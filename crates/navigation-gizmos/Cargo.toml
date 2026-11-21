@@ -1,0 +1,17 @@
+[package]
+name = "concerto-navigation-gizmos"
+version.workspace = true
+edition = "2024"
+description.workspace = true
+repository.workspace = true
+license.workspace = true
+
+[dependencies]
+concerto-app.workspace = true
+concerto-color.workspace = true
+concerto-debug-gizmos.workspace = true
+concerto-ecs.workspace = true
+concerto-foundation.workspace = true
+concerto-navigation.workspace = true
+concerto-render.workspace = true
+glam.workspace = true

@@ -159,6 +159,36 @@ fn collect_binding_fields(fields: &syn::FieldsNamed) -> Vec<BindingField<'_>> {
     bindings
 }
 
+fn alpha_mode_field(fields: &syn::FieldsNamed) -> syn::Result<Option<&Ident>> {
+    let marked: Vec<&Field> = fields
+        .named
+        .iter()
+        .filter(|field| {
+            field
+                .attrs
+                .iter()
+                .any(|attr| attr.path().is_ident("alpha_mode"))
+        })
+        .collect();
+    match marked.as_slice() {
+        [] => Ok(None),
+        [field] => Ok(field.ident.as_ref()),
+        [_, second, ..] => {
+            let names: Vec<String> = marked
+                .iter()
+                .filter_map(|field| field.ident.as_ref().map(|ident| format!("`{ident}`")))
+                .collect();
+            Err(syn::Error::new_spanned(
+                second,
+                format!(
+                    "only one field may be marked #[alpha_mode], but {} are",
+                    names.join(" and ")
+                ),
+            ))
+        }
+    }
+}
+
 /// Parse the struct-level `#[material(...)]` attribute into a [`MaterialAttr`].
 ///
 /// Supported keys:
@@ -463,7 +493,7 @@ fn gen_create_bind_group(bindings: &[BindingField<'_>], struct_name: &Ident) -> 
 }
 
 /// Generate the body of `impl Material for <Name>` from the parsed attribute.
-fn gen_material_impl(name: &Ident, m: &MaterialAttr) -> TokenStream2 {
+fn gen_material_impl(name: &Ident, m: &MaterialAttr, alpha_mode: Option<&Ident>) -> TokenStream2 {
     let render = render_root();
     let wgpu = quote!(#render::wgpu);
     let camera_fn = m
@@ -536,8 +566,8 @@ fn gen_material_impl(name: &Ident, m: &MaterialAttr) -> TokenStream2 {
                 "read_only" => quote! {
                     Some(#wgpu::DepthStencilState {
                         format: #wgpu::TextureFormat::Depth32Float,
-                        depth_write_enabled: false,
-                        depth_compare: #wgpu::CompareFunction::LessEqual,
+                        depth_write_enabled: Some(false),
+                        depth_compare: Some(#wgpu::CompareFunction::LessEqual),
                         stencil: #wgpu::StencilState::default(),
                         bias: #wgpu::DepthBiasState::default(),
                     })
@@ -545,8 +575,8 @@ fn gen_material_impl(name: &Ident, m: &MaterialAttr) -> TokenStream2 {
                 _ => quote! {
                     Some(#wgpu::DepthStencilState {
                         format: #wgpu::TextureFormat::Depth32Float,
-                        depth_write_enabled: true,
-                        depth_compare: #wgpu::CompareFunction::Less,
+                        depth_write_enabled: Some(true),
+                        depth_compare: Some(#wgpu::CompareFunction::Less),
                         stencil: #wgpu::StencilState::default(),
                         bias: #wgpu::DepthBiasState::default(),
                     })
@@ -579,6 +609,16 @@ fn gen_material_impl(name: &Ident, m: &MaterialAttr) -> TokenStream2 {
         })
         .unwrap_or_default();
 
+    let alpha_mode_fn = alpha_mode
+        .map(|field| {
+            quote! {
+                fn alpha_mode(&self) -> #render::assets::material::AlphaMode {
+                    #render::assets::material::AlphaMode::from(&self.#field)
+                }
+            }
+        })
+        .unwrap_or_default();
+
     quote! {
         impl #render::assets::material::Material for #name {
             #camera_fn
@@ -590,6 +630,7 @@ fn gen_material_impl(name: &Ident, m: &MaterialAttr) -> TokenStream2 {
             #depth_stencil_fn
             #vertex_layouts_fn
             #blend_state_fn
+            #alpha_mode_fn
         }
     }
 }
@@ -605,6 +646,7 @@ fn gen_material_impl(name: &Ident, m: &MaterialAttr) -> TokenStream2 {
 /// | `#[texture(N)]` | `Option<AssetHandle<Texture>>`      | Texture binding at slot *N* (FRAGMENT stage) |
 /// | `#[sampler(N)]` | *(any)*                             | Sampler binding at slot *N* (FRAGMENT stage) |
 /// | `#[uniform(N)]` | `T: bytemuck::Pod + bytemuck::Zeroable` | Uniform buffer at slot *N*               |
+/// | `#[alpha_mode]` | `T` where `AlphaMode: From<&T>`     | Per-asset `Material::alpha_mode()`, read from this field; at most one field |
 ///
 /// # Struct attributes (`#[material(...)]`)
 ///
@@ -623,7 +665,10 @@ fn gen_material_impl(name: &Ident, m: &MaterialAttr) -> TokenStream2 {
 ///
 /// The macro always emits `impl Material for YourStruct { … }`.  Methods whose
 /// keys are absent fall back to the trait's default implementations.
-#[proc_macro_derive(AsBindGroup, attributes(texture, sampler, uniform, material))]
+#[proc_macro_derive(
+    AsBindGroup,
+    attributes(texture, sampler, uniform, material, alpha_mode)
+)]
 pub fn derive_as_bind_group(input: TokenStream) -> TokenStream {
     let render = render_root();
     let input = parse_macro_input!(input as DeriveInput);
@@ -659,12 +704,17 @@ pub fn derive_as_bind_group(input: TokenStream) -> TokenStream {
         }
     };
 
+    let alpha_mode = match alpha_mode_field(named_fields) {
+        Ok(field) => field,
+        Err(error) => return error.to_compile_error().into(),
+    };
+
     let bindings = collect_binding_fields(named_fields);
 
     let layout_fn = gen_bind_group_layout(&bindings, name);
     let bind_group_fn = gen_create_bind_group(&bindings, name);
 
-    let material_impl = gen_material_impl(name, &mat_attr);
+    let material_impl = gen_material_impl(name, &mat_attr, alpha_mode);
 
     let expanded = quote! {
         impl #render::assets::material::AsBindGroup for #name {
@@ -691,23 +741,30 @@ pub fn derive_as_bind_group(input: TokenStream) -> TokenStream {
 mod tests {
     use super::render_root_for;
 
-    #[test]
-    fn a_crate_depending_on_concerto_reaches_render_through_it() {
-        assert_eq!(
-            render_root_for(&["concerto"]).to_string(),
-            ":: concerto :: render"
-        );
+    struct Root {
+        dependencies: &'static [&'static str],
+        path: &'static str,
     }
 
     #[test]
-    fn a_crate_depending_on_concerto_render_uses_it_directly() {
-        assert_eq!(
-            render_root_for(&["concerto-render"]).to_string(),
-            ":: concerto_render"
-        );
-        assert_eq!(
-            render_root_for(&["concerto-render", "concerto"]).to_string(),
-            ":: concerto_render"
-        );
+    fn the_render_path_goes_through_concerto_render_when_the_crate_depends_on_it() {
+        let cases = [
+            Root {
+                dependencies: &["concerto"],
+                path: ":: concerto :: render",
+            },
+            Root {
+                dependencies: &["concerto-render"],
+                path: ":: concerto_render",
+            },
+        ];
+        for case in &cases {
+            assert_eq!(
+                render_root_for(case.dependencies).to_string(),
+                case.path,
+                "{:?}",
+                case.dependencies
+            );
+        }
     }
 }

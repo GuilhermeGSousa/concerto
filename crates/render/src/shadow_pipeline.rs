@@ -10,10 +10,11 @@ use wgpu::{
 
 use crate::{
     assets::vertex::VertexBufferLayout,
+    batching::clear_draw_stats,
     capabilities::RenderCapabilities,
     components::shadows::{
-        render_shadow_maps, resize_shadow_maps, update_shadow_view_proj,
-        RenderShadowCasterViewProjs,
+        queue_shadow_meshes, render_shadow_maps, resize_shadow_maps, update_shadow_view_proj,
+        RenderShadowCasterViewProjs, ShadowViewBatches,
     },
     device::RenderDevice,
     layouts::SkeletonLayout,
@@ -37,13 +38,20 @@ pub struct ShadowPipelinePlugin;
 
 impl Plugin for ShadowPipelinePlugin {
     fn build(&self, app: &mut concerto_app::App) {
-        app.render_mut().add_system(
-            Render,
-            render_shadow_maps
-                .in_set(RenderSet::Shadows)
-                .after(update_shadow_view_proj)
-                .after(resize_shadow_maps),
-        );
+        app.render_mut()
+            .add_system(
+                Render,
+                queue_shadow_meshes
+                    .in_set(RenderSet::Queue)
+                    .after(clear_draw_stats),
+            )
+            .add_system(
+                Render,
+                render_shadow_maps
+                    .in_set(RenderSet::Shadows)
+                    .after(update_shadow_view_proj)
+                    .after(resize_shadow_maps),
+            );
     }
 
     fn finish(&self, app: &mut concerto_app::App) {
@@ -86,8 +94,8 @@ impl Plugin for ShadowPipelinePlugin {
 
         let pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
             label: Some("Shadow Pipeline Layout"),
-            bind_group_layouts: &[&light_view_bind_group_layout, skeleton_layout],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(&light_view_bind_group_layout), Some(skeleton_layout)],
+            immediate_size: 0,
         });
 
         let pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {
@@ -96,7 +104,10 @@ impl Plugin for ShadowPipelinePlugin {
             vertex: wgpu::VertexState {
                 module: &vs_module,
                 entry_point: Some("vs_main"),
-                buffers: &[Vertex::describe(), GlobalTransformRaw::describe()],
+                buffers: &[
+                    Some(Vertex::describe()),
+                    Some(GlobalTransformRaw::describe()),
+                ],
                 compilation_options: PipelineCompilationOptions::default(),
             },
             fragment: None,
@@ -111,8 +122,8 @@ impl Plugin for ShadowPipelinePlugin {
             },
             depth_stencil: Some(DepthStencilState {
                 format: TextureFormat::Depth32Float,
-                depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::Less,
+                depth_write_enabled: Some(true),
+                depth_compare: Some(wgpu::CompareFunction::Less),
                 stencil: StencilState::default(),
                 bias: DepthBiasState {
                     constant: 0,
@@ -129,7 +140,7 @@ impl Plugin for ShadowPipelinePlugin {
                 mask: !0,
                 alpha_to_coverage_enabled: false,
             },
-            multiview: None,
+            multiview_mask: None,
             cache: None,
         });
 
@@ -138,6 +149,7 @@ impl Plugin for ShadowPipelinePlugin {
             bind_group_layout: light_view_bind_group_layout,
         });
         app.render_mut()
-            .insert_resource(RenderShadowCasterViewProjs::default());
+            .insert_resource(RenderShadowCasterViewProjs::default())
+            .insert_resource(ShadowViewBatches::default());
     }
 }

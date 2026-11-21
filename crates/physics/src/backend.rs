@@ -40,6 +40,14 @@ pub struct RawRayHit<Handle> {
     pub normal: Vec3,
 }
 
+/// The first body a swept sphere touches, in backend terms.
+pub struct RawShapeHit<Handle> {
+    pub body: Handle,
+    pub fraction: f32,
+    pub point: Vec3,
+    pub normal: Vec3,
+}
+
 /// A ground contact found by [`PhysicsBackend::probe_ground`]: the contact
 /// with the most upward-facing normal within reach of the probed body's
 /// shape. Slope classification against a walkable angle happens in the
@@ -53,6 +61,20 @@ pub struct RawGroundHit<Handle> {
     pub normal: Vec3,
     /// The ground body's velocity at the contact point (moving platforms).
     pub velocity: Vec3,
+}
+
+/// Whether a sensor pair began or stopped overlapping.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum SensorContactKind {
+    Enter,
+    Exit,
+}
+
+/// A sensor pair that began or stopped overlapping, in backend terms.
+pub struct RawSensorContact<Handle> {
+    pub sensor: Handle,
+    pub other: Handle,
+    pub kind: SensorContactKind,
 }
 
 /// Raw simulation operations a physics backend must provide.
@@ -87,18 +109,26 @@ pub trait PhysicsBackend: Send + Sync + Sized {
     /// kinematic per its [`MotionType`](crate::rigid_body::MotionType), with
     /// its density and allowed degrees of freedom. `offset` displaces the
     /// shape's geometry relative to the body origin; it must not leak into
-    /// [`body_transform`](Self::body_transform).
+    /// [`body_transform`](Self::body_transform). A `sensor` body detects
+    /// bodies without colliding with them, is never dynamic, and is skipped
+    /// by [`cast_ray`](Self::cast_ray), [`cast_sphere`](Self::cast_sphere)
+    /// and [`probe_ground`](Self::probe_ground).
     fn create_body(
         &mut self,
         collider: &Collider,
         transform: &Transform,
         rigid_body: Option<&RigidBody>,
         offset: Option<&ColliderOffset>,
+        sensor: bool,
     ) -> Self::BodyHandle;
 
     /// Removes `body` from the simulation and destroys it, waking any bodies
-    /// that were touching it. The handle is invalid afterwards.
+    /// that were touching it. The handle is invalid afterwards. Sensor pairs
+    /// holding the body are forgotten and report nothing more.
     fn destroy_body(&mut self, body: Self::BodyHandle);
+
+    /// Moves the sensor pair begins and ends seen since the last drain into `out`, in order, keeping only a sensor against a dynamic or kinematic body.
+    fn drain_sensor_contacts(&mut self, out: &mut Vec<RawSensorContact<Self::BodyHandle>>);
 
     /// A body's current world-space pose (translation and rotation).
     fn body_transform(&self, body: Self::BodyHandle) -> Transform;
@@ -117,8 +147,23 @@ pub trait PhysicsBackend: Send + Sync + Sized {
     fn add_force_at(&mut self, body: Self::BodyHandle, force: Vec3, position: Vec3);
 
     /// Casts a ray from `origin` along `direction` — whose length is the
-    /// maximum cast distance — and returns the closest hit, if any.
-    fn cast_ray(&self, origin: Vec3, direction: Vec3) -> Option<RawRayHit<Self::BodyHandle>>;
+    /// maximum cast distance — and returns the closest hit, if any, skipping
+    /// the bodies in `ignore`.
+    fn cast_ray(
+        &self,
+        origin: Vec3,
+        direction: Vec3,
+        ignore: &[Self::BodyHandle],
+    ) -> Option<RawRayHit<Self::BodyHandle>>;
+
+    /// Sweeps a sphere of `radius` from `origin` along `direction` and returns the first body it touches, skipping `ignore`.
+    fn cast_sphere(
+        &self,
+        origin: Vec3,
+        radius: f32,
+        direction: Vec3,
+        ignore: &[Self::BodyHandle],
+    ) -> Option<RawShapeHit<Self::BodyHandle>>;
 
     /// Collides `body`'s shape against the world (ignoring `body` itself)
     /// and reports the contact with the most upward-facing normal within

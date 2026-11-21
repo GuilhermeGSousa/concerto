@@ -95,9 +95,10 @@ impl<T: ReadOnlySystemInput + 'static> SystemInput for Extracted<'_, '_, T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::App;
     use concerto_ecs::{
-        query::change_detection::DetectChanges, system::BoxedSystem, IntoSystem, Res, ResMut,
-        System,
+        component::removed::RemovedComponents, query::change_detection::DetectChanges,
+        system::BoxedSystem, Component, Entity, IntoSystem, Res, ResMut, System,
     };
 
     #[derive(Resource)]
@@ -118,25 +119,6 @@ mod tests {
         system.initialize(&mut render);
         system.run_and_apply((), &mut render);
         render.get_resource::<Seen>().unwrap().0
-    }
-
-    #[derive(Resource, Default)]
-    struct Ran(bool);
-
-    fn extracts(_: Extracted<Option<Res<Counter>>>, mut ran: ResMut<Ran>) {
-        ran.0 = true;
-    }
-
-    #[test]
-    fn an_extracting_system_is_skipped_without_a_main_world() {
-        let mut render = World::new();
-        render.insert_resource(Ran::default());
-        let mut system = extracts.into_system();
-        system.initialize(&mut render);
-
-        system.run_and_apply((), &mut render);
-
-        assert!(!render.get_resource::<Ran>().unwrap().0);
     }
 
     #[test]
@@ -211,58 +193,120 @@ mod tests {
         }
     }
 
-    #[test]
-    fn an_extract_system_sees_a_main_world_system_write_once() {
-        let mut frames = Frames::new(watch.into_boxed_system());
-        let mut writer = bump.into_system();
-        writer.initialize(&mut frames.main);
-        frames.extract();
-        assert_eq!(frames.extract(), Some(false));
+    enum Step {
+        Extract(Option<bool>),
+        Added(bool),
+        SystemWrite,
+        DirectWrite,
+        Tick,
+        Disable,
+        Enable,
+    }
 
-        writer.run_and_apply((), &mut frames.main);
-        frames.main.tick();
-
-        assert_eq!(frames.extract(), Some(true));
-        assert_eq!(frames.extract(), Some(false));
+    struct Watch {
+        name: &'static str,
+        gated: bool,
+        steps: &'static [Step],
     }
 
     #[test]
-    fn an_extract_system_sees_a_direct_main_world_write_between_extracts() {
-        let mut frames = Frames::new(watch.into_boxed_system());
-        frames.extract();
-        assert_eq!(frames.extract(), Some(false));
+    fn an_extract_system_sees_each_main_world_change_once_even_across_a_skipped_run() {
+        use Step::*;
+        let cases = [
+            Watch {
+                name: "a main world system's write",
+                gated: false,
+                steps: &[
+                    Extract(Some(true)),
+                    Extract(Some(false)),
+                    SystemWrite,
+                    Tick,
+                    Extract(Some(true)),
+                    Extract(Some(false)),
+                ],
+            },
+            Watch {
+                name: "a first run sees everything",
+                gated: false,
+                steps: &[
+                    Tick,
+                    Tick,
+                    Extract(Some(true)),
+                    Added(true),
+                    Extract(Some(false)),
+                    Added(false),
+                ],
+            },
+            Watch {
+                name: "a skipped extract keeps the change",
+                gated: true,
+                steps: &[
+                    Extract(Some(true)),
+                    Extract(Some(false)),
+                    Disable,
+                    DirectWrite,
+                    Extract(None),
+                    Tick,
+                    Enable,
+                    Extract(Some(true)),
+                    Extract(Some(false)),
+                ],
+            },
+        ];
+        for case in cases {
+            let system = if case.gated {
+                watch_when_enabled.into_boxed_system()
+            } else {
+                watch.into_boxed_system()
+            };
+            let mut frames = Frames::new(system);
+            let mut writer = bump.into_system();
+            writer.initialize(&mut frames.main);
+            for step in case.steps {
+                match step {
+                    Extract(changed) => {
+                        assert_eq!(frames.extract(), *changed, "{}", case.name)
+                    }
+                    Added(added) => {
+                        assert_eq!(frames.added(), Some(*added), "{}", case.name)
+                    }
+                    SystemWrite => writer.run_and_apply((), &mut frames.main),
+                    DirectWrite => frames.main.get_resource_mut::<Counter>().unwrap().0 += 1,
+                    Tick => frames.main.tick(),
+                    Disable => {
+                        frames.render.remove_resource::<Enabled>();
+                    }
+                    Enable => frames.render.insert_resource(Enabled),
+                }
+            }
+        }
+    }
 
-        frames.main.get_resource_mut::<Counter>().unwrap().0 += 1;
+    #[derive(Component)]
+    struct Health;
 
-        assert_eq!(frames.extract(), Some(true));
-        assert_eq!(frames.extract(), Some(false));
+    #[derive(Resource, Default)]
+    struct Removed(Vec<Entity>);
+
+    fn read_removals(mut removed: Extracted<RemovedComponents<Health>>, mut seen: ResMut<Removed>) {
+        seen.0.extend(removed.read());
     }
 
     #[test]
-    fn an_extract_systems_first_run_sees_everything() {
-        let mut frames = Frames::new(watch.into_boxed_system());
-        frames.main.tick();
-        frames.main.tick();
+    fn removals_in_the_main_world_reach_an_extract_system() {
+        let mut app = App::new();
+        app.track_removals::<Health>();
+        let main = app.main_mut().world_mut();
+        let entity = main.spawn(Health);
+        main.remove_component::<Health>(entity);
+        let mut render = World::new();
+        render.insert_resource(Removed::default());
+        render.insert_resource(MainWorld::new(mem::take(main)));
+        let mut system = read_removals.into_system();
+        system.initialize(&mut render);
 
-        assert_eq!(frames.extract(), Some(true));
-        assert_eq!(frames.added(), Some(true));
-        assert_eq!(frames.extract(), Some(false));
-        assert_eq!(frames.added(), Some(false));
-    }
+        system.run_and_apply((), &mut render);
 
-    #[test]
-    fn a_skipped_extract_keeps_the_change() {
-        let mut frames = Frames::new(watch_when_enabled.into_boxed_system());
-        frames.extract();
-        assert_eq!(frames.extract(), Some(false));
-
-        frames.render.remove_resource::<Enabled>();
-        frames.main.get_resource_mut::<Counter>().unwrap().0 += 1;
-        assert_eq!(frames.extract(), None);
-        frames.main.tick();
-        frames.render.insert_resource(Enabled);
-
-        assert_eq!(frames.extract(), Some(true));
-        assert_eq!(frames.extract(), Some(false));
+        assert_eq!(render.get_resource::<Removed>().unwrap().0, vec![entity]);
     }
 }

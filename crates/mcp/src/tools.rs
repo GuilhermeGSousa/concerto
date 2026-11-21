@@ -141,9 +141,9 @@ fn assert_reads_only<M>(name: &str, system: impl IntoSystem<(), M>) {
     );
 }
 
-/// Adds MCP tools to an `App` that has [`McpPlugin`](crate::McpPlugin).
+/// Adds MCP tools to an `App`; [`McpPlugin`](crate::McpPlugin) comes first.
 pub trait AppMcpExt {
-    /// Registers tool `A` and adds `system` to [`McpServe`], and also to [`McpRead`] for a read-only tool, whose system must only read.
+    /// Registers tool `A` and adds `system` to [`McpServe`], and also to [`McpRead`] for a read-only tool, whose system must only read; does nothing in an `App` without [`McpPlugin`](crate::McpPlugin).
     fn add_tool<A, M>(
         &mut self,
         tool: McpTool,
@@ -166,12 +166,14 @@ impl AppMcpExt for App {
         A: DeserializeOwned + JsonSchema + 'static,
     {
         let read_only = tool.read_only;
+        let tool_name = tool.name;
+        let Some(registry) = self.get_resource_mut::<ToolRegistry>() else {
+            return self;
+        };
+        registry.add::<A>(tool);
         if read_only {
-            assert_reads_only(tool.name, system.clone());
+            assert_reads_only(tool_name, system.clone());
         }
-        self.get_resource_mut::<ToolRegistry>()
-            .expect("register McpPlugin before adding tools")
-            .add::<A>(tool);
         self.add_system(McpServe, system.clone().before(answer_unanswered));
         if read_only {
             self.add_system(

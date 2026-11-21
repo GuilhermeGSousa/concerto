@@ -10,11 +10,19 @@ use concerto_ecs::{
 };
 use concerto_foundation::transform::Transform;
 use concerto_render::components::render_entity::SyncWithRenderWorld;
-use concerto_scene::{capture::capture_subtree, scene::Scene, spawner::spawn_scene_in_world};
+use concerto_scene::{
+    capture::capture_subtree,
+    node_id::{NodeId, SceneNodeId},
+    scene::Scene,
+    spawner::{SpawnFilter, spawn_scene_in_world},
+};
 
-use crate::tools::{
-    scene::{RevealEntity, SceneRoot, SceneStatus, report_edit, write},
-    selection::Select,
+use crate::{
+    links::{LinkedEdit, record_removal, refusal},
+    tools::{
+        scene::{RevealEntity, SceneRoot, SceneStatus, report_edit, write},
+        selection::Select,
+    },
 };
 
 /// A structural change to an open scene, or to a game's world, which has no scene root. Trigger it; one listener applies it.
@@ -102,6 +110,7 @@ fn apply(world: &mut World, edit: &EntityEdit) -> anyhow::Result<Applied> {
                 Name::new("Entity"),
                 Transform::IDENTITY,
                 SyncWithRenderWorld,
+                SceneNodeId(NodeId::fresh()),
             ));
             if let Some(parent) = parent {
                 world.entity_mut(*parent).add_child(child);
@@ -110,16 +119,22 @@ fn apply(world: &mut World, edit: &EntityEdit) -> anyhow::Result<Applied> {
         }
         EntityEdit::Delete(entity) => {
             let parent = editable(world, *entity)?;
+            record_removal(world, *entity);
             world.despawn(*entity);
             Ok(Applied::Removed(parent))
         }
         EntityEdit::Duplicate(entity) => {
             let parent = editable(world, *entity)?;
-            let scene = capture_subtree(world, *entity)?;
+            refuse_linked(world, *entity, LinkedEdit::Duplicate)?;
+            let mut scene = capture_subtree(world, *entity)?;
+            for node in &mut scene.nodes {
+                node.id = NodeId::fresh();
+            }
             Ok(Applied::Changed(spawn_beside(world, &scene, parent)))
         }
         EntityEdit::Rename { entity, name } => {
             editable(world, *entity)?;
+            refuse_linked(world, *entity, LinkedEdit::Rename)?;
             let name = name.trim();
             if name.is_empty() {
                 bail!("a name cannot be empty");
@@ -134,6 +149,13 @@ fn apply(world: &mut World, edit: &EntityEdit) -> anyhow::Result<Applied> {
     }
 }
 
+fn refuse_linked(world: &World, entity: Entity, edit: LinkedEdit) -> anyhow::Result<()> {
+    match refusal(world, entity, edit) {
+        Some(reason) => bail!(reason),
+        None => Ok(()),
+    }
+}
+
 fn has_scene_root(world: &mut World) -> bool {
     world.query::<&SceneRoot, ()>().iter(world).next().is_some()
 }
@@ -145,7 +167,7 @@ fn exists(world: &World, entity: Entity) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn new_parent(world: &mut World, parent: Option<Entity>) -> anyhow::Result<()> {
+pub(crate) fn new_parent(world: &mut World, parent: Option<Entity>) -> anyhow::Result<()> {
     if has_scene_root(world) {
         scene_member(
             world,
@@ -169,7 +191,7 @@ fn editable(world: &mut World, entity: Entity) -> anyhow::Result<Option<Entity>>
 
 fn spawn_beside(world: &mut World, scene: &Scene, parent: Option<Entity>) -> Option<Entity> {
     let holder = parent.unwrap_or_else(|| world.spawn(()));
-    let spawned = spawn_scene_in_world(world, scene, holder);
+    let spawned = spawn_scene_in_world(world, scene, holder, &SpawnFilter::default());
     if parent.is_none() {
         for root in &spawned.root_entities {
             world.remove_component::<ChildOf>(*root);
@@ -188,7 +210,7 @@ pub(crate) fn in_open_scene(world: &mut World, entity: Entity) -> anyhow::Result
 }
 
 /// Whether `entity` is the scene root; an error if it is not part of an open scene at all.
-fn scene_member(world: &World, entity: Entity) -> anyhow::Result<bool> {
+pub(crate) fn scene_member(world: &World, entity: Entity) -> anyhow::Result<bool> {
     scene_member_by(entity, |entity| {
         world.entity_is_valid(entity).then(|| {
             (
@@ -245,8 +267,6 @@ mod tests {
         selection::Selection,
     };
     use concerto_ecs::entity::hierarchy::Children;
-    use concerto_foundation::assets::AssetId;
-    use concerto_mesh::skeleton::{Skeleton, SkeletonComponent};
 
     struct Fixture {
         app: App,
@@ -260,13 +280,20 @@ mod tests {
         let world = app.main_mut().world_mut();
         world.register_type::<Transform>();
         world.register_type::<SyncWithRenderWorld>();
-        world.register_type::<SkeletonComponent>();
         world.register_component::<ChildOf>();
         world.register_component::<Children>();
         world.register_component::<Name>();
         let root = world.spawn((Transform::IDENTITY, SceneRoot));
-        let node = world.spawn((Name::new("node"), Transform::IDENTITY));
-        let child = world.spawn((Name::new("child"), Transform::IDENTITY));
+        let node = world.spawn((
+            Name::new("node"),
+            Transform::IDENTITY,
+            SceneNodeId(NodeId(1)),
+        ));
+        let child = world.spawn((
+            Name::new("child"),
+            Transform::from_translation(glam::Vec3::X * 7.0),
+            SceneNodeId(NodeId(2)),
+        ));
         world.entity_mut(root).add_child(node);
         world.entity_mut(node).add_child(child);
         Fixture {
@@ -281,23 +308,12 @@ mod tests {
         fn world(&mut self) -> &mut World {
             self.app.main_mut().world_mut()
         }
-        fn trigger(&mut self, edit: EntityEdit) {
+        fn edit(&mut self, edit: EntityEdit) -> Result<Option<Entity>, String> {
             self.world().trigger(edit);
+            written::<EntityEdited>(&self.app).pop().unwrap().result
         }
         fn edits(&self) -> usize {
             written::<SceneEdited>(&self.app).len()
-        }
-        fn statuses(&self) -> Vec<String> {
-            written::<SceneStatus>(&self.app)
-                .into_iter()
-                .map(|status| status.0)
-                .collect()
-        }
-        fn outcomes(&self) -> Vec<(EntityEdit, Result<Option<Entity>, String>)> {
-            written::<EntityEdited>(&self.app)
-                .into_iter()
-                .map(|outcome| (outcome.edit, outcome.result))
-                .collect()
         }
         fn selected(&self) -> Option<Entity> {
             self.app.get_resource::<Selection>().unwrap().entity()
@@ -318,190 +334,55 @@ mod tests {
         fn valid(&mut self, entity: Entity) -> bool {
             self.world().entity_is_valid(entity)
         }
+        fn node_id(&mut self, entity: Entity) -> Option<NodeId> {
+            self.world()
+                .get_component_for_entity::<SceneNodeId>(entity)
+                .map(|id| id.0)
+        }
     }
 
     #[test]
-    fn an_applied_edit_writes_scene_edited_and_reveals_what_it_created() {
+    fn entities_are_created_duplicated_renamed_and_deleted_in_a_scene_and_in_a_game_world() {
         let mut f = fixture();
+        let (root, node, child) = (f.root, f.node, f.child);
 
-        f.trigger(EntityEdit::Create {
-            parent: Some(f.root),
-        });
-
-        assert_eq!(f.edits(), 1);
-        let revealed = written::<RevealEntity>(&f.app);
-        assert_eq!(revealed.len(), 1);
-        assert_eq!(f.selected(), Some(revealed[0].0));
-    }
-
-    #[test]
-    fn a_refused_edit_writes_a_status_and_no_scene_edited() {
-        let mut f = fixture();
-
-        f.trigger(EntityEdit::Delete(f.root));
-
-        assert_eq!(f.edits(), 0);
-        let status = f.statuses();
-        assert_eq!(status.len(), 1);
-        assert!(status[0].starts_with("Delete failed"));
-    }
-
-    #[test]
-    fn every_applied_entity_edit_writes_its_outcome_with_the_entity_it_made() {
-        let mut f = fixture();
-        let (root, node) = (f.root, f.node);
-
-        f.trigger(EntityEdit::Create { parent: Some(root) });
-        let created = f.selected().unwrap();
-        f.trigger(EntityEdit::Duplicate(node));
-        let copy = f.selected().unwrap();
-        let rename = EntityEdit::Rename {
-            entity: node,
-            name: "lamp".into(),
-        };
-        f.trigger(rename.clone());
-        f.trigger(rename.clone());
-        f.trigger(EntityEdit::Delete(copy));
-
-        assert_eq!(
-            f.outcomes(),
-            vec![
-                (EntityEdit::Create { parent: Some(root) }, Ok(Some(created))),
-                (EntityEdit::Duplicate(node), Ok(Some(copy))),
-                (rename.clone(), Ok(None)),
-                (rename, Ok(None)),
-                (EntityEdit::Delete(copy), Ok(None)),
-            ]
-        );
-    }
-
-    #[test]
-    fn a_refused_entity_edit_writes_its_outcome_with_the_status_text() {
-        let mut f = fixture();
-
-        f.trigger(EntityEdit::Delete(f.root));
-
-        let status = f.statuses().remove(0);
-        assert_eq!(
-            f.outcomes(),
-            vec![(EntityEdit::Delete(f.root), Err(status))]
-        );
-    }
-
-    #[test]
-    fn create_adds_a_selected_last_child_and_writes_scene_edited() {
-        let mut f = fixture();
-        f.trigger(EntityEdit::Create {
-            parent: Some(f.node),
-        });
-        let created = f.selected().unwrap();
-        assert_eq!(f.children(f.node), [f.child, created]);
+        let created = f
+            .edit(EntityEdit::Create { parent: Some(node) })
+            .unwrap()
+            .unwrap();
+        assert_eq!(f.children(node), [child, created]);
         assert_eq!(f.name(created), "Entity");
         assert!(
-            f.world()
-                .get_component_for_entity::<Transform>(created)
-                .is_some()
+            f.node_id(created)
+                .is_some_and(|id| id != NodeId(1) && id != NodeId(2))
         );
         assert!(
             f.world()
                 .get_component_for_entity::<SyncWithRenderWorld>(created)
                 .is_some()
         );
-        assert_eq!(f.edits(), 1);
+        assert_eq!(f.selected(), Some(created));
+        assert_eq!(
+            written::<RevealEntity>(&f.app)
+                .into_iter()
+                .map(|reveal| reveal.0)
+                .collect::<Vec<_>>(),
+            [created]
+        );
 
-        f.trigger(EntityEdit::Create {
-            parent: Some(f.root),
-        });
-        let second = f.selected().unwrap();
-        assert_eq!(f.children(f.root), [f.node, second]);
-    }
-
-    #[test]
-    fn an_entity_outside_any_scene_is_rejected() {
-        let mut f = fixture();
-        let stray = f.world().spawn(Name::new("stray"));
-        let count = |f: &mut Fixture| {
-            let world = f.world();
-            world.query::<Entity, ()>().iter(world).count()
-        };
-        let before = count(&mut f);
-        for edit in [
-            EntityEdit::Create {
-                parent: Some(stray),
-            },
-            EntityEdit::Delete(stray),
-            EntityEdit::Duplicate(stray),
-            EntityEdit::Rename {
-                entity: stray,
-                name: "other".into(),
-            },
-        ] {
-            f.trigger(edit);
-        }
-        assert_eq!(count(&mut f), before);
-        assert_eq!(f.name(stray), "stray");
-        assert_eq!(f.edits(), 0);
-        assert_eq!(f.statuses().len(), 4);
-        assert_eq!(f.selected(), None);
-    }
-
-    #[test]
-    fn delete_removes_the_subtree_and_selects_the_parent() {
-        let mut f = fixture();
-        f.trigger(EntityEdit::Delete(f.node));
-        assert!(!f.valid(f.node));
-        assert!(!f.valid(f.child));
-        assert_eq!(f.selected(), Some(f.root));
-        assert_eq!(f.edits(), 1);
-    }
-
-    #[test]
-    fn the_scene_root_cannot_be_deleted_duplicated_or_renamed() {
-        let mut f = fixture();
-        for (refused, edit) in [
-            EntityEdit::Delete(f.root),
-            EntityEdit::Duplicate(f.root),
-            EntityEdit::Rename {
-                entity: f.root,
-                name: "other".into(),
-            },
-        ]
-        .into_iter()
-        .enumerate()
-        {
-            f.trigger(edit);
-            let statuses = f.statuses();
-            assert_eq!(statuses.len(), refused + 1);
-            assert!(
-                statuses[refused].contains("failed"),
-                "{}",
-                statuses[refused]
-            );
-        }
-        assert!(f.valid(f.root));
-        assert_eq!(f.children(f.root), [f.node]);
-        let root = f.root;
-        assert!(f.world().get_component_for_entity::<Name>(root).is_none());
-        assert_eq!(f.edits(), 0);
-    }
-
-    #[test]
-    fn duplicate_copies_the_subtree_beside_the_source_and_selects_the_copy() {
-        let mut f = fixture();
-        let child = f.child;
-        f.world()
-            .get_component_for_entity_mut::<Transform>(child)
-            .unwrap()
-            .translation
-            .x = 7.0;
-        f.trigger(EntityEdit::Duplicate(f.node));
-        let copy = f.selected().unwrap();
-        assert_ne!(copy, f.node);
-        assert_eq!(f.children(f.root), [f.node, copy]);
-        assert_eq!(f.name(copy), "node");
+        let copy = f.edit(EntityEdit::Duplicate(node)).unwrap().unwrap();
+        assert_eq!(f.children(root), [node, copy]);
+        assert_eq!(f.selected(), Some(copy));
         let copied_child = f.children(copy)[0];
-        assert_ne!(copied_child, f.child);
+        assert_ne!(copied_child, child);
         assert_eq!(f.name(copied_child), "child");
+        let copied = [f.node_id(copy), f.node_id(copied_child)];
+        assert!(
+            copied
+                .iter()
+                .all(|id| id.is_some_and(|id| id != NodeId(1) && id != NodeId(2)))
+        );
+        assert_ne!(copied[0], copied[1]);
         assert_eq!(
             f.world()
                 .get_component_for_entity::<Transform>(copied_child)
@@ -510,183 +391,33 @@ mod tests {
                 .x,
             7.0
         );
-        assert_eq!(f.edits(), 1);
-    }
 
-    #[test]
-    fn a_duplicate_that_refers_outside_its_subtree_spawns_nothing_and_says_why() {
-        let mut f = fixture();
-        let (root, child) = (f.root, f.child);
-        let bone = f.world().spawn(Name::new("bone"));
-        f.world().entity_mut(root).add_child(bone);
-        f.world().insert(
-            SkeletonComponent {
-                skeleton: concerto_foundation::assets::handle::AssetHandle::<Skeleton>::weak(
-                    AssetId::new(),
-                ),
-                bones: vec![concerto_ecs::component::scene::SceneEntityRef::Entity(bone)],
-                bone_ids: vec![],
-                root: None,
-            },
-            child,
-        );
-        f.trigger(EntityEdit::Duplicate(f.node));
-        assert_eq!(f.children(f.root), [f.node, bone]);
-        let statuses = f.statuses();
-        assert_eq!(statuses.len(), 1);
-        assert!(
-            statuses[0].starts_with("Duplicate failed: "),
-            "{}",
-            statuses[0]
-        );
-        assert_eq!(f.edits(), 0);
-        assert_eq!(f.selected(), None);
-    }
-
-    #[test]
-    fn rename_sets_a_trimmed_name_and_ignores_empty_or_unchanged_ones() {
-        let mut f = fixture();
-        f.trigger(EntityEdit::Rename {
-            entity: f.node,
-            name: "node".into(),
-        });
-        assert_eq!(f.edits(), 0, "an unchanged name is not an edit");
-        assert!(f.statuses().is_empty());
-
-        f.trigger(EntityEdit::Rename {
-            entity: f.node,
-            name: "   ".into(),
-        });
-        assert_eq!(f.name(f.node), "node");
-        assert!(f.statuses()[0].starts_with("Rename failed: "));
-        assert_eq!(f.edits(), 0);
-
-        f.trigger(EntityEdit::Rename {
-            entity: f.node,
+        f.edit(EntityEdit::Rename {
+            entity: copy,
             name: "  lamp ".into(),
-        });
-        assert_eq!(f.name(f.node), "lamp");
-        assert_eq!(f.edits(), 1);
+        })
+        .unwrap();
+        assert_eq!(f.name(copy), "lamp");
 
-        let root = f.root;
-        let unnamed = f.world().spawn(());
-        f.world().entity_mut(root).add_child(unnamed);
-        f.trigger(EntityEdit::Rename {
-            entity: unnamed,
-            name: "fresh".into(),
-        });
-        assert_eq!(f.name(unnamed), "fresh");
-    }
+        f.edit(EntityEdit::Delete(node)).unwrap();
+        assert!(!f.valid(node) && !f.valid(child) && !f.valid(created));
+        assert_eq!(f.selected(), Some(root));
+        assert_eq!(f.edits(), 4);
 
-    fn play_fixture() -> Fixture {
-        let mut f = fixture();
-        let root = f.root;
+        assert!(f.edit(EntityEdit::Delete(root)).is_err());
+        assert!(f.edit(EntityEdit::Create { parent: None }).is_err());
+        assert!(f.valid(root));
+        assert_eq!(f.edits(), 4);
+
         f.world().remove_component::<SceneRoot>(root);
-        f
-    }
-
-    fn parent_of(f: &mut Fixture, entity: Entity) -> Option<Entity> {
-        f.world()
-            .get_component_for_entity::<ChildOf>(entity)
-            .map(ChildOf::parent)
-    }
-
-    #[test]
-    fn in_a_scene_create_without_a_parent_is_refused() {
-        let mut f = fixture();
-
-        f.trigger(EntityEdit::Create { parent: None });
-
-        assert_eq!(f.edits(), 0);
-        let statuses = f.statuses();
-        assert_eq!(statuses.len(), 1);
-        assert!(statuses[0].starts_with("Create failed"), "{}", statuses[0]);
-        assert_eq!(f.selected(), None);
-        assert_eq!(f.children(f.root), [f.node]);
-    }
-
-    #[test]
-    fn without_a_scene_root_create_without_a_parent_adds_a_selected_top_level_entity() {
-        let mut f = play_fixture();
-
-        f.trigger(EntityEdit::Create { parent: None });
-
-        let created = f.selected().unwrap();
-        assert_ne!(created, f.root);
-        assert_eq!(parent_of(&mut f, created), None);
-        assert_eq!(f.name(created), "Entity");
-        assert_eq!(f.edits(), 1);
-
-        f.trigger(EntityEdit::Create {
-            parent: Some(f.root),
-        });
-        let child = f.selected().unwrap();
-        assert_eq!(f.children(f.root), [f.node, child]);
-        assert!(f.statuses().is_empty());
-    }
-
-    #[test]
-    fn without_a_scene_root_a_top_level_entity_can_be_renamed_duplicated_and_deleted() {
-        let mut f = play_fixture();
-
-        f.trigger(EntityEdit::Rename {
-            entity: f.root,
-            name: "level".into(),
-        });
-        assert_eq!(f.name(f.root), "level");
-
-        f.trigger(EntityEdit::Duplicate(f.root));
-        let copy = f.selected().unwrap();
-        assert_ne!(copy, f.root);
-        assert_eq!(parent_of(&mut f, copy), None);
-        assert_eq!(f.name(copy), "level");
-        assert_eq!(f.children(copy).len(), 1);
-        assert_eq!(f.children(f.root), [f.node]);
-
-        f.trigger(EntityEdit::Delete(f.root));
-        assert!(!f.valid(f.root));
-        assert!(!f.valid(f.node));
-        assert!(!f.valid(f.child));
-        assert!(f.valid(copy));
-        assert_eq!(f.selected(), None);
-        assert_eq!(f.edits(), 3);
-        assert!(f.statuses().is_empty());
-
-        f.trigger(EntityEdit::Rename {
-            entity: f.root,
-            name: "gone".into(),
-        });
-        let statuses = f.statuses();
-        assert_eq!(statuses.len(), 1);
-        assert!(statuses[0].starts_with("Rename failed"), "{}", statuses[0]);
-        assert_eq!(f.edits(), 3);
-    }
-
-    #[test]
-    fn without_a_scene_root_deleting_a_child_selects_its_parent() {
-        let mut f = play_fixture();
-
-        f.trigger(EntityEdit::Delete(f.node));
-
-        assert!(!f.valid(f.node));
-        assert!(!f.valid(f.child));
-        assert_eq!(f.selected(), Some(f.root));
-        assert_eq!(f.edits(), 1);
-    }
-
-    #[test]
-    fn without_a_scene_root_a_top_level_duplicate_adds_only_the_copied_subtree() {
-        let mut f = play_fixture();
-        let count = |f: &mut Fixture| {
-            let world = f.world();
-            world.query::<Entity, ()>().iter(world).count()
-        };
-        let before = count(&mut f);
-
-        f.trigger(EntityEdit::Duplicate(f.root));
-
-        assert_eq!(count(&mut f), before + 3);
-        let copy = f.selected().unwrap();
-        assert_eq!(parent_of(&mut f, copy), None);
+        let top = f
+            .edit(EntityEdit::Create { parent: None })
+            .unwrap()
+            .unwrap();
+        assert!(f.world().get_component_for_entity::<ChildOf>(top).is_none());
+        f.edit(EntityEdit::Delete(root)).unwrap();
+        assert!(!f.valid(root) && !f.valid(copy));
+        assert!(f.valid(top));
+        assert_eq!(f.edits(), 6);
     }
 }

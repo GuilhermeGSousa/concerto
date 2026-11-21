@@ -1,71 +1,189 @@
+use bitflags::bitflags;
 use concerto_app::extractor::Extracted;
-use concerto_ecs::{component::Component, query::Query, resource::Res, CommandQueue};
-use concerto_foundation::{assets::AssetId, transform::GlobalTransform};
-use concerto_mesh::{mesh::MeshComponent, SkeletonComponent};
+use concerto_ecs::{
+    component::removed::RemovedComponents,
+    entity::EntityHashSet,
+    query::Query,
+    resource::{ResMut, Resource},
+    Changed, Entity, Or,
+};
+use concerto_foundation::{
+    assets::AssetId,
+    transform::{GlobalTransform, GlobalTransformRaw},
+};
+use concerto_mesh::{mesh::MeshComponent, Aabb, SkeletonComponent};
+use derive_more::{Deref, DerefMut};
 use glam::Mat4;
-use wgpu::util::DeviceExt;
 
-use crate::{components::render_entity::RenderEntity, device::RenderDevice, queue::RenderQueue};
+use crate::{
+    batching::{BatchedInstanceBuffers, InstanceInputUniformBuffer},
+    components::{
+        render_entity::{MainEntity, MainEntityHashMap},
+        visibility::{NoFrustumCulling, NotShadowCaster, RenderLayers},
+    },
+    frustum::Frustum,
+};
 
-#[derive(Component)]
 pub(crate) struct RenderMeshInstance {
     pub(crate) mesh_asset_id: AssetId,
-    pub(crate) transform: wgpu::Buffer,
+    pub(crate) flags: RenderMeshInstanceFlags,
+    pub(crate) current_uniform_index: u32,
+    pub(crate) world_aabb: Option<Aabb>,
+    pub(crate) layers: RenderLayers,
+}
+
+bitflags! {
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    pub(crate) struct RenderMeshInstanceFlags: u8 {
+        const SKINNED = 1;
+        const NO_FRUSTUM_CULLING = 1 << 1;
+        const SHADOW_CASTER = 1 << 2;
+        const BLENDED = 1 << 3;
+    }
+}
+
+impl RenderMeshInstance {
+    pub(crate) fn is_visible_in(&self, frustum: &Frustum) -> bool {
+        if self.flags.intersects(
+            RenderMeshInstanceFlags::SKINNED | RenderMeshInstanceFlags::NO_FRUSTUM_CULLING,
+        ) {
+            return true;
+        }
+        self.world_aabb
+            .is_none_or(|world_aabb| frustum.intersects_aabb(&world_aabb))
+    }
+}
+
+#[derive(Resource, Default, Deref, DerefMut)]
+pub(crate) struct RenderMeshInstances(MainEntityHashMap<RenderMeshInstance>);
+
+type MeshExtractionQuery = (
+    Entity,
+    &'static MeshComponent,
+    &'static GlobalTransform,
+    Option<&'static SkeletonComponent>,
+    Option<&'static Aabb>,
+    Option<&'static NoFrustumCulling>,
+    Option<&'static NotShadowCaster>,
+    Option<&'static RenderLayers>,
+);
+
+type ChangedMeshFilter = Or<(
+    Changed<GlobalTransform>,
+    Changed<MeshComponent>,
+    Changed<SkeletonComponent>,
+    Changed<Aabb>,
+    Changed<NoFrustumCulling>,
+    Changed<NotShadowCaster>,
+    Changed<RenderLayers>,
+)>;
+
+fn extract_mesh(
+    (entity, mesh, transform, skeleton, aabb, no_frustum_culling, not_shadow_caster, layers): (
+        Entity,
+        &MeshComponent,
+        &GlobalTransform,
+        Option<&SkeletonComponent>,
+        Option<&Aabb>,
+        Option<&NoFrustumCulling>,
+        Option<&NotShadowCaster>,
+        Option<&RenderLayers>,
+    ),
+    render_mesh_instances: &mut RenderMeshInstances,
+    input: &mut InstanceInputUniformBuffer<GlobalTransformRaw>,
+) {
+    let mut flags = RenderMeshInstanceFlags::empty();
+    flags.set(RenderMeshInstanceFlags::SKINNED, skeleton.is_some());
+    flags.set(
+        RenderMeshInstanceFlags::NO_FRUSTUM_CULLING,
+        no_frustum_culling.is_some(),
+    );
+    flags.set(
+        RenderMeshInstanceFlags::SHADOW_CASTER,
+        not_shadow_caster.is_none(),
+    );
+    let layers = layers.copied().unwrap_or_default();
+    let world_aabb = aabb.map(|aabb| aabb.transformed(transform.matrix()));
+    let raw_transform = if flags.contains(RenderMeshInstanceFlags::SKINNED) {
+        GlobalTransform::new(Mat4::IDENTITY).to_raw()
+    } else {
+        transform.to_raw()
+    };
+
+    let main_entity = MainEntity::new(entity);
+    if let Some(instance) = render_mesh_instances.get_mut(&main_entity) {
+        instance.mesh_asset_id = mesh.handle.id();
+        instance.world_aabb = world_aabb;
+        instance.flags = flags;
+        instance.layers = layers;
+        input.set(instance.current_uniform_index, raw_transform);
+        return;
+    }
+
+    let current_uniform_index = input.add(raw_transform);
+    render_mesh_instances.insert(
+        main_entity,
+        RenderMeshInstance {
+            mesh_asset_id: mesh.handle.id(),
+            flags,
+            current_uniform_index,
+            world_aabb,
+            layers,
+        },
+    );
 }
 
 pub(crate) fn extract_meshes(
-    meshes: Extracted<
-        Query<(
-            &MeshComponent,
-            &GlobalTransform,
-            Option<&SkeletonComponent>,
-            &RenderEntity,
-        )>,
-    >,
-    render_meshes: Query<&mut RenderMeshInstance>,
-    mut cmd: CommandQueue,
-    device: Res<RenderDevice>,
-    queue: Res<RenderQueue>,
+    changed_meshes: Extracted<Query<MeshExtractionQuery, ChangedMeshFilter>>,
+    all_meshes: Extracted<Query<MeshExtractionQuery>>,
+    mut removed_meshes: Extracted<RemovedComponents<MeshComponent>>,
+    mut removed_skeletons: Extracted<RemovedComponents<SkeletonComponent>>,
+    mut removed_aabbs: Extracted<RemovedComponents<Aabb>>,
+    mut removed_no_frustum_culling: Extracted<RemovedComponents<NoFrustumCulling>>,
+    mut removed_not_shadow_casters: Extracted<RemovedComponents<NotShadowCaster>>,
+    mut removed_layers: Extracted<RemovedComponents<RenderLayers>>,
+    mut render_mesh_instances: ResMut<RenderMeshInstances>,
+    mut buffers: ResMut<BatchedInstanceBuffers>,
 ) {
-    for (mesh, transform, skeleton, render_entity) in meshes.iter() {
-        let render_entity = **render_entity;
+    let input = &mut buffers.current_input_buffer;
 
-        let raw_transform = match skeleton {
-            Some(_) => GlobalTransform::new(Mat4::IDENTITY).to_raw(),
-            None => transform.to_raw(),
-        };
+    for row in changed_meshes.iter() {
+        extract_mesh(row, &mut render_mesh_instances, input);
+    }
 
-        if let Some(mut render_mesh) = render_meshes.get_entity(render_entity) {
-            if render_mesh.mesh_asset_id != mesh.handle.id() {
-                render_mesh.mesh_asset_id = mesh.handle.id();
-            }
-            queue.write_buffer(
-                &render_mesh.transform,
-                0,
-                bytemuck::cast_slice(&[raw_transform]),
-            );
+    let removed: EntityHashSet = removed_skeletons
+        .read()
+        .chain(removed_aabbs.read())
+        .chain(removed_no_frustum_culling.read())
+        .chain(removed_not_shadow_casters.read())
+        .chain(removed_layers.read())
+        .collect();
+    for entity in removed {
+        if changed_meshes.contains_entity(entity) {
             continue;
         }
+        if let Some(row) = all_meshes.get_entity(entity) {
+            extract_mesh(row, &mut render_mesh_instances, input);
+        }
+    }
 
-        let instance_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Instance Buffer"),
-            contents: bytemuck::cast_slice(&[raw_transform]),
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-        });
-
-        let instance = RenderMeshInstance {
-            mesh_asset_id: mesh.handle.id(),
-            transform: instance_buffer,
-        };
-
-        cmd.insert(instance, render_entity);
+    for entity in removed_meshes.read() {
+        if all_meshes.contains_entity(entity) {
+            continue;
+        }
+        if let Some(instance) = render_mesh_instances.remove(&MainEntity::new(entity)) {
+            input.remove(instance.current_uniform_index);
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{draw_target::DrawTarget, gpu::Gpu, plugin::RenderPlugin};
+    use crate::{
+        components::render_entity::MainEntity, draw_target::DrawTarget, gpu::Gpu,
+        plugin::RenderPlugin,
+    };
     use concerto_app::{
         main_schedule::MainSchedulePlugin,
         plugins::{AssetManagerPlugin, TimePlugin, TransformPlugin},
@@ -74,8 +192,14 @@ mod tests {
     use concerto_ecs::Entity;
     use concerto_foundation::{assets::handle::AssetHandle, transform::Transform};
     use concerto_window::plugin::{Window, WindowPlugin};
+    use glam::Vec3;
 
-    fn app(gpu: &Gpu, mesh: AssetId) -> (App, Entity) {
+    struct Spawned {
+        app: App,
+        entity: Entity,
+    }
+
+    fn app(gpu: &Gpu, mesh: AssetId, translation: Vec3) -> Spawned {
         let mut app = App::new();
         app.insert_resource(gpu.clone())
             .insert_resource(DrawTarget::None)
@@ -86,23 +210,28 @@ mod tests {
             .register_plugin(WindowPlugin)
             .register_plugin(TransformPlugin)
             .register_plugin(RenderPlugin);
-        let world = app.main_mut().world_mut();
-        world.register_component::<Transform>();
-        let entity = world.spawn((
+        app.main_mut().world_mut().register_component::<Transform>();
+        let entity = spawn_mesh(&mut app, mesh, translation);
+        app.finish_plugin_build();
+        Spawned { app, entity }
+    }
+
+    fn spawn_mesh(app: &mut App, mesh: AssetId, translation: Vec3) -> Entity {
+        app.main_mut().world_mut().spawn((
             MeshComponent {
                 handle: AssetHandle::weak(mesh),
             },
-            Transform::IDENTITY,
-        ));
-        app.finish_plugin_build();
-        (app, entity)
+            Transform::from_translation(translation),
+        ))
+    }
+
+    fn instances(app: &App) -> &RenderMeshInstances {
+        app.render().get_resource::<RenderMeshInstances>().unwrap()
     }
 
     fn drawn(app: &mut App) -> Vec<AssetId> {
-        let world = app.render_mut().world_mut();
-        world
-            .query::<&RenderMeshInstance, ()>()
-            .iter(world)
+        instances(app)
+            .values()
             .map(|instance| instance.mesh_asset_id)
             .collect()
     }
@@ -113,7 +242,7 @@ mod tests {
             return;
         };
         let (first, second) = (AssetId::new(), AssetId::new());
-        let (mut app, entity) = app(&gpu, first);
+        let Spawned { mut app, entity } = app(&gpu, first, Vec3::ZERO);
         app.update();
         assert_eq!(drawn(&mut app), [first]);
 
@@ -125,5 +254,265 @@ mod tests {
         app.update();
 
         assert_eq!(drawn(&mut app), [second]);
+    }
+
+    fn slot(app: &mut App, entity: Entity) -> u32 {
+        instances(app)
+            .get(&MainEntity::new(entity))
+            .unwrap()
+            .current_uniform_index
+    }
+
+    fn stored(app: &App, slot: u32) -> Mat4 {
+        let value = app
+            .render()
+            .get_resource::<BatchedInstanceBuffers>()
+            .unwrap()
+            .current_input_buffer
+            .get(slot);
+        Mat4::from_cols_slice(bytemuck::cast_slice(&[value]))
+    }
+
+    #[test]
+    fn a_moved_mesh_stores_its_new_transform() {
+        let Some(gpu) = Gpu::request_for_test() else {
+            return;
+        };
+        let Spawned { mut app, entity } = app(&gpu, AssetId::new(), Vec3::ZERO);
+        app.update();
+        app.update();
+        let slot = slot(&mut app, entity);
+
+        app.main_mut()
+            .world_mut()
+            .get_component_for_entity_mut::<Transform>(entity)
+            .unwrap()
+            .translation = Vec3::new(1.0, 2.0, 3.0);
+        app.update();
+
+        assert_eq!(
+            stored(&app, slot),
+            Mat4::from_translation(Vec3::new(1.0, 2.0, 3.0))
+        );
+    }
+
+    #[test]
+    fn a_mesh_that_gains_a_skeleton_stores_the_identity() {
+        let Some(gpu) = Gpu::request_for_test() else {
+            return;
+        };
+        let Spawned { mut app, entity } = app(&gpu, AssetId::new(), Vec3::X);
+        app.update();
+        app.update();
+        let slot = slot(&mut app, entity);
+        assert_eq!(stored(&app, slot), Mat4::from_translation(Vec3::X));
+
+        app.main_mut()
+            .world_mut()
+            .insert(SkeletonComponent::default(), entity);
+        app.update();
+
+        assert_eq!(stored(&app, slot), Mat4::IDENTITY);
+    }
+
+    #[test]
+    fn a_mesh_that_loses_its_skeleton_stores_its_world_transform() {
+        let Some(gpu) = Gpu::request_for_test() else {
+            return;
+        };
+        let Spawned { mut app, entity } = app(&gpu, AssetId::new(), Vec3::X);
+        app.main_mut()
+            .world_mut()
+            .insert(SkeletonComponent::default(), entity);
+        app.update();
+        app.update();
+        let slot = slot(&mut app, entity);
+        assert_eq!(stored(&app, slot), Mat4::IDENTITY);
+
+        app.main_mut()
+            .world_mut()
+            .remove_component::<SkeletonComponent>(entity);
+        app.update();
+
+        assert_eq!(stored(&app, slot), Mat4::from_translation(Vec3::X));
+    }
+
+    #[test]
+    fn a_mesh_readded_after_moving_without_one_stores_where_it_now_is() {
+        let Some(gpu) = Gpu::request_for_test() else {
+            return;
+        };
+        let mesh = AssetId::new();
+        let Spawned { mut app, entity } = app(&gpu, mesh, Vec3::ZERO);
+        app.update();
+        app.update();
+        let slot = slot(&mut app, entity);
+
+        let world = app.main_mut().world_mut();
+        world.remove_component::<MeshComponent>(entity);
+        world
+            .get_component_for_entity_mut::<Transform>(entity)
+            .unwrap()
+            .translation = Vec3::Y;
+        app.update();
+        app.main_mut().world_mut().insert(
+            MeshComponent {
+                handle: AssetHandle::weak(mesh),
+            },
+            entity,
+        );
+        app.update();
+
+        assert_eq!(stored(&app, slot), Mat4::from_translation(Vec3::Y));
+    }
+
+    #[test]
+    fn a_mesh_removed_and_readded_in_one_frame_keeps_its_slot() {
+        let Some(gpu) = Gpu::request_for_test() else {
+            return;
+        };
+        let mesh = AssetId::new();
+        let Spawned { mut app, entity } = app(&gpu, mesh, Vec3::ZERO);
+        app.update();
+        app.update();
+        let old_slot = slot(&mut app, entity);
+
+        let world = app.main_mut().world_mut();
+        world.remove_component::<MeshComponent>(entity);
+        world.insert(
+            MeshComponent {
+                handle: AssetHandle::weak(mesh),
+            },
+            entity,
+        );
+        app.update();
+
+        assert_eq!(slot(&mut app, entity), old_slot);
+    }
+
+    #[test]
+    fn a_mesh_that_loses_its_mesh_component_leaves_render_mesh_instances() {
+        let Some(gpu) = Gpu::request_for_test() else {
+            return;
+        };
+        let mesh = AssetId::new();
+        let Spawned { mut app, entity } = app(&gpu, mesh, Vec3::ZERO);
+        app.update();
+        app.update();
+
+        app.main_mut()
+            .world_mut()
+            .remove_component::<MeshComponent>(entity);
+        app.update();
+
+        assert!(instances(&app).get(&MainEntity::new(entity)).is_none());
+    }
+
+    fn frustum() -> Frustum {
+        let view = glam::camera::rh::view::look_at_mat4(Vec3::ZERO, Vec3::NEG_Z, Vec3::Y);
+        let proj = glam::camera::rh::proj::directx::perspective(
+            std::f32::consts::FRAC_PI_2,
+            1.0,
+            0.1,
+            100.0,
+        );
+        Frustum::from_clip_from_world(proj * view)
+    }
+
+    fn instance_with(
+        flags: RenderMeshInstanceFlags,
+        world_aabb: Option<Aabb>,
+    ) -> RenderMeshInstance {
+        RenderMeshInstance {
+            mesh_asset_id: AssetId::new(),
+            flags,
+            current_uniform_index: 0,
+            world_aabb,
+            layers: RenderLayers::default(),
+        }
+    }
+
+    fn box_behind() -> Option<Aabb> {
+        Some(Aabb {
+            min: Vec3::new(-1.0, -1.0, 9.0),
+            max: Vec3::new(1.0, 1.0, 11.0),
+        })
+    }
+
+    struct Visibility {
+        case: &'static str,
+        flags: RenderMeshInstanceFlags,
+        world_aabb: Option<Aabb>,
+        visible: bool,
+    }
+
+    #[test]
+    fn an_instance_is_culled_only_when_its_bounds_are_known_outside_the_frustum() {
+        let cases = [
+            Visibility {
+                case: "skinned, behind the camera",
+                flags: RenderMeshInstanceFlags::SKINNED,
+                world_aabb: box_behind(),
+                visible: true,
+            },
+            Visibility {
+                case: "no frustum culling, behind the camera",
+                flags: RenderMeshInstanceFlags::NO_FRUSTUM_CULLING,
+                world_aabb: box_behind(),
+                visible: true,
+            },
+            Visibility {
+                case: "behind the camera",
+                flags: RenderMeshInstanceFlags::empty(),
+                world_aabb: box_behind(),
+                visible: false,
+            },
+        ];
+        for case in &cases {
+            let instance = instance_with(case.flags, case.world_aabb);
+            assert_eq!(
+                instance.is_visible_in(&frustum()),
+                case.visible,
+                "{}",
+                case.case
+            );
+        }
+    }
+
+    #[test]
+    fn a_mesh_gaining_no_frustum_culling_is_extracted_with_the_flag() {
+        let Some(gpu) = Gpu::request_for_test() else {
+            return;
+        };
+        let Spawned { mut app, entity } = app(&gpu, AssetId::new(), Vec3::ZERO);
+        app.update();
+        app.update();
+        let flags = |app: &App| instances(app).get(&MainEntity::new(entity)).unwrap().flags;
+        assert!(!flags(&app).contains(RenderMeshInstanceFlags::NO_FRUSTUM_CULLING));
+
+        app.main_mut().world_mut().insert(NoFrustumCulling, entity);
+        app.update();
+
+        assert!(flags(&app).contains(RenderMeshInstanceFlags::NO_FRUSTUM_CULLING));
+    }
+
+    #[test]
+    fn a_mesh_losing_not_shadow_caster_becomes_a_shadow_caster_again() {
+        let Some(gpu) = Gpu::request_for_test() else {
+            return;
+        };
+        let Spawned { mut app, entity } = app(&gpu, AssetId::new(), Vec3::ZERO);
+        app.main_mut().world_mut().insert(NotShadowCaster, entity);
+        app.update();
+        app.update();
+        let flags = |app: &App| instances(app).get(&MainEntity::new(entity)).unwrap().flags;
+        assert!(!flags(&app).contains(RenderMeshInstanceFlags::SHADOW_CASTER));
+
+        app.main_mut()
+            .world_mut()
+            .remove_component::<NotShadowCaster>(entity);
+        app.update();
+
+        assert!(flags(&app).contains(RenderMeshInstanceFlags::SHADOW_CASTER));
     }
 }

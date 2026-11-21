@@ -1,6 +1,9 @@
 use concerto_ecs::resource::Resource;
 
-use crate::shader::{ShaderDefs, NO_CUBE_ARRAY_TEXTURES_SUPPORT};
+use crate::{
+    shader::{ShaderDefValue, ShaderDefs, NO_CUBE_ARRAY_TEXTURES_SUPPORT, SKY_RADIANCE_SQRT},
+    sky_light::SKY_RADIANCE_SCALE,
+};
 
 /// GPU features the renderer adapts to, read from the adapter.
 #[derive(Resource, Clone, Copy, Debug, PartialEq, Eq)]
@@ -11,6 +14,10 @@ pub struct RenderCapabilities {
     pub depth_bias_clamp: bool,
     /// A single-layer texture can be viewed as an array. `false` on GL.
     pub single_layer_texture_arrays: bool,
+    /// BC1 to BC7 textures can be sampled. `false` where the adapter lacks `TEXTURE_COMPRESSION_BC`.
+    pub bc_textures: bool,
+    /// `Rgba16Float` can be rendered to. `false` on WebGL2 without `EXT_color_buffer_float`.
+    pub float_render_targets: bool,
 }
 
 impl RenderCapabilities {
@@ -24,6 +31,13 @@ impl RenderCapabilities {
                 && !is_webgl2,
             depth_bias_clamp: downlevel.contains(wgpu::DownlevelFlags::DEPTH_BIAS_CLAMP),
             single_layer_texture_arrays: !is_gl,
+            bc_textures: adapter
+                .features()
+                .contains(wgpu::Features::TEXTURE_COMPRESSION_BC),
+            float_render_targets: adapter
+                .get_texture_format_features(wgpu::TextureFormat::Rgba16Float)
+                .allowed_usages
+                .contains(wgpu::TextureUsages::RENDER_ATTACHMENT),
         }
     }
 
@@ -32,6 +46,9 @@ impl RenderCapabilities {
         let mut defs = ShaderDefs::default();
         if !self.cube_array_textures {
             defs.define(NO_CUBE_ARRAY_TEXTURES_SUPPORT);
+        }
+        if !self.float_render_targets {
+            defs.insert(SKY_RADIANCE_SQRT, ShaderDefValue::UInt(SKY_RADIANCE_SCALE));
         }
         defs
     }

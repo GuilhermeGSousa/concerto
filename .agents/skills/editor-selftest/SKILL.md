@@ -18,8 +18,10 @@ ever committed.
   `src/inspector/selftest.rs`, which can reach that module's private
   components). The generated `editor/src/main.rs` cannot register it: it only
   passes the game's recipe, which builds each edit `App`, not the editor's.
-- Run it against tech-demo's editor: `cargo build -p tech-demo-editor`, then
-  `./target/debug/tech-demo-editor --decorated --project <scratch copy>`.
+- Run it against tech-demo's editor, from the sibling repository `../tech-demo`,
+  which builds against this checkout:
+  `cargo build --manifest-path ../tech-demo/Cargo.toml -p tech-demo-editor`, then
+  `../tech-demo/target/debug/tech-demo-editor --decorated --project <scratch copy>`.
 - One `Update` system steps a small stage machine held in a resource. Each
   stage waits on an `Instant`, does one thing, and prints a marker:
   `eprintln!("SELFTEST <stage>")`.
@@ -63,8 +65,9 @@ mode, maximised, size.
   `App`'s world and `EditWorldSignals` triggers in it, so the selftest finds and
   selects game entities the same way it does scene entities. A game's own
   marker types are not reachable from the editor crate; find its entities by
-  engine components (`Transform`, `Children`, `Name`), and remember that
-  `SceneSpawnerComponent` is removed once its scene has spawned.
+  engine components (`Transform`, `Children`, `Name`, `LinkedNode`); a
+  `SceneLink` stays on its entity, with `SceneLinkState::Spawned` once its
+  scene has spawned.
 - **A log line inside the game.** To prove a key reached the game, add a
   selftest-only system to the play `App` from the `extra` closure in
   `scene.rs`'s `begin_play`, gated on `CONCERTO_SELFTEST`, and delete it with
@@ -81,11 +84,13 @@ shows up.
 
 ## Rules
 
-- **Never point a saving or importing flow at `examples/*`.** Copy
-  `examples/tech-demo/content` to `<scratch>/td/content` and pass
+- **Never point a saving or importing flow at `examples/*` or a sibling game
+  repository.** Copy `../tech-demo/content` to `<scratch>/td/content` and
+  `../tech-demo/content.toml` to `<scratch>/td/content.toml`, and pass
   `--project <scratch>/td`: `--project` takes the directory that contains
   `content/`, and given the `content` directory itself the editor opens an
-  empty project without an error.
+  empty project without an error. Without `content.toml` the editor opens the
+  project's first scene instead of its `default_scene`, the sanatorium level.
 - **Expect the owner's pointer.** Real pointer input reaches the window, and a
   stray click changes the selection. Have the selftest re-trigger `Select` for
   the entity it wants whenever `Selection` differs, send `CursorMoved` on every
@@ -102,4 +107,5 @@ shows up.
 
 1. Delete the selftest module and the line that registers it.
 2. `grep -rn SELFTEST crates examples src` returns nothing.
-3. `git status` shows no selftest file and no change under `examples/*/content`.
+3. `git status` shows no selftest file, and `git -C ../tech-demo status` no
+   change under `content/`.

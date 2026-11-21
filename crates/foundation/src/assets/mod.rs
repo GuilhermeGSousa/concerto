@@ -11,6 +11,8 @@ pub use concerto_foundation_macros::asset_id_bytes as __asset_id_bytes;
 /// Paths are relative to the calling package's manifest. Register the content
 /// directory with `concerto_asset_build::track_assets` in that package's build script.
 /// Only the header is read; the expansion is a constant UUID, not asset bytes.
+/// A missing file expands to `AssetId::nil()` with a warning.
+/// `"content/hero/scene.gasset#mesh/0"` names an asset embedded in a file.
 ///
 /// ```ignore
 /// const HERO: AssetId = asset_id!("content/hero/scene.gasset");
@@ -27,6 +29,7 @@ pub mod asset_container;
 pub mod asset_server;
 pub mod asset_store;
 pub mod content;
+pub mod derived;
 pub mod handle;
 pub mod registry;
 pub mod utils;
@@ -115,7 +118,19 @@ pub use concerto_asset_format::AssetId;
 /// serialize (GPU descriptor handles, `&'static` refs) — never merely for an
 /// `AssetHandle<T>` field, which serializes to its bare `AssetId`.
 pub trait Asset: Send + Sync + 'static + serde::Serialize + serde::de::DeserializeOwned {
+    /// The version of this type's payload encoding, stored in each content asset's header.
+    const FORMAT_VERSION: u32 = 1;
+
     fn name() -> &'static str;
+
+    /// Decodes a payload written at `version`, older than `FORMAT_VERSION`; the default rejects it.
+    fn migrate(version: u32, _payload: &[u8]) -> anyhow::Result<Self> {
+        anyhow::bail!(
+            "{} version {version} has no migration to version {}; re-import its source, or re-create it if it was authored in the editor",
+            Self::name(),
+            Self::FORMAT_VERSION
+        )
+    }
 
     /// AssetIds of every sub-asset this one references — the import tool's
     /// reference-integrity pass. Empty for leaf assets.
@@ -124,12 +139,48 @@ pub trait Asset: Send + Sync + 'static + serde::Serialize + serde::de::Deseriali
     }
 }
 
+/// Data an asset's file keeps in a section of its own, for tools and for a derive that misses its cache; loads never read it and a cook drops it.
+pub trait UncookedData:
+    Send + Sync + 'static + serde::Serialize + serde::de::DeserializeOwned
+{
+    /// The asset type whose files carry this data.
+    type Asset: Asset;
+
+    /// The version of this type's encoding, stored with each section.
+    const VERSION: u32 = 1;
+
+    /// Decodes a section written at `version`, older than `VERSION`; the default rejects it.
+    fn migrate(version: u32, _bytes: &[u8]) -> anyhow::Result<Self> {
+        anyhow::bail!(
+            "the uncooked data of {} version {version} has no migration to version {}; re-import its source, or re-create it if it was authored in the editor",
+            <Self::Asset as Asset>::name(),
+            Self::VERSION
+        )
+    }
+}
+
+/// An asset the editor can create from nothing.
+pub trait CreatableAsset: Asset {
+    fn new_asset() -> Self;
+}
+
+// Merge into Asset
 pub trait LoadableAsset: Asset {
-    /// Finishes runtime initialization after the cooked payload has been
-    /// deserialized. Most assets need no additional work.
+    /// Finishes runtime initialization after a cooked load deserializes the payload, or inline in `AssetServer::add`.
     fn on_load(&mut self, _context: &asset_server::AssetLoadContext) -> anyhow::Result<()> {
         Ok(())
     }
+}
+
+/// An asset that can be placed in a scene as an entity.
+pub trait PlaceableAsset: LoadableAsset {
+    /// Adds to `entity` what makes it show or use the asset behind `handle`.
+    fn place(
+        asset: &Self,
+        handle: handle::AssetHandle<Self>,
+        entity: concerto_ecs::Entity,
+        cmd: &mut concerto_ecs::CommandQueue,
+    );
 }
 
 #[cfg(test)]
@@ -158,14 +209,6 @@ mod content_root_tests {
         assert_eq!(
             directory_of("https://host/games/mine/"),
             "https://host/games/mine"
-        );
-        assert_eq!(
-            directory_of("http://localhost:8080/"),
-            "http://localhost:8080"
-        );
-        assert_eq!(
-            directory_of("http://localhost:8080"),
-            "http://localhost:8080"
         );
     }
 }

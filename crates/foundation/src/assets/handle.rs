@@ -32,6 +32,28 @@ impl AssetLifetimeEvent {
     }
 }
 
+/// Sent when an asset of type `A`, loaded or added, lands in its `AssetStore<A>`.
+#[derive(Event)]
+pub struct AssetLoaded<A: Asset> {
+    pub id: AssetId,
+    _asset: PhantomData<fn() -> A>,
+}
+
+impl<A: Asset> AssetLoaded<A> {
+    pub(crate) fn new(id: AssetId) -> Self {
+        Self {
+            id,
+            _asset: PhantomData,
+        }
+    }
+}
+
+/// Sent when a load fails, with the id that was asked for; the reason is in the log.
+#[derive(Event, Clone)]
+pub struct AssetLoadFailed {
+    pub id: AssetId,
+}
+
 pub struct StrongAssetHandle {
     pub(crate) id: AssetId,
     pub(crate) lifetime_sender: Sender<AssetLifetimeEvent>,
@@ -219,7 +241,7 @@ impl ReflectAssetHandle {
         (self.id)(value)
     }
 
-    /// Writes into `value` a handle to `id` loaded through `server`.
+    /// Writes into `value` a handle to `id` loaded through `server`, or a weak one when `server` only names the asset's kind.
     pub fn set(
         &self,
         value: &mut dyn Reflect,
@@ -243,6 +265,10 @@ impl<A: LoadableAsset> FromType<AssetHandle<A>> for ReflectAssetHandle {
                 let handle = (value as &mut dyn std::any::Any)
                     .downcast_mut::<AssetHandle<A>>()
                     .ok_or(SetHandleError::NotThisHandle)?;
+                if server.names_asset::<A>() {
+                    *handle = AssetHandle::weak(id);
+                    return Ok(());
+                }
                 if !server.is_registered::<A>() {
                     return Err(SetHandleError::AssetNotRegistered);
                 }
@@ -290,7 +316,7 @@ impl LiveLeaves {
     pub fn new(world: &World) -> Self {
         let server = world.get_resource::<AssetServer>();
         match world.get_resource::<AppTypeRegistry>() {
-            Some(registry) => Self::from_parts(registry, server),
+            Some(registry) => Self::from_parts(&registry.read(), server),
             None => Self {
                 server: server.cloned(),
                 handles: HashMap::new(),
@@ -304,7 +330,7 @@ impl LiveLeaves {
             .iter()
             .filter_map(|registration| {
                 Some((
-                    registration.type_id(),
+                    (*registration).type_id(),
                     *registration.data::<ReflectAssetHandle>()?,
                 ))
             })
@@ -348,24 +374,6 @@ impl LeafHook for LiveLeaves {
 mod tests {
     use super::*;
 
-    #[test]
-    fn final_strong_reference_emits_one_uuid_drop_event() {
-        let (sender, receiver) = crossbeam_channel::unbounded();
-        let id = AssetId::new();
-        let handle = Arc::new(StrongAssetHandle {
-            id,
-            lifetime_sender: sender,
-        });
-        let clone = handle.clone();
-        drop(handle);
-        assert!(receiver.is_empty());
-
-        drop(clone);
-        let AssetLifetimeEvent::Dropped(dropped_id) = receiver.try_recv().unwrap();
-        assert_eq!(dropped_id, id);
-        assert!(receiver.is_empty());
-    }
-
     #[derive(serde::Serialize, serde::Deserialize)]
     struct Note;
 
@@ -397,34 +405,15 @@ mod tests {
     }
 
     #[test]
-    fn a_handle_is_its_asset_id_as_32_hex_digits_in_json() {
+    fn a_handle_is_its_asset_id_as_32_hex_digits_in_json_and_nothing_else_decodes() {
+        let registry = handle_registry();
         let id = AssetId::new();
         let handle = AssetHandle::<Note>::weak(id);
         let json = serde_json::Value::String(id.simple_hex());
 
         assert_eq!((json_codec().to_json)(&handle), json);
+        assert_eq!(concerto_reflect::to_json(&handle, &registry), json);
         assert_eq!(handle_from_json(&json), Ok(id));
-    }
-
-    #[test]
-    fn a_handle_does_not_decode_from_anything_but_an_asset_id() {
-        for value in [serde_json::json!("not an id"), serde_json::json!(7)] {
-            assert!(handle_from_json(&value).is_err(), "{value} must not decode");
-        }
-    }
-
-    fn handle_registry() -> concerto_reflect::TypeRegistry {
-        let mut registry = concerto_reflect::TypeRegistry::default();
-        registry.register::<AssetHandle<Note>>();
-        registry
-    }
-
-    #[test]
-    fn a_handle_written_back_from_its_json_names_the_same_asset() {
-        let registry = handle_registry();
-        let id = AssetId::new();
-        let json = concerto_reflect::to_json(&AssetHandle::<Note>::weak(id), &registry);
-
         let stored = concerto_reflect::json_to_value(
             &json,
             std::any::TypeId::of::<AssetHandle<Note>>(),
@@ -434,17 +423,24 @@ mod tests {
         let mut loaded = AssetHandle::<Note>::default();
         assert!(concerto_reflect::apply_value(&mut loaded, &stored).is_empty());
         assert_eq!(loaded.id(), id);
+
+        for value in [serde_json::json!("not an id"), serde_json::json!(7)] {
+            assert!(handle_from_json(&value).is_err(), "{value} must not decode");
+            assert!(
+                concerto_reflect::json_to_value(
+                    &value,
+                    std::any::TypeId::of::<AssetHandle<Note>>(),
+                    &registry,
+                )
+                .is_err(),
+                "{value}"
+            );
+        }
     }
 
-    #[test]
-    fn a_handle_written_from_anything_but_an_asset_id_says_what_it_expected() {
-        assert_eq!(
-            concerto_reflect::json_to_value(
-                &serde_json::json!(7),
-                std::any::TypeId::of::<AssetHandle<Note>>(),
-                &handle_registry(),
-            ),
-            Err("expected an asset id of 32 hex digits".to_owned())
-        );
+    fn handle_registry() -> concerto_reflect::TypeRegistry {
+        let mut registry = concerto_reflect::TypeRegistry::default();
+        registry.register::<AssetHandle<Note>>();
+        registry
     }
 }

@@ -1,26 +1,223 @@
 use concerto_ecs::{
     component::scene::SceneEntityRef, reflect::ReflectSceneComponent, Component, Entity,
 };
-use concerto_foundation::assets::{handle::AssetHandle, Asset, LoadableAsset};
-use concerto_reflect::Reflect;
-use glam::Mat4;
+use concerto_foundation::assets::{handle::AssetHandle, Asset, AssetId, LoadableAsset};
+use concerto_name::Name;
+use concerto_reflect::{FromType, JsonLeaf, Reflect, ReflectDefault, ReflectJson, TypeData};
+use glam::{Mat4, Quat, Vec3};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use std::{fmt, ops::Deref};
 use uuid::Uuid;
 
-#[derive(Asset, Serialize, Deserialize)]
-pub struct Skeleton {
-    pub inverse_bindposes: Box<[Mat4]>,
+/// Translation, rotation and scale of one bone relative to its parent.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct JointPose {
+    pub translation: Vec3,
+    pub rotation: Quat,
+    pub scale: Vec3,
 }
 
-impl From<Vec<Mat4>> for Skeleton {
-    fn from(value: Vec<Mat4>) -> Self {
-        Self {
-            inverse_bindposes: value.into_boxed_slice(),
+impl JointPose {
+    pub const IDENTITY: JointPose = JointPose {
+        translation: Vec3::ZERO,
+        rotation: Quat::IDENTITY,
+        scale: Vec3::ONE,
+    };
+
+    /// The matrix that applies scale, then rotation, then translation.
+    pub fn to_mat4(&self) -> Mat4 {
+        Mat4::from_scale_rotation_translation(self.scale, self.rotation, self.translation)
+    }
+}
+
+/// Why a skeleton could not be built or evaluated.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SkeletonError {
+    LengthMismatch {
+        field: &'static str,
+        expected: usize,
+        actual: usize,
+    },
+    ParentNotBefore {
+        bone: usize,
+        parent: usize,
+    },
+    PoseLength {
+        expected: usize,
+        actual: usize,
+    },
+}
+
+impl fmt::Display for SkeletonError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            SkeletonError::LengthMismatch {
+                field,
+                expected,
+                actual,
+            } => write!(
+                f,
+                "skeleton field `{field}` has {actual} entries, expected {expected}"
+            ),
+            SkeletonError::ParentNotBefore { bone, parent } => write!(
+                f,
+                "bone {bone} has parent {parent}, which does not come before it"
+            ),
+            SkeletonError::PoseLength { expected, actual } => {
+                write!(f, "pose has {actual} joints, skeleton has {expected} bones")
+            }
         }
     }
 }
 
+impl std::error::Error for SkeletonError {}
+
+/// The name of a bone of a [`Skeleton`], stored as a reflected leaf so an editor can offer the skeleton's bones.
+#[derive(Reflect, Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[reflect(opaque, Default, Json)]
+pub struct JointName(pub Name);
+
+impl Deref for JointName {
+    type Target = str;
+
+    fn deref(&self) -> &str {
+        self.0.as_str()
+    }
+}
+
+impl From<&str> for JointName {
+    fn from(name: &str) -> Self {
+        Self(Name::new(name))
+    }
+}
+
+impl JsonLeaf for JointName {
+    fn to_json(&self) -> Value {
+        self.0.to_json()
+    }
+
+    fn from_json(value: &Value) -> Result<Self, String> {
+        Name::from_json(value).map(Self)
+    }
+}
+
+/// Bone hierarchy, names, rest pose and bind data; every slice has one entry per bone.
+#[derive(Asset, Serialize, Deserialize)]
+pub struct Skeleton {
+    pub inverse_bindposes: Box<[Mat4]>,
+    pub parents: Box<[Option<u16>]>,
+    pub names: Box<[Name]>,
+    pub rest_pose: Box<[JointPose]>,
+    pub bone_ids: Box<[Uuid]>,
+}
+
+impl Skeleton {
+    /// Builds a skeleton, checking that the slices agree in length and that each parent precedes its child.
+    pub fn new(
+        inverse_bindposes: Vec<Mat4>,
+        parents: Vec<Option<u16>>,
+        names: Vec<Name>,
+        rest_pose: Vec<JointPose>,
+        bone_ids: Vec<Uuid>,
+    ) -> Result<Skeleton, SkeletonError> {
+        let skeleton = Skeleton {
+            inverse_bindposes: inverse_bindposes.into_boxed_slice(),
+            parents: parents.into_boxed_slice(),
+            names: names.into_boxed_slice(),
+            rest_pose: rest_pose.into_boxed_slice(),
+            bone_ids: bone_ids.into_boxed_slice(),
+        };
+        skeleton.validate()?;
+        Ok(skeleton)
+    }
+
+    /// Checks that every slice has one entry per inverse bind pose and that each parent precedes its child.
+    pub fn validate(&self) -> Result<(), SkeletonError> {
+        let expected = self.inverse_bindposes.len();
+        for (field, actual) in [
+            ("parents", self.parents.len()),
+            ("names", self.names.len()),
+            ("rest_pose", self.rest_pose.len()),
+            ("bone_ids", self.bone_ids.len()),
+        ] {
+            if actual != expected {
+                return Err(SkeletonError::LengthMismatch {
+                    field,
+                    expected,
+                    actual,
+                });
+            }
+        }
+        for (bone, parent) in self.parents.iter().enumerate() {
+            if let Some(parent) = parent {
+                if usize::from(*parent) >= bone {
+                    return Err(SkeletonError::ParentNotBefore {
+                        bone,
+                        parent: usize::from(*parent),
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub fn bone_count(&self) -> usize {
+        self.inverse_bindposes.len()
+    }
+
+    /// The index of the first bone with this name.
+    pub fn bone_index(&self, name: Name) -> Option<usize> {
+        self.names.iter().position(|bone| *bone == name)
+    }
+
+    /// The global transform of every bone for the given local poses.
+    pub fn forward_kinematics(&self, local: &[JointPose]) -> Result<Vec<Mat4>, SkeletonError> {
+        if local.len() != self.bone_count() {
+            return Err(SkeletonError::PoseLength {
+                expected: self.bone_count(),
+                actual: local.len(),
+            });
+        }
+        let mut global: Vec<Mat4> = Vec::with_capacity(local.len());
+        for (pose, parent) in local.iter().zip(self.parents.iter()) {
+            let local_matrix = pose.to_mat4();
+            let matrix = match parent {
+                Some(parent) => global[usize::from(*parent)] * local_matrix,
+                None => local_matrix,
+            };
+            global.push(matrix);
+        }
+        Ok(global)
+    }
+}
+
 impl LoadableAsset for Skeleton {}
+
+/// An asset that names the skeleton its bone fields refer to.
+pub trait SkeletonSource: Reflect {
+    fn skeleton(&self) -> Option<&AssetHandle<Skeleton>>;
+}
+
+/// Reads a value's skeleton without naming its type.
+#[derive(Clone, Copy)]
+pub struct ReflectSkeletonSource {
+    pub skeleton: fn(&dyn Reflect) -> Option<AssetId>,
+}
+
+impl TypeData for ReflectSkeletonSource {}
+
+impl<T: SkeletonSource> FromType<T> for ReflectSkeletonSource {
+    fn from_type() -> Self {
+        Self {
+            skeleton: skeleton_of::<T>,
+        }
+    }
+}
+
+fn skeleton_of<T: SkeletonSource>(value: &dyn Reflect) -> Option<AssetId> {
+    value.downcast_ref::<T>()?.skeleton().map(AssetHandle::id)
+}
 
 /// Runtime data built by the importer; scene-only, so the inspector does not edit it.
 #[derive(Component, Clone, Reflect, Default)]
@@ -28,7 +225,6 @@ impl LoadableAsset for Skeleton {}
 pub struct SkeletonComponent {
     pub skeleton: AssetHandle<Skeleton>,
     pub bones: Vec<SceneEntityRef>,
-    pub bone_ids: Vec<Uuid>,
     pub root: Option<SceneEntityRef>,
 }
 
@@ -36,13 +232,11 @@ impl SkeletonComponent {
     pub fn new(
         skeleton: AssetHandle<Skeleton>,
         bones: Vec<SceneEntityRef>,
-        bone_ids: Vec<Uuid>,
         root: Option<SceneEntityRef>,
     ) -> Self {
         Self {
             skeleton,
             bones,
-            bone_ids,
             root,
         }
     }
@@ -53,10 +247,6 @@ impl SkeletonComponent {
 
     pub fn bones(&self) -> &[SceneEntityRef] {
         &self.bones
-    }
-
-    pub fn bone_ids(&self) -> &[Uuid] {
-        &self.bone_ids
     }
 
     pub fn root(&self) -> Option<Entity> {

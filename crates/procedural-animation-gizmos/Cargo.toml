@@ -1,0 +1,23 @@
+[package]
+name = "concerto-procedural-animation-gizmos"
+version.workspace = true
+edition = "2024"
+description.workspace = true
+repository.workspace = true
+license.workspace = true
+
+[dependencies]
+concerto-animation.workspace = true
+concerto-app.workspace = true
+concerto-color.workspace = true
+concerto-debug-gizmos.workspace = true
+concerto-ecs.workspace = true
+concerto-foundation.workspace = true
+concerto-procedural-animation.workspace = true
+concerto-reflect.workspace = true
+concerto-render.workspace = true
+glam.workspace = true
+
+[dev-dependencies]
+concerto-mesh.workspace = true
+uuid = { version = "1.18.1", features = ["v4", "js", "serde"] }

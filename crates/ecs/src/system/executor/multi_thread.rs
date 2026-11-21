@@ -1,6 +1,7 @@
 use std::{
     mem,
     sync::{Arc, Mutex},
+    thread::{self, ThreadId},
 };
 
 use crate::Resource;
@@ -64,6 +65,8 @@ struct Environment<'env> {
     system_meta: &'env [SystemMetadata],
     system_access: &'env [SystemAccess],
     world_cell: UnsafeWorldCell<'env>,
+    scope_thread: ThreadId,
+    thread_executor: Option<&'env ThreadExecutor<'static>>,
 }
 
 #[derive(Clone, Copy)]
@@ -120,6 +123,8 @@ impl SystemExecutor for MultiThreadedExecutor {
             system_meta: compiled_data.system_meta.as_slice(),
             system_access: compiled_data.system_access.as_slice(),
             world_cell: world.as_unsafe_world_cell_mut(),
+            scope_thread: thread::current().id(),
+            thread_executor,
         };
 
         ComputeTaskPool::get_or_init(|| TaskPool::with_name("compute")).scope_with_executor(
@@ -132,6 +137,17 @@ impl SystemExecutor for MultiThreadedExecutor {
     }
 }
 
+impl Environment<'_> {
+    fn apply_deferred(&self, systems: &FixedBitSet) {
+        profiling::scope!("apply_deferred");
+        for system_index in systems.ones() {
+            let sys = unsafe { &mut *self.systems[system_index].get() };
+            // SAFETY: no system runs while a sync point applies.
+            sys.apply(unsafe { self.world_cell.world_mut() });
+        }
+    }
+}
+
 impl<'scope, 'env> Context<'scope, 'env> {
     fn tick_executor(self) {
         let executor = self.environment.executor;
@@ -139,12 +155,42 @@ impl<'scope, 'env> Context<'scope, 'env> {
             let Ok(mut state) = executor.state.try_lock() else {
                 return;
             };
-            state.tick(self);
+            let candidate = state.tick(self);
             drop(state);
+
+            if let Some(system_index) = candidate {
+                self.run_system(system_index);
+                executor
+                    .system_completion
+                    .push(system_index)
+                    .expect("Error registering finished system");
+                continue;
+            }
 
             if executor.system_completion.is_empty() {
                 return;
             }
+        }
+    }
+
+    fn run_system(self, system_index: usize) {
+        let sys = unsafe { &mut *self.environment.systems[system_index].get() };
+        profiling::scope!(sys.name());
+        // SAFETY: the executor starts a system only once no running system conflicts with its access.
+        unsafe { sys.run_unsafe((), self.environment.world_cell) };
+    }
+
+    fn may_run_here(self, system_index: usize) -> bool {
+        let environment = self.environment;
+        let on_scope_thread = thread::current().id() == environment.scope_thread;
+        if !environment.system_meta[system_index].is_send() {
+            environment
+                .thread_executor
+                .map_or(on_scope_thread, ThreadExecutor::is_current_thread)
+        } else if environment.system_access[system_index].is_exclusive() {
+            on_scope_thread
+        } else {
+            true
         }
     }
 
@@ -173,28 +219,62 @@ impl ExecutorState {
         }
     }
 
-    fn tick(&mut self, context: Context) {
+    fn tick(&mut self, context: Context) -> Option<usize> {
         let environment = context.environment;
 
-        let mut apply_deferred = false;
         while let Ok(finished_system) = environment.executor.system_completion.pop() {
             self.finish_system(environment, finished_system);
-            let sys = unsafe { &*environment.systems[finished_system].get() };
-            apply_deferred |= is_sync_point(sys);
         }
 
-        if apply_deferred {
-            profiling::scope!("apply_deferred");
-            for unapplied_system in self.unapplied_systems.ones() {
-                let sys = unsafe { &mut *environment.systems[unapplied_system].get() };
-                // SAFETY: a sync point declares the whole world and has just finished, and no
-                // system starts until the deferred work is applied.
-                sys.apply(unsafe { environment.world_cell.world_mut() });
-            }
-            self.unapplied_systems.clear();
-        }
+        self.start_sync_points(context);
 
+        let candidate = self.lone_candidate(context);
+        if let Some(system_index) = candidate {
+            self.start_system(context.environment, system_index);
+        }
         self.spawn_system_tasks(context);
+        candidate
+    }
+
+    fn start_sync_points(&mut self, context: Context) {
+        let environment = context.environment;
+        while let Some(sync_index) = self
+            .ready_systems
+            .ones()
+            .find(|&index| is_sync_point(unsafe { &*environment.systems[index].get() }))
+        {
+            self.start_system(environment, sync_index);
+            if thread::current().id() == environment.scope_thread {
+                environment.apply_deferred(&self.unapplied_systems);
+                self.unapplied_systems.clear();
+                self.finish_system(environment, sync_index);
+                continue;
+            }
+
+            let unapplied = self.unapplied_systems.clone();
+            self.unapplied_systems.clear();
+            context.scope.spawn_on_scope(async move {
+                environment.apply_deferred(&unapplied);
+                context.system_completed(sync_index);
+            });
+            return;
+        }
+    }
+
+    fn lone_candidate(&self, context: Context) -> Option<usize> {
+        if !self.running_systems.is_clear() || self.ready_systems.count_ones(..) != 1 {
+            return None;
+        }
+        let system_index = self.ready_systems.ones().next()?;
+        context.may_run_here(system_index).then_some(system_index)
+    }
+
+    fn start_system(&mut self, environment: &Environment, system_index: usize) {
+        if !environment.system_meta[system_index].is_send() {
+            self.local_thread_running = true;
+        }
+        self.ready_systems.remove(system_index);
+        self.running_systems.insert(system_index);
     }
 
     fn finish_system(&mut self, environment: &Environment, system_index: usize) {
@@ -219,25 +299,14 @@ impl ExecutorState {
         for system_index in ready_systems.ones() {
             let is_send = context.environment.system_meta[system_index].is_send();
             let is_exclusive = context.environment.system_access[system_index].is_exclusive();
-            if !is_send {
-                if self.local_thread_running {
-                    continue;
-                }
-                self.local_thread_running = true;
+            if !is_send && self.local_thread_running {
+                continue;
             }
 
-            self.ready_systems.remove(system_index);
-            self.running_systems.insert(system_index);
+            self.start_system(context.environment, system_index);
 
-            let sys = unsafe { &mut *context.environment.systems[system_index].get() };
-            let world_cell = context.environment.world_cell;
             let task = async move {
-                {
-                    profiling::scope!(sys.name());
-                    // SAFETY: the executor starts a system only once no running system
-                    // conflicts with its declared access.
-                    unsafe { sys.run_unsafe((), world_cell) };
-                }
+                context.run_system(system_index);
                 context.system_completed(system_index);
             };
 
@@ -258,146 +327,24 @@ impl ExecutorState {
 mod tests {
     use std::{
         sync::{
-            Arc, Mutex,
+            Mutex,
             atomic::{AtomicBool, Ordering},
+            mpsc::{Receiver, Sender, channel},
         },
         thread::ThreadId,
         time::Duration,
     };
 
     use crate::{
-        Changed, Resource, System, World,
+        Resource, World,
         command::CommandQueue,
-        component::Component,
-        entity::Entity,
-        query::Query,
         resource::ResMut,
         system::{
             NonSendMarker,
-            access::SystemAccess,
             executor::multi_thread::{MainThreadExecutor, MultiThreadedExecutor},
-            meta::SystemMetadata,
-            schedule::{Schedule, ScheduleLabel, Schedules},
+            schedule::{Schedule, Schedules},
         },
-        world::UnsafeWorldCell,
     };
-
-    #[derive(Component)]
-    struct TagComponent;
-
-    #[derive(Resource)]
-    struct Counter(usize);
-
-    fn spawn_tag_entity(mut cmd: CommandQueue) {
-        cmd.spawn(TagComponent);
-    }
-
-    fn check_changed_entities(
-        query: Query<Entity, Changed<TagComponent>>,
-        mut counter: ResMut<Counter>,
-    ) {
-        if query.iter().count() != 0 {
-            counter.0 += 1;
-        }
-    }
-
-    #[test]
-    fn check_changed_after_spawned() {
-        let mut world = World::new();
-        world.insert_resource(Counter(0));
-
-        let mut schedule = Schedule::new();
-        schedule.add_system(spawn_tag_entity);
-        schedule.add_system(check_changed_entities);
-
-        println!("{:?}", schedule);
-
-        schedule
-            .compile::<MultiThreadedExecutor>(&mut world)
-            .run(&mut world);
-
-        assert_eq!(world.get_resource::<Counter>().unwrap().0, 1);
-    }
-
-    struct NonSendProbe {
-        running: Arc<AtomicBool>,
-        overlapped: Arc<AtomicBool>,
-        ran_on: Arc<Mutex<Vec<ThreadId>>>,
-    }
-
-    impl System for NonSendProbe {
-        type In = ();
-
-        fn name(&self) -> &'static str {
-            "NonSendProbe"
-        }
-
-        fn initialize(&mut self, _world: &mut World) {}
-
-        fn fill_access(&self, meta: &mut SystemMetadata, _access: &mut SystemAccess) {
-            meta.set_non_send();
-        }
-
-        unsafe fn run_unsafe(&mut self, _args: Self::In, _world: UnsafeWorldCell) {
-            if self.running.swap(true, Ordering::SeqCst) {
-                self.overlapped.store(true, Ordering::SeqCst);
-            }
-            self.ran_on
-                .lock()
-                .unwrap()
-                .push(std::thread::current().id());
-            std::thread::sleep(Duration::from_millis(5));
-            self.running.store(false, Ordering::SeqCst);
-        }
-
-        fn apply(&mut self, _world: &mut World) {}
-
-        fn check_change_tick(&mut self, _check: crate::component::CheckChangeTicks) {}
-    }
-
-    #[test]
-    fn non_send_systems_run_one_at_a_time_on_calling_thread() {
-        let mut world = World::new();
-        world.insert_resource(MainThreadExecutor::new());
-
-        let running = Arc::new(AtomicBool::new(false));
-        let overlapped = Arc::new(AtomicBool::new(false));
-        let ran_on = Arc::new(Mutex::new(Vec::new()));
-
-        let mut schedule = Schedule::new();
-        for _ in 0..4 {
-            schedule.add_system(NonSendProbe {
-                running: running.clone(),
-                overlapped: overlapped.clone(),
-                ran_on: ran_on.clone(),
-            });
-        }
-
-        schedule
-            .compile::<MultiThreadedExecutor>(&mut world)
-            .run(&mut world);
-
-        let ran_on = ran_on.lock().unwrap();
-        assert_eq!(ran_on.len(), 4);
-        assert!(ran_on.iter().all(|&id| id == std::thread::current().id()));
-        assert!(!overlapped.load(Ordering::SeqCst));
-    }
-
-    #[derive(Clone, PartialEq, Eq, Hash, Debug)]
-    struct Outer;
-    impl ScheduleLabel for Outer {
-        fn dyn_clone(&self) -> Box<dyn ScheduleLabel> {
-            Box::new(self.clone())
-        }
-    }
-
-    #[derive(Clone, PartialEq, Eq, Hash, Debug)]
-    struct Inner;
-    impl ScheduleLabel for Inner {
-        fn dyn_clone(&self) -> Box<dyn ScheduleLabel> {
-            Box::new(self.clone())
-        }
-    }
 
     #[derive(Resource, Default)]
     struct RanOn(Option<ThreadId>);
@@ -426,32 +373,7 @@ mod tests {
         );
     }
 
-    #[derive(Resource, Default)]
-    struct ExclusiveRanOn(Option<ThreadId>);
-
-    #[test]
-    fn an_exclusive_system_runs_on_the_thread_that_runs_its_schedule() {
-        let mut world = World::new();
-        world.insert_resource(MainThreadExecutor::new());
-        world.insert_resource(ExclusiveRanOn::default());
-
-        let mut schedules = Schedules::default();
-        schedules.add_system(Outer, |world: &mut World| {
-            world.get_resource_mut::<ExclusiveRanOn>().unwrap().0 =
-                Some(std::thread::current().id());
-        });
-        let compiled = schedules.compile::<MultiThreadedExecutor>(&mut world);
-        world.insert_resource(compiled);
-
-        world.run_schedule(Outer);
-
-        assert_eq!(
-            world.get_resource::<ExclusiveRanOn>().unwrap().0,
-            Some(std::thread::current().id())
-        );
-    }
-
-    use crate::system::input::test_support::{Gate, GateOpen};
+    use crate::testing::{Gate, GateOpen, Inner, Outer};
 
     #[derive(Resource, Default)]
     struct Ran {
@@ -509,29 +431,281 @@ mod tests {
         finished.slow.store(true, Ordering::SeqCst);
     }
 
+    struct Side {
+        send: Mutex<Sender<()>>,
+        recv: Mutex<Receiver<()>>,
+        met: AtomicBool,
+    }
+
+    #[derive(Resource)]
+    struct Rendezvous {
+        a: Side,
+        b: Side,
+    }
+
+    impl Rendezvous {
+        fn new() -> Self {
+            let (to_b, from_a) = channel();
+            let (to_a, from_b) = channel();
+            Self {
+                a: Side {
+                    send: Mutex::new(to_b),
+                    recv: Mutex::new(from_b),
+                    met: AtomicBool::new(false),
+                },
+                b: Side {
+                    send: Mutex::new(to_a),
+                    recv: Mutex::new(from_a),
+                    met: AtomicBool::new(false),
+                },
+            }
+        }
+    }
+
+    fn meet(side: &Side) {
+        let _ = side.send.lock().unwrap().send(());
+        let met = side
+            .recv
+            .lock()
+            .unwrap()
+            .recv_timeout(Duration::from_secs(5))
+            .is_ok();
+        side.met.store(met, Ordering::SeqCst);
+    }
+
+    fn meet_a(rendezvous: crate::resource::Res<Rendezvous>) {
+        meet(&rendezvous.a);
+    }
+
+    fn meet_b(rendezvous: crate::resource::Res<Rendezvous>) {
+        meet(&rendezvous.b);
+    }
+
+    fn fewer_than_two_threads() -> bool {
+        let fewer = !std::thread::available_parallelism().is_ok_and(|n| n.get() >= 2);
+        if fewer {
+            eprintln!("SKIPPED: fewer than two compute threads are available");
+        }
+        fewer
+    }
+
+    fn assert_pair_met(world: &World) {
+        let rendezvous = world.get_resource::<Rendezvous>().unwrap();
+        assert!(rendezvous.a.met.load(Ordering::SeqCst));
+        assert!(rendezvous.b.met.load(Ordering::SeqCst));
+    }
+
+    struct PanicCase {
+        name: &'static str,
+        build: fn(&mut Schedule),
+        parallel_pair: bool,
+        slow_finishes: bool,
+    }
+
     #[test]
-    fn a_panicking_system_is_raised_after_its_running_neighbours_finish_and_its_dependants_never_run()
-     {
+    fn a_panicking_system_is_raised_after_its_running_neighbours_and_its_dependants_never_run() {
         use crate::IntoSystemConfig;
-        for _ in 0..5 {
+        let cases = [
+            PanicCase {
+                name: "beside a slow neighbour",
+                build: |schedule| {
+                    schedule
+                        .add_system(breaks)
+                        .add_system(after_breaks.after(breaks))
+                        .add_system(slow);
+                },
+                parallel_pair: false,
+                slow_finishes: true,
+            },
+            PanicCase {
+                name: "alone after a parallel pair",
+                build: |schedule| {
+                    schedule
+                        .add_system(meet_a)
+                        .add_system(meet_b)
+                        .add_system(breaks.after(meet_a).after(meet_b))
+                        .add_system(after_breaks.after(breaks));
+                },
+                parallel_pair: true,
+                slow_finishes: false,
+            },
+        ];
+        for case in cases {
+            if case.parallel_pair && fewer_than_two_threads() {
+                continue;
+            }
+            for _ in 0..5 {
+                let mut world = World::new();
+                world.insert_resource(MainThreadExecutor::new());
+                world.insert_resource(Finished::default());
+                world.insert_resource(Rendezvous::new());
+                let mut schedule = Schedule::new();
+                (case.build)(&mut schedule);
+                let mut compiled = schedule.compile::<MultiThreadedExecutor>(&mut world);
+
+                let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    compiled.run(&mut world)
+                }));
+
+                let payload = outcome.expect_err(case.name);
+                assert_eq!(
+                    payload.downcast_ref::<&str>(),
+                    Some(&"the system broke"),
+                    "{}",
+                    case.name
+                );
+                if case.parallel_pair {
+                    assert_pair_met(&world);
+                }
+                let finished = world.get_resource::<Finished>().unwrap();
+                assert_eq!(
+                    finished.slow.load(Ordering::SeqCst),
+                    case.slow_finishes,
+                    "{}",
+                    case.name
+                );
+                assert!(!finished.dependant.load(Ordering::SeqCst), "{}", case.name);
+            }
+        }
+    }
+
+    #[derive(Resource, Default)]
+    struct Threads(Vec<ThreadId>);
+
+    fn record_non_send(_: NonSendMarker, mut threads: ResMut<Threads>) {
+        threads.0.push(std::thread::current().id());
+    }
+
+    fn record_exclusive(world: &mut World) {
+        world
+            .get_resource_mut::<Threads>()
+            .unwrap()
+            .0
+            .push(std::thread::current().id());
+    }
+
+    struct CallingThreadCase {
+        name: &'static str,
+        build: fn(&mut Schedule),
+    }
+
+    #[test]
+    fn work_that_must_stay_on_the_calling_thread_runs_there() {
+        use crate::IntoSystemConfig;
+        if fewer_than_two_threads() {
+            return;
+        }
+        let cases = [
+            CallingThreadCase {
+                name: "an exclusive system after a parallel pair",
+                build: |schedule| {
+                    schedule
+                        .add_system(meet_a)
+                        .add_system(meet_b)
+                        .add_system(record_exclusive.after(meet_a).after(meet_b));
+                },
+            },
+            CallingThreadCase {
+                name: "a non-send system after a parallel pair",
+                build: |schedule| {
+                    schedule
+                        .add_system(meet_a)
+                        .add_system(meet_b)
+                        .add_system(record_non_send.after(meet_a).after(meet_b));
+                },
+            },
+        ];
+        for case in cases {
             let mut world = World::new();
             world.insert_resource(MainThreadExecutor::new());
-            world.insert_resource(Finished::default());
+            world.insert_resource(Rendezvous::new());
+            world.insert_resource(Threads::default());
             let mut schedule = Schedule::new();
+            (case.build)(&mut schedule);
+
             schedule
-                .add_system(breaks)
-                .add_system(after_breaks.after(breaks))
-                .add_system(slow);
-            let mut compiled = schedule.compile::<MultiThreadedExecutor>(&mut world);
+                .compile::<MultiThreadedExecutor>(&mut world)
+                .run(&mut world);
 
-            let outcome =
-                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| compiled.run(&mut world)));
-
-            let payload = outcome.expect_err("the panic is raised again");
-            assert_eq!(payload.downcast_ref::<&str>(), Some(&"the system broke"));
-            let finished = world.get_resource::<Finished>().unwrap();
-            assert!(finished.slow.load(Ordering::SeqCst));
-            assert!(!finished.dependant.load(Ordering::SeqCst));
+            assert_pair_met(&world);
+            let threads = &world.get_resource::<Threads>().unwrap().0;
+            assert_eq!(threads.len(), 1, "{}", case.name);
+            assert_eq!(threads[0], std::thread::current().id(), "{}", case.name);
         }
+    }
+
+    struct Applied;
+    impl crate::signal::Signal for Applied {}
+
+    #[derive(Resource, Default)]
+    struct AppliedOn(Option<ThreadId>);
+
+    fn record_applied(_: crate::signal::On<Applied>, mut applied_on: ResMut<AppliedOn>) {
+        applied_on.0 = Some(std::thread::current().id());
+    }
+
+    fn meet_and_trigger(rendezvous: crate::resource::Res<Rendezvous>, mut cmd: CommandQueue) {
+        meet(&rendezvous.b);
+        cmd.trigger(Applied);
+    }
+
+    fn trigger_applied(mut cmd: CommandQueue) {
+        cmd.trigger(Applied);
+    }
+
+    #[test]
+    fn commands_reached_from_pool_threads_apply_on_the_calling_thread() {
+        if fewer_than_two_threads() {
+            return;
+        }
+        for _ in 0..5 {
+            let mut world = World::new();
+            world.insert_resource(Rendezvous::new());
+            world.insert_resource(AppliedOn::default());
+            world.add_listener(record_applied);
+            let mut schedule = Schedule::new();
+            schedule.add_system(meet_a).add_system(meet_and_trigger);
+            schedule
+                .compile::<MultiThreadedExecutor>(&mut world)
+                .run(&mut world);
+
+            assert_pair_met(&world);
+            assert_eq!(
+                world.get_resource::<AppliedOn>().unwrap().0,
+                Some(std::thread::current().id())
+            );
+        }
+    }
+
+    #[derive(Resource, Default)]
+    struct FirstCount(usize);
+
+    #[derive(Resource, Default)]
+    struct SecondCount(usize);
+
+    fn count_first(mut count: ResMut<FirstCount>) {
+        count.0 += 1;
+    }
+
+    fn count_second(mut count: ResMut<SecondCount>) {
+        count.0 += 1;
+    }
+
+    #[test]
+    fn every_dependant_ready_after_a_sync_point_runs() {
+        let mut world = World::new();
+        world.insert_resource(FirstCount::default());
+        world.insert_resource(SecondCount::default());
+        let mut schedule = Schedule::new();
+        schedule
+            .add_system(trigger_applied)
+            .add_system(count_first)
+            .add_system(count_second);
+        schedule
+            .compile::<MultiThreadedExecutor>(&mut world)
+            .run(&mut world);
+
+        assert_eq!(world.get_resource::<FirstCount>().unwrap().0, 1);
+        assert_eq!(world.get_resource::<SecondCount>().unwrap().0, 1);
     }
 }

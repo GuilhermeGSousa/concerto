@@ -35,20 +35,35 @@ pub fn pixels_to_ascii_into(
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_luma_to_char_black() {
-        assert_eq!(luma_to_char(0), ' ');
+    struct Shade {
+        luma: u8,
+        char: char,
     }
 
     #[test]
-    fn test_luma_to_char_white() {
-        assert_eq!(luma_to_char(255), '@');
-    }
-
-    #[test]
-    fn test_luma_midrange() {
-        let c = luma_to_char(128);
-        assert_ne!(c, ' ');
-        assert_ne!(c, '@');
+    fn luma_walks_the_ramp_from_a_space_for_black_to_an_at_for_white() {
+        let cases = [
+            Shade { luma: 0, char: ' ' },
+            Shade {
+                luma: 128,
+                char: '=',
+            },
+            Shade {
+                luma: 255,
+                char: '@',
+            },
+        ];
+        for case in &cases {
+            assert_eq!(luma_to_char(case.luma), case.char, "{}", case.luma);
+        }
+        let ramp: Vec<usize> = (0..=255u8)
+            .map(|luma| {
+                CHARS
+                    .iter()
+                    .position(|&c| c as char == luma_to_char(luma))
+                    .unwrap()
+            })
+            .collect();
+        assert!(ramp.windows(2).all(|pair| pair[0] <= pair[1]));
     }
 }

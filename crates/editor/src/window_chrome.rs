@@ -26,7 +26,7 @@ use concerto_window::plugin::{
 use taffy::Position;
 
 use crate::dock::{DockedApp, PanelDescriptor, PanelRegistry, Region, TOP_STRIP};
-use crate::fonts::{glyph, icon};
+use crate::fonts::{button_icon, glyph, icon_button};
 
 pub const PANEL_ID: &str = "concerto.window";
 
@@ -130,17 +130,14 @@ fn build_controls(
         ] {
             bar.add_child_with(
                 (
-                    theme
-                        .pressable()
+                    icon_button(&theme)
                         .pressed(match control {
                             Control::Close => theme.error,
                             _ => theme.accent,
                         })
-                        .size(UIValue::Px(30.0), UIValue::Px(26.0))
-                        .padding(UIRect::axes(3.0, 8.0))
                         .z_index(CONTROL_LAYER)
                         .on_click(press_control(control)),
-                    icon(&theme, mark, theme.font_size_lg).muted(),
+                    button_icon(&theme, mark),
                     WindowChromeControl,
                 ),
                 |mut button| {

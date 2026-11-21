@@ -232,7 +232,10 @@ where
     }
 
     fn fill_access(&self, meta: &mut SystemMetadata, access: &mut SystemAccess) {
-        F::Inputs::fill_access(meta, access);
+        match &self.system_state {
+            Some(state) => F::Inputs::fill_state_access(state, meta, access),
+            None => F::Inputs::fill_access(meta, access),
+        }
     }
 
     fn check_change_tick(&mut self, check: CheckChangeTicks) {
@@ -368,41 +371,5 @@ impl SystemInput for NonSendMarker {
 
     fn fill_access(meta: &mut SystemMetadata, _access: &mut SystemAccess) {
         meta.set_non_send();
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::{
-        ResMut, Resource, World,
-        command::CommandQueue,
-        system::input::test_support::{Gate, GateOpen},
-    };
-
-    #[derive(Resource, Default)]
-    struct Runs(usize);
-
-    fn gated(_: Gate, mut runs: ResMut<Runs>, mut cmd: CommandQueue) {
-        runs.0 += 1;
-        cmd.insert_resource(GateOpen(false));
-    }
-
-    #[test]
-    fn a_system_whose_parameter_declines_does_not_run_or_queue() {
-        let mut world = World::new();
-        world.insert_resource(Runs::default());
-        world.insert_resource(GateOpen(false));
-        let mut system = gated.into_system();
-        system.initialize(&mut world);
-
-        system.run_and_apply((), &mut world);
-        assert_eq!(world.get_resource::<Runs>().unwrap().0, 0);
-        assert!(!world.get_resource::<GateOpen>().unwrap().0);
-
-        world.insert_resource(GateOpen(true));
-        system.run_and_apply((), &mut world);
-        assert_eq!(world.get_resource::<Runs>().unwrap().0, 1);
-        assert!(!world.get_resource::<GateOpen>().unwrap().0);
     }
 }

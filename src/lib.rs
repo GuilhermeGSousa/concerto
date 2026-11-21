@@ -1,5 +1,6 @@
 pub use concerto_animation as animation;
 pub use concerto_app as app;
+pub use concerto_audio as audio;
 pub use concerto_color as color;
 pub use concerto_director as director;
 pub use concerto_ecs as ecs;
@@ -8,7 +9,13 @@ pub use concerto_foundation::asset_id;
 pub use concerto_gameplay as gameplay;
 use concerto_gameplay::GameplayPlugin;
 pub use concerto_mesh as mesh;
+pub use concerto_motion_matching as motion_matching;
+pub use concerto_name as name;
+pub use concerto_navigation as navigation;
+use concerto_navigation::NavigationPlugin;
+pub use concerto_noise as noise;
 pub use concerto_physics as physics;
+pub use concerto_procedural_animation as procedural_animation;
 pub use concerto_reflect as reflect;
 pub use concerto_render as render;
 pub use concerto_scene as scene;
@@ -23,8 +30,13 @@ use concerto_app::{
     plugins::{AssetManagerPlugin, TimePlugin, TransformPlugin},
     App, Plugin,
 };
+use concerto_audio::AudioPlugin;
 use concerto_director::CameraDirectorPlugin;
+#[cfg(not(target_arch = "wasm32"))]
+use concerto_foundation::assets::derived::CookReport;
+use concerto_motion_matching::MotionMatchingPlugin;
 use concerto_physics::plugin::PhysicsPlugin;
+use concerto_procedural_animation::ProceduralAnimationPlugin;
 use concerto_render::{
     assets::material::StandardMaterial, plugin::RenderPlugin,
     shadow_pipeline::ShadowPipelinePlugin, MaterialPlugin,
@@ -35,20 +47,129 @@ use concerto_ui::plugin::UIPlugin;
 use concerto_window::plugin::WindowPlugin;
 use concerto_world_grid::plugin::WorldGridPlugin;
 
-/// Sets up logging, opens a window, and runs the `App` that `build` makes with `registry`, from [`content_registry!`], installed.
-pub fn run(build: impl FnOnce(&mut app::App) + 'static, registry: &'static str) {
+/// Sets up logging, opens a window, and runs the `App` that `build` makes with `content`, from [`content_registry!`], installed; natively, `--cook <out>` runs [`cook`] instead and exits.
+pub fn run(
+    build: impl FnOnce(&mut app::App) + 'static,
+    content: concerto_app::plugins::ContentSettings<'static>,
+) {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        match cook_arg(std::env::args().skip(1)) {
+            CookArg::Absent => {}
+            CookArg::Dir(out) => std::process::exit(report_cook(cook(build, content, &out))),
+            CookArg::Missing => std::process::exit(report_cook(Err(anyhow::anyhow!(
+                "--cook needs the directory to write the cooked content to"
+            )))),
+            CookArg::Flag(flag) => std::process::exit(report_cook(Err(anyhow::anyhow!(
+                "--cook needs the directory to write the cooked content to, not the flag `{flag}`"
+            )))),
+        }
+    }
     init_logging();
     concerto_winit::run(move |app| {
         build(app);
-        concerto_app::plugins::install_content_registry(app, registry);
+        concerto_app::plugins::install_content_registry(app, content);
     });
 }
 
-/// The asset registry the package's `build.rs` wrote through `concerto_asset_build::track_assets`.
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Debug, PartialEq, Eq)]
+enum CookArg {
+    Absent,
+    Missing,
+    Flag(String),
+    Dir(std::path::PathBuf),
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn cook_arg(args: impl IntoIterator<Item = String>) -> CookArg {
+    let mut args = args.into_iter();
+    if !args.any(|arg| arg == "--cook") {
+        return CookArg::Absent;
+    }
+    match args.next() {
+        None => CookArg::Missing,
+        Some(out) if out.starts_with('-') => CookArg::Flag(out),
+        Some(out) => CookArg::Dir(out.into()),
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+const COOK_MARKER: &str = ".concerto-cook";
+
+/// Builds the `App` that `build` makes, with no GPU and no window, and writes to `out` every file of `content` whose asset derives, with its derived blob, and every other file that has an uncooked section, all without those sections; `out` must be missing, empty, or a previous cook output, which it replaces.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn cook(
+    build: impl FnOnce(&mut App),
+    content: concerto_app::plugins::ContentSettings,
+    out: &std::path::Path,
+) -> anyhow::Result<CookReport> {
+    use anyhow::Context;
+    use concerto_foundation::assets::{
+        asset_server::AssetServer, derived::DerivedDataCache, registry::AssetRegistry,
+        ContentAssetRoot,
+    };
+
+    init_logging();
+    let project_root = std::path::PathBuf::from(
+        content
+            .project_root
+            .context("the cook needs the project root that `content_registry!()` embeds")?,
+    );
+    let registry = AssetRegistry::parse(content.registry)
+        .context("the embedded content registry is malformed")?;
+    let mut app = App::new();
+    build(&mut app);
+    let server = app
+        .get_resource::<AssetServer>()
+        .context("the cook needs an AssetServer; register AssetManagerPlugin")?;
+    server.publish_content_source(ContentAssetRoot::Directory(project_root.clone()), registry);
+    server.set_derived_cache(DerivedDataCache::in_project(&project_root));
+    if out.exists() {
+        let empty = std::fs::read_dir(out)
+            .with_context(|| format!("failed to read '{}'", out.display()))?
+            .next()
+            .is_none();
+        anyhow::ensure!(
+            empty || out.join(COOK_MARKER).is_file(),
+            "'{}' is not empty and is not a previous cook output, which holds a `{COOK_MARKER}` file",
+            out.display()
+        );
+        std::fs::remove_dir_all(out)
+            .with_context(|| format!("failed to remove '{}'", out.display()))?;
+    }
+    std::fs::create_dir_all(out)
+        .with_context(|| format!("failed to create '{}'", out.display()))?;
+    std::fs::write(out.join(COOK_MARKER), "")
+        .with_context(|| format!("failed to write '{}'", out.join(COOK_MARKER).display()))?;
+    server.cook(out)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn report_cook(result: anyhow::Result<CookReport>) -> i32 {
+    match result {
+        Ok(report) => {
+            for address in &report.cooked {
+                println!("cooked {address}");
+            }
+            println!("cooked {} files", report.cooked.len());
+            0
+        }
+        Err(error) => {
+            eprintln!("error: {error:#}");
+            1
+        }
+    }
+}
+
+/// The asset registry and project root the package's `build.rs` recorded through `concerto_asset_build::track_assets`.
 #[macro_export]
 macro_rules! content_registry {
     () => {
-        include_str!(concat!(env!("OUT_DIR"), "/concerto_registry.toml"))
+        $crate::app::plugins::ContentSettings {
+            registry: include_str!(concat!(env!("OUT_DIR"), "/concerto_registry.toml")),
+            project_root: option_env!("CONCERTO_PROJECT_ROOT"),
+        }
     };
 }
 
@@ -74,7 +195,8 @@ impl Plugin for DefaultPlugins {
         app.register_plugin(MainSchedulePlugin)
             .register_plugin(AssetManagerPlugin)
             .register_plugin(TimePlugin)
-            .register_plugin(WindowPlugin);
+            .register_plugin(WindowPlugin)
+            .register_plugin(AudioPlugin);
 
         app.register_plugin(TransformPlugin)
             .register_plugin(CameraDirectorPlugin)
@@ -84,38 +206,194 @@ impl Plugin for DefaultPlugins {
             .register_plugin(MaterialPlugin::<StandardMaterial>::default());
 
         app.register_plugin(PhysicsPlugin)
+            .register_plugin(MotionMatchingPlugin)
+            .register_plugin(ProceduralAnimationPlugin)
             .register_plugin(AnimationPlugin)
             .register_plugin(ScenePlugin)
             .register_plugin(WorldGridPlugin)
+            .register_plugin(NavigationPlugin)
             .register_plugin(GameplayPlugin)
             .register_plugin(UIPlugin);
     }
 }
 
-/// Builds an `App` with a GPU and no window, ready to step; `None` when there is no GPU adapter.
+/// Builds an `App` with a GPU, no window and the mock audio backend, ready to step; `None` when there is no GPU adapter.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn headless(build: impl FnOnce(&mut App)) -> Option<App> {
     use concerto_app::plugins::PluginsState;
+    use concerto_audio::AudioBackend;
     use concerto_render::{draw_target::DrawTarget, gpu::Gpu};
     use concerto_window::plugin::Window;
 
-    let gpu = pollster::block_on(Gpu::request(&Gpu::instance(), None))?;
+    let gpu = pollster::block_on(Gpu::request(&Gpu::instance(None), None))?;
     let mut app = App::new();
     app.insert_resource(gpu)
         .insert_resource(DrawTarget::None)
-        .insert_resource(Window::new((1280, 720), 1.0));
+        .insert_resource(Window::new((1280, 720), 1.0))
+        .insert_resource(AudioBackend::Mock);
     build(&mut app);
     while app.plugin_state() != PluginsState::Ready {}
     app.finish_plugin_build();
     Some(app)
 }
 
-#[cfg(test)]
-mod tests {
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod cook_tests {
+    use concerto_app::{plugins::ContentSettings, App};
+    use concerto_foundation::assets::{
+        content::{read_content_asset_parts, save_content_asset_into},
+        derived::{DerivedData, DerivedInputs},
+        registry::AssetRegistry,
+        Asset, AssetId, LoadableAsset,
+    };
+    use concerto_render::gpu::Gpu;
+    use serde::{Deserialize, Serialize};
+
+    use crate::DefaultPlugins;
+
+    #[derive(Serialize, Deserialize)]
+    struct Doubled {
+        value: u64,
+        #[serde(skip)]
+        doubled: Option<u64>,
+    }
+
+    impl Asset for Doubled {
+        fn name() -> &'static str {
+            "Doubled"
+        }
+    }
+
+    impl LoadableAsset for Doubled {}
+
+    impl DerivedData for Doubled {
+        const DERIVED_VERSION: u32 = 1;
+
+        fn derived_inputs(&self) -> Vec<AssetId> {
+            Vec::new()
+        }
+
+        fn derived_key(&self, _inputs: &DerivedInputs) -> anyhow::Result<u64> {
+            Ok(self.value)
+        }
+
+        fn derive(
+            &self,
+            _inputs: &DerivedInputs,
+            _progress: &mut dyn FnMut(usize, usize),
+        ) -> anyhow::Result<Vec<u8>> {
+            Ok((self.value * 2).to_le_bytes().to_vec())
+        }
+
+        fn apply_derived(&mut self, blob: &[u8]) -> anyhow::Result<()> {
+            let bytes: [u8; 8] = blob.try_into()?;
+            self.doubled = Some(u64::from_le_bytes(bytes));
+            Ok(())
+        }
+    }
+
+    fn recipe(app: &mut App) {
+        app.register_plugin(DefaultPlugins)
+            .register_derived_asset::<Doubled>();
+        assert!(app.get_resource::<Gpu>().is_none());
+    }
+
+    struct DoubledProject {
+        dir: tempfile::TempDir,
+        registry: String,
+    }
+
+    impl DoubledProject {
+        fn new() -> Self {
+            let dir = tempfile::tempdir().unwrap();
+            let mut registry = AssetRegistry::new();
+            save_content_asset_into(
+                &Doubled {
+                    value: 21,
+                    doubled: None,
+                },
+                dir.path(),
+                "content/doubled.gasset",
+                &mut registry,
+            )
+            .unwrap();
+            Self {
+                dir,
+                registry: registry.to_toml(),
+            }
+        }
+
+        fn path(&self) -> &std::path::Path {
+            self.dir.path()
+        }
+
+        fn cook(&self, out: &std::path::Path) -> anyhow::Result<super::CookReport> {
+            super::cook(
+                recipe,
+                ContentSettings {
+                    registry: &self.registry,
+                    project_root: self.path().to_str(),
+                },
+                out,
+            )
+        }
+    }
+
     #[test]
-    #[cfg(not(target_arch = "wasm32"))]
-    fn setting_up_logging_twice_does_not_panic() {
-        super::init_logging();
-        super::init_logging();
+    fn a_cook_with_no_gpu_writes_each_derived_asset_and_its_blob_over_its_own_output_only() {
+        let project = DoubledProject::new();
+        let out = project.path().join("cooked");
+
+        let report = project.cook(&out).unwrap();
+
+        assert_eq!(report.cooked, vec!["content/doubled.gasset"]);
+        let bytes = std::fs::read(out.join("content/doubled.gasset")).unwrap();
+        let parts = read_content_asset_parts(&bytes).unwrap();
+        assert_eq!(parts.header.derived.map(|section| section.key), Some(21));
+        assert_eq!(parts.derived_blob, Some(&42u64.to_le_bytes()[..]));
+
+        std::fs::write(out.join("stale.gasset"), b"stale").unwrap();
+        project.cook(&out).unwrap();
+        assert!(!out.join("stale.gasset").exists());
+        assert!(out.join("content/doubled.gasset").is_file());
+
+        let mine = project.path().join("mine");
+        std::fs::create_dir_all(&mine).unwrap();
+        std::fs::write(mine.join("notes.txt"), b"mine").unwrap();
+        assert!(project.cook(&mine).is_err());
+        assert_eq!(std::fs::read(mine.join("notes.txt")).unwrap(), b"mine");
+        assert!(!mine.join("content").exists());
+    }
+
+    struct CookArgRow {
+        args: &'static [&'static str],
+        cook: super::CookArg,
+    }
+
+    #[test]
+    fn the_cook_flag_takes_the_directory_after_it_and_no_flag_means_no_cook() {
+        let dir = |path: &str| super::CookArg::Dir(std::path::PathBuf::from(path));
+        let rows = [
+            CookArgRow {
+                args: &[],
+                cook: super::CookArg::Absent,
+            },
+            CookArgRow {
+                args: &["--forest"],
+                cook: super::CookArg::Absent,
+            },
+            CookArgRow {
+                args: &["--cook", "out"],
+                cook: dir("out"),
+            },
+            CookArgRow {
+                args: &["--forest", "--cook", "cooked/dir", "--sanatorium"],
+                cook: dir("cooked/dir"),
+            },
+        ];
+        for row in rows {
+            let args = row.args.iter().map(|arg| arg.to_string());
+            assert_eq!(super::cook_arg(args), row.cook, "{:?}", row.args);
+        }
     }
 }

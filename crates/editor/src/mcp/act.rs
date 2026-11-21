@@ -7,6 +7,7 @@ use concerto_ecs::{
     component::name::Name,
     events::event_reader::EventReader,
     query::filter::{With, Without},
+    reflect::AppTypeRegistry,
 };
 use concerto_foundation::{
     assets::{
@@ -15,9 +16,11 @@ use concerto_foundation::{
     },
     transform::{GlobalTransform, Transform},
 };
+use concerto_import::importer_for;
 use concerto_mcp::{
     AppMcpExt, McpServe, McpTool, Needs, PendingCall, ToolCalls, ToolError, answer_unanswered,
 };
+use concerto_reflect::{Reflect, TypeRegistry, apply_value, json_to_value, to_json};
 use concerto_scene::scene::Scene;
 use glam::Vec3;
 use schemars::JsonSchema;
@@ -26,8 +29,13 @@ use serde::Deserialize;
 use super::observe::{SceneEntities, resolve};
 use crate::{
     asset_editor::{AssetEditorCommand, AssetEditorCommands, AssetEditorRegistry, EditorDocument},
+    content::{self, AssetCreation},
     guard::{GuardChoice, UnsavedGuard},
     hosted::{EditTarget, EditWorld, EditWorldSignals, PlayState},
+    import::{
+        ImportFinished, ImportQueue, RowState, keep_project_sources_in_place, scan_content,
+        stage_row, stage_sources, validate_rows,
+    },
     project::{EditorCommand, EditorCommands, ProjectOpenFailed, ProjectOpened, ProjectState},
     scene::{SaveFailed, SceneOpenFailed, SceneOpened},
     tools::{
@@ -47,13 +55,37 @@ pub struct OpenProject {
     pub unsaved: Option<UnsavedChoice>,
 }
 
-/// Opens an asset of the project in its editor; a scene replaces the one shown, and the call waits until it has loaded.
+/// Opens an asset of the project in its editor and waits until it has loaded; a scene replaces the one shown.
 #[derive(Deserialize, JsonSchema)]
 pub struct OpenAsset {
-    /// The asset's address, such as content/level.gasset, or its id, as list_assets shows them.
+    /// The asset's address, such as content/level.gasset or content/hero/scene.gasset#mesh/0 for one stored in an import's file, or its id, as list_assets shows them.
     pub asset: String,
     /// What to do with unsaved changes the call would lose; without it such a call fails with unsaved_changes.
     pub unsaved: Option<UnsavedChoice>,
+}
+
+/// Creates an empty asset of a creatable kind in the project, as the Asset Browser's New does, and answers its address and id; open_asset then opens it.
+#[derive(Deserialize, JsonSchema)]
+pub struct CreateAsset {
+    /// The kind of asset, such as Scene; an unknown kind answers the kinds that can be created.
+    pub kind: String,
+    /// The asset's name without an extension: letters, digits, spaces, - and _.
+    pub name: String,
+    /// The folder to create it in, such as content/rooms, made if it is missing; the content root without one.
+    pub folder: Option<String>,
+}
+
+/// Imports a source file, such as a .glb, .obj, .bvh or .png, into the project, as the Import… dialog does, and answers the assets it wrote.
+#[derive(Deserialize, JsonSchema)]
+pub struct ImportSource {
+    /// The source file; a relative path is read from the editor's working directory.
+    pub source: String,
+    /// Where the source is copied to in the project, such as assets/props/crate.glb, keeping its extension; assets/<file name> without one, or where it already is when it lies inside the project.
+    pub destination: Option<String>,
+    /// Changes to the importer's settings, as an object of the fields to change, such as {"scale": 0.5} for a .bvh; the others keep the values the project holds.
+    pub settings: Option<serde_json::Value>,
+    /// Changes to the settings of the asset an image source makes, such as {"compression": "Bc7", "max_size": "S512"}; the others keep the asset's current values.
+    pub asset_settings: Option<serde_json::Value>,
 }
 
 /// Closes an open document.
@@ -125,6 +157,17 @@ struct OpeningAsset {
 }
 
 #[derive(Component)]
+struct CreatingAsset {
+    kind: &'static str,
+    name: String,
+}
+
+#[derive(Component)]
+struct ImportingSource {
+    destination: String,
+}
+
+#[derive(Component)]
 struct ClosingDocument(Entity);
 
 #[derive(Component)]
@@ -150,6 +193,14 @@ struct AwaitingPose {
 pub(super) fn build(app: &mut App) {
     app.add_tool::<OpenProject, _>(McpTool::new("open_project"), open_project)
         .add_tool::<OpenAsset, _>(McpTool::new("open_asset").needs(Needs::Project), open_asset)
+        .add_tool::<CreateAsset, _>(
+            McpTool::new("create_asset").needs(Needs::Project),
+            create_asset,
+        )
+        .add_tool::<ImportSource, _>(
+            McpTool::new("import_source").needs(Needs::Project),
+            import_source,
+        )
         .add_tool::<CloseDocument, _>(McpTool::new("close_document"), close_document)
         .add_tool::<Select, _>(McpTool::new("select").needs(Needs::Scene), select)
         .add_tool::<Frame, _>(McpTool::new("frame").needs(Needs::Scene), frame)
@@ -168,6 +219,8 @@ pub(super) fn build(app: &mut App) {
                 answer_failed_saves,
                 answer_project_opens,
                 answer_asset_opens,
+                answer_asset_creations,
+                answer_imports,
                 answer_closes,
             ),
         );
@@ -265,9 +318,12 @@ fn answer_project_opens(
     }
 }
 
-fn find_asset<'a>(registry: &'a AssetRegistry, asset: &str) -> Result<&'a AssetEntry, ToolError> {
+pub(super) fn find_asset<'a>(
+    registry: &'a AssetRegistry,
+    asset: &str,
+) -> Result<&'a AssetEntry, ToolError> {
     registry
-        .id_for_address(asset)
+        .id_for_location(asset)
         .or_else(|| AssetId::from_simple_hex(asset).ok())
         .and_then(|id| registry.get(id))
         .ok_or_else(|| {
@@ -291,7 +347,7 @@ fn open_asset(
     state: Res<ProjectState>,
     registry: Res<AssetRegistry>,
     editors: Res<AssetEditorRegistry>,
-    documents: Query<(Entity, &EditorDocument)>,
+    documents: Query<(Entity, &mut EditorDocument)>,
     mut commands: ResMut<EditorCommands>,
     mut cmd: CommandQueue,
 ) {
@@ -323,22 +379,33 @@ fn open_asset(
         commands.0.push_back(EditorCommand::OpenAsset(asset.id));
         let document = documents
             .iter()
-            .find(|(_, document)| document.asset_type == kind);
-        if let Some((entity, _)) = document.filter(|(_, document)| {
-            document
+            .find(|(_, document)| document.asset_type == kind)
+            .map(|(entity, _)| entity);
+        if let Some(entity) = document
+            && let Some((_, mut shown)) = documents.get_entity(entity)
+        {
+            if shown
                 .current
                 .as_ref()
                 .is_some_and(|current| current.id == asset.id)
-        }) {
-            reply.ok(opened(&asset, entity));
-            continue;
+            {
+                reply.ok(opened(&asset, entity));
+                continue;
+            }
+            if shown
+                .failed
+                .as_ref()
+                .is_some_and(|failed| failed.id == asset.id)
+            {
+                shown.failed = None;
+            }
         }
         cmd.spawn((
             PendingCall::new(reply, "the asset to open"),
             OpeningAsset {
                 asset,
                 kind,
-                document: document.map(|(entity, _)| entity),
+                document,
             },
             Guarded::new(arguments.unsaved),
         ));
@@ -379,15 +446,273 @@ fn answer_asset_opens(
         }
         let shown = documents.iter().find(|(_, document)| {
             document.asset_type == opening.kind
-                && [&document.current, &document.pending]
-                    .into_iter()
-                    .flatten()
-                    .any(|asset| asset.id == opening.asset.id)
+                && document
+                    .current
+                    .as_ref()
+                    .is_some_and(|asset| asset.id == opening.asset.id)
         });
         if let Some((document, _)) = shown {
             pending.reply.ok(opened(&opening.asset, document));
             cmd.despawn(entity);
+            continue;
         }
+        let failed = documents.iter().find(|(_, document)| {
+            document.asset_type == opening.kind
+                && document
+                    .failed
+                    .as_ref()
+                    .is_some_and(|asset| asset.id == opening.asset.id)
+        });
+        if let Some((_, document)) = failed {
+            pending
+                .reply
+                .err(ToolError::new("open_failed", document.status.clone()));
+            cmd.despawn(entity);
+        }
+    }
+}
+
+fn create_asset(
+    mut calls: ToolCalls<CreateAsset>,
+    state: Res<ProjectState>,
+    editors: Res<AssetEditorRegistry>,
+    commands: Res<EditorCommands>,
+    mut cmd: CommandQueue,
+) {
+    for (arguments, reply) in calls.read() {
+        if project_opening(&state, &commands) {
+            reply.err(busy());
+            continue;
+        }
+        if state.project.is_none() {
+            continue;
+        }
+        let Some(kind) = editors
+            .creatable()
+            .map(|(kind, _)| kind)
+            .find(|kind| kind.eq_ignore_ascii_case(&arguments.kind))
+        else {
+            let kinds: Vec<&str> = editors.creatable().map(|(kind, _)| kind).collect();
+            reply.err(ToolError::new(
+                "unknown_kind",
+                format!(
+                    "No asset of kind `{}` can be created; the kinds that can are: {}.",
+                    arguments.kind,
+                    kinds.join(", ")
+                ),
+            ));
+            continue;
+        };
+        cmd.trigger(content::CreateAsset {
+            kind: kind.into(),
+            folder: arguments.folder.clone(),
+            name: arguments.name.clone(),
+            open: false,
+        });
+        cmd.spawn((
+            PendingCall::new(reply, "the asset to be created"),
+            CreatingAsset {
+                kind,
+                name: arguments.name.clone(),
+            },
+        ));
+    }
+}
+
+fn answer_asset_creations(
+    mut creations: EventReader<AssetCreation>,
+    waiting: Query<(Entity, &PendingCall, &CreatingAsset)>,
+    mut cmd: CommandQueue,
+) {
+    for creation in creations.read() {
+        let Some((entity, pending, creating)) = waiting.iter().find(|(_, _, creating)| {
+            creating.kind == creation.kind
+                && creation
+                    .address
+                    .ends_with(&format!("/{}.gasset", creating.name))
+        }) else {
+            continue;
+        };
+        match &creation.result {
+            Ok(id) => pending.reply.ok(format!(
+                "Created {} · {} · {}. Open it with open_asset.",
+                creation.address,
+                creating.kind,
+                id.simple_hex()
+            )),
+            Err(message) => pending.reply.err(ToolError::new(
+                "create_failed",
+                format!(
+                    "{message}. Give a name of letters, digits, spaces, - and _ that list_assets does not show in that folder, and a folder inside the content root."
+                ),
+            )),
+        }
+        cmd.despawn(entity);
+    }
+}
+
+fn import_source(
+    mut calls: ToolCalls<ImportSource>,
+    state: Res<ProjectState>,
+    commands: Res<EditorCommands>,
+    mut queue: ResMut<ImportQueue>,
+    types: Res<AppTypeRegistry>,
+    mut cmd: CommandQueue,
+) {
+    for (arguments, reply) in calls.read() {
+        if project_opening(&state, &commands) {
+            reply.err(busy());
+            continue;
+        }
+        let Some(root) = state.project.as_ref().map(|project| project.root.clone()) else {
+            continue;
+        };
+        let source = PathBuf::from(&arguments.source);
+        if !source.is_file() {
+            reply.err(ToolError::new(
+                "unknown_source",
+                format!(
+                    "No file at {}; give a path to a source file, absolute or from the editor's working directory.",
+                    source.display()
+                ),
+            ));
+            continue;
+        }
+        let mut rows = stage_sources(vec![source]);
+        match &arguments.destination {
+            Some(destination) => rows[0].destination = destination.clone(),
+            None => keep_project_sources_in_place(&mut rows, &root),
+        }
+        stage_row(&mut rows[0], &scan_content(&root));
+        validate_rows(&mut rows, &root);
+        if let RowState::Rejected(reason) = &rows[0].state {
+            reply.err(ToolError::new(
+                "import_refused",
+                format!(
+                    "{} cannot be imported to {}: {reason}. A destination is a file inside the project with the source's extension.",
+                    arguments.source, rows[0].destination
+                ),
+            ));
+            continue;
+        }
+        let (Some(Ok(staged)), Some(importer)) = (
+            &rows[0].staged,
+            importer_for(
+                &rows[0]
+                    .source
+                    .extension()
+                    .unwrap_or_default()
+                    .to_string_lossy(),
+            ),
+        ) else {
+            continue;
+        };
+        let types = types.read();
+        let settings = patched(
+            "settings",
+            arguments.settings.as_ref(),
+            Some(importer.clone_settings(staged.settings.as_ref())),
+            &types,
+        );
+        let asset_settings = patched(
+            "asset_settings",
+            arguments.asset_settings.as_ref(),
+            staged
+                .asset_settings
+                .as_deref()
+                .map(|value| importer.clone_settings(value)),
+            &types,
+        );
+        match (settings, asset_settings) {
+            (Ok(settings), Ok(asset_settings)) => {
+                rows[0].settings = settings;
+                rows[0].asset_settings = asset_settings;
+            }
+            (Err(reason), _) | (_, Err(reason)) => {
+                reply.err(ToolError::new(
+                    "invalid_arguments",
+                    format!("{}: {reason}", arguments.source),
+                ));
+                continue;
+            }
+        }
+        let destination = rows[0].destination.clone();
+        queue.enqueue(rows);
+        cmd.spawn((
+            PendingCall::new(reply, "the import to finish"),
+            ImportingSource { destination },
+        ));
+    }
+}
+
+fn patched(
+    argument: &str,
+    patch: Option<&serde_json::Value>,
+    current: Option<Box<dyn Reflect>>,
+    types: &TypeRegistry,
+) -> Result<Option<Box<dyn Reflect>>, String> {
+    let Some(patch) = patch else {
+        return Ok(None);
+    };
+    let Some(mut value) = current else {
+        return Err(format!(
+            "its importer has no {argument}; leave out {argument}"
+        ));
+    };
+    let shown = to_json(value.as_ref(), types);
+    let refused = |reason: String| {
+        format!(
+            "in {argument}, {reason}; the current {argument} are {shown}. Give an object of the fields to change."
+        )
+    };
+    let type_id = (value.as_ref() as &dyn std::any::Any).type_id();
+    let stored = json_to_value(patch, type_id, types).map_err(&refused)?;
+    let warnings = apply_value(value.as_mut(), &stored);
+    if let Some(warning) = warnings.first() {
+        return Err(refused(warning.to_string()));
+    }
+    Ok(Some(value))
+}
+
+fn answer_imports(
+    mut finished: EventReader<ImportFinished>,
+    waiting: Query<(Entity, &PendingCall, &ImportingSource)>,
+    mut cmd: CommandQueue,
+) {
+    for event in finished.read() {
+        let Some((entity, pending, _)) = waiting
+            .iter()
+            .find(|(_, _, importing)| importing.destination == event.destination)
+        else {
+            continue;
+        };
+        match &event.result {
+            Ok(imported) => {
+                let mut answer = format!(
+                    "Imported {}: {}, {}.",
+                    event.destination,
+                    counted(imported.assets.len(), "asset"),
+                    counted(imported.siblings.len(), "sibling file")
+                );
+                for asset in &imported.assets {
+                    answer.push_str(&format!(
+                        "\n{} · {} · {}",
+                        asset.location(),
+                        asset.kind,
+                        asset.id.simple_hex()
+                    ));
+                }
+                if !event.settings.is_empty() {
+                    answer.push_str(&format!("\n\n{}", event.settings.trim_end()));
+                }
+                pending.reply.ok(answer);
+            }
+            Err(reason) => pending.reply.err(ToolError::new(
+                "import_failed",
+                format!("{} was not imported: {reason}", event.destination),
+            )),
+        }
+        cmd.despawn(entity);
     }
 }
 

@@ -709,10 +709,7 @@ mod tests {
         resource::Resource,
         system::{executor::multi_thread::MultiThreadedExecutor, schedule::CompiledSchedule},
     };
-    use concerto_window::input::{
-        Input,
-        actions::{ActionFired, ActionLabel},
-    };
+    use concerto_window::input::{Input, actions::ActionFired};
     use concerto_window::plugin::Window;
 
     use super::*;
@@ -934,9 +931,7 @@ mod tests {
             self.world
                 .get_resource_mut::<EventChannel<ActionFired>>()
                 .unwrap()
-                .push_event(ActionFired {
-                    action: UIDismissPanel.intern(),
-                });
+                .push_event(ActionFired::new(UIDismissPanel));
             self.frame();
         }
     }
@@ -1025,7 +1020,7 @@ mod tests {
     }
 
     #[test]
-    fn an_srgba_color_round_trips_through_the_picker() {
+    fn a_color_round_trips_through_the_picker_in_its_own_space() {
         for color in [
             Color::srgba(0.2, 0.4, 0.6, 0.8),
             Color::srgba(1.0, 0.0, 0.5, 1.0),
@@ -1034,100 +1029,75 @@ mod tests {
             assert_near(round_trip(color), color);
             assert_eq!(UIColorPicker::new(color).color(), color);
         }
-    }
 
-    #[test]
-    fn an_hsla_color_round_trips_and_keeps_its_hue_without_saturation() {
-        for color in [
-            Color::hsl(200.0, 0.5, 0.4, 0.7),
-            Color::hsl(200.0, 0.0, 0.4, 1.0),
-        ] {
-            assert_near(round_trip(color), color);
-            assert_eq!(UIColorPicker::new(color).color(), color);
+        {
+            for color in [
+                Color::hsl(200.0, 0.5, 0.4, 0.7),
+                Color::hsl(200.0, 0.0, 0.4, 1.0),
+            ] {
+                assert_near(round_trip(color), color);
+                assert_eq!(UIColorPicker::new(color).color(), color);
+            }
+            for (color, black_or_white) in [
+                (
+                    Color::hsl(75.0, 0.3, 0.0, 1.0),
+                    Color::hsl(75.0, 0.0, 0.0, 1.0),
+                ),
+                (
+                    Color::hsl(310.0, 0.8, 1.0, 1.0),
+                    Color::hsl(310.0, 0.0, 1.0, 1.0),
+                ),
+            ] {
+                assert_near(round_trip(color), black_or_white);
+            }
         }
-        for (color, black_or_white) in [
-            (
-                Color::hsl(75.0, 0.3, 0.0, 1.0),
-                Color::hsl(75.0, 0.0, 0.0, 1.0),
-            ),
-            (
-                Color::hsl(310.0, 0.8, 1.0, 1.0),
-                Color::hsl(310.0, 0.0, 1.0, 1.0),
-            ),
-        ] {
-            assert_near(round_trip(color), black_or_white);
+
+        {
+            for color in [
+                Color::rgba(0.2, 0.4, 0.6, 1.0),
+                Color::rgba(3.0, 1.5, 0.3, 0.5),
+            ] {
+                assert_near(round_trip(color), color);
+                assert_eq!(UIColorPicker::new(color).color(), color);
+            }
+            assert_eq!(shown_of(Color::rgba(0.2, 0.4, 0.6, 1.0)).0.intensity, 1.0);
+            assert_eq!(shown_of(Color::rgba(3.0, 1.5, 0.3, 0.5)).0.intensity, 3.0);
+            assert_eq!(shown_of(Color::rgba(3.0, 1.5, 0.3, 0.5)).0.alpha, 0.5);
         }
     }
 
     #[test]
-    fn a_linear_color_round_trips_at_intensity_one_and_three() {
-        for color in [
-            Color::rgba(0.2, 0.4, 0.6, 1.0),
-            Color::rgba(3.0, 1.5, 0.3, 0.5),
-        ] {
-            assert_near(round_trip(color), color);
-            assert_eq!(UIColorPicker::new(color).color(), color);
-        }
-        assert_eq!(shown_of(Color::rgba(0.2, 0.4, 0.6, 1.0)).0.intensity, 1.0);
-        assert_eq!(shown_of(Color::rgba(3.0, 1.5, 0.3, 0.5)).0.intensity, 3.0);
-        assert_eq!(shown_of(Color::rgba(3.0, 1.5, 0.3, 0.5)).0.alpha, 0.5);
-    }
-
-    #[test]
-    fn intensity_three_survives_a_drag_that_lowers_the_value() {
-        let mut harness = Harness::new();
-        let picker = harness.picker(Color::rgba(3.0, 1.5, 0.3, 1.0));
-        let field = harness.field(picker, FieldKind::Intensity).unwrap();
-        assert_eq!(harness.text(field), "3");
-        let square = harness.part(picker, PartKind::Square);
-
-        harness.press(square, Vec2::new(1.0, 0.5));
-
-        let [r, g, b, a] = channels(harness.color(picker));
-        assert!(matches!(harness.color(picker), Color::LinearRgba(_)));
-        assert!(
-            (r.max(g).max(b) - 3.0 * srgb_to_linear(0.5)).abs() <= EPS,
-            "{r} {g} {b}"
-        );
-        assert_eq!(a, 1.0);
-        assert_eq!(harness.text(field), "3");
-        assert_eq!(harness.heard().len(), 1);
-    }
-
-    #[test]
-    fn hex_shows_rgb_at_full_alpha_and_rgba_below_it() {
+    fn hex_formats_rgb_or_rgba_and_parses_six_or_eight_digits() {
         assert_eq!(format_hex(Srgba::new(1.0, 0.5, 0.0, 1.0)), "#FF8000");
         assert_eq!(format_hex(Srgba::new(1.0, 0.5, 0.0, 0.5)), "#FF800080");
         assert_eq!(format_hex(Srgba::new(1.0, 0.5, 0.0, 0.999)), "#FF8000FF");
-    }
 
-    #[test]
-    fn hex_parses_six_and_eight_digits_with_an_optional_hash_in_any_case() {
-        let orange = Srgba::from_bytes(0xff, 0x80, 0x00, 0xff);
-        assert_eq!(parse_hex("#FF8000"), Some(orange));
-        assert_eq!(parse_hex("ff8000"), Some(orange));
-        assert_eq!(
-            parse_hex("#fF80a0"),
-            Some(Srgba::from_bytes(0xff, 0x80, 0xa0, 0xff))
-        );
-        assert_eq!(
-            parse_hex("Ff800080"),
-            Some(Srgba::from_bytes(0xff, 0x80, 0x00, 0x80))
-        );
-        assert_eq!(parse_hex("#ff8000").unwrap().a, 1.0);
-    }
+        {
+            let orange = Srgba::from_bytes(0xff, 0x80, 0x00, 0xff);
+            assert_eq!(parse_hex("#FF8000"), Some(orange));
+            assert_eq!(parse_hex("ff8000"), Some(orange));
+            assert_eq!(
+                parse_hex("#fF80a0"),
+                Some(Srgba::from_bytes(0xff, 0x80, 0xa0, 0xff))
+            );
+            assert_eq!(
+                parse_hex("Ff800080"),
+                Some(Srgba::from_bytes(0xff, 0x80, 0x00, 0x80))
+            );
+            assert_eq!(parse_hex("#ff8000").unwrap().a, 1.0);
+        }
 
-    #[test]
-    fn hex_rejects_other_lengths_and_non_hex_characters() {
-        for text in [
-            "#FFF", "FFFFF", "#FFFFFFF", "#GG0000", "+F0000", "#ff 000", "ééé", "", "#",
-        ] {
-            assert_eq!(parse_hex(text), None, "{text:?}");
+        {
+            for text in [
+                "#FFF", "FFFFF", "#FFFFFFF", "#GG0000", "+F0000", "#ff 000", "ééé", "", "#",
+            ] {
+                assert_eq!(parse_hex(text), None, "{text:?}");
+            }
         }
     }
 
     #[test]
-    fn a_six_digit_hex_entry_sets_alpha_to_one_and_keeps_the_intensity() {
+    fn a_hex_or_intensity_entry_commits_what_it_can_hold_and_restores_the_rest() {
         let mut harness = Harness::new();
         let picker = harness.picker(Color::rgba(3.0, 0.0, 0.0, 0.5));
         let hex = harness.field(picker, FieldKind::Hex).unwrap();
@@ -1143,129 +1113,104 @@ mod tests {
         assert!(harness.heard().is_empty());
         assert_eq!(harness.text(hex), "#00FF00");
         assert_near(harness.color(picker), Color::rgba(0.0, 3.0, 0.0, 1.0));
-    }
 
-    #[test]
-    fn a_hex_entry_commits_when_its_field_loses_focus() {
-        let mut harness = Harness::new();
-        let picker = harness.picker(Color::srgba(0.0, 0.0, 0.0, 1.0));
-        let hex = harness.field(picker, FieldKind::Hex).unwrap();
-        assert!(harness.field(picker, FieldKind::Intensity).is_none());
+        {
+            let mut harness = Harness::new();
+            let picker = harness.picker(Color::srgba(0.0, 0.0, 0.0, 1.0));
+            let hex = harness.field(picker, FieldKind::Hex).unwrap();
+            assert!(harness.field(picker, FieldKind::Intensity).is_none());
 
-        harness.type_into(hex, "#3366CC80");
-        harness.lose_focus(hex);
+            harness.type_into(hex, "#3366CC80");
+            harness.lose_focus(hex);
 
-        assert_heard(
-            harness.heard(),
-            &[Color::Srgba(Srgba::from_bytes(0x33, 0x66, 0xcc, 0x80))],
-        );
-    }
+            assert_heard(
+                harness.heard(),
+                &[Color::Srgba(Srgba::from_bytes(0x33, 0x66, 0xcc, 0x80))],
+            );
+        }
 
-    #[test]
-    fn intensity_entry_accepts_one_and_above_and_restores_anything_else() {
-        let mut harness = Harness::new();
-        let picker = harness.picker(Color::rgba(0.5, 0.25, 0.1, 1.0));
-        let field = harness.field(picker, FieldKind::Intensity).unwrap();
-        assert_eq!(harness.text(field), "1");
+        {
+            let mut harness = Harness::new();
+            let picker = harness.picker(Color::rgba(0.5, 0.25, 0.1, 1.0));
+            let field = harness.field(picker, FieldKind::Intensity).unwrap();
+            assert_eq!(harness.text(field), "1");
 
-        harness.submit(field, "2.5");
+            harness.submit(field, "2.5");
 
-        let bright = Color::rgba(1.25, 0.625, 0.25, 1.0);
-        assert_heard(harness.heard(), &[bright]);
-        assert_eq!(harness.text(field), "2.5");
+            let bright = Color::rgba(1.25, 0.625, 0.25, 1.0);
+            assert_heard(harness.heard(), &[bright]);
+            assert_eq!(harness.text(field), "2.5");
 
-        for text in ["0.5", "0", "NaN", "inf", "bright"] {
-            harness.submit(field, text);
+            for text in ["0.5", "0", "NaN", "inf", "bright"] {
+                harness.submit(field, text);
 
-            assert!(harness.heard().is_empty(), "{text:?}");
-            assert_eq!(harness.text(field), "2.5", "{text:?}");
-            assert_near(harness.color(picker), bright);
+                assert!(harness.heard().is_empty(), "{text:?}");
+                assert_eq!(harness.text(field), "2.5", "{text:?}");
+                assert_near(harness.color(picker), bright);
+            }
+        }
+
+        {
+            let mut harness = Harness::new();
+            let picker = harness.picker(Color::srgba(1.0, 0.0, 0.0, 1.0));
+            let hex = harness.field(picker, FieldKind::Hex).unwrap();
+            let square = harness.part(picker, PartKind::Square);
+            harness.type_into(hex, "#12");
+            harness.focus(hex);
+
+            harness.press(square, Vec2::new(0.0, 0.0));
+
+            assert_eq!(harness.text(hex), "#12");
+            harness.heard();
+            harness.lose_focus(hex);
+            assert_eq!(harness.text(hex), "#FFFFFF");
+            assert!(harness.heard().is_empty());
+            assert_eq!(harness.color(picker), Color::srgba(1.0, 1.0, 1.0, 1.0));
+        }
+
+        {
+            let mut harness = Harness::new();
+            let picker = harness.picker(Color::srgba(1.0, 0.0, 0.0, 1.0));
+            let hex = harness.field(picker, FieldKind::Hex).unwrap();
+            let square = harness.part(picker, PartKind::Square);
+            harness.focus(hex);
+            harness.submit(hex, "#00FF00");
+            assert_heard(harness.heard(), &[Color::srgba(0.0, 1.0, 0.0, 1.0)]);
+
+            harness.press(square, Vec2::new(0.5, 0.5));
+            harness.lose_focus(hex);
+
+            let pressed = Color::srgba(0.25, 0.5, 0.25, 1.0);
+            assert_heard(harness.heard(), &[pressed]);
+            assert_near(harness.color(picker), pressed);
+            assert_eq!(harness.text(hex), "#408040");
+        }
+
+        {
+            let mut harness = Harness::new();
+            let picker = harness.picker(Color::srgba(1.0, 0.0, 0.0, 1.0));
+            let hex = harness.field(picker, FieldKind::Hex).unwrap();
+            harness.type_into(hex, "#00");
+            **harness.world.get_resource_mut::<FocusedWidget>().unwrap() = Some(hex);
+
+            harness
+                .world
+                .get_resource_mut::<EventChannel<UITextInputCancelled>>()
+                .unwrap()
+                .push_event(UITextInputCancelled { entity: hex });
+            harness.frame();
+
+            assert_eq!(harness.text(hex), "#FF0000");
+            assert_eq!(
+                **harness.world.get_resource::<FocusedWidget>().unwrap(),
+                None
+            );
+            assert!(harness.heard().is_empty());
         }
     }
 
     #[test]
-    fn a_focused_field_keeps_its_text_while_a_drag_changes_the_color() {
-        let mut harness = Harness::new();
-        let picker = harness.picker(Color::srgba(1.0, 0.0, 0.0, 1.0));
-        let hex = harness.field(picker, FieldKind::Hex).unwrap();
-        let square = harness.part(picker, PartKind::Square);
-        harness.type_into(hex, "#12");
-        harness.focus(hex);
-
-        harness.press(square, Vec2::new(0.0, 0.0));
-
-        assert_eq!(harness.text(hex), "#12");
-        harness.heard();
-        harness.lose_focus(hex);
-        assert_eq!(harness.text(hex), "#FFFFFF");
-        assert!(harness.heard().is_empty());
-        assert_eq!(harness.color(picker), Color::srgba(1.0, 1.0, 1.0, 1.0));
-    }
-
-    #[test]
-    fn a_press_after_a_hex_entry_is_kept_when_the_field_loses_focus() {
-        let mut harness = Harness::new();
-        let picker = harness.picker(Color::srgba(1.0, 0.0, 0.0, 1.0));
-        let hex = harness.field(picker, FieldKind::Hex).unwrap();
-        let square = harness.part(picker, PartKind::Square);
-        harness.focus(hex);
-        harness.submit(hex, "#00FF00");
-        assert_heard(harness.heard(), &[Color::srgba(0.0, 1.0, 0.0, 1.0)]);
-
-        harness.press(square, Vec2::new(0.5, 0.5));
-        harness.lose_focus(hex);
-
-        let pressed = Color::srgba(0.25, 0.5, 0.25, 1.0);
-        assert_heard(harness.heard(), &[pressed]);
-        assert_near(harness.color(picker), pressed);
-        assert_eq!(harness.text(hex), "#408040");
-    }
-
-    #[test]
-    fn a_cancelled_entry_restores_its_field_and_drops_focus() {
-        let mut harness = Harness::new();
-        let picker = harness.picker(Color::srgba(1.0, 0.0, 0.0, 1.0));
-        let hex = harness.field(picker, FieldKind::Hex).unwrap();
-        harness.type_into(hex, "#00");
-        **harness.world.get_resource_mut::<FocusedWidget>().unwrap() = Some(hex);
-
-        harness
-            .world
-            .get_resource_mut::<EventChannel<UITextInputCancelled>>()
-            .unwrap()
-            .push_event(UITextInputCancelled { entity: hex });
-        harness.frame();
-
-        assert_eq!(harness.text(hex), "#FF0000");
-        assert_eq!(
-            **harness.world.get_resource::<FocusedWidget>().unwrap(),
-            None
-        );
-        assert!(harness.heard().is_empty());
-    }
-
-    #[test]
-    fn a_field_whose_picker_is_gone_is_ignored() {
-        let mut harness = Harness::new();
-        let picker = harness.picker(Color::srgba(1.0, 0.0, 0.0, 1.0));
-        let field = harness.world.spawn((
-            UITextInput::new(""),
-            ColorPickerField {
-                picker,
-                kind: FieldKind::Hex,
-                displayed: String::new(),
-            },
-        ));
-        harness.world.despawn(picker);
-
-        harness.submit(field, "#00FF00");
-
-        assert!(harness.heard().is_empty());
-        assert_eq!(harness.text(field), "#00FF00");
-    }
-
-    #[test]
-    fn pressing_and_dragging_the_parts_sets_saturation_value_hue_and_alpha() {
+    fn a_press_or_drag_on_a_part_sets_the_color_and_sends_one_signal_per_change() {
         let red = |saturation: f32, value: f32| {
             Color::srgba(
                 value,
@@ -1336,95 +1281,65 @@ mod tests {
             (100.0 - MARKER / 2.0, -MARKER / 2.0)
         );
         assert_eq!(px(harness.inset(alpha_thumb)), (148.0, -THUMB_OVERHANG));
-    }
 
-    #[test]
-    fn the_marker_is_a_white_ring_inside_a_dark_one() {
-        use concerto_ecs::entity::hierarchy::Children;
+        {
+            let mut harness = Harness::new();
+            let picker = harness.picker(Color::srgba(1.0, 0.0, 0.0, 1.0));
+            let square = harness.part(picker, PartKind::Square);
+            harness.press(square, Vec2::new(0.5, 0.5));
+            assert_eq!(harness.heard().len(), 1);
 
-        let mut harness = Harness::new();
-        let picker = harness.picker(Color::srgba(1.0, 1.0, 1.0, 1.0));
-        let marker = harness.part(picker, PartKind::Marker);
-        let outline = harness
-            .world
-            .get_component_for_entity::<UIMaterial>(marker)
-            .unwrap();
-        assert_eq!(outline.border_width, 1.0);
-        assert!(
-            outline.border_color.luminance() < 0.05,
-            "{:?}",
-            outline.border_color
-        );
-        let rings: Vec<Entity> = harness
-            .world
-            .get_component_for_entity::<Children>(marker)
-            .unwrap()
-            .iter()
-            .copied()
-            .collect();
-        assert_eq!(rings.len(), 1);
-        let ring = rings[0];
-        let white = harness
-            .world
-            .get_component_for_entity::<UIMaterial>(ring)
-            .unwrap();
-        assert_eq!(white.border_color, LinearRgba::WHITE);
-        assert_eq!(white.border_width, 2.0);
-        let layout = |entity| {
-            harness
-                .world
-                .get_component_for_entity::<UILayout>(entity)
-                .unwrap()
-                .rect
-        };
-        let (outer, inner) = (layout(marker), layout(ring));
-        assert_eq!(inner.min, outer.min + Vec2::ONE);
-        assert_eq!(inner.size, outer.size - Vec2::splat(2.0));
-    }
+            for _ in 0..3 {
+                harness.drag(square, Vec2::new(0.5, 0.5));
+            }
 
-    #[test]
-    fn a_still_picker_writes_nothing() {
-        use crate::testing::Watch;
+            assert!(harness.heard().is_empty());
 
-        let mut harness = Harness::new();
-        harness.picker(Color::rgba(3.0, 1.5, 0.3, 0.5));
-        for mut watch in [
-            Watch::new::<UITextInput, _>(&mut harness.world, sync_color_picker_parts),
-            Watch::new::<ColorPickerField, _>(&mut harness.world, sync_color_picker_parts),
-            Watch::new::<UINode, _>(&mut harness.world, sync_color_picker_parts),
-            Watch::new::<UIMaterial, _>(&mut harness.world, sync_color_picker_parts),
-        ] {
-            watch.run(&mut harness.world);
-            assert_eq!(
-                [watch.run(&mut harness.world), watch.run(&mut harness.world)],
-                [0, 0]
+            let grey = harness.picker(Color::srgba(0.5, 0.5, 0.5, 1.0));
+            let hue = harness.hue_strip(grey);
+            let hue_thumb = harness.part(grey, PartKind::HueThumb);
+
+            harness.drag(hue, Vec2::new(0.25, 0.5));
+
+            assert!(harness.heard().is_empty());
+            assert_eq!(px(harness.inset(hue_thumb)), (48.0, -THUMB_OVERHANG));
+            assert_eq!(harness.color(grey), Color::srgba(0.5, 0.5, 0.5, 1.0));
+        }
+
+        {
+            let mut harness = Harness::new();
+            let picker = harness.picker(Color::rgba(3.0, 1.5, 0.3, 1.0));
+            let field = harness.field(picker, FieldKind::Intensity).unwrap();
+            assert_eq!(harness.text(field), "3");
+            let square = harness.part(picker, PartKind::Square);
+
+            harness.press(square, Vec2::new(1.0, 0.5));
+
+            let [r, g, b, a] = channels(harness.color(picker));
+            assert!(matches!(harness.color(picker), Color::LinearRgba(_)));
+            assert!(
+                (r.max(g).max(b) - 3.0 * srgb_to_linear(0.5)).abs() <= EPS,
+                "{r} {g} {b}"
             );
-        }
-    }
-
-    #[test]
-    fn a_drag_that_leaves_the_color_unchanged_sends_nothing() {
-        let mut harness = Harness::new();
-        let picker = harness.picker(Color::srgba(1.0, 0.0, 0.0, 1.0));
-        let square = harness.part(picker, PartKind::Square);
-        harness.press(square, Vec2::new(0.5, 0.5));
-        assert_eq!(harness.heard().len(), 1);
-
-        for _ in 0..3 {
-            harness.drag(square, Vec2::new(0.5, 0.5));
+            assert_eq!(a, 1.0);
+            assert_eq!(harness.text(field), "3");
+            assert_eq!(harness.heard().len(), 1);
         }
 
-        assert!(harness.heard().is_empty());
+        {
+            let mut harness = Harness::new();
+            let picker = harness.picker(Color::hsl(200.0, 0.5, 0.5, 1.0));
+            let square = harness.part(picker, PartKind::Square);
 
-        let grey = harness.picker(Color::srgba(0.5, 0.5, 0.5, 1.0));
-        let hue = harness.hue_strip(grey);
-        let hue_thumb = harness.part(grey, PartKind::HueThumb);
+            harness.press(square, Vec2::new(0.0, 0.5));
 
-        harness.drag(hue, Vec2::new(0.25, 0.5));
-
-        assert!(harness.heard().is_empty());
-        assert_eq!(px(harness.inset(hue_thumb)), (48.0, -THUMB_OVERHANG));
-        assert_eq!(harness.color(grey), Color::srgba(0.5, 0.5, 0.5, 1.0));
+            let heard = harness.heard();
+            assert_eq!(heard.len(), 1);
+            let Color::Hsla(Hsla { h, s, .. }) = heard[0] else {
+                panic!("{:?} is not HSL", heard[0]);
+            };
+            assert_eq!((h, s), (200.0, 0.0));
+        }
     }
 
     fn popup_with_picker(harness: &mut Harness, color: Color) -> (Entity, Entity) {
@@ -1449,7 +1364,7 @@ mod tests {
     }
 
     #[test]
-    fn escape_restores_the_color_the_picker_opened_with() {
+    fn escape_restores_the_opening_color_and_an_outside_press_keeps_the_picked_one() {
         let original = Color::rgba(0.2, 0.4, 0.6, 1.0);
         let mut harness = Harness::new();
         let (popup, picker) = popup_with_picker(&mut harness, original);
@@ -1462,51 +1377,33 @@ mod tests {
         assert!(!is_open(&harness, popup));
         assert_eq!(harness.heard(), [original]);
         assert_eq!(harness.color(picker), original);
-    }
 
-    #[test]
-    fn escape_on_an_untouched_picker_sends_nothing() {
-        let mut harness = Harness::new();
-        let (popup, _) = popup_with_picker(&mut harness, Color::rgba(0.2, 0.4, 0.6, 1.0));
+        {
+            let mut harness = Harness::new();
+            let (popup, _) = popup_with_picker(&mut harness, Color::rgba(0.2, 0.4, 0.6, 1.0));
 
-        harness.press_escape();
+            harness.press_escape();
 
-        assert!(!is_open(&harness, popup));
-        assert!(harness.heard().is_empty());
-    }
+            assert!(!is_open(&harness, popup));
+            assert!(harness.heard().is_empty());
+        }
 
-    #[test]
-    fn a_press_outside_the_popup_keeps_the_color() {
-        let mut harness = Harness::new();
-        let (popup, picker) = popup_with_picker(&mut harness, Color::rgba(0.2, 0.4, 0.6, 1.0));
-        let square = harness.part(picker, PartKind::Square);
-        harness.press(square, Vec2::new(0.9, 0.1));
-        let dragged = harness.color(picker);
-        harness.heard();
+        {
+            let mut harness = Harness::new();
+            let (popup, picker) = popup_with_picker(&mut harness, Color::rgba(0.2, 0.4, 0.6, 1.0));
+            let square = harness.part(picker, PartKind::Square);
+            harness.press(square, Vec2::new(0.9, 0.1));
+            let dragged = harness.color(picker);
+            harness.heard();
 
-        let input = harness.world.get_resource_mut::<Input>().unwrap();
-        input.update_mouse_position(790.0, 590.0);
-        input.update_mouse_button(MouseButton::Left, true);
-        harness.frame();
+            let input = harness.world.get_resource_mut::<Input>().unwrap();
+            input.update_mouse_position(790.0, 590.0);
+            input.update_mouse_button(MouseButton::Left, true);
+            harness.frame();
 
-        assert!(!is_open(&harness, popup));
-        assert!(harness.heard().is_empty());
-        assert_eq!(harness.color(picker), dragged);
-    }
-
-    #[test]
-    fn an_hsla_color_keeps_its_hue_through_a_drag_to_grey() {
-        let mut harness = Harness::new();
-        let picker = harness.picker(Color::hsl(200.0, 0.5, 0.5, 1.0));
-        let square = harness.part(picker, PartKind::Square);
-
-        harness.press(square, Vec2::new(0.0, 0.5));
-
-        let heard = harness.heard();
-        assert_eq!(heard.len(), 1);
-        let Color::Hsla(Hsla { h, s, .. }) = heard[0] else {
-            panic!("{:?} is not HSL", heard[0]);
-        };
-        assert_eq!((h, s), (200.0, 0.0));
+            assert!(!is_open(&harness, popup));
+            assert!(harness.heard().is_empty());
+            assert_eq!(harness.color(picker), dragged);
+        }
     }
 }

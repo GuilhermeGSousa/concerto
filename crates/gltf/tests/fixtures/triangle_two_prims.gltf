@@ -6,13 +6,22 @@
   "meshes": [{
     "primitives": [
       { "attributes": { "POSITION": 0 }, "indices": 1, "material": 0 },
-      { "attributes": { "POSITION": 0 }, "indices": 1, "material": 0 }
+      { "attributes": { "POSITION": 0 }, "indices": 1, "material": 1 }
     ]
   }],
-  "materials": [{
-    "name": "Red",
-    "pbrMetallicRoughness": { "baseColorFactor": [1.0, 0.0, 0.0, 1.0] }
-  }],
+  "materials": [
+    {
+      "name": "Glass",
+      "pbrMetallicRoughness": { "baseColorFactor": [1.0, 0.0, 0.0, 0.5] },
+      "alphaMode": "BLEND"
+    },
+    {
+      "name": "Leaves",
+      "pbrMetallicRoughness": { "baseColorFactor": [0.0, 1.0, 0.0, 1.0] },
+      "alphaMode": "MASK",
+      "alphaCutoff": 0.3
+    }
+  ],
   "accessors": [
     { "bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3", "max": [1.0, 1.0, 0.0], "min": [0.0, 0.0, 0.0] },
     { "bufferView": 1, "componentType": 5123, "count": 3, "type": "SCALAR" }

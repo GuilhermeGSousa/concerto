@@ -12,10 +12,18 @@ use syn::{parse_macro_input, Data, DeriveInput, Fields};
 pub fn asset_id_bytes(input: TokenStream) -> TokenStream {
     let path = parse_macro_input!(input as syn::LitStr);
     match read_asset_id(&path) {
-        Ok(bytes) => quote!({
+        Ok(AssetIdLookup::Found(bytes)) => quote!({
             // Keep the configured root visible to rustc's environment tracking.
             const _: &str = env!("CONCERTO_ASSET_ROOT");
             [#(#bytes),*]
+        })
+        .into(),
+        Ok(AssetIdLookup::Missing(message)) => quote_spanned!(path.span()=> {
+            const _: &str = env!("CONCERTO_ASSET_ROOT");
+            #[deprecated(note = #message)]
+            const fn missing_asset() {}
+            const _: () = missing_asset();
+            [0u8; 16]
         })
         .into(),
         Err(message) => syn::Error::new(path.span(), message)
@@ -24,7 +32,12 @@ pub fn asset_id_bytes(input: TokenStream) -> TokenStream {
     }
 }
 
-fn read_asset_id(literal: &syn::LitStr) -> Result<[u8; 16], String> {
+enum AssetIdLookup {
+    Found([u8; 16]),
+    Missing(String),
+}
+
+fn read_asset_id(literal: &syn::LitStr) -> Result<AssetIdLookup, String> {
     use std::path::Path;
 
     let tracking_root = std::env::var_os("CONCERTO_ASSET_ROOT").ok_or_else(|| {
@@ -38,30 +51,113 @@ fn read_asset_id(literal: &syn::LitStr) -> Result<[u8; 16], String> {
         return Err("asset_id! expects a path relative to the calling package".into());
     }
     let path = Path::new(&manifest).join(relative);
-    let canonical = path
-        .canonicalize()
-        .map_err(|error| format!("asset_id!: cannot open '{}': {error}", path.display()))?;
-    if !canonical.starts_with(Path::new(&tracking_root)) {
+    let mut found = existing_file(&path)?.map(|canonical| AssetFile {
+        path: path.clone(),
+        canonical,
+        embedded_as: None,
+    });
+    for (at, _) in value.match_indices('#') {
+        if found.is_some() {
+            break;
+        }
+        let file = Path::new(&manifest).join(&value[..at]);
+        found = existing_file(&file)?
+            .filter(|canonical| canonical.is_file())
+            .map(|canonical| AssetFile {
+                path: file,
+                canonical,
+                embedded_as: Some(&value[at + 1..]),
+            });
+    }
+    let Some(file) = found else {
+        return Ok(AssetIdLookup::Missing(format!(
+            "asset_id!: no asset at '{}'; using a nil id",
+            path.display()
+        )));
+    };
+    if !file.canonical.starts_with(Path::new(&tracking_root)) {
         return Err(format!(
             "asset_id!: '{}' is outside the directory registered by asset_build::track_assets",
-            path.display()
+            file.path.display()
         ));
     }
-    concerto_asset_format::read_content_asset_header(&canonical)
-        .map(|header| header.asset_id.to_bytes())
-        .map_err(|error| format!("asset_id!: {error:#}"))
+    let header = concerto_asset_format::read_content_asset_header(&file.canonical)
+        .map_err(|error| format!("asset_id!: {error:#}"))?;
+    let Some(name) = file.embedded_as else {
+        return Ok(AssetIdLookup::Found(header.asset_id.to_bytes()));
+    };
+    match header.embedded.iter().find(|asset| asset.name() == name) {
+        Some(asset) => Ok(AssetIdLookup::Found(asset.asset_id.to_bytes())),
+        None => Err(format!(
+            "asset_id!: '{}' holds no embedded asset named '{name}'; it holds [{}]",
+            file.path.display(),
+            header
+                .embedded
+                .iter()
+                .map(|asset| asset.name())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )),
+    }
 }
 
-#[proc_macro_derive(Asset)]
+struct AssetFile<'a> {
+    path: std::path::PathBuf,
+    canonical: std::path::PathBuf,
+    embedded_as: Option<&'a str>,
+}
+
+fn existing_file(path: &std::path::Path) -> Result<Option<std::path::PathBuf>, String> {
+    match path.canonicalize() {
+        Ok(canonical) => Ok(Some(canonical)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(format!(
+            "asset_id!: cannot open '{}': {error}",
+            path.display()
+        )),
+    }
+}
+
+#[proc_macro_derive(Asset, attributes(asset))]
 pub fn asset(input: TokenStream) -> TokenStream {
     let ast = syn::parse(input).unwrap();
     impl_asset(&ast)
 }
 
+fn asset_version(ast: &syn::DeriveInput) -> syn::Result<Option<u32>> {
+    let mut version = None;
+    for attr in ast
+        .attrs
+        .iter()
+        .filter(|attr| attr.path().is_ident("asset"))
+    {
+        attr.parse_nested_meta(|meta| {
+            let expected = || meta.error("expected #[asset(version = …)] with an integer literal");
+            if !meta.path.is_ident("version") {
+                return Err(expected());
+            }
+            match meta.value().and_then(|value| value.parse::<syn::Lit>()) {
+                Ok(syn::Lit::Int(int)) => {
+                    version = Some(int.base10_parse::<u32>()?);
+                    Ok(())
+                }
+                _ => Err(expected()),
+            }
+        })?;
+    }
+    Ok(version)
+}
+
 fn impl_asset(ast: &syn::DeriveInput) -> TokenStream {
     let name = &ast.ident;
+    let version = match asset_version(ast) {
+        Ok(version) => version.map(|version| quote! { const FORMAT_VERSION: u32 = #version; }),
+        Err(error) => return error.to_compile_error().into(),
+    };
     let gen = quote! {
         impl Asset for #name {
+            #version
+
             fn name() -> &'static str {
                 stringify!(#name)
             }

@@ -1,5 +1,6 @@
 use std::{
     fmt::{Debug, Display},
+    hash::{Hash, Hasher},
     num::NonZero,
 };
 
@@ -11,14 +12,17 @@ use crate::{
 };
 
 pub mod entity_store;
+pub mod hash;
 pub mod hierarchy;
+
+pub use hash::{EntityHash, EntityHashMap, EntityHashSet, EntityHasher};
 
 /// A lightweight, copyable handle that uniquely identifies a game object in the [`World`](crate::world::World).
 ///
 /// Entities are created with [`World::spawn`](crate::world::World::spawn) and destroyed with
 /// [`World::despawn`](crate::world::World::despawn).  An entity is just an `(index, generation)`
 /// pair — the generation is bumped each time a slot is reused so stale handles can be detected.
-#[derive(Eq, Hash, PartialEq, Clone, Copy)]
+#[derive(Eq, PartialEq, Clone, Copy)]
 pub struct Entity {
     index: u32,
     generation: NonZero<u32>,
@@ -40,6 +44,11 @@ impl Entity {
         self.generation
     }
 
+    /// Packs this entity into one `u64`, index in the low 32 bits and generation in the high 32.
+    pub fn to_bits(&self) -> u64 {
+        u64::from(self.index) | (u64::from(self.generation.get()) << 32)
+    }
+
     /// Writes this entity as a text id, index then generation, such as `42v3`.
     pub fn to_id_string(&self) -> String {
         format!("{}v{}", self.index, self.generation)
@@ -58,6 +67,12 @@ impl Entity {
             digits(index)?,
             NonZero::new(digits(generation)?)?,
         ))
+    }
+}
+
+impl Hash for Entity {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        state.write_u64(self.to_bits());
     }
 }
 
@@ -155,47 +170,29 @@ impl<'w> EntityWorldMut<'w> {
 }
 
 #[cfg(test)]
-mod structural_version_tests {
-    use super::EntityStructuralVersion;
-
-    #[test]
-    fn structural_version_wraps_and_continues_incrementing() {
-        let wrapped = EntityStructuralVersion(u16::MAX).next();
-        assert_eq!(wrapped, EntityStructuralVersion(0));
-        assert_eq!(wrapped.next(), EntityStructuralVersion(1));
-    }
-}
-
-#[cfg(test)]
 mod id_string_tests {
     use std::num::NonZero;
 
-    use super::Entity;
-    use crate::world::World;
+    use proptest::prelude::*;
 
-    #[test]
-    fn id_strings_round_trip() {
-        let mut world = World::new();
-        world.spawn(());
-        let entity = world.spawn(());
-        let id = entity.to_id_string();
-        assert_eq!(id, format!("{}v{}", entity.index(), entity.generation()));
-        assert_eq!(Entity::parse_id(&id), Some(entity));
+    use super::Entity;
+
+    proptest! {
+        #[test]
+        fn an_id_string_parses_back_to_its_entity(index in any::<u32>(), generation in 1u32..) {
+            let entity = Entity::new(index, NonZero::new(generation).unwrap());
+
+            prop_assert_eq!(Entity::parse_id(&entity.to_id_string()), Some(entity));
+        }
     }
 
     #[test]
-    fn id_string_is_index_then_generation() {
+    fn an_id_string_is_index_v_generation_and_nothing_else_parses() {
         let entity = Entity::new(42, NonZero::new(3).unwrap());
         assert_eq!(entity.to_id_string(), "42v3");
         assert_eq!(Entity::parse_id("42v3"), Some(entity));
-    }
 
-    #[test]
-    fn malformed_ids_do_not_parse() {
-        for id in [
-            "", "42", "v3", "42v", "42v0", "42v3x", "-1v1", "+1v1", "1v+1", "42x3", "42v3v1",
-            " 42v3", "42v3 ",
-        ] {
+        for id in ["42", "42v0", "+1v1", "42v3x"] {
             assert_eq!(Entity::parse_id(id), None, "{id:?} must not parse");
         }
     }

@@ -41,7 +41,7 @@ use concerto::{
         widgets::{UITabBody, UITabChanged, UITabStrip, select_tab},
     },
     window::{
-        input::MouseButton,
+        input::{GamepadButton, GamepadStick, Input, MouseButton},
         plugin::{Window, WindowCommand},
     },
 };
@@ -52,6 +52,9 @@ struct Diagnostics;
 
 #[derive(Component)]
 struct ContextMenu;
+
+#[derive(Component)]
+struct GamepadReadout;
 
 #[derive(Component)]
 struct ShowcaseTabs;
@@ -66,6 +69,8 @@ const STRESS_LABELS: usize = 300;
 const STRESS_TICK: f32 = 0.1;
 const DIAGNOSTICS_REFRESH: f32 = 0.25;
 const DIAGNOSTICS_WIDTH: f32 = 1040.0;
+const GAMEPAD_WIDTH: f32 = 206.0;
+const GAMEPAD_LINES: f32 = 10.0;
 
 #[derive(Resource, Default)]
 struct StressTicker {
@@ -394,6 +399,20 @@ fn spawn_showcase(mut cmd: CommandQueue, theme: Res<UITheme>, mut window: ResMut
             .gap(8.0)
             .padding(12.0),
     )
+    .add_child(section_title(theme, "GAMEPADS"))
+    .add_child((
+        theme
+            .label(gamepad_readout(&Input::new()))
+            .mono()
+            .font_size(11.0)
+            .size(
+                UIValue::Px(GAMEPAD_WIDTH),
+                UIValue::Px(theme.line_height(11.0) * GAMEPAD_LINES),
+            )
+            .fixed()
+            .clipped(),
+        GamepadReadout,
+    ))
     .add_child_with(
         (
             theme.canvas().grow().column().gap(0.0),
@@ -805,13 +824,61 @@ fn update_diagnostics(
     }
 }
 
+fn gamepad_readout(input: &Input) -> String {
+    let pads: Vec<String> = input
+        .gamepads()
+        .map(|pad| {
+            let left = pad.stick(GamepadStick::Left);
+            let right = pad.stick(GamepadStick::Right);
+            let held: Vec<String> = GamepadButton::ALL
+                .into_iter()
+                .filter(|&button| pad.is_held(button))
+                .map(|button| format!("{button:?}"))
+                .collect();
+            let held = if held.is_empty() {
+                String::from("none")
+            } else {
+                held.join(" ")
+            };
+            format!(
+                "{}\nL {:+.2} {:+.2}  R {:+.2} {:+.2}\nLT {:.2}  RT {:.2}\nheld {}",
+                pad.name(),
+                left.x,
+                left.y,
+                right.x,
+                right.y,
+                pad.button_value(GamepadButton::LeftTrigger),
+                pad.button_value(GamepadButton::RightTrigger),
+                held,
+            )
+        })
+        .collect();
+    if pads.is_empty() {
+        String::from("No gamepad connected")
+    } else {
+        pads.join("\n\n")
+    }
+}
+
+fn update_gamepads(input: Res<Input>, text: Query<&mut UIText, With<GamepadReadout>>) {
+    let value = gamepad_readout(&input);
+    for mut text in text.iter() {
+        if text.text != value {
+            text.text = value.clone();
+        }
+    }
+}
+
 fn game(app: &mut App) {
     app.register_plugin(DefaultPlugins)
         .insert_resource(StressTicker::default())
         .insert_resource(DiagnosticsTimer::default())
         .insert_resource(PickedColor(Color::rgba(2.0, 1.0, 0.25, 1.0)))
         .add_system(Startup, spawn_showcase)
-        .add_system(Update, (tick_stress_labels, update_diagnostics));
+        .add_system(
+            Update,
+            (tick_stress_labels, update_diagnostics, update_gamepads),
+        );
 }
 
 fn main() {

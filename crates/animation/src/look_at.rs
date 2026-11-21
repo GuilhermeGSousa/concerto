@@ -1,0 +1,102 @@
+use glam::{Quat, Vec3};
+
+const MIN_PERPENDICULAR_SQUARED: f32 = 1e-8;
+
+/// The direction a bone looks along and its up, in the bone's own space; orthonormal.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LookFrame {
+    forward: Vec3,
+    up: Vec3,
+}
+
+impl LookFrame {
+    /// `forward` normalized and `up` made perpendicular to it; `None` when either is zero or not finite, or they are parallel.
+    pub fn new(forward: Vec3, up: Vec3) -> Option<LookFrame> {
+        let forward = forward.try_normalize()?;
+        let up = up.try_normalize()?;
+        let perpendicular = up - forward * up.dot(forward);
+        if perpendicular.length_squared() <= MIN_PERPENDICULAR_SQUARED {
+            return None;
+        }
+        Some(LookFrame {
+            forward,
+            up: perpendicular.try_normalize()?,
+        })
+    }
+
+    pub fn forward(&self) -> Vec3 {
+        self.forward
+    }
+
+    pub fn up(&self) -> Vec3 {
+        self.up
+    }
+
+    /// `up × forward`: the axis a positive yaw turns `forward` toward.
+    pub fn side(&self) -> Vec3 {
+        self.up.cross(self.forward)
+    }
+}
+
+/// A turn of a `LookFrame`, in radians: yaw about its up toward its side, then pitch toward its up.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct YawPitch {
+    pub yaw: f32,
+    pub pitch: f32,
+}
+
+/// The yaw and pitch that turn `frame`'s forward onto `direction`, both in the frame's space; zero for a zero direction.
+pub fn yaw_pitch_to(frame: &LookFrame, direction: Vec3) -> YawPitch {
+    let Some(t) = direction.try_normalize() else {
+        return YawPitch::default();
+    };
+    let along = t.dot(frame.forward());
+    let across = t.dot(frame.side());
+    let rise = t.dot(frame.up());
+    YawPitch {
+        yaw: across.atan2(along),
+        pitch: rise.atan2((along * along + across * across).sqrt()),
+    }
+}
+
+/// The rotation, in the frame's space, that turns its forward by `angles`.
+pub fn look_rotation(frame: &LookFrame, angles: YawPitch) -> Quat {
+    Quat::from_axis_angle(frame.up(), angles.yaw)
+        * Quat::from_axis_angle(frame.side(), -angles.pitch)
+}
+
+#[cfg(test)]
+mod tests {
+    use glam::Vec3;
+    use proptest::prelude::*;
+
+    use super::{LookFrame, look_rotation, yaw_pitch_to};
+
+    fn any_vec3() -> impl Strategy<Value = Vec3> {
+        prop::array::uniform3(-2.0f32..2.0).prop_map(Vec3::from_array)
+    }
+
+    proptest! {
+        #[test]
+        fn a_frame_is_orthonormal_and_its_yaw_and_pitch_turn_forward_onto_the_direction(
+            forward in any_vec3(),
+            up in any_vec3(),
+            direction in any_vec3().prop_filter("not zero", |direction| direction.length() > 1e-3),
+        ) {
+            let Some(frame) = LookFrame::new(forward, up) else {
+                return Ok(());
+            };
+
+            prop_assert!(frame.forward().distance(forward.normalize()) < 1e-5);
+            prop_assert!((frame.up().length() - 1.0).abs() < 1e-5);
+            prop_assert!(frame.up().dot(frame.forward()).abs() < 1e-4);
+            prop_assert!(frame.up().dot(forward.cross(up).normalize()).abs() < 1e-4);
+            prop_assert!(frame.up().dot(up) > 0.0);
+            let turned = look_rotation(&frame, yaw_pitch_to(&frame, direction)) * frame.forward();
+            prop_assert!(
+                turned.distance(direction.normalize()) < 1e-4,
+                "{direction}: turned {turned}"
+            );
+        }
+    }
+}

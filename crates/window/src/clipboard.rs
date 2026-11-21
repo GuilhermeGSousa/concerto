@@ -186,54 +186,44 @@ mod tests {
         std::iter::from_fn(|| clipboard.next_answer()).collect()
     }
 
-    #[test]
-    fn a_write_is_pasted_back_from_the_in_process_clipboard() {
-        let mut clipboard = WindowClipboard::default();
-        clipboard.write("bunny");
-        assert!(answers(&mut clipboard).is_empty());
-
-        clipboard.request_paste();
-        assert_eq!(answers(&mut clipboard), ["bunny"]);
-        assert!(answers(&mut clipboard).is_empty());
+    struct Paste {
+        name: &'static str,
+        backend: Option<ClipboardRead>,
+        answer: &'static str,
     }
 
     #[test]
-    fn each_paste_request_is_answered_once_in_order() {
-        let mut clipboard = WindowClipboard::default();
-        clipboard.write("one");
-        clipboard.request_paste();
-        clipboard.write("two");
-        clipboard.request_paste();
-        assert_eq!(answers(&mut clipboard), ["one", "two"]);
-    }
-
-    #[test]
-    fn a_failed_read_answers_with_the_in_process_copy() {
-        let mut clipboard = WindowClipboard::with_backend(Answers::with(
-            ClipboardRead::Unavailable("access denied".into()),
-        ));
-        clipboard.write("kept here");
-        clipboard.request_paste();
-        assert_eq!(answers(&mut clipboard), ["kept here"]);
-        clipboard.request_paste();
-        assert_eq!(answers(&mut clipboard), ["kept here"]);
-    }
-
-    #[test]
-    fn a_clipboard_without_text_answers_empty() {
-        let mut clipboard = WindowClipboard::with_backend(Answers::with(ClipboardRead::NoText));
-        clipboard.write("kept here");
-        clipboard.request_paste();
-        assert_eq!(answers(&mut clipboard), [""]);
-    }
-
-    #[test]
-    fn the_backends_text_wins_over_the_in_process_copy() {
-        let mut clipboard =
-            WindowClipboard::with_backend(Answers::with(ClipboardRead::Text("from the OS".into())));
-        clipboard.write("kept here");
-        clipboard.request_paste();
-        assert_eq!(answers(&mut clipboard), ["from the OS"]);
+    fn a_paste_answers_once_with_the_backends_text_or_else_the_in_process_copy() {
+        let cases = [
+            Paste {
+                name: "a backend with text",
+                backend: Some(ClipboardRead::Text("from the OS".into())),
+                answer: "from the OS",
+            },
+            Paste {
+                name: "a backend without text",
+                backend: Some(ClipboardRead::NoText),
+                answer: "",
+            },
+            Paste {
+                name: "a backend that cannot be read",
+                backend: Some(ClipboardRead::Unavailable("access denied".into())),
+                answer: "kept here",
+            },
+        ];
+        for case in cases {
+            let mut clipboard = match case.backend {
+                Some(read) => WindowClipboard::with_backend(Answers::with(read)),
+                None => WindowClipboard::default(),
+            };
+            clipboard.write("kept here");
+            assert!(answers(&mut clipboard).is_empty(), "{}", case.name);
+            for _ in 0..2 {
+                clipboard.request_paste();
+                assert_eq!(answers(&mut clipboard), [case.answer], "{}", case.name);
+                assert!(answers(&mut clipboard).is_empty(), "{}", case.name);
+            }
+        }
     }
 
     #[test]

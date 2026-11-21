@@ -1,34 +1,29 @@
 use anyhow::Context;
 use cfg_if::cfg_if;
 
-use super::ContentAssetRoot;
+#[cfg(not(target_arch = "wasm32"))]
+use super::content::read_content_without_uncooked;
+use super::{content::decode_content_asset, Asset, ContentAssetRoot};
 
-/// Reads an asset's payload from the content asset at `<root>/<address>`.
-pub async fn load_content_asset_bytes(
+/// Loads the content asset at `<root>/<address>` as `A`, through [`decode_content_asset`](crate::assets::content::decode_content_asset).
+pub async fn load_content_asset<A: Asset>(
     root: &ContentAssetRoot,
     address: &str,
-    expected_kind: &str,
-) -> anyhow::Result<Vec<u8>> {
+) -> anyhow::Result<A> {
     let raw = try_read_relative(root, address)
         .await?
         .with_context(|| format!("no content asset at '{address}'"))?;
-
-    let (header, payload) = crate::assets::content::read_content_asset(&raw)
+    let (_, asset) = decode_content_asset::<A>(&raw)
         .with_context(|| format!("malformed content asset '{address}'"))?;
-    if header.kind != expected_kind {
-        anyhow::bail!(
-            "content asset '{address}' holds a {} but a {expected_kind} was requested",
-            header.kind
-        );
-    }
-    Ok(payload.to_vec())
+    Ok(asset)
 }
 
-/// Reads `<root>/<relative>`, returning `Ok(None)` when it simply is not
+/// Reads `<root>/<relative>`, natively without its uncooked sections,
+/// returning `Ok(None)` when it simply is not
 /// there (a missing file natively, a non-success status on wasm) so the
 /// caller can turn absence into its own error message. Any other failure
 /// is a real error.
-async fn try_read_relative(
+pub(crate) async fn try_read_relative(
     root: &ContentAssetRoot,
     relative: &str,
 ) -> anyhow::Result<Option<Vec<u8>>> {
@@ -40,7 +35,11 @@ async fn try_read_relative(
                     let _ = path;
                     Ok(None)
                 } else {
-                    match async_fs::read(&path).await {
+                    let read = {
+                        let path = path.clone();
+                        blocking::unblock(move || read_content_without_uncooked(&path)).await
+                    };
+                    match read {
                         Ok(bytes) => Ok(Some(bytes)),
                         Err(err)
                             if matches!(

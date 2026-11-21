@@ -3,12 +3,17 @@
 //! (it requires thread primitives the toolchains do not provide), so web
 //! builds use the Rapier backend instead.
 
+use std::collections::HashSet;
+
 use concerto_foundation::transform::Transform;
 use concerto_mesh::Mesh;
 use glam::{Quat, Vec3};
 
 use crate::aabb::Aabb;
-use crate::backend::{MeshShapeCreationError, PhysicsBackend, RawGroundHit, RawRayHit};
+use crate::backend::{
+    MeshShapeCreationError, PhysicsBackend, RawGroundHit, RawRayHit, RawSensorContact, RawShapeHit,
+    SensorContactKind,
+};
 use crate::collider::{Collider, ColliderOffset};
 use crate::rigid_body::{AllowedDofs, MotionType, RigidBody};
 
@@ -21,12 +26,14 @@ const MAX_CONTACT_CONSTRAINTS: u32 = 10_240;
 // Shapes are shared between bodies, so density can no longer come from an
 // individual body's `RigidBody`. See the note on `create_sphere_shape`.
 const SHAPE_DENSITY: f32 = 1000.0; // water
+const SENSOR_CONTACT_BATCH: usize = 64;
 
 /// Owns the Jolt physics world: the body store, broad/narrow phases, and the
 /// collision-layer interfaces it was initialised with (all held together on
 /// the C++ side of the `jolt-ffi` shim).
 pub struct JoltBackend {
     world: *mut concerto_jolt_ffi::JoltWorld,
+    static_sensors: HashSet<concerto_jolt_ffi::JoltBodyId>,
 }
 
 // SAFETY: `JoltBackend` holds a raw pointer into Jolt, which is not inherently
@@ -132,7 +139,10 @@ impl PhysicsBackend for JoltBackend {
             )
         };
 
-        Self { world }
+        Self {
+            world,
+            static_sensors: HashSet::new(),
+        }
     }
 
     fn new_stepper() -> Stepper {
@@ -160,6 +170,7 @@ impl PhysicsBackend for JoltBackend {
         transform: &Transform,
         rigid_body: Option<&RigidBody>,
         offset: Option<&ColliderOffset>,
+        sensor: bool,
     ) -> Self::BodyHandle {
         let position = transform.translation.to_array();
         let rotation = transform.rotation.to_array();
@@ -175,7 +186,7 @@ impl PhysicsBackend for JoltBackend {
         // arrays are valid xyz triples and the rotation a valid xyzw
         // quaternion. The settings are created, used, and destroyed within
         // this call.
-        unsafe {
+        let id = unsafe {
             let settings = concerto_jolt_ffi::jolt_body_creation_settings_create();
             concerto_jolt_ffi::jolt_body_creation_settings_set_position(
                 settings,
@@ -211,10 +222,15 @@ impl PhysicsBackend for JoltBackend {
                 settings,
                 collider.shape().0.as_ptr(),
             );
+            concerto_jolt_ffi::jolt_body_creation_settings_set_is_sensor(settings, sensor);
             let id = concerto_jolt_ffi::jolt_body_create(self.world, settings);
             concerto_jolt_ffi::jolt_body_creation_settings_destroy(settings);
             id
+        };
+        if sensor && rigid_body.is_none() {
+            self.static_sensors.insert(id);
         }
+        id
     }
 
     fn destroy_body(&mut self, body: Self::BodyHandle) {
@@ -223,6 +239,37 @@ impl PhysicsBackend for JoltBackend {
         // create).
         unsafe {
             concerto_jolt_ffi::jolt_body_destroy(self.world, body);
+        }
+        self.static_sensors.remove(&body);
+    }
+
+    fn drain_sensor_contacts(&mut self, out: &mut Vec<RawSensorContact<Self::BodyHandle>>) {
+        let mut batch = [concerto_jolt_ffi::JoltSensorContact {
+            sensor: 0,
+            other: 0,
+            entered: 0,
+        }; SENSOR_CONTACT_BATCH];
+        loop {
+            // SAFETY: `self.world` is a valid world and `batch` holds `SENSOR_CONTACT_BATCH` writable contacts.
+            let count = unsafe {
+                concerto_jolt_ffi::jolt_world_drain_sensor_contacts(
+                    self.world,
+                    batch.as_mut_ptr(),
+                    SENSOR_CONTACT_BATCH as u32,
+                )
+            } as usize;
+            out.extend(batch[..count].iter().map(|contact| RawSensorContact {
+                sensor: contact.sensor,
+                other: contact.other,
+                kind: if contact.entered != 0 {
+                    SensorContactKind::Enter
+                } else {
+                    SensorContactKind::Exit
+                },
+            }));
+            if count < SENSOR_CONTACT_BATCH {
+                break;
+            }
         }
     }
 
@@ -258,6 +305,9 @@ impl PhysicsBackend for JoltBackend {
     }
 
     fn set_linear_velocity(&mut self, body: Self::BodyHandle, velocity: Vec3) {
+        if self.static_sensors.contains(&body) {
+            return;
+        }
         let velocity = velocity.to_array();
         // SAFETY: `body` is a body in this world; `velocity` is a valid xyz
         // triple.
@@ -304,7 +354,12 @@ impl PhysicsBackend for JoltBackend {
         }
     }
 
-    fn cast_ray(&self, origin: Vec3, direction: Vec3) -> Option<RawRayHit<Self::BodyHandle>> {
+    fn cast_ray(
+        &self,
+        origin: Vec3,
+        direction: Vec3,
+        ignore: &[Self::BodyHandle],
+    ) -> Option<RawRayHit<Self::BodyHandle>> {
         let origin_array = origin.to_array();
         let direction_array = direction.to_array();
         let mut hit = concerto_jolt_ffi::JoltRayHit {
@@ -313,13 +368,14 @@ impl PhysicsBackend for JoltBackend {
             normal: [0.0; 3],
         };
 
-        // SAFETY: the input arrays are valid xyz triples and `hit` is a valid
-        // out-buffer; the shim only writes it when returning true.
+        // SAFETY: the arrays are valid xyz triples, `ignore` holds `ignore.len()` ids, and `hit` is a valid out-buffer.
         let did_hit = unsafe {
             concerto_jolt_ffi::jolt_world_cast_ray(
                 self.world,
                 origin_array.as_ptr(),
                 direction_array.as_ptr(),
+                ignore.as_ptr(),
+                ignore.len() as u32,
                 &mut hit,
             )
         };
@@ -327,6 +383,43 @@ impl PhysicsBackend for JoltBackend {
         did_hit.then(|| RawRayHit {
             body: hit.body,
             fraction: hit.fraction,
+            normal: Vec3::from(hit.normal),
+        })
+    }
+
+    fn cast_sphere(
+        &self,
+        origin: Vec3,
+        radius: f32,
+        direction: Vec3,
+        ignore: &[Self::BodyHandle],
+    ) -> Option<RawShapeHit<Self::BodyHandle>> {
+        let origin_array = origin.to_array();
+        let direction_array = direction.to_array();
+        let mut hit = concerto_jolt_ffi::JoltShapeHit {
+            body: 0,
+            fraction: 0.0,
+            point: [0.0; 3],
+            normal: [0.0; 3],
+        };
+
+        // SAFETY: the arrays are valid xyz triples, `ignore` holds `ignore.len()` ids, and `hit` is a valid out-buffer.
+        let did_hit = unsafe {
+            concerto_jolt_ffi::jolt_world_cast_sphere(
+                self.world,
+                origin_array.as_ptr(),
+                radius,
+                direction_array.as_ptr(),
+                ignore.as_ptr(),
+                ignore.len() as u32,
+                &mut hit,
+            )
+        };
+
+        did_hit.then(|| RawShapeHit {
+            body: hit.body,
+            fraction: hit.fraction,
+            point: Vec3::from(hit.point),
             normal: Vec3::from(hit.normal),
         })
     }

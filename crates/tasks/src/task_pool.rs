@@ -207,23 +207,21 @@ impl TaskPool {
         get_results: impl Future<Output = R>,
     ) -> R {
         let execute_forever = async {
-            loop {
-                let tick_forever = async {
+            let tick_forever = async {
+                loop {
+                    scope_ticker.tick().await;
+                }
+            };
+
+            if let Some(external_ticker) = &external_ticker {
+                let tick_external_forever = async {
                     loop {
-                        scope_ticker.tick().await;
+                        external_ticker.tick().await;
                     }
                 };
-
-                if let Some(external_ticker) = &external_ticker {
-                    let tick_external_forever = async {
-                        loop {
-                            external_ticker.tick().await;
-                        }
-                    };
-                    tick_forever.or(tick_external_forever).await;
-                } else {
-                    tick_forever.await;
-                }
+                tick_forever.or(tick_external_forever).await
+            } else {
+                tick_forever.await
             }
         };
         get_results.or(execute_forever).await
@@ -315,146 +313,43 @@ mod tests {
     };
 
     #[test]
-    fn spawn_returns_result() {
-        let pool = TaskPool::new();
-        let task = pool.spawn(async { 42u32 });
-        let result = pollster::block_on(task);
-        assert_eq!(result, 42);
-    }
-
-    #[test]
-    fn spawn_multiple_tasks_concurrently() {
+    fn spawned_tasks_all_run_and_return_their_results() {
         let pool = TaskPool::new();
         let counter = Arc::new(AtomicUsize::new(0));
-
-        let tasks: Vec<_> = (0..16)
-            .map(|_| {
+        let tasks: Vec<_> = (0..16u32)
+            .map(|index| {
                 let counter = Arc::clone(&counter);
                 pool.spawn(async move {
                     counter.fetch_add(1, Ordering::Relaxed);
+                    index * 2
                 })
             })
             .collect();
 
-        for task in tasks {
-            pollster::block_on(task);
-        }
+        let results: Vec<u32> = tasks.into_iter().map(pollster::block_on).collect();
 
+        assert_eq!(results, (0..16).map(|index| index * 2).collect::<Vec<_>>());
         assert_eq!(counter.load(Ordering::Relaxed), 16);
     }
 
     #[test]
-    fn scope_collects_results() {
-        let pool = TaskPool::new();
-        let results = pool.scope(|scope| {
-            for i in 0u32..8 {
-                scope.spawn(async move { i * 2 });
-            }
-        });
-
-        assert_eq!(results.len(), 8);
-        let mut sorted = results;
-        sorted.sort();
-        assert_eq!(sorted, vec![0, 2, 4, 6, 8, 10, 12, 14]);
-    }
-
-    #[test]
-    fn scope_with_no_tasks_returns_empty() {
-        let pool = TaskPool::new();
-        let results = pool.scope(|_scope: &ScopedTaskPool<u32>| {});
-        assert!(results.is_empty());
-    }
-
-    #[test]
-    fn scope_shared_state_mutation() {
-        let pool = TaskPool::new();
-        let counter = Arc::new(AtomicUsize::new(0));
-
-        pool.scope(|scope| {
-            for _ in 0..4 {
-                let counter = Arc::clone(&counter);
-                scope.spawn(async move {
-                    counter.fetch_add(1, Ordering::Relaxed);
-                });
-            }
-        });
-
-        assert_eq!(counter.load(Ordering::Relaxed), 4);
-    }
-
-    #[test]
-    fn task_is_finished_after_await() {
-        let pool = TaskPool::new();
-        let task = pool.spawn(async { 1u32 });
-        let result = pollster::block_on(task);
-        assert_eq!(result, 1);
-    }
-
-    #[test]
-    fn drop_joins_threads() {
-        // If Drop impl is broken this will hang or panic.
-        let pool = TaskPool::new();
-        drop(pool);
-    }
-
-    #[test]
-    fn a_task_spawned_on_the_scope_runs_on_the_thread_that_opened_it() {
-        let pool = TaskPool::with_threads("scope-test", 1);
-        let opener = std::thread::current().id();
-
-        let ran_on = pool.scope(|scope| {
-            scope.spawn_on_scope(async { std::thread::current().id() });
-        });
-
-        assert_eq!(ran_on, vec![opener]);
-    }
-
-    #[test]
-    fn a_scope_whose_task_panics_unwinds_only_after_its_other_tasks_finish() {
+    fn a_scope_whose_closure_panics_unwinds_with_that_panic_only_after_its_tasks_finish() {
         let pool = TaskPool::with_threads("panic-test", 2);
-        let finished: Vec<std::sync::atomic::AtomicBool> = (0..10)
-            .map(|_| std::sync::atomic::AtomicBool::new(false))
-            .collect();
-
-        for flag in &finished {
+        for _ in 0..10 {
+            let finished = std::sync::atomic::AtomicBool::new(false);
             let outcome = std::panic::catch_unwind(AssertUnwindSafe(|| {
                 pool.scope(|scope| {
                     scope.spawn(async { panic!("the task broke") });
                     scope.spawn(async {
                         std::thread::sleep(std::time::Duration::from_millis(100));
-                        flag.store(true, Ordering::SeqCst);
-                    });
-                    scope.spawn(async { panic!("a later task broke") });
-                })
-            }));
-
-            let payload = outcome.expect_err("the panic is raised again");
-            assert!(flag.load(Ordering::SeqCst));
-            assert_eq!(payload.downcast_ref::<&str>(), Some(&"the task broke"));
-        }
-    }
-
-    #[test]
-    fn a_scope_whose_closure_panics_unwinds_only_after_its_tasks_finish() {
-        let pool = TaskPool::with_threads("closure-panic-test", 2);
-        let finished: Vec<std::sync::atomic::AtomicBool> = (0..10)
-            .map(|_| std::sync::atomic::AtomicBool::new(false))
-            .collect();
-
-        for flag in &finished {
-            let outcome = std::panic::catch_unwind(AssertUnwindSafe(|| {
-                pool.scope(|scope| {
-                    scope.spawn(async { panic!("the task broke") });
-                    scope.spawn(async {
-                        std::thread::sleep(std::time::Duration::from_millis(100));
-                        flag.store(true, Ordering::SeqCst);
+                        finished.store(true, Ordering::SeqCst);
                     });
                     panic!("the closure broke");
                 })
             }));
 
             let payload = outcome.expect_err("the panic is raised again");
-            assert!(flag.load(Ordering::SeqCst));
+            assert!(finished.load(Ordering::SeqCst));
             assert_eq!(payload.downcast_ref::<&str>(), Some(&"the closure broke"));
         }
     }

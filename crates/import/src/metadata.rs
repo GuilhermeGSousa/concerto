@@ -14,12 +14,17 @@ pub struct SourceMetadata {
     pub importer: String,
     #[serde(default)]
     pub outputs: BTreeMap<String, OutputMetadata>,
+    #[serde(default, skip_serializing_if = "toml::Table::is_empty")]
+    pub settings: toml::Table,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct OutputMetadata {
     pub asset_id: AssetId,
+    /// Whether the output is written as its own file instead of inside its import's scene file.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub file: bool,
 }
 
 pub fn sidecar_path(source: &Path) -> PathBuf {
@@ -41,7 +46,10 @@ impl SourceMetadata {
                 path.display()
             );
         }
-        if !matches!(metadata.importer.as_str(), "gltf" | "obj" | "image") {
+        if !crate::importers()
+            .iter()
+            .any(|importer| importer.name() == metadata.importer)
+        {
             bail!(
                 "unknown importer '{}' in '{}'",
                 metadata.importer,

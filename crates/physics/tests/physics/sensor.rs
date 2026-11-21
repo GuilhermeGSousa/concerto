@@ -1,0 +1,329 @@
+use crate::common::physics_world;
+use concerto_ecs::entity::Entity;
+use concerto_ecs::resource::{ResMut, Resource};
+use concerto_ecs::signal::listener::{IntoListener, Listener};
+use concerto_ecs::signal::On;
+use concerto_ecs::system::executor::single_thread::SingleThreadedExecutor;
+use concerto_ecs::system::schedule::{CompiledSchedule, Schedule};
+use concerto_ecs::world::World;
+use concerto_ecs::IntoSystemConfig;
+use concerto_foundation::transform::Transform;
+use concerto_mesh::MeshComponent;
+use glam::Vec3;
+
+use concerto_physics::backend::SensorContactKind;
+use concerto_physics::body::BodyId;
+use concerto_physics::collider::{build_box_colliders, register_colliders, BoxCollider, Collider};
+use concerto_physics::ground::GroundState;
+use concerto_physics::physics_pipeline::PhysicsPipeline;
+use concerto_physics::physics_state::PhysicsState;
+use concerto_physics::query::QueryFilter;
+use concerto_physics::rigid_body::{MotionType, RigidBody};
+use concerto_physics::sensor::{report_sensor_contacts, Sensor, SensorEnter, SensorExit};
+use concerto_physics::shape::MeshCollider;
+use concerto_physics::step_simulation;
+
+const MAX_SEPARATION: f32 = 0.05;
+const MAX_SLOPE: f32 = std::f32::consts::PI * 50.0 / 180.0;
+
+#[derive(Clone, Copy, PartialEq, Debug)]
+struct Recorded {
+    kind: SensorContactKind,
+    other: Entity,
+}
+
+#[derive(Resource, Default)]
+struct Contacts(Vec<Recorded>);
+
+fn record_enter() -> Listener<SensorEnter> {
+    (|on: On<SensorEnter>, mut contacts: ResMut<Contacts>| {
+        contacts.0.push(Recorded {
+            kind: SensorContactKind::Enter,
+            other: on.signal().other,
+        });
+    })
+    .into_listener()
+}
+
+fn record_exit() -> Listener<SensorExit> {
+    (|on: On<SensorExit>, mut contacts: ResMut<Contacts>| {
+        contacts.0.push(Recorded {
+            kind: SensorContactKind::Exit,
+            other: on.signal().other,
+        });
+    })
+    .into_listener()
+}
+
+fn enter(other: Entity) -> Recorded {
+    Recorded {
+        kind: SensorContactKind::Enter,
+        other,
+    }
+}
+
+fn exit(other: Entity) -> Recorded {
+    Recorded {
+        kind: SensorContactKind::Exit,
+        other,
+    }
+}
+
+struct SensorWorld {
+    world: World,
+    registration: CompiledSchedule,
+    fixed_step: CompiledSchedule,
+}
+
+impl SensorWorld {
+    fn new() -> Self {
+        let mut world = physics_world();
+        world.register_component::<Sensor>();
+        world.register_component::<MeshCollider>();
+        world.register_component::<MeshComponent>();
+        world.register_component::<BoxCollider>();
+        world.register_component::<Listener<SensorEnter>>();
+        world.register_component::<Listener<SensorExit>>();
+        world.insert_resource(PhysicsPipeline::new());
+        world.insert_resource(Contacts::default());
+        let mut registration = Schedule::new();
+        registration.add_system((build_box_colliders, register_colliders).chain());
+        let registration = registration.compile::<SingleThreadedExecutor>(&mut world);
+        let mut fixed_step = Schedule::new();
+        fixed_step.add_system(
+            (
+                build_box_colliders,
+                register_colliders,
+                step_simulation,
+                report_sensor_contacts,
+            )
+                .chain(),
+        );
+        let fixed_step = fixed_step.compile::<SingleThreadedExecutor>(&mut world);
+        Self {
+            world,
+            registration,
+            fixed_step,
+        }
+    }
+
+    fn update(&mut self) {
+        self.registration.run(&mut self.world);
+    }
+
+    fn step(&mut self, steps: usize) {
+        for _ in 0..steps {
+            self.fixed_step.run(&mut self.world);
+        }
+    }
+
+    fn contacts(&self) -> &[Recorded] {
+        &self.world.get_resource::<Contacts>().unwrap().0
+    }
+
+    fn spawn_sensor(&mut self, collider: Collider, transform: Transform) -> Entity {
+        self.world
+            .spawn((collider, Sensor, transform, record_enter(), record_exit()))
+    }
+
+    fn spawn_kinematic_sensor(&mut self, collider: Collider, transform: Transform) -> Entity {
+        self.world.spawn((
+            RigidBody {
+                motion_type: MotionType::Kinematic,
+                ..RigidBody::default()
+            },
+            collider,
+            Sensor,
+            transform,
+            record_enter(),
+            record_exit(),
+        ))
+    }
+
+    fn set_velocity(&mut self, entity: Entity, velocity: Vec3) {
+        let body = self.body(entity);
+        self.state_mut().set_linear_velocity(body, velocity);
+    }
+
+    fn state(&self) -> &PhysicsState {
+        self.world.get_resource::<PhysicsState>().unwrap()
+    }
+
+    fn state_mut(&mut self) -> &mut PhysicsState {
+        self.world.get_resource_mut::<PhysicsState>().unwrap()
+    }
+
+    fn body(&self, entity: Entity) -> BodyId {
+        *self
+            .world
+            .get_component_for_entity::<BodyId>(entity)
+            .expect("the entity should have a body")
+    }
+
+    fn position(&self, entity: Entity) -> Vec3 {
+        self.state().body_transform(self.body(entity)).translation
+    }
+}
+
+fn at(translation: Vec3) -> Transform {
+    Transform::from_translation(translation)
+}
+
+#[test]
+fn queries_and_the_ground_probe_pass_through_sensors() {
+    let mut physics = SensorWorld::new();
+    let wall = physics.world.spawn((
+        Collider::cuboid(0.5, 5.0, 5.0),
+        at(Vec3::new(5.0, 0.0, 0.0)),
+    ));
+    let floor = physics.world.spawn((
+        Collider::cuboid(10.0, 0.5, 10.0),
+        at(Vec3::new(0.0, -0.5, 0.0)),
+    ));
+    physics
+        .world
+        .spawn((Collider::cuboid(3.0, 3.0, 3.0), Sensor, at(Vec3::ZERO)));
+    let resting = physics.world.spawn((
+        RigidBody::default(),
+        Collider::sphere(0.5),
+        at(Vec3::new(-1.5, 0.5, 0.0)),
+    ));
+    physics.update();
+
+    let origin = Vec3::new(-5.0, 2.0, 0.0);
+    let direction = Vec3::new(20.0, 0.0, 0.0);
+    let ray = physics
+        .state()
+        .cast_ray(origin, direction, QueryFilter::default())
+        .expect("the ray should hit the wall behind the sensor");
+    assert_eq!(ray.entity, Some(wall));
+    assert!((ray.point.x - 4.5).abs() < 0.01, "{}", ray.point);
+    let sweep = physics
+        .state()
+        .cast_sphere(origin, 0.25, direction, QueryFilter::default())
+        .expect("the sweep should hit the wall behind the sensor");
+    assert_eq!(sweep.entity, Some(wall));
+
+    physics.step(30);
+    let ground = physics
+        .state()
+        .probe_ground(physics.body(resting), MAX_SEPARATION, MAX_SLOPE);
+    let GroundState::OnGround(contact) = ground else {
+        panic!("a sphere resting inside a sensor should be OnGround, was {ground:?}");
+    };
+    assert_eq!(contact.entity, Some(floor));
+}
+
+#[test]
+fn a_falling_sphere_enters_and_leaves_a_sensor() {
+    let mut physics = SensorWorld::new();
+    physics.spawn_sensor(
+        Collider::cuboid(2.0, 1.0, 2.0),
+        at(Vec3::new(0.0, 5.0, 0.0)),
+    );
+    let sphere = physics.world.spawn((
+        RigidBody::default(),
+        Collider::sphere(0.5),
+        at(Vec3::new(0.0, 8.0, 0.0)),
+    ));
+    physics.update();
+
+    physics.step(90);
+    assert_eq!(physics.contacts(), [enter(sphere), exit(sphere)]);
+    let height = physics.position(sphere).y;
+    assert!(
+        height < 3.5,
+        "the sphere should fall on through the sensor, below y = 3.5, was {height}"
+    );
+}
+
+#[test]
+fn a_sphere_asleep_inside_a_sensor_does_not_leave_it() {
+    let mut physics = SensorWorld::new();
+    physics.world.spawn((
+        Collider::cuboid(10.0, 0.5, 10.0),
+        at(Vec3::new(0.0, -0.5, 0.0)),
+    ));
+    physics.spawn_sensor(Collider::cuboid(3.0, 3.0, 3.0), at(Vec3::ZERO));
+    let sphere = physics.world.spawn((
+        RigidBody::default(),
+        Collider::sphere(0.5),
+        at(Vec3::new(0.0, 0.5, 0.0)),
+    ));
+    physics.update();
+
+    physics.step(360);
+    assert_eq!(physics.contacts(), [enter(sphere)]);
+}
+
+#[test]
+fn a_kinematic_body_moved_through_a_sensor_enters_and_leaves_it() {
+    let mut physics = SensorWorld::new();
+    physics.spawn_sensor(Collider::cuboid(1.0, 1.0, 1.0), at(Vec3::ZERO));
+    let mover = physics.world.spawn((
+        RigidBody {
+            motion_type: MotionType::Kinematic,
+            ..RigidBody::default()
+        },
+        Collider::cuboid(0.5, 0.5, 0.5),
+        at(Vec3::new(-4.0, 0.0, 0.0)),
+    ));
+    physics.update();
+
+    physics.set_velocity(mover, Vec3::new(4.0, 0.0, 0.0));
+    physics.step(120);
+    assert_eq!(physics.contacts(), [enter(mover), exit(mover)]);
+}
+
+#[test]
+fn sensors_do_not_detect_each_other() {
+    let mut physics = SensorWorld::new();
+    physics.world.spawn((
+        Collider::cuboid(20.0, 0.5, 20.0),
+        at(Vec3::new(0.0, -0.5, 0.0)),
+    ));
+    physics.spawn_sensor(
+        Collider::cuboid(1.0, 1.0, 1.0),
+        at(Vec3::new(0.0, 0.5, 0.0)),
+    );
+    let sphere = physics.world.spawn((
+        RigidBody::default(),
+        Collider::sphere(0.5),
+        at(Vec3::new(0.0, 0.5, 0.0)),
+    ));
+    let moving = physics.spawn_kinematic_sensor(
+        Collider::cuboid(1.0, 1.0, 1.0),
+        at(Vec3::new(-3.0, 0.5, 0.0)),
+    );
+    physics.update();
+
+    physics.set_velocity(moving, Vec3::new(3.0, 0.0, 0.0));
+    physics.step(120);
+    assert_eq!(
+        physics.contacts(),
+        [enter(sphere), enter(sphere), exit(sphere)],
+        "the sensors should record only the sphere, never each other"
+    );
+}
+
+#[test]
+fn despawning_a_body_inside_a_sensor_exits_it() {
+    let mut physics = SensorWorld::new();
+    physics.world.spawn((
+        Collider::cuboid(20.0, 0.5, 20.0),
+        at(Vec3::new(0.0, -0.5, 0.0)),
+    ));
+    physics.spawn_sensor(Collider::cuboid(2.0, 2.0, 2.0), at(Vec3::ZERO));
+    let sphere = physics.world.spawn((
+        RigidBody::default(),
+        Collider::sphere(0.5),
+        at(Vec3::new(0.0, 0.5, 0.0)),
+    ));
+    physics.update();
+    physics.step(10);
+    assert_eq!(physics.contacts(), [enter(sphere)]);
+
+    physics.world.despawn(sphere);
+    physics.step(30);
+    assert_eq!(physics.contacts(), [enter(sphere), exit(sphere)]);
+}

@@ -17,12 +17,16 @@
 extern crate self as concerto_render;
 
 pub mod assets;
+pub mod batching;
 pub mod capabilities;
 pub mod components;
 pub mod device;
 pub mod draw_target;
+pub(crate) mod frustum;
 pub mod gpu;
 pub mod importers;
+#[cfg(test)]
+pub(crate) mod layout_test;
 pub mod layouts;
 pub mod material_plugin;
 pub mod plugin;
@@ -33,7 +37,9 @@ pub mod resources;
 pub mod sets;
 pub mod shader;
 pub mod shadow_pipeline;
+pub mod sky_light;
 pub mod systems;
+pub(crate) mod viewport_clear;
 pub mod wgpu_wrapper;
 
 #[doc(hidden)]
@@ -46,3 +52,7 @@ pub use assets::material::Material;
 pub use components::camera::ExclusiveCamera;
 pub use components::material::MaterialComponent;
 pub use material_plugin::{MaterialPipeline, MaterialPlugin, RenderMaterial};
+pub use sky_light::{
+    CameraSkyLight, LightTint, RadianceSample, SkyRadianceMap, SphericalHarmonics,
+    SKY_RADIANCE_SCALE,
+};

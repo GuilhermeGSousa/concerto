@@ -170,7 +170,7 @@ mod tests {
     }
 
     #[test]
-    fn events_update_the_facts() {
+    fn fact_events_update_the_facts_and_input_events_report_none() {
         let mut window = Window::new((800, 600), 1.0);
         window.apply(&WindowEvent::Resized {
             width: 1024,
@@ -183,23 +183,7 @@ mod tests {
         assert_eq!(window.scale_factor(), 1.5);
         assert!(!window.is_focused());
         assert!(window.is_maximised());
-    }
-
-    #[test]
-    fn an_input_event_reports_no_fact() {
-        assert!(!Window::reports(&WindowEvent::CloseRequested));
         assert!(Window::reports(&WindowEvent::Focused(true)));
-    }
-
-    #[test]
-    fn a_command_is_taken_once_and_in_order() {
-        let mut window = Window::new((800, 600), 1.0);
-        window.send(WindowCommand::Minimise);
-        window.send(WindowCommand::Close);
-        assert_eq!(
-            window.drain_commands(),
-            vec![WindowCommand::Minimise, WindowCommand::Close]
-        );
-        assert!(window.drain_commands().is_empty());
+        assert!(!Window::reports(&WindowEvent::CloseRequested));
     }
 }

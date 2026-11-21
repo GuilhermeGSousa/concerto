@@ -8,12 +8,33 @@ compiled together with your game's library, by a small crate in your project,
 
 ```rust
 fn main() {
-    concerto_editor::run(my_game::game, concat!(env!("CARGO_MANIFEST_DIR"), "/.."));
+    concerto_editor::run_with(
+        my_game::game,
+        concat!(env!("CARGO_MANIFEST_DIR"), "/.."),
+        &[concerto_animation_editor::install],
+    );
 }
 ```
 
-`cargo concerto new` writes it, and `cargo concerto editor <dir>` adds it to
-an existing game. Because the editor holds your recipe, every scene it opens is
+`cargo concerto new` writes it. The last argument lists the crates that extend
+the editor. It comes from your game's `Cargo.toml`, which in a new project lists
+the clip editor:
+
+```toml
+[package.metadata.concerto.editor]
+plugins = [
+    { package = "concerto-animation-editor", install = "concerto_animation_editor::install" },
+]
+```
+
+`cargo concerto editor <dir>` adds `editor/` to an existing game. With no list
+in its `Cargo.toml`, the game gets `concerto_editor::run` instead, which takes
+only the first two arguments, and it has no clip tab and no rig tab: its rigs
+open in the generic inspector. To get them, add the entry
+above and run `cargo concerto editor <dir> --update`; see the
+[project tool's README](../../crates/project/README.md#editor-plugins).
+
+Because the editor holds your recipe, every scene it opens is
 built from your recipe: your components appear in the inspector, and your
 edit-time systems run in the viewport. A game crate never depends on the
 editor; the editor depends on the game.
@@ -32,13 +53,23 @@ it to an AI agent (below).
 - **Import** glTF, OBJ and image files with **Import…** in the asset
   browser, the panel titled **Asset Browser**. Each becomes `.gasset` files in
   `content/` (chapter 5).
-- **Open** a scene by double-clicking it in the asset browser.
+- **Open** a scene by double-clicking it in the asset browser. The project
+  opens with its default scene, the one `content.toml`'s `default_scene`
+  names, or failing that its first scene. The Scene tab has no close button:
+  opening another scene replaces the one it shows.
 - **Arrange** the scene: the hierarchy, titled **Warren**, adds, duplicates,
   renames (F2) and deletes entities; the viewport selects by clicking and
   moves with the gizmo; the inspector, titled **Looking Glass**, adds and
-  edits components.
-- **Save** with Ctrl+S. The saved scene belongs to the editor from then on:
-  re-importing its source leaves it alone.
+  edits components. Selecting an entity draws its component gizmos, not its
+  children's: a mesh's bounds, a skeleton's bones, a light's reach or a
+  camera's frustum. The **Gizmos** menu on the viewport's
+  top-right corner draws a kind for every entity instead, in every scene.
+- **Save** with Ctrl+S. A scene an import made belongs to its source and is
+  read-only: a save of it is refused. To build on it, make a scene of your own
+  and place the import's scene in it. That makes a link: your scene stores
+  which scene it links and the changes you make to the linked nodes, not the
+  nodes themselves, so a re-import updates the nodes, and a change whose node
+  was renamed shows as unapplied.
 - **Play** with the button on the Scene tab, or Ctrl+P. The game is built from
   your recipe and starts in the open scene. Stop returns to the scene exactly
   as it was; changes made while playing are not kept.
@@ -91,9 +122,10 @@ app.register_type::<Door>();
 ```
 
 `bool`, `f32`, `f64`, `Vec3`, `Quat` and asset handles get editors out of the
-box. A field whose type has no editor shows its own fields when it is a
-reflected struct, and otherwise shows as unsupported until a property editor
-is registered for it. A type that needs its own widget gets a `PropertyEditor`;
+box, and a `Vec` shows its elements with buttons to add and remove them. A
+field whose type has no editor shows its own fields when it is a reflected
+struct, and otherwise shows as unsupported until a property editor is
+registered for it. A type that needs its own widget gets a `PropertyEditor`;
 see
 [Custom property editors](../../crates/editor/README.md#custom-property-editors)
 in the editor's README, and `cargo run -p concerto-editor --example custom_property`.
@@ -103,8 +135,9 @@ in the editor's README, and `cargo run -p concerto-editor --example custom_prope
 `--mcp` runs the whole editor with no window and serves it over
 [MCP](https://modelcontextprotocol.io) on stdin and stdout, so an AI agent can
 open scenes, look at them, edit them, save, and play the game. The repository's
-`.mcp.json` registers `tech-demo-editor -- --mcp` with Claude Code; build the
-editor first, since a client gives up if starting it takes too long:
+`.mcp.json` registers `tech-demo-editor -- --mcp` with Claude Code, built from
+the tech demo checked out beside it in `../tech-demo`; build the editor first,
+since a client gives up if starting it takes too long:
 
 ```sh
 cargo build -p my-game-editor

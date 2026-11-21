@@ -1,5 +1,6 @@
 use crate::{
-    GetTypeRegistration, Reflect, ReflectEnumInfo, ReflectOption, TypeRegistration, TypeRegistry,
+    GetTypeRegistration, Reflect, ReflectEnumInfo, ReflectList, ReflectOption, TypeRegistration,
+    TypeRegistry,
 };
 
 /// What kind of value a [`Reflect`] is, for reading.
@@ -55,6 +56,8 @@ pub trait List {
     fn get_mut(&mut self, index: usize) -> Option<&mut dyn Reflect>;
     fn push_default(&mut self);
     fn truncate(&mut self, len: usize);
+    /// Removes the element at `index`, moving the later ones down; false when it is out of range.
+    fn remove(&mut self, index: usize) -> bool;
 
     fn is_empty(&self) -> bool {
         self.len() == 0
@@ -183,6 +186,14 @@ impl<T: Reflect + Default> List for Vec<T> {
     fn truncate(&mut self, len: usize) {
         Vec::truncate(self, len);
     }
+
+    fn remove(&mut self, index: usize) -> bool {
+        if index >= Vec::len(self) {
+            return false;
+        }
+        Vec::remove(self, index);
+        true
+    }
 }
 
 impl<T: Reflect + Default> Reflect for Vec<T> {
@@ -197,7 +208,9 @@ impl<T: Reflect + Default> Reflect for Vec<T> {
 
 impl<T: GetTypeRegistration + Default> GetTypeRegistration for Vec<T> {
     fn get_type_registration() -> TypeRegistration {
-        TypeRegistration::of::<Self>()
+        let mut registration = TypeRegistration::of::<Self>();
+        registration.insert(ReflectList);
+        registration
     }
 
     fn register_dependencies(registry: &mut TypeRegistry) {

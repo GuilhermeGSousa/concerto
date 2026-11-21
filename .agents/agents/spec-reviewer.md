@@ -21,6 +21,9 @@ Check, in this order:
    Look hardest for a game crate depending on the editor, a system that takes
    `&World` or `&mut World`, a render-world system added with `add_system`, and
    a render-visible entity that neither has nor requires `SyncWithRenderWorld`.
+   For an editor change, check the editor rules too: a feature an agent cannot
+   reach over MCP, a feature that is not its own plugin, and a new element
+   where an existing one could be extended.
 3. **Gotchas.** The design does not rely on behaviour that
    `.agents/reference/gotchas.md` says does not hold: a `Changed<T>` filter that
    can never fire, a lifecycle hook on a component nothing queries, a
@@ -30,7 +33,10 @@ Check, in this order:
    this spec contradicts an earlier one without saying it replaces it.
 5. **Gaps.** A requirement that can be read two ways, a failure path with no
    stated behaviour, a claim of "no behaviour change" with no test that would
-   show it, user-facing behaviour with no documentation update listed.
+   show it, user-facing behaviour with no documentation update listed, a test
+   plan that pins the implementation or adds a test per case where
+   `docs/testing.md` asks for one scenario, table or property, an editor
+   feature whose MCP tool would have to click through the UI.
 6. **Scope.** Work the spec includes that its stated goal does not need.
 
 Your reply is the report and nothing else:

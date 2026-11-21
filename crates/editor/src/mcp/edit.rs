@@ -1,37 +1,36 @@
-use std::{
-    any::{Any, TypeId},
-    sync::Arc,
-};
+use std::{any::TypeId, sync::Arc};
 
 use concerto_app::{App, schedule_groups::LateUpdate};
 use concerto_ecs::{
-    Component, Entity, Query, Res, ResMut, command::CommandQueue, component::name::Name,
-    events::event_reader::EventReader, query::filter::With, reflect::ReflectComponent,
+    Component, Entity, Query, Res, ResMut,
+    command::CommandQueue,
+    component::{Tick, name::Name},
+    events::event_reader::EventReader,
+    query::filter::With,
+    reflect::ReflectComponent,
 };
-use concerto_foundation::assets::{asset_server::AssetServer, handle::LiveLeaves};
+use concerto_foundation::assets::asset_server::AssetServer;
 use concerto_mcp::{AppMcpExt, McpTool, Needs, PendingCall, Reply, ToolCalls, ToolError};
-use concerto_reflect::{
-    PropertyPath, Reflect, ReflectDefault, ReflectJson, TypeRegistry, apply_value_with,
-    json_to_value_with, to_value_with, with_property,
-};
+use concerto_reflect::{PropertyPath, Reflect, ReflectRef, TypeRegistry, with_property};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::Value;
 
 use super::{
     act::label,
-    observe::{ListedPath, SceneEntities, component_json, listed_paths, names_component, resolve},
+    observe::{SceneEntities, component_json, names_component, resolve},
 };
 use crate::{
     hosted::{EditTarget, EditWorld, EditWorldSignals, Hosted},
     inspector::{
-        ErasedEditor, InspectionSource, InspectorRegistry, PropertyCommit, PropertyCommits,
-        current_editor,
+        ComponentTarget, EditSource, InspectionSource, InspectorRegistry, ListEdit, ListEditor,
+        ListedPath, PropertyAddress, PropertyCommit, PropertyCommits, PropertyTarget,
+        adapter_commit, find_path, listed_paths, not_editable, refusal_error,
+        refused as inspector_refused, unknown_path,
     },
     tools::{
         edits::{
-            ComponentEdit, ComponentEdited, EditComponent, PropertyCommitted, PropertyRefusal,
-            SetValue,
+            ComponentEdit, ComponentEdited, EditComponent, PropertyCommitted, SetValue, dotted_name,
         },
         entity_ops::{EntityEdit, EntityEdited},
         scene::SceneRoot,
@@ -69,14 +68,16 @@ pub struct RenameEntity {
     pub name: String,
 }
 
-/// Writes a JSON value into one property of a component, through the inspector's adapter when one edits it, and answers the component as inspect shows it.
+/// Writes a JSON value into one property of a component or of a value of the front document, through the inspector's adapter when one edits it, and answers the component or value as inspect shows it.
 #[derive(Deserialize, JsonSchema)]
 pub struct SetProperty {
-    /// The entity, such as 42v3, as scene_tree shows it.
-    pub entity: String,
-    /// The component, by short name such as Light, or by full type path when the short name is ambiguous.
-    pub component: String,
-    /// The property, one of the paths inspect lists for the component, such as intensity or translation; "" for a component inspect lists as one value; a path inspect marks enum takes the whole enum, such as "Point" or {"Spot": {"cone_angle": 40}}.
+    /// A value of the front document, by a name status lists under values; give it instead of entity and component.
+    pub target: Option<String>,
+    /// The entity, such as 42v3, as scene_tree shows it; needed with component unless target is given.
+    pub entity: Option<String>,
+    /// The component, by short name such as Light, or by full type path when the short name is ambiguous; needed with entity unless target is given.
+    pub component: Option<String>,
+    /// The property, one of the paths inspect lists for the component or value, such as intensity, translation or values.2, or an element past where inspect cuts a long list; "" for a component inspect lists as one value; a list's own path takes the whole array; a path inspect marks enum takes the whole enum, such as "Point" or {"Spot": {"cone_angle": 40}}, unless it sits under a list and its type has neither JSON nor a default, which answers not_editable.
     pub path: String,
     /// The value, as JSON in the shape inspect reports it; a struct may leave fields out to keep them.
     pub value: Value,
@@ -100,6 +101,34 @@ pub struct RemoveComponent {
     pub component: String,
 }
 
+/// Appends a default element to a list property and answers the list's new length.
+#[derive(Deserialize, JsonSchema)]
+pub struct ListPush {
+    /// A value of the front document, by a name status lists under values; give it instead of entity and component.
+    pub target: Option<String>,
+    /// The entity, such as 42v3, as scene_tree shows it; needed with component unless target is given.
+    pub entity: Option<String>,
+    /// The component, by short name such as Light, or by full type path when the short name is ambiguous; needed with entity unless target is given.
+    pub component: Option<String>,
+    /// The list, one of the paths inspect lists for the component or value, such as values.
+    pub path: String,
+}
+
+/// Removes one element of a list property and answers the list's new length.
+#[derive(Deserialize, JsonSchema)]
+pub struct ListRemove {
+    /// A value of the front document, by a name status lists under values; give it instead of entity and component.
+    pub target: Option<String>,
+    /// The entity, such as 42v3, as scene_tree shows it; needed with component unless target is given.
+    pub entity: Option<String>,
+    /// The component, by short name such as Light, or by full type path when the short name is ambiguous; needed with entity unless target is given.
+    pub component: Option<String>,
+    /// The list, one of the paths inspect lists for the component or value, such as values.
+    pub path: String,
+    /// The element's index, from 0.
+    pub index: usize,
+}
+
 #[derive(Component)]
 struct EditingEntity {
     document: Entity,
@@ -110,9 +139,9 @@ struct EditingEntity {
 #[derive(Component)]
 struct SettingProperty {
     document: Entity,
-    entity: Entity,
-    component: TypeId,
+    target: Arc<dyn PropertyTarget>,
     path: PropertyPath,
+    list_edit: Option<String>,
 }
 
 #[derive(Component)]
@@ -151,6 +180,8 @@ pub(super) fn build(app: &mut App) {
         McpTool::new("remove_component").needs(Needs::Scene),
         remove_component,
     )
+    .add_tool::<ListPush, _>(McpTool::new("list_push").needs(Needs::Scene), list_push)
+    .add_tool::<ListRemove, _>(McpTool::new("list_remove").needs(Needs::Scene), list_remove)
     .add_system(
         LateUpdate,
         (
@@ -161,8 +192,8 @@ pub(super) fn build(app: &mut App) {
     );
 }
 
-fn refused(reason: &str) -> ToolError {
-    ToolError::new("refused", reason)
+pub(super) fn refused(reason: &str) -> ToolError {
+    inspector_refused(reason).into()
 }
 
 fn root_refused(edit: &str) -> ToolError {
@@ -416,7 +447,7 @@ fn registered_component(types: &TypeRegistry, name: &str) -> Result<Named, ToolE
         .filter(|registration| registration.data::<ReflectComponent>().is_some())
         .map(|registration| {
             (
-                registration.type_id(),
+                (*registration).type_id(),
                 registration.short_name(),
                 registration.type_path(),
             )
@@ -444,112 +475,6 @@ fn registered_component(types: &TypeRegistry, name: &str) -> Result<Named, ToolE
     })
 }
 
-fn shown_path(path: &PropertyPath) -> String {
-    path.segments().join(".")
-}
-
-fn property_name(component: &str, path: &PropertyPath) -> String {
-    std::iter::once(component)
-        .chain(path.segments().iter().copied())
-        .collect::<Vec<_>>()
-        .join(".")
-}
-
-fn unknown_path(component: &str, path: &str, listed: &[ListedPath]) -> ToolError {
-    if listed.is_empty() {
-        return ToolError::new(
-            "unknown_path",
-            format!(
-                "{component} has no reflection data the editor can write, so it has no paths; inspect shows it unavailable."
-            ),
-        );
-    }
-    let paths: Vec<String> = listed
-        .iter()
-        .map(|listed| match shown_path(&listed.path) {
-            shown if shown.is_empty() => "\"\"".to_owned(),
-            shown => shown,
-        })
-        .collect();
-    ToolError::new(
-        "unknown_path",
-        format!(
-            "{component} has no path `{path}`; its paths are {}.",
-            paths.join(", ")
-        ),
-    )
-}
-
-fn decoded(
-    field: &dyn Reflect,
-    value: &Value,
-    types: &TypeRegistry,
-    hook: &mut LiveLeaves,
-) -> Result<Box<dyn Reflect>, ToolError> {
-    let type_id = (field as &dyn Any).type_id();
-    let invalid = |reason: String| ToolError::new("invalid_value", reason);
-    let mut built = if let Some(codec) = types.get_type_data::<ReflectJson>(type_id) {
-        (codec.from_json)(value).map_err(invalid)?
-    } else {
-        let Some(default) = types.get_type_data::<ReflectDefault>(type_id) else {
-            return Err(ToolError::new(
-                "not_editable",
-                format!(
-                    "{} has no JSON form and no registered Default, so a value cannot be built from JSON.",
-                    field.type_name()
-                ),
-            ));
-        };
-        let mut built = default.default();
-        if let Ok(current) = to_value_with(field, hook) {
-            apply_value_with(built.as_mut(), &current, hook);
-        }
-        built
-    };
-    let stored = json_to_value_with(value, type_id, types, hook).map_err(invalid)?;
-    let warnings = apply_value_with(built.as_mut(), &stored, hook);
-    if warnings.is_empty() {
-        Ok(built)
-    } else {
-        Err(invalid(
-            warnings
-                .iter()
-                .map(ToString::to_string)
-                .collect::<Vec<_>>()
-                .join("; "),
-        ))
-    }
-}
-
-fn value_edit(
-    field: &dyn Reflect,
-    value: &Value,
-    types: &TypeRegistry,
-    hook: &mut LiveLeaves,
-    editor: &dyn ErasedEditor,
-    property: &str,
-) -> Result<Arc<dyn Any + Send + Sync>, ToolError> {
-    let built = decoded(field, value, types, hook).map_err(|error| {
-        ToolError::new(
-            error.code,
-            format!("{value} does not fit {property}: {}", error.message),
-        )
-    })?;
-    match editor.edit_to(built.as_ref()) {
-        Ok(Some(edit)) => Ok(edit),
-        Ok(None) => Err(ToolError::new(
-            "not_editable",
-            format!(
-                "{property}'s inspector adapter offers no value edit, so set_property cannot write it."
-            ),
-        )),
-        Err(error) => Err(ToolError::new(
-            "invalid_value",
-            format!("{value} does not fit {property}: {error}"),
-        )),
-    }
-}
-
 enum Write {
     Adapter(PropertyCommit),
     Value(SetValue),
@@ -561,56 +486,48 @@ fn property_write(
     server: Option<&AssetServer>,
     entity: Entity,
     root: bool,
-    arguments: SetProperty,
+    component: &str,
+    path: &str,
+    value: Value,
 ) -> Result<Write, ToolError> {
-    let (component, short, _) = carried_component(source, entity, &arguments.component)?;
+    let (component, short, _) = carried_component(source, entity, component)?;
     let changed = registry.changed_tick();
     let rows = source
-        .collect_component(registry, changed, entity, component)
+        .collect_component(registry, entity, component)
         .unwrap_or_default();
-    let listed = source
-        .read(entity, component)
+    let current = source.read(entity, component);
+    let listed = current
         .map(|value| listed_paths(value, &rows))
         .unwrap_or_default();
-    let Some(found) = listed
-        .iter()
-        .find(|listed| shown_path(&listed.path) == arguments.path)
-    else {
-        return Err(unknown_path(short, &arguments.path, &listed));
-    };
-    let name = property_name(short, &found.path);
+    let found = find_path(short, path, &listed)?;
+    let name = dotted_name(short, &found.path);
     if root {
         return Err(root_refused(&format!("Set {name}")));
     }
-    let Some(property) = found
-        .row
-        .filter(|property| !found.names_enum && property.has_editor())
-    else {
+    let Some(property) = found.adapter() else {
         return Ok(Write::Value(SetValue {
             entity,
             component,
             path: found.path.clone(),
-            value: arguments.value,
+            value,
         }));
     };
-    let row = property.row(entity, component);
-    let editor = current_editor(registry, Some(source.types()), changed, &row)
-        .map_err(|error| refused(&format!("Set {name} failed: {error}")))?;
-    let mut edit = Err(unknown_path(short, &arguments.path, &[]));
-    let mut hook = LiveLeaves::from_parts(source.types(), server);
-    if let Some(value) = source.read(entity, component) {
-        let _ = with_property(value, &row.path, &mut |field| {
-            edit = value_edit(
-                field,
-                &arguments.value,
-                source.types(),
-                &mut hook,
-                editor.adapter.as_ref(),
-                &name,
-            );
-        });
-    }
-    Ok(Write::Adapter(PropertyCommit { row, edit: edit? }))
+    let target = Arc::new(ComponentTarget { entity, component });
+    let current = current.ok_or_else(|| unknown_path(short, path, &[]))?;
+    let commit = adapter_commit(
+        property,
+        target,
+        short,
+        current,
+        &value,
+        &EditSource {
+            types: &source.types(),
+            registry,
+            changed,
+            server,
+        },
+    )?;
+    Ok(Write::Adapter(commit))
 }
 
 fn set_property(
@@ -629,7 +546,12 @@ fn set_property(
         return;
     };
     for (arguments, reply) in calls.read() {
-        let write = resolve(&arguments.entity, &entities).and_then(|entity| {
+        let (None, Some(entity), Some(component)) =
+            (&arguments.target, &arguments.entity, &arguments.component)
+        else {
+            continue;
+        };
+        let write = resolve(entity, &entities).and_then(|entity| {
             let root = roots.get_entity(entity).is_some();
             property_write(
                 &source,
@@ -637,36 +559,216 @@ fn set_property(
                 server.as_deref(),
                 entity,
                 root,
-                arguments,
+                component,
+                &arguments.path,
+                arguments.value,
             )
         });
-        let row = match write {
+        let (target, path) = match write {
             Ok(Write::Adapter(commit)) => {
-                let row = commit.row.clone();
+                let address = commit.row.address.clone();
                 commits.0.push(commit);
-                (row.entity, row.component, row.path)
+                (address.target, address.path)
             }
             Ok(Write::Value(set)) => {
-                let row = (set.entity, set.component, set.path.clone());
+                let written = set.target();
+                let path = set.path.clone();
                 scene.trigger(set);
-                row
+                (written, path)
             }
             Err(error) => {
                 reply.err(error);
                 continue;
             }
         };
-        let (entity, component, path) = row;
         cmd.spawn((
             PendingCall::new(reply, "the property to be set"),
             SettingProperty {
                 document,
-                entity,
-                component,
+                target,
                 path,
+                list_edit: None,
             },
         ));
     }
+}
+
+fn list_commit(
+    source: &InspectionSource,
+    registry: &Res<InspectorRegistry>,
+    entity: Entity,
+    root: bool,
+    component: &str,
+    path: &str,
+    edit: ListEdit,
+) -> Result<(PropertyCommit, String), ToolError> {
+    let (component, short, _) = carried_component(source, entity, component)?;
+    let rows = source
+        .collect_component(registry, entity, component)
+        .unwrap_or_default();
+    let listed = source
+        .read(entity, component)
+        .map(|value| listed_paths(value, &rows))
+        .unwrap_or_default();
+    let target = Arc::new(ComponentTarget { entity, component });
+    let changed = registry.changed_tick();
+    list_commit_at(short, path, &listed, root, edit, target, changed)
+}
+
+/// The commit that makes `edit` to the list at `path` among `listed`, and what its answer says was done.
+pub(super) fn list_commit_at(
+    owner: &str,
+    path: &str,
+    listed: &[ListedPath],
+    root: bool,
+    edit: ListEdit,
+    target: Arc<dyn PropertyTarget>,
+    changed: Tick,
+) -> Result<(PropertyCommit, String), ToolError> {
+    let found = find_path(owner, path, listed)?;
+    let name = dotted_name(owner, &found.path);
+    let (attempt, done) = match edit {
+        ListEdit::Push => (
+            format!("Add to {name}"),
+            format!("Added an element to {name}"),
+        ),
+        ListEdit::Remove(index) => (
+            format!("Remove from {name}"),
+            format!("Removed element {index} of {name}"),
+        ),
+    };
+    if root {
+        return Err(root_refused(&attempt));
+    }
+    let (list, length) = found
+        .row
+        .and_then(|row| Some((row, row.list_length()?)))
+        .ok_or_else(|| {
+            ToolError::new(
+                "not_a_list",
+                format!("{name} is not a list that list_push and list_remove can change."),
+            )
+        })?;
+    if let ListEdit::Remove(index) = edit
+        && index >= length
+    {
+        return Err(ToolError::new(
+            "index_out_of_range",
+            format!("{name} has length {length}, so it has no element {index}."),
+        ));
+    }
+    let row = list
+        .row(target, changed)
+        .ok_or_else(|| not_editable(&name))?;
+    let commit = PropertyCommit::erased::<ListEditor>(&row, edit)
+        .map_err(|error| refused(&format!("{attempt} failed: {error}")))?;
+    Ok((commit, done))
+}
+
+fn start_list_edit(
+    reply: &Reply,
+    document: Entity,
+    edit: Result<(PropertyCommit, String), ToolError>,
+    commits: &mut PropertyCommits,
+    cmd: &mut CommandQueue,
+) {
+    let (commit, done) = match edit {
+        Ok(edit) => edit,
+        Err(error) => {
+            reply.err(error);
+            return;
+        }
+    };
+    let PropertyAddress { target, path, .. } = commit.row.address.clone();
+    commits.0.push(commit);
+    cmd.spawn((
+        PendingCall::new(reply, "the list to be changed"),
+        SettingProperty {
+            document,
+            target,
+            path,
+            list_edit: Some(done),
+        },
+    ));
+}
+
+fn list_push(
+    mut calls: ToolCalls<ListPush>,
+    source: EditWorld<InspectionSource>,
+    entities: EditWorld<SceneEntities>,
+    roots: EditWorld<Query<Entity, With<SceneRoot>>>,
+    registry: Res<InspectorRegistry>,
+    targets: Query<Entity, With<EditTarget>>,
+    mut commits: ResMut<PropertyCommits>,
+    mut cmd: CommandQueue,
+) {
+    let Some(document) = targets.iter().next() else {
+        return;
+    };
+    for (arguments, reply) in calls.read() {
+        let (None, Some(entity), Some(component)) =
+            (&arguments.target, &arguments.entity, &arguments.component)
+        else {
+            continue;
+        };
+        let edit = resolve(entity, &entities).and_then(|entity| {
+            list_commit(
+                &source,
+                &registry,
+                entity,
+                roots.get_entity(entity).is_some(),
+                component,
+                &arguments.path,
+                ListEdit::Push,
+            )
+        });
+        start_list_edit(reply, document, edit, &mut commits, &mut cmd);
+    }
+}
+
+fn list_remove(
+    mut calls: ToolCalls<ListRemove>,
+    source: EditWorld<InspectionSource>,
+    entities: EditWorld<SceneEntities>,
+    roots: EditWorld<Query<Entity, With<SceneRoot>>>,
+    registry: Res<InspectorRegistry>,
+    targets: Query<Entity, With<EditTarget>>,
+    mut commits: ResMut<PropertyCommits>,
+    mut cmd: CommandQueue,
+) {
+    let Some(document) = targets.iter().next() else {
+        return;
+    };
+    for (arguments, reply) in calls.read() {
+        let (None, Some(entity), Some(component)) =
+            (&arguments.target, &arguments.entity, &arguments.component)
+        else {
+            continue;
+        };
+        let edit = resolve(entity, &entities).and_then(|entity| {
+            list_commit(
+                &source,
+                &registry,
+                entity,
+                roots.get_entity(entity).is_some(),
+                component,
+                &arguments.path,
+                ListEdit::Remove(arguments.index),
+            )
+        });
+        start_list_edit(reply, document, edit, &mut commits, &mut cmd);
+    }
+}
+
+/// The length of the list at `path` of `value`, 0 when there is none.
+pub(super) fn list_length(value: &dyn Reflect, path: &PropertyPath) -> usize {
+    let mut length = 0;
+    let _ = with_property(value, path, &mut |field| {
+        if let ReflectRef::List(list) = field.reflect_ref() {
+            length = list.len();
+        }
+    });
+    length
 }
 
 fn component_answer(
@@ -693,25 +795,26 @@ fn answer_property_commits(
 ) {
     for Hosted { document, event } in committed.read() {
         for (call, pending, setting) in waiting.iter() {
-            let row = &event.row;
             if setting.document != *document
-                || setting.entity != row.entity
-                || setting.component != row.component
-                || setting.path != row.path
+                || !event.address.reaches(&setting.target)
+                || setting.path != event.address.path
             {
                 continue;
             }
+            let Some(target) = setting.target.component() else {
+                continue;
+            };
             match &event.result {
-                Ok(()) => pending.reply.ok(component_answer(
-                    &source,
-                    &registry,
-                    setting.entity,
-                    setting.component,
-                )),
-                Err(PropertyRefusal::Undecodable(reason)) => {
-                    pending.reply.err(ToolError::new("invalid_value", reason))
-                }
-                Err(PropertyRefusal::Refused(reason)) => pending.reply.err(refused(reason)),
+                Ok(()) => pending.reply.ok(match &setting.list_edit {
+                    Some(done) => format!(
+                        "{done}; its length is {}.",
+                        source
+                            .read(target.entity, target.component)
+                            .map_or(0, |value| list_length(value, &setting.path))
+                    ),
+                    None => component_answer(&source, &registry, target.entity, target.component),
+                }),
+                Err(refusal) => pending.reply.err(refusal_error(refusal).into()),
             }
             cmd.despawn(call);
         }
@@ -732,7 +835,8 @@ fn add_component(
     };
     for (arguments, reply) in calls.read() {
         let edit = resolve(&arguments.entity, &entities).and_then(|entity| {
-            let (component, short, _) = registered_component(source.types(), &arguments.component)?;
+            let (component, short, _) =
+                registered_component(&source.types(), &arguments.component)?;
             if roots.get_entity(entity).is_some() {
                 return Err(root_refused(&format!("Add {short}")));
             }

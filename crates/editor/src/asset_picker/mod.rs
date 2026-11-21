@@ -16,7 +16,7 @@ use concerto_foundation::assets::{
     registry::AssetRegistry,
 };
 use concerto_reflect::Reflect;
-use concerto_ui::elements::prelude::*;
+use concerto_ui::elements::{Label, Pressable, Text, prelude::*};
 use concerto_ui::{
     anchor::{UIAnchorAlign, UIAnchorSide, UIAnchorTarget, UIAnchoredPanel},
     interaction::UIClick,
@@ -35,10 +35,10 @@ use crate::inspector::{
     PropertyRowValue,
 };
 
-const MENU_WIDTH: f32 = 240.0;
-const ITEM_HEIGHT: f32 = 26.0;
-const LIST_MAX_HEIGHT: f32 = 280.0;
-const SCROLLBAR_GUTTER: f32 = SCROLLBAR_WIDTH + 2.0;
+pub(crate) const MENU_WIDTH: f32 = 240.0;
+pub(crate) const ITEM_HEIGHT: f32 = 26.0;
+pub(crate) const LIST_MAX_HEIGHT: f32 = 280.0;
+pub(crate) const SCROLLBAR_GUTTER: f32 = SCROLLBAR_WIDTH + 2.0;
 
 /// Picks the asset a reflected asset handle names from the project's assets of its kind.
 pub struct AssetPicker {
@@ -67,9 +67,9 @@ pub(crate) struct AssetPickerLabel {
     row: Entity,
 }
 
-/// The menu every picker shares, pointed at the row whose button opened it last.
+/// The menu every picker shares, pointed at the row whose button opened it last, if a row did.
 #[derive(Component)]
-pub(crate) struct AssetPickerMenu {
+pub struct AssetPickerMenu {
     row: Option<Entity>,
 }
 
@@ -94,34 +94,11 @@ impl ErasedEditor for AssetPicker {
         theme: &UITheme,
     ) -> Result<(), EditError> {
         cmd.entity(entity).add_child_with(
-            theme
-                .pressable()
-                .bordered()
-                .radius_sm()
-                .row()
-                .gap(6.0)
-                .height(UIValue::Px(theme.control_height))
-                .padding(UIRect::axes(0.0, 8.0))
-                .grow()
-                .shrink(1.0)
-                .min_width(UIValue::Px(0.0))
-                .on_click(toggle_asset_picker(entity, self.handle.kind())),
+            picker_button(theme).on_click(toggle_asset_picker(entity, self.handle.kind())),
             |mut button| {
                 button
-                    .add_child((
-                        theme
-                            .label("")
-                            .font_size(theme.font_size_sm)
-                            .single_line()
-                            .grow()
-                            .shrink(1.0)
-                            .min_width(UIValue::Px(0.0)),
-                        AssetPickerLabel { row: entity },
-                    ))
-                    .add_child((
-                        UINode::default().with_flex_shrink(0.0),
-                        icon(theme, glyph::CARET_DOWN, theme.font_size_sm).muted(),
-                    ));
+                    .add_child((picker_label(theme), AssetPickerLabel { row: entity }))
+                    .add_child(picker_caret(theme));
             },
         );
         Ok(())
@@ -166,7 +143,8 @@ fn held(values: &Query<&PropertyRowValue>, row: Entity) -> Option<AssetId> {
         .and_then(|value| value.downcast::<AssetId>().copied())
 }
 
-fn asset_name(registry: &AssetRegistry, id: AssetId) -> String {
+/// The name of the asset `id` names, `None` for a nil id and `Missing` for one not in `registry`.
+pub fn asset_name(registry: &AssetRegistry, id: AssetId) -> String {
     if id.is_nil() {
         return "None".into();
     }
@@ -175,7 +153,7 @@ fn asset_name(registry: &AssetRegistry, id: AssetId) -> String {
         .map_or_else(|| "Missing".into(), |entry| entry.name().into())
 }
 
-fn menu_panel(button: Entity) -> UIAnchoredPanel {
+pub(crate) fn menu_panel(button: Entity) -> UIAnchoredPanel {
     UIAnchoredPanel::new(UIAnchorTarget::from_node(button))
         .with_owner(button)
         .with_side(UIAnchorSide::Below)
@@ -184,7 +162,41 @@ fn menu_panel(button: Entity) -> UIAnchoredPanel {
         .with_open(true)
 }
 
-/// Opens the shared menu on `row`'s assets, or closes it if `row`'s button opened it.
+/// A picker's button, which takes the free space of the row it sits in.
+pub fn picker_button(theme: &UITheme) -> Pressable {
+    theme
+        .pressable()
+        .bordered()
+        .radius_sm()
+        .row()
+        .gap(6.0)
+        .height(UIValue::Px(theme.control_height))
+        .padding(UIRect::axes(0.0, 8.0))
+        .grow()
+        .shrink(1.0)
+        .min_width(UIValue::Px(0.0))
+}
+
+/// The text inside a [`picker_button`], for the name of the asset it holds.
+pub fn picker_label(theme: &UITheme) -> Label {
+    theme
+        .label("")
+        .font_size(theme.font_size_sm)
+        .single_line()
+        .grow()
+        .shrink(1.0)
+        .min_width(UIValue::Px(0.0))
+}
+
+/// The caret that closes a [`picker_button`].
+pub fn picker_caret(theme: &UITheme) -> (UINode, Text) {
+    (
+        UINode::default().with_flex_shrink(0.0),
+        icon(theme, glyph::CARET_DOWN, theme.font_size_sm).muted(),
+    )
+}
+
+/// Opens `row`'s assets in the shared menu, or closes it if the click came from its own button.
 fn toggle_asset_picker(row: Entity, kind: &'static str) -> Listener<UIClick> {
     (move |on: On<UIClick>,
            values: Query<&PropertyRowValue>,
@@ -195,28 +207,53 @@ fn toggle_asset_picker(row: Entity, kind: &'static str) -> Listener<UIClick> {
         if on.signal().button != MouseButton::Left {
             return;
         }
-        let mut menu = match menus.iter().next() {
-            Some((entity, mut menu, mut panel)) => {
-                if panel.open && panel.owner == Some(on.entity()) {
-                    panel.open = false;
-                    return;
-                }
-                menu.row = Some(row);
-                **panel = menu_panel(on.entity());
-                cmd.entity(entity).despawn_children()
-            }
-            None => cmd.spawn((
-                theme
-                    .popup()
-                    .width(UIValue::Px(MENU_WIDTH))
-                    .padding(theme.spacing_xs),
-                menu_panel(on.entity()),
-                AssetPickerMenu { row: Some(row) },
-            )),
-        };
-        fill_menu(&mut menu, kind, &registry, held(&values, row), &theme);
+        open_asset_menu(
+            on.entity(),
+            kind,
+            Some(row),
+            held(&values, row),
+            pick_asset,
+            &menus,
+            &registry,
+            &theme,
+            &mut cmd,
+        );
     })
     .into_listener()
+}
+
+/// Opens the shared menu under `button` on `kind`'s assets, each item's click built by `pick`, or closes it if `button` opened it; `row` is `None` for a menu that commits to no property.
+pub fn open_asset_menu(
+    button: Entity,
+    kind: &str,
+    row: Option<Entity>,
+    current: Option<AssetId>,
+    pick: impl Fn(AssetId) -> Listener<UIClick>,
+    menus: &Query<(Entity, &mut AssetPickerMenu, &mut UIAnchoredPanel)>,
+    registry: &AssetRegistry,
+    theme: &UITheme,
+    cmd: &mut CommandQueue,
+) {
+    let mut menu = match menus.iter().next() {
+        Some((entity, mut menu, mut panel)) => {
+            if panel.open && panel.owner == Some(button) {
+                panel.open = false;
+                return;
+            }
+            menu.row = row;
+            **panel = menu_panel(button);
+            cmd.entity(entity).despawn_children()
+        }
+        None => cmd.spawn((
+            theme
+                .popup()
+                .width(UIValue::Px(MENU_WIDTH))
+                .padding(theme.spacing_xs),
+            menu_panel(button),
+            AssetPickerMenu { row },
+        )),
+    };
+    fill_menu(&mut menu, kind, registry, current, pick, theme);
 }
 
 fn fill_menu(
@@ -224,6 +261,7 @@ fn fill_menu(
     kind: &str,
     registry: &AssetRegistry,
     current: Option<AssetId>,
+    pick: impl Fn(AssetId) -> Listener<UIClick>,
     theme: &UITheme,
 ) {
     let entries: Vec<_> = registry.of_kind(kind).collect();
@@ -246,7 +284,7 @@ fn fill_menu(
             .height(UIValue::Px(extent.min(LIST_MAX_HEIGHT)))
             .clipped(),
         |mut view| {
-            let mut list = view.spawn_child(theme.column().padding(UIRect {
+            let mut list = view.spawn_child(theme.column().gap(0.0).padding(UIRect {
                 right: SCROLLBAR_GUTTER,
                 ..UIRect::all(0.0)
             }));
@@ -260,7 +298,7 @@ fn fill_menu(
                         .fixed()
                         .height(UIValue::Px(ITEM_HEIGHT))
                         .padding(UIRect::axes(0.0, 8.0))
-                        .on_click(pick_asset(entry.id)),
+                        .on_click(pick(entry.id)),
                     |mut item| {
                         item.add_child(
                             theme

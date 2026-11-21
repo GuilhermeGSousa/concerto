@@ -48,7 +48,7 @@ impl TransformInterpolation {
 /// Writes the interpolated fixed-step pose into each body's [`Transform`] so
 /// frame-rate systems (transform propagation, rendering) see smooth motion
 /// instead of the raw once-per-step jumps.
-pub(crate) fn interpolate_body_transforms(
+pub fn interpolate_body_transforms(
     bodies: Query<(&TransformInterpolation, &mut Transform)>,
     time: Res<Time>,
 ) {

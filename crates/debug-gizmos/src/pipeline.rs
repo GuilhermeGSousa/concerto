@@ -35,8 +35,8 @@ impl GizmoPipeline {
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Gizmo Pipeline Layout"),
-            bind_group_layouts: &[&camera_layout.camera_layout],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(&camera_layout.camera_layout)],
+            immediate_size: 0,
         });
 
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -45,7 +45,7 @@ impl GizmoPipeline {
             vertex: wgpu::VertexState {
                 module: &shader,
                 entry_point: Some("vs_main"),
-                buffers: &[GizmoVertex::describe()],
+                buffers: &[Some(GizmoVertex::describe())],
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
             },
             fragment: Some(wgpu::FragmentState {
@@ -73,7 +73,7 @@ impl GizmoPipeline {
                 mask: !0,
                 alpha_to_coverage_enabled: false,
             },
-            multiview: None,
+            multiview_mask: None,
             cache: None,
         });
 
@@ -96,8 +96,8 @@ impl GizmoPipeline {
         });
         let wide_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Wide Gizmo Pipeline Layout"),
-            bind_group_layouts: &[&camera_layout.camera_layout, &viewport_layout],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(&camera_layout.camera_layout), Some(&viewport_layout)],
+            immediate_size: 0,
         });
         let wide_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Wide Gizmo Pipeline"),
@@ -105,7 +105,7 @@ impl GizmoPipeline {
             vertex: wgpu::VertexState {
                 module: &wide_shader,
                 entry_point: Some("vs_main"),
-                buffers: &[WideGizmoVertex::describe()],
+                buffers: &[Some(WideGizmoVertex::describe())],
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
             },
             fragment: Some(wgpu::FragmentState {
@@ -125,7 +125,7 @@ impl GizmoPipeline {
             },
             depth_stencil: None,
             multisample: wgpu::MultisampleState::default(),
-            multiview: None,
+            multiview_mask: None,
             cache: None,
         });
 

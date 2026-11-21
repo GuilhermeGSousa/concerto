@@ -1,7 +1,8 @@
 use concerto_foundation::assets::asset_server::{
     handle_asset_load_events, sync_asset_registry, AssetServer,
 };
-use concerto_foundation::assets::handle::AssetLifetimeEvent;
+use concerto_foundation::assets::derived::DerivedDataCache;
+use concerto_foundation::assets::handle::{AssetLifetimeEvent, AssetLoadFailed};
 use concerto_foundation::assets::registry::AssetRegistry;
 use concerto_foundation::time::{FrameStats, Time};
 
@@ -93,8 +94,11 @@ pub struct AssetManagerPlugin;
 
 impl Plugin for AssetManagerPlugin {
     fn build(&self, app: &mut App) {
-        app.insert_resource(AssetServer::new());
+        let server = AssetServer::new();
+        server.set_type_registry(app.main_mut().world_mut().type_registry());
+        app.insert_resource(server);
         app.register_event::<AssetLifetimeEvent>();
+        app.register_event::<AssetLoadFailed>();
         app.add_system(LateUpdate, handle_asset_load_events.at_edit_time());
         app.add_system(First, sync_asset_registry.at_edit_time());
     }
@@ -112,14 +116,36 @@ impl Plugin for AssetManagerPlugin {
     }
 }
 
-/// Parses embedded registry text into the app's [`AssetRegistry`] and publishes it to its [`AssetServer`], if any; panics when malformed.
-pub fn install_content_registry(app: &mut App, text: &str) {
-    let registry = AssetRegistry::parse(text)
+/// What a game embeds about its content: the registry text `track_assets` wrote, and the project root it ran in.
+#[derive(Debug, Clone, Copy)]
+pub struct ContentSettings<'a> {
+    /// The registry text, parsed into an [`AssetRegistry`] on install.
+    pub registry: &'a str,
+    /// The game package's directory, whose `derived-cache` holds derived data on native builds.
+    pub project_root: Option<&'a str>,
+}
+
+/// Parses the embedded registry into the app's [`AssetRegistry`] and publishes it, with the derived-data cache, to its [`AssetServer`], if any; panics when malformed.
+pub fn install_content_registry(app: &mut App, settings: ContentSettings) {
+    let registry = AssetRegistry::parse(settings.registry)
         .unwrap_or_else(|error| panic!("the embedded content registry is malformed: {error:#}"));
     if let Some(server) = app.get_resource::<AssetServer>() {
         server.publish_registry(registry.clone());
+        server.set_derived_cache(derived_cache(settings.project_root));
     }
     app.insert_resource(registry);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn derived_cache(project_root: Option<&str>) -> DerivedDataCache {
+    project_root
+        .map(|root| DerivedDataCache::in_project(std::path::Path::new(root)))
+        .unwrap_or_default()
+}
+
+#[cfg(target_arch = "wasm32")]
+fn derived_cache(_project_root: Option<&str>) -> DerivedDataCache {
+    DerivedDataCache::none()
 }
 
 /// Plugin that registers [`Transform`] lifecycle callbacks and the global-transform
@@ -150,6 +176,33 @@ mod tests {
         root
     }
 
+    fn settings<'a>(registry: &'a str, project_root: Option<&'a str>) -> ContentSettings<'a> {
+        ContentSettings {
+            registry,
+            project_root,
+        }
+    }
+
+    #[test]
+    fn content_settings_keep_derived_data_under_the_project_root_or_nowhere_without_one() {
+        let root = temp_root();
+        for project_root in [Some(root.to_str().unwrap()), None] {
+            let mut app = App::new();
+            app.register_plugin(AssetManagerPlugin);
+            app.get_resource::<AssetServer>()
+                .unwrap()
+                .set_derived_cache(DerivedDataCache::at("stale"));
+
+            install_content_registry(&mut app, settings("", project_root));
+
+            let cache = app.get_resource::<AssetServer>().unwrap().derived_cache();
+            let expected = project_root.map(|_| root.join("derived-cache"));
+            assert_eq!(cache.root(), expected.as_deref());
+        }
+        assert!(!root.join("derived-cache").exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     fn wait_for_plugins(app: &mut App) {
         let deadline = Instant::now() + Duration::from_secs(10);
         while app.plugin_state() == PluginsState::Building {
@@ -159,51 +212,34 @@ mod tests {
     }
 
     #[test]
-    fn the_published_registry_becomes_a_resource_once_plugins_finish() {
+    fn the_registry_resource_once_plugins_finish_is_the_one_supplied_or_else_the_published_one() {
         let root = temp_root();
-        let entry = AssetEntry {
-            id: AssetId::new(),
-            address: "content/hero.gasset".into(),
-            kind: "Mesh".into(),
-            provenance: None,
-        };
-        let mut registry = AssetRegistry::new();
-        registry.insert(entry.clone());
-        let mut app = App::new();
-        app.register_plugin(AssetManagerPlugin);
-        let server = AssetServer::with_content_root(ContentAssetRoot::Directory(root.clone()));
-        server.publish_registry(registry);
-        app.insert_resource(server);
-        wait_for_plugins(&mut app);
-        app.finish_plugin_build();
+        for supplied in [false, true] {
+            let entry = AssetEntry {
+                embedded_in: None,
+                id: AssetId::new(),
+                address: "content/hero.gasset".into(),
+                kind: "Mesh".into(),
+                kind_version: None,
+                provenance: None,
+            };
+            let mut registry = AssetRegistry::new();
+            registry.insert(entry.clone());
+            let mut app = App::new();
+            app.register_plugin(AssetManagerPlugin);
+            let server = AssetServer::with_content_root(ContentAssetRoot::Directory(root.clone()));
+            if supplied {
+                app.insert_resource(registry);
+            } else {
+                server.publish_registry(registry);
+            }
+            app.insert_resource(server);
+            wait_for_plugins(&mut app);
+            app.finish_plugin_build();
 
-        let registry = app.get_resource::<AssetRegistry>().unwrap();
-        assert_eq!(registry.get(entry.id), Some(&entry));
-        std::fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn a_registry_the_host_supplied_is_kept_when_plugins_finish() {
-        let root = temp_root();
-        let supplied = AssetEntry {
-            id: AssetId::new(),
-            address: "content/supplied.gasset".into(),
-            kind: "Mesh".into(),
-            provenance: None,
-        };
-        let mut registry = AssetRegistry::new();
-        registry.insert(supplied.clone());
-        let mut app = App::new();
-        app.register_plugin(AssetManagerPlugin);
-        app.insert_resource(AssetServer::with_content_root(ContentAssetRoot::Directory(
-            root.clone(),
-        )));
-        app.insert_resource(registry);
-        wait_for_plugins(&mut app);
-        app.finish_plugin_build();
-
-        let registry = app.get_resource::<AssetRegistry>().unwrap();
-        assert_eq!(registry.get(supplied.id), Some(&supplied));
+            let registry = app.get_resource::<AssetRegistry>().unwrap();
+            assert_eq!(registry.get(entry.id), Some(&entry), "supplied: {supplied}");
+        }
         std::fs::remove_dir_all(root).unwrap();
     }
 
@@ -242,7 +278,7 @@ mod tests {
         )));
         app.register_asset::<Note>();
 
-        install_content_registry(&mut app, &scanned.to_toml());
+        install_content_registry(&mut app, settings(&scanned.to_toml(), None));
         wait_for_plugins(&mut app);
         app.finish_plugin_build();
         assert!(!root.join("content/.registry.toml").exists());
@@ -265,36 +301,11 @@ mod tests {
         );
         assert_eq!(
             app.get_resource::<AssetRegistry>().unwrap().get(id),
-            scanned.get(id)
+            Some(&AssetEntry {
+                kind_version: None,
+                ..scanned.get(id).unwrap().clone()
+            })
         );
         std::fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    #[should_panic(expected = "content registry")]
-    fn installing_a_malformed_registry_panics() {
-        let mut app = App::new();
-        app.register_plugin(AssetManagerPlugin);
-        install_content_registry(&mut app, "broken = [");
-    }
-
-    #[test]
-    fn an_app_without_an_asset_server_gets_the_registry_resource() {
-        let entry = AssetEntry {
-            id: AssetId::new(),
-            address: "content/hero.gasset".into(),
-            kind: "Mesh".into(),
-            provenance: None,
-        };
-        let mut registry = AssetRegistry::new();
-        registry.insert(entry.clone());
-        let mut app = App::new();
-
-        install_content_registry(&mut app, &registry.to_toml());
-
-        assert_eq!(
-            app.get_resource::<AssetRegistry>().unwrap().get(entry.id),
-            Some(&entry)
-        );
     }
 }

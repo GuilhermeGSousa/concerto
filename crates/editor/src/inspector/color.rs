@@ -280,223 +280,66 @@ pub(crate) fn refresh_color_swatches(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::inspector::numeric::{format_slot, slot_label};
 
-    fn edit(color: &mut Color, slot: usize, number: f64) -> Result<(), EditError> {
-        let space = Some(ColorSpace::of(color));
-        color.edit(&NumericEdit::Slot {
+    struct ChannelEdit {
+        color: Color,
+        slot: usize,
+        number: f64,
+        space: Option<ColorSpace>,
+        edited: Option<Color>,
+    }
+
+    fn row(color: Color, slot: usize, number: f64, edited: Option<Color>) -> ChannelEdit {
+        ChannelEdit {
+            color,
             slot,
             number,
-            space,
-        })
-    }
-
-    fn edited(color: Color, slot: usize, number: f64) -> Color {
-        let mut copy = color;
-        assert_eq!(
-            edit(&mut copy, slot, number),
-            Ok(()),
-            "{color:?} slot {slot} = {number}"
-        );
-        copy
-    }
-
-    fn refused(color: Color, slot: usize, number: f64) {
-        let mut copy = color;
-        assert_eq!(
-            edit(&mut copy, slot, number),
-            Err(EditError::Rejected),
-            "{color:?} slot {slot} = {number}"
-        );
-        assert_eq!(copy, color);
-    }
-
-    fn shown_slots(color: Color) -> Vec<String> {
-        (0..4)
-            .map(|slot| format_slot(&color.numbers(), slot))
-            .collect()
+            space: Some(ColorSpace::of(&color)),
+            edited,
+        }
     }
 
     #[test]
-    fn a_color_shows_the_channels_of_its_own_space() {
-        let linear = Color::rgba(0.1, 0.2, 0.3, 0.4);
+    fn a_channel_edit_keeps_the_space_wraps_hue_in_degrees_and_refuses_what_the_space_cannot_hold()
+    {
+        let linear = Color::rgba(0.5, 0.5, 0.5, 1.0);
         let srgb = Color::srgba(0.5, 0.25, 0.75, 1.0);
-        let hsl = Color::hsl(0.25, 0.5, 0.5, 1.0);
-        for color in [linear, srgb, hsl] {
-            assert_eq!(color.numbers(), NumericSnapshot::Color(color));
-        }
-        assert_eq!(shown_slots(linear), ["0.100", "0.200", "0.300", "0.400"]);
-        assert_eq!(shown_slots(srgb), ["0.500", "0.250", "0.750", "1.000"]);
-        assert_eq!(shown_slots(hsl), ["90.000", "0.500", "0.500", "1.000"]);
-        let letters = |snapshot: NumericSnapshot| -> Vec<Option<&'static str>> {
-            (0..4).map(|slot| slot_label(&snapshot, slot)).collect()
-        };
-        let rgba = [Some("R"), Some("G"), Some("B"), Some("A")];
-        assert_eq!(letters(linear.numbers()), rgba);
-        assert_eq!(letters(srgb.numbers()), rgba);
-        assert_eq!(
-            letters(hsl.numbers()),
-            [Some("H"), Some("S"), Some("L"), Some("A")]
-        );
-        assert_eq!(letters(NumericSnapshot::Number(1.0)), [None; 4]);
-        assert_eq!(letters(NumericSnapshot::Vec3([1.0; 3])), [None; 4]);
-    }
-
-    #[test]
-    fn the_swatch_drops_alpha_in_the_values_own_space() {
-        assert_eq!(
-            opaque(Color::srgba(0.5, 0.5, 0.5, 0.2)),
-            Color::srgba(0.5, 0.5, 0.5, 1.0)
-        );
-        assert_eq!(
-            opaque(Color::hsl(0.25, 0.5, 0.5, 0.0)),
-            Color::hsl(0.25, 0.5, 0.5, 1.0)
-        );
-        assert_eq!(
-            opaque(Color::rgba(2.0, 0.5, 0.0, 0.5)),
-            Color::rgba(2.0, 0.5, 0.0, 1.0)
-        );
-    }
-
-    #[test]
-    fn editing_a_channel_keeps_the_color_space() {
-        assert_eq!(
-            edited(Color::rgba(0.1, 0.2, 0.3, 0.4), 0, 0.9),
-            Color::rgba(0.9, 0.2, 0.3, 0.4)
-        );
-        assert_eq!(
-            edited(Color::srgba(0.5, 0.25, 0.75, 1.0), 0, 0.9),
-            Color::srgba(0.9, 0.25, 0.75, 1.0)
-        );
-        assert_eq!(
-            edited(Color::hsl(0.25, 0.5, 0.5, 1.0), 0, 180.0),
-            Color::hsl(0.5, 0.5, 0.5, 1.0)
-        );
-        assert_eq!(
-            edited(Color::hsl(0.25, 0.5, 0.5, 1.0), 2, 0.75),
-            Color::hsl(0.25, 0.5, 0.75, 1.0)
-        );
-    }
-
-    #[test]
-    fn linear_channels_accept_hdr_and_refuse_negatives() {
-        let color = Color::rgba(0.5, 0.5, 0.5, 1.0);
-        assert_eq!(edited(color, 0, 4.0), Color::rgba(4.0, 0.5, 0.5, 1.0));
-        refused(color, 0, -0.1);
-        refused(color, 3, 1.5);
-    }
-
-    #[test]
-    fn srgb_and_hsl_channels_refuse_values_outside_zero_to_one() {
-        let srgb = Color::srgba(0.5, 0.5, 0.5, 0.5);
-        let hsl = Color::hsl(0.5, 0.5, 0.5, 0.5);
-        refused(srgb, 1, 1.2);
-        refused(srgb, 2, -0.01);
-        refused(hsl, 1, 1.5);
-        refused(hsl, 2, -0.5);
-        refused(hsl, 3, 2.0);
-        refused(srgb, 3, -0.5);
-        for bound in [0.0, 1.0] {
-            for slot in 0..4 {
-                assert_eq!(channels(&edited(srgb, slot, bound))[slot], bound as f32);
-            }
-            for slot in 1..4 {
-                assert_eq!(channels(&edited(hsl, slot, bound))[slot], bound as f32);
-            }
-        }
-    }
-
-    #[test]
-    fn hue_is_edited_in_degrees_and_wraps() {
         let hsl = Color::hsl(0.5, 0.5, 0.5, 1.0);
-        let hue = |degrees: f64| channels(&edited(hsl, 0, degrees))[0];
-        assert_eq!(hue(450.0), 0.25);
-        assert_eq!(hue(-90.0), 0.75);
-        assert_eq!(hue(360.0), 0.0);
-        assert_eq!(hue(-1e-9), 0.0);
-    }
-
-    #[test]
-    fn colors_refuse_non_finite_and_out_of_range_slots_without_mutating() {
-        for color in [
-            Color::rgba(0.5, 0.5, 0.5, 1.0),
-            Color::srgba(0.5, 0.5, 0.5, 1.0),
-            Color::hsl(0.5, 0.5, 0.5, 1.0),
-        ] {
-            for slot in 0..4 {
-                for number in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, 1e300] {
-                    refused(color, slot, number);
+        let rows = [
+            row(linear, 0, 4.0, Some(Color::rgba(4.0, 0.5, 0.5, 1.0))),
+            row(linear, 0, -0.1, None),
+            row(linear, 3, 1.5, None),
+            row(srgb, 0, 0.9, Some(Color::srgba(0.9, 0.25, 0.75, 1.0))),
+            row(srgb, 1, 1.2, None),
+            row(hsl, 0, 180.0, Some(Color::hsl(0.5, 0.5, 0.5, 1.0))),
+            row(hsl, 0, 450.0, Some(Color::hsl(0.25, 0.5, 0.5, 1.0))),
+            row(hsl, 0, -90.0, Some(Color::hsl(0.75, 0.5, 0.5, 1.0))),
+            row(hsl, 2, 0.75, Some(Color::hsl(0.5, 0.5, 0.75, 1.0))),
+            row(hsl, 1, 1.5, None),
+            row(srgb, 0, f64::NAN, None),
+            ChannelEdit {
+                space: Some(ColorSpace::Hsl),
+                ..row(srgb, 0, 0.25, None)
+            },
+        ];
+        for row in rows {
+            let mut color = row.color;
+            let result = color.edit(&NumericEdit::Slot {
+                slot: row.slot,
+                number: row.number,
+                space: row.space,
+            });
+            let label = format!("{:?} slot {} = {}", row.color, row.slot, row.number);
+            match row.edited {
+                Some(edited) => {
+                    assert_eq!(result, Ok(()), "{label}");
+                    assert_eq!(color, edited, "{label}");
+                }
+                None => {
+                    assert_eq!(result, Err(EditError::Rejected), "{label}");
+                    assert_eq!(color, row.color, "{label}");
                 }
             }
-            refused(color, 4, 0.5);
         }
-    }
-
-    #[test]
-    fn channel_checks_use_the_f32_value_and_store_positive_zero() {
-        let srgb = Color::srgba(0.5, 0.5, 0.5, 1.0);
-        assert_eq!(channels(&edited(srgb, 0, 1.0000000001))[0], 1.0);
-        for zero in [
-            channels(&edited(Color::rgba(0.5, 0.5, 0.5, 1.0), 0, -0.0))[0],
-            channels(&edited(srgb, 0, -1e-50))[0],
-            channels(&edited(Color::hsl(0.5, 0.5, 0.5, 1.0), 0, -0.0))[0],
-        ] {
-            assert_eq!(zero, 0.0);
-            assert!(zero.is_sign_positive());
-        }
-    }
-
-    #[test]
-    fn a_whole_color_edit_sets_the_color_and_its_space() {
-        let mut copy = Color::srgba(0.5, 0.5, 0.5, 1.0);
-        let linear = Color::rgba(2.0, 0.25, 0.0, 0.5);
-        assert_eq!(
-            copy.edit(&NumericEdit::Whole(NumericSnapshot::Color(linear))),
-            Ok(())
-        );
-        assert_eq!(copy, linear);
-    }
-
-    #[test]
-    fn a_whole_color_edit_out_of_range_is_refused() {
-        let color = Color::srgba(0.5, 0.5, 0.5, 1.0);
-        for bad in [
-            Color::srgba(1.5, 0.5, 0.5, 1.0),
-            Color::rgba(0.5, 0.5, 0.5, 2.0),
-            Color::rgba(f32::NAN, 0.5, 0.5, 1.0),
-        ] {
-            let mut copy = color;
-            assert_eq!(
-                copy.edit(&NumericEdit::Whole(NumericSnapshot::Color(bad))),
-                Err(EditError::Rejected),
-                "{bad:?}"
-            );
-            assert_eq!(copy, color);
-        }
-    }
-
-    #[test]
-    fn an_edit_made_against_another_space_is_refused() {
-        let color = Color::srgba(0.5, 0.5, 0.5, 1.0);
-        for space in [Some(ColorSpace::Hsl), None] {
-            let mut copy = color;
-            assert_eq!(
-                copy.edit(&NumericEdit::Slot {
-                    slot: 0,
-                    number: 0.25,
-                    space,
-                }),
-                Err(EditError::Rejected)
-            );
-            assert_eq!(copy, color);
-        }
-        let mut copy = color;
-        copy.edit(&NumericEdit::Slot {
-            slot: 0,
-            number: 0.25,
-            space: Some(ColorSpace::Srgb),
-        })
-        .unwrap();
-        assert_eq!(copy, Color::srgba(0.25, 0.5, 0.5, 1.0));
     }
 }

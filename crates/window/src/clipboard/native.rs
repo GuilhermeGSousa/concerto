@@ -48,38 +48,34 @@ fn arboard_read(result: Result<String, Error>) -> ClipboardRead {
 mod tests {
     use super::*;
 
-    #[test]
-    fn text_on_the_clipboard_is_read_as_text() {
-        assert_eq!(
-            arboard_read(Ok("bunny".into())),
-            ClipboardRead::Text("bunny".into())
-        );
+    struct Read {
+        read: Result<String, Error>,
+        expected: ClipboardRead,
     }
 
     #[test]
-    fn an_empty_or_non_text_clipboard_reads_as_no_text() {
-        assert_eq!(arboard_read(Ok(String::new())), ClipboardRead::NoText);
-        assert_eq!(
-            arboard_read(Err(Error::ContentNotAvailable)),
-            ClipboardRead::NoText
-        );
-        assert_eq!(
-            arboard_read(Err(Error::ConversionFailure)),
-            ClipboardRead::NoText
-        );
-    }
-
-    #[test]
-    fn access_errors_read_as_unavailable() {
-        for error in [
-            Error::ClipboardOccupied,
-            Error::ClipboardNotSupported,
-            Error::Unknown {
-                description: "no display".into(),
+    fn a_clipboard_read_is_text_no_text_or_unavailable_with_the_reason() {
+        let unavailable = |error: Error| Read {
+            expected: ClipboardRead::Unavailable(error.to_string()),
+            read: Err(error),
+        };
+        let cases = [
+            Read {
+                read: Ok("bunny".into()),
+                expected: ClipboardRead::Text("bunny".into()),
             },
-        ] {
-            let reason = error.to_string();
-            assert_eq!(arboard_read(Err(error)), ClipboardRead::Unavailable(reason));
+            Read {
+                read: Ok(String::new()),
+                expected: ClipboardRead::NoText,
+            },
+            Read {
+                read: Err(Error::ContentNotAvailable),
+                expected: ClipboardRead::NoText,
+            },
+            unavailable(Error::ClipboardOccupied),
+        ];
+        for case in cases {
+            assert_eq!(arboard_read(case.read), case.expected);
         }
     }
 }

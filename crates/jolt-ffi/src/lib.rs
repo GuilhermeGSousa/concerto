@@ -98,6 +98,25 @@ pub struct JoltRayHit {
     pub normal: [f32; 3],
 }
 
+/// The first body a swept sphere touches (mirrors `JoltShapeHit` in `shape_cast.h`).
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct JoltShapeHit {
+    pub body: JoltBodyId,
+    pub fraction: f32,
+    pub point: [f32; 3],
+    pub normal: [f32; 3],
+}
+
+/// A sensor pair that began (`entered` = 1) or ended (`entered` = 0) overlapping (mirrors `JoltSensorContact` in `body.h`).
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct JoltSensorContact {
+    pub sensor: JoltBodyId,
+    pub other: JoltBodyId,
+    pub entered: u8,
+}
+
 extern "C" {
     /// Process-global one-time Jolt setup. Thread-safe and idempotent;
     /// `jolt_world_create` calls it implicitly.
@@ -194,6 +213,12 @@ extern "C" {
         out_max: *mut f32,
     );
 
+    /// Makes the body a kinematic, always active sensor on the sensor layer.
+    pub fn jolt_body_creation_settings_set_is_sensor(
+        settings: *mut JoltBodyCreationSettings,
+        is_sensor: bool,
+    );
+
     /// Sets the shape the body is built from. The settings take their own
     /// reference, so `shape` may be destroyed straight afterwards or reused
     /// for any number of other bodies.
@@ -223,17 +248,24 @@ extern "C" {
     );
 
     /// Creates a body from `settings` and adds it to the simulation, active
-    /// unless static. The settings remain owned by the caller and can be
-    /// reused.
+    /// unless static; a sensor is always kinematic and active. The settings
+    /// remain owned by the caller and can be reused.
     pub fn jolt_body_create(
         world: *mut JoltWorld,
         settings: *const JoltBodyCreationSettings,
     ) -> JoltBodyId;
 
     /// Removes a body from the simulation and destroys it, waking any bodies
-    /// that were touching it (they would otherwise sleep in mid-air). The id
-    /// is invalid afterwards.
+    /// that were touching it (they would otherwise sleep in mid-air) and
+    /// forgetting its sensor pairs. The id is invalid afterwards.
     pub fn jolt_body_destroy(world: *mut JoltWorld, body: JoltBodyId);
+
+    /// Moves up to `capacity` queued sensor contacts, oldest first, into `out` and returns how many it wrote.
+    pub fn jolt_world_drain_sensor_contacts(
+        world: *mut JoltWorld,
+        out: *mut JoltSensorContact,
+        capacity: u32,
+    ) -> u32;
 
     /// Collides `body`'s shape against the world (ignoring `body` itself) and
     /// reports the most upward-facing contact within `max_separation` below
@@ -270,14 +302,27 @@ extern "C" {
     );
 
     /// Casts a ray from `origin` (xyz) along `direction` (xyz, whose length is
-    /// the maximum cast distance) against all bodies, writing the closest hit
-    /// to `out_hit`. Returns `false` — leaving `out_hit` untouched — if
-    /// nothing was hit.
+    /// the maximum cast distance) against every body except the `ignore_count`
+    /// ids at `ignore`, writing the closest hit to `out_hit`. Returns `false`
+    /// — leaving `out_hit` untouched — if nothing was hit.
     pub fn jolt_world_cast_ray(
         world: *const JoltWorld,
         origin: *const f32,
         direction: *const f32,
+        ignore: *const JoltBodyId,
+        ignore_count: u32,
         out_hit: *mut JoltRayHit,
+    ) -> bool;
+
+    /// Sweeps a sphere of `radius` from `origin` along `direction`, skipping the `ignore_count` ids at `ignore`, and writes the first hit to `out_hit`.
+    pub fn jolt_world_cast_sphere(
+        world: *const JoltWorld,
+        origin: *const f32,
+        radius: f32,
+        direction: *const f32,
+        ignore: *const JoltBodyId,
+        ignore_count: u32,
+        out_hit: *mut JoltShapeHit,
     ) -> bool;
 
     pub fn jolt_body_add_impulse(world: *const JoltWorld, body: JoltBodyId, impulse: *const f32);

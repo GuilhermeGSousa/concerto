@@ -1,0 +1,710 @@
+//! The editor of an animation clip: it plays the clip on a skeleton, shows its bones, and edits and saves its events.
+pub mod events;
+pub mod graph;
+mod panels;
+pub mod preview;
+pub mod rig;
+mod save;
+pub mod transport;
+
+use std::{collections::HashSet, path::Path, sync::Arc};
+
+use concerto_animation::{
+    clip::{AnimationChannel, AnimationClip},
+    graph::AnimationGraph,
+    mask::BoneMask,
+};
+use concerto_app::{
+    App,
+    plugins::Plugin,
+    schedule_groups::{LateUpdate, Startup, Update},
+};
+use concerto_ecs::{
+    Component, Entity, IntoSystemConfig, Query, Res,
+    command::{CommandQueue, EntityCommandQueue},
+    events::event_reader::EventReader,
+};
+use concerto_editor::{
+    actions::EditorContextSet,
+    asset_editor::{
+        AssetEditor, AssetEditorAppExt, EditorDocument, PreviewSpec, Unsaved, finish_asset_request,
+    },
+    fonts::{AssetIconsAppExt, glyph},
+    hosted::{Hosted, HostedEventsAppExt},
+    preview::PreviewSignals,
+    project::ProjectState,
+    scene::load_scene,
+    timeline::{TimelineTrack, frame_count},
+};
+use concerto_foundation::assets::{
+    Asset, AssetId,
+    content::{decode_content_asset, read_asset_record},
+    registry::{AssetEntry, AssetRegistry},
+};
+use concerto_scene::scene::Scene;
+use concerto_window::{define_action, define_context};
+use uuid::Uuid;
+
+use events::{TabEvent, read_events};
+use graph::AnimationGraphEditorPlugin;
+use panels::{
+    apply_clip_event_fields, bind_clip_keys, build_clip_panels, remove_clip_event,
+    sync_clip_event_context, sync_clip_events, sync_clip_panels,
+};
+use preview::{
+    ClipPreviewBones, SetClipTransport, ShowClip, ShowClipScene, ShownBone, clip_preview,
+};
+use rig::RetargetRigEditorPlugin;
+use save::{restore_clip_events, save_clip};
+use transport::{
+    ClipTransport, TransportPlugin, follow_transport_progress, sync_transport_rows,
+    sync_transport_timelines,
+};
+
+define_action!(
+    /// Remove the event selected in the active clip tab.
+    RemoveClipEvent
+);
+define_context!(
+    /// Active while the active tab is a clip's with an `AnimationEvent` selected and no text field focused.
+    ClipEventContext
+);
+
+/// What a clip's tab shows and how its preview plays, kept on the document.
+#[derive(Component)]
+pub struct ClipDocument {
+    pub clip: Option<Arc<AnimationClip>>,
+    pub facts: ClipFacts,
+    pub root_motion: bool,
+    pub skeleton_gizmo: bool,
+    pub picked_scene: Option<AssetId>,
+    pub shown_scene: Option<AssetId>,
+    pub scene_error: Option<String>,
+    pub events: Vec<TabEvent>,
+    pub selected_event: Option<usize>,
+    pub skeleton: Vec<ShownBone>,
+    pub rows: Vec<TimelineTrack>,
+}
+
+impl Default for ClipDocument {
+    fn default() -> Self {
+        Self {
+            clip: None,
+            facts: ClipFacts::default(),
+            root_motion: false,
+            skeleton_gizmo: true,
+            picked_scene: None,
+            shown_scene: None,
+            scene_error: None,
+            events: Vec::new(),
+            selected_event: None,
+            skeleton: Vec::new(),
+            rows: Vec::new(),
+        }
+    }
+}
+
+impl ClipDocument {
+    pub(crate) fn rebuild_rows(&mut self) {
+        self.rows = self
+            .clip
+            .as_ref()
+            .map_or_else(Vec::new, |clip| bone_rows(clip, &self.skeleton));
+    }
+}
+
+pub(crate) fn measure_transport(transport: &mut ClipTransport, facts: &ClipFacts) {
+    if transport.duration != facts.duration {
+        transport.duration = facts.duration;
+    }
+    if transport.rate != facts.rate {
+        transport.rate = facts.rate;
+    }
+}
+
+fn track_keys(channels: &[AnimationChannel]) -> Vec<f32> {
+    let mut keys: Vec<f32> = channels
+        .iter()
+        .flat_map(|channel| channel.key_times().iter().copied())
+        .collect();
+    keys.sort_by(f32::total_cmp);
+    keys.dedup();
+    keys
+}
+
+pub(crate) fn bone_rows(clip: &AnimationClip, skeleton: &[ShownBone]) -> Vec<TimelineTrack> {
+    let named: HashSet<Uuid> = skeleton.iter().map(|bone| bone.id).collect();
+    let mut unmatched: Vec<Uuid> = clip
+        .target_ids()
+        .copied()
+        .filter(|id| !named.contains(id))
+        .collect();
+    unmatched.sort();
+    let shown = skeleton.iter().filter_map(|bone| {
+        Some(TimelineTrack {
+            label: bone.name.as_str().to_owned(),
+            warning: false,
+            keys: track_keys(clip.get_channels(&bone.id)?),
+        })
+    });
+    let missing = unmatched.into_iter().filter_map(|id| {
+        Some(TimelineTrack {
+            label: format!("? {}", &id.simple().to_string()[..8]),
+            warning: true,
+            keys: track_keys(clip.get_channels(&id)?),
+        })
+    });
+    shown.chain(missing).collect()
+}
+
+/// What a clip holds, and how much of it the shown skeleton uses.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ClipFacts {
+    pub duration: f32,
+    pub rate: Option<f32>,
+    pub rate_is_stored: bool,
+    pub frames: Option<u32>,
+    pub clip_bones: usize,
+    pub skeleton_bones: usize,
+    pub driven: usize,
+}
+
+impl ClipFacts {
+    /// What `clip` holds; the bones a skeleton uses are left at zero.
+    pub fn of(clip: &AnimationClip) -> Self {
+        let duration = clip.duration();
+        let stored = clip.frame_rate();
+        let rate = stored.or_else(|| clip.detected_frame_rate());
+        Self {
+            duration,
+            rate,
+            rate_is_stored: stored.is_some(),
+            frames: rate.map(|rate| frame_count(duration, rate)),
+            clip_bones: clip.target_ids().len(),
+            skeleton_bones: 0,
+            driven: 0,
+        }
+    }
+}
+
+/// Opens an `AnimationClip` in a tab that plays it in a preview.
+#[derive(Default)]
+pub struct AnimationClipEditor;
+
+impl AssetEditor for AnimationClipEditor {
+    fn build(&self, editor: &mut EntityCommandQueue) {
+        editor.insert((ClipDocument::default(), ClipTransport::default()));
+    }
+
+    fn preview(&self) -> Option<PreviewSpec> {
+        Some(PreviewSpec {
+            build: clip_preview,
+        })
+    }
+
+    fn bottom_host(&self) -> bool {
+        true
+    }
+}
+
+pub(crate) fn sync_clip_preview(
+    mut bones: EventReader<Hosted<ClipPreviewBones>>,
+    documents: Query<&mut ClipDocument>,
+) {
+    for Hosted { document, event } in bones.read() {
+        if let Some(mut state) = documents.get_entity(*document) {
+            state.facts.skeleton_bones = event.bones;
+            state.facts.driven = event.driven;
+            if state.skeleton != event.skeleton {
+                state.skeleton = event.skeleton.clone();
+                state.rebuild_rows();
+            }
+        }
+    }
+}
+
+/// Reads the clip `asset` names under `root`, checking its id and its kind.
+pub fn read_clip(root: &Path, asset: &AssetEntry) -> anyhow::Result<AnimationClip> {
+    let bytes = read_asset_record(root, asset)?;
+    let (header, clip) = decode_content_asset::<AnimationClip>(&bytes)?;
+    anyhow::ensure!(header.asset_id == asset.id, "Asset identity mismatch");
+    Ok(clip)
+}
+
+pub(crate) fn settle_edit(
+    result: Result<(), String>,
+    document: Entity,
+    editor: &mut EditorDocument,
+    cmd: &mut CommandQueue,
+) {
+    match result {
+        Ok(()) => {
+            if !editor.status.is_empty() {
+                editor.status.clear();
+            }
+            cmd.insert(Unsaved, document);
+        }
+        Err(message) => {
+            if editor.status != message {
+                editor.status = message;
+            }
+        }
+    }
+}
+
+pub(crate) fn default_scene<'a>(
+    clip: &AssetEntry,
+    assets: &'a AssetRegistry,
+) -> Option<&'a AssetEntry> {
+    assets
+        .of_type::<Scene>()
+        .find(|entry| entry.name() == "scene" && entry.folder() == clip.folder())
+}
+
+/// Reads the `picked` scene, or else the one named `scene` in `clip`'s folder, with its id.
+pub fn read_shown_scene(
+    root: &Path,
+    clip: Option<&AssetEntry>,
+    picked: Option<AssetId>,
+    assets: &AssetRegistry,
+) -> anyhow::Result<Option<(AssetId, Scene)>> {
+    let entry = match picked {
+        Some(id) => Some(
+            assets
+                .get(id)
+                .ok_or_else(|| anyhow::anyhow!("The picked scene is not in the project"))?,
+        ),
+        None => clip.and_then(|clip| default_scene(clip, assets)),
+    };
+    entry
+        .map(|entry| {
+            let scene = load_scene(root.to_owned(), entry.address.clone(), entry.id)?;
+            Ok((entry.id, scene))
+        })
+        .transpose()
+}
+
+fn scene_signal(
+    state: &mut ClipDocument,
+    root: &Path,
+    clip: Option<&AssetEntry>,
+    assets: &AssetRegistry,
+) -> ShowClipScene {
+    let shown = read_shown_scene(root, clip, state.picked_scene, assets);
+    state.scene_error = shown.as_ref().err().map(|error| format!("{error:#}"));
+    let shown = shown.ok().flatten();
+    state.shown_scene = shown.as_ref().map(|(id, _)| *id);
+    ShowClipScene(shown.map(|(_, scene)| scene))
+}
+
+pub(crate) fn load_clip(
+    documents: Query<(
+        Entity,
+        &mut EditorDocument,
+        &mut ClipDocument,
+        &mut ClipTransport,
+    )>,
+    project: Res<ProjectState>,
+    assets: Res<AssetRegistry>,
+    mut previews: PreviewSignals,
+) {
+    let Some(root) = project.project.as_ref().map(|project| project.root.clone()) else {
+        return;
+    };
+    for (entity, mut document, mut state, mut transport) in documents.iter() {
+        let Some(asset) = document.pending.clone() else {
+            continue;
+        };
+        let clip = match read_clip(&root, &asset) {
+            Ok(clip) => Arc::new(clip),
+            Err(error) => {
+                finish_asset_request(&mut document, &asset, Err(error));
+                continue;
+            }
+        };
+        let events = match read_events(&clip) {
+            Ok(events) => events,
+            Err(error) => {
+                finish_asset_request(&mut document, &asset, Err(anyhow::anyhow!(error)));
+                continue;
+            }
+        };
+        state.events = events;
+        state.selected_event = None;
+        state.facts = ClipFacts {
+            skeleton_bones: state.facts.skeleton_bones,
+            driven: state.facts.driven,
+            ..ClipFacts::of(&clip)
+        };
+        state.clip = Some(Arc::clone(&clip));
+        state.rebuild_rows();
+        measure_transport(&mut transport, &state.facts);
+        transport.time = 0.0;
+        transport.playing = true;
+        previews.trigger(entity, ShowClip(clip));
+        previews.trigger(
+            entity,
+            SetClipTransport {
+                playing: true,
+                looping: transport.looping,
+                rate: transport.speed,
+            },
+        );
+        previews.trigger(
+            entity,
+            scene_signal(&mut state, &root, Some(&asset), &assets),
+        );
+        finish_asset_request(&mut document, &asset, Ok(()));
+    }
+}
+
+/// Registers [`AnimationClipEditor`] and runs the clip tab's systems; needs [`TransportPlugin`].
+pub struct AnimationClipEditorPlugin;
+
+impl Plugin for AnimationClipEditorPlugin {
+    fn build(&self, app: &mut App) {
+        app.register_asset_icon(AnimationClip::name(), glyph::WAVEFORM);
+        app.register_asset_editor::<AnimationClip, AnimationClipEditor>()
+            .expect("the editor's App holds the asset-editor registry")
+            .forward_hosted_event::<ClipPreviewBones>()
+            .add_system(
+                Update,
+                (
+                    sync_clip_preview,
+                    load_clip,
+                    build_clip_panels,
+                    apply_clip_event_fields,
+                    remove_clip_event,
+                    save_clip,
+                    sync_clip_panels,
+                    sync_clip_events,
+                )
+                    .chain()
+                    .after(follow_transport_progress)
+                    .before(sync_transport_rows)
+                    .before(sync_transport_timelines),
+            )
+            .add_listener(restore_clip_events);
+        install_event_keys(app);
+    }
+}
+
+/// Adds the clip, rig and graph editors and the transport they play clips with to the editor's `App`.
+pub fn install(app: &mut App) {
+    app.register_plugin(TransportPlugin)
+        .register_plugin(AnimationClipEditorPlugin)
+        .register_plugin(RetargetRigEditorPlugin)
+        .register_plugin(AnimationGraphEditorPlugin);
+    app.register_asset_icon(AnimationGraph::name(), glyph::GRAPH)
+        .register_asset_icon(BoneMask::name(), glyph::MASK_HAPPY);
+}
+
+fn install_event_keys(app: &mut App) {
+    app.add_system(Startup, bind_clip_keys)
+        .add_system(LateUpdate, sync_clip_event_context.after(EditorContextSet));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use concerto_animation::{
+        clip::{AnimationChanelOutput, AnimationChannel, ClipEventData, ClipEventKey},
+        event::AnimationEvent,
+        graph::AnimationGraph,
+        retarget::RetargetRig,
+    };
+    use concerto_app::{
+        main_schedule::MainSchedulePlugin,
+        plugins::{AssetManagerPlugin, TimePlugin},
+    };
+    use concerto_ecs::{IntoSystem, System, events::event_channel::EventChannel};
+    use concerto_editor::{
+        asset_editor::{ActiveEditor, AssetEditorRegistry},
+        hosted::{
+            Hosted, HostedApp, HostedPlugin,
+            input::{ViewportShown, ViewportView},
+            testing::*,
+        },
+        preview::{PreviewHostPlugin, PreviewSignals},
+        project::Project,
+        scene::SceneRecipe,
+    };
+    use concerto_foundation::assets::{Asset, content::save_content_asset_into};
+    use concerto_name::Name;
+    use concerto_reflect::{ReflectedValue, to_value};
+    use concerto_ui::theme::UITheme;
+    use concerto_window::plugin::{Window, WindowPlugin};
+    use glam::Vec2;
+    use preview::{ClipPreviewProgress, SetClipTransport};
+    use std::time::{Duration, Instant};
+    use uuid::Uuid;
+
+    fn keys(seconds: usize) -> AnimationChannel {
+        let times: Vec<f32> = (0..=seconds * 30).map(|key| key as f32 / 30.0).collect();
+        let translations = vec![[0.0; 3]; times.len()];
+        AnimationChannel::new(
+            times,
+            AnimationChanelOutput::from_translation(translations.into_iter()),
+        )
+    }
+
+    pub(super) fn clip_of(seconds: usize) -> AnimationClip {
+        let mut clip = AnimationClip::default();
+        clip.add_channel(Uuid::from_u128(1), keys(seconds));
+        clip
+    }
+
+    pub(super) const FOOTSTEP: &str = "game::events::Footstep";
+
+    pub(super) fn stored_key(time: f32, type_name: &str, value: ReflectedValue) -> ClipEventKey {
+        ClipEventKey {
+            time,
+            event: ClipEventData::Stored {
+                type_name: type_name.to_owned(),
+                value,
+            },
+        }
+    }
+
+    pub(super) fn named_key(time: f32, name: &str) -> ClipEventKey {
+        let event = AnimationEvent {
+            name: Name::new(name),
+        };
+        stored_key(
+            time,
+            std::any::type_name::<AnimationEvent>(),
+            to_value(&event).unwrap(),
+        )
+    }
+
+    pub(super) fn footstep_value() -> ReflectedValue {
+        ReflectedValue::Struct(vec![(
+            "strength".to_owned(),
+            ReflectedValue::Leaf(vec![0, 0, 32, 64]),
+        )])
+    }
+
+    pub(super) fn typed_key(time: f32) -> ClipEventKey {
+        stored_key(time, FOOTSTEP, footstep_value())
+    }
+
+    pub(super) fn clip_fixture() -> SceneFixture {
+        let mut f = SceneFixture::new();
+        f.world
+            .get_resource_mut::<AssetEditorRegistry>()
+            .unwrap()
+            .register::<AnimationClip, AnimationClipEditor>()
+            .unwrap();
+        f.world
+            .insert_resource(EventChannel::<Hosted<ClipPreviewProgress>>::new());
+        f.world
+            .insert_resource(EventChannel::<Hosted<ClipPreviewBones>>::new());
+        f.add_delivery(forwarding::<ClipPreviewProgress>());
+        f.add_delivery(forwarding::<ClipPreviewBones>());
+        f.add_delivery(follow_transport_progress.into_boxed_system());
+        f.add_delivery(sync_clip_preview.into_boxed_system());
+        f.add_delivery(load_clip.into_boxed_system());
+        f
+    }
+
+    pub(super) fn write_clip(
+        f: &mut SceneFixture,
+        address: &str,
+        clip: &AnimationClip,
+    ) -> AssetEntry {
+        let root = f.project_root.clone();
+        let assets = f.world.get_resource_mut::<AssetRegistry>().unwrap();
+        let id = save_content_asset_into(clip, &root, address, assets).unwrap();
+        assets.get(id).unwrap().clone()
+    }
+
+    pub(super) fn write_scene(f: &mut SceneFixture, address: &str, node: &str) -> AssetEntry {
+        let asset = AssetEntry {
+            address: address.into(),
+            ..scene_entry("fixture")
+        };
+        let path = f.project_root.join(address);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        f.add_to_project(&asset);
+        write_scene_file(&f.project_root, &asset, &[node]);
+        asset
+    }
+
+    pub(super) fn open_clip(f: &mut SceneFixture, clip: &AssetEntry) -> Entity {
+        f.request(clip);
+        let document = f.world.get_resource::<ActiveEditor>().unwrap().0.unwrap();
+        f.frames_until("the clip never finished opening", |f| {
+            f.document(document).pending.is_none()
+                && f.world
+                    .get_component_for_entity::<HostedApp>(document)
+                    .is_some()
+        });
+        document
+    }
+
+    pub(super) fn state(f: &SceneFixture, document: Entity) -> &ClipDocument {
+        f.world
+            .get_component_for_entity::<ClipDocument>(document)
+            .expect("the document is a clip's")
+    }
+
+    pub(super) fn state_mut(f: &mut SceneFixture, document: Entity) -> &mut ClipDocument {
+        f.world
+            .get_component_for_entity_mut::<ClipDocument>(document)
+            .expect("the document is a clip's")
+    }
+
+    pub(super) fn transport(f: &SceneFixture, document: Entity) -> &ClipTransport {
+        f.world
+            .get_component_for_entity::<ClipTransport>(document)
+            .expect("the document has a transport")
+    }
+
+    fn pause(f: &mut SceneFixture, document: Entity) {
+        let mut system = (move |mut previews: PreviewSignals| {
+            previews.trigger(
+                document,
+                SetClipTransport {
+                    playing: false,
+                    looping: true,
+                    rate: 1.0,
+                },
+            );
+        })
+        .into_system();
+        system.initialize(&mut f.world);
+        system.run_and_apply((), &mut f.world);
+        f.frames_until("the pause never came back", |f| {
+            !transport(f, document).playing
+        });
+    }
+
+    #[test]
+    fn a_clip_opens_on_its_folders_scene_with_its_events_and_a_second_clip_replaces_them_from_zero()
+    {
+        let mut f = clip_fixture();
+        let scene = write_scene(&mut f, "content/hero/scene.gasset", "sibling");
+        let stranger = write_scene(&mut f, "content/other/scene.gasset", "stranger");
+        let mut eventful = clip_of(10);
+        eventful
+            .replace_events(vec![typed_key(0.25), named_key(0.5, "footstep")])
+            .unwrap();
+        let walk = write_clip(&mut f, "content/hero/walk.gasset", &eventful);
+        let run = write_clip(&mut f, "content/other/run.gasset", &clip_of(20));
+
+        let document = open_clip(&mut f, &walk);
+
+        f.frames_until("the scene never reached the preview", |f| {
+            f.scene_names(document).contains(&"sibling".to_owned())
+        });
+        assert!(!f.scene_names(document).contains(&"stranger".to_owned()));
+        let opened = state(&f, document);
+        assert_eq!(opened.shown_scene, Some(scene.id));
+        assert_eq!(opened.events.len(), 2);
+        assert_eq!(transport(&f, document).duration, 10.0);
+        f.frames_until("the head never moved", |f| {
+            transport(f, document).time > 0.0
+        });
+        pause(&mut f, document);
+
+        open_clip(&mut f, &run);
+
+        let restarted = transport(&f, document);
+        assert_eq!(restarted.time, 0.0);
+        assert!(restarted.playing);
+        assert_eq!(restarted.duration, 20.0);
+        assert!(state(&f, document).events.is_empty());
+        assert_eq!(f.document(document).current, Some(run));
+        assert_eq!(state(&f, document).shown_scene, Some(stranger.id));
+        f.frames_until("the second scene never reached the preview", |f| {
+            f.scene_names(document).contains(&"stranger".to_owned())
+        });
+        assert!(!f.scene_names(document).contains(&"sibling".to_owned()));
+        f.frames_until("the second clip never played", |f| {
+            transport(f, document).time > 0.0
+        });
+        assert!(!f.unsaved(document));
+    }
+
+    #[test]
+    fn install_registers_the_three_editors_and_plays_a_clip_in_the_editors_schedule() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut assets = AssetRegistry::default();
+        let id = save_content_asset_into(
+            &clip_of(10),
+            directory.path(),
+            "content/walk.gasset",
+            &mut assets,
+        )
+        .unwrap();
+        let walk = assets.get(id).unwrap().clone();
+        let mut project = ProjectState::default();
+        project.project = Some(Project {
+            root: directory.path().into(),
+            content_root: "content".into(),
+            default_scene: None,
+        });
+        let mut app = App::new();
+        app.register_plugin(MainSchedulePlugin)
+            .register_plugin(AssetManagerPlugin)
+            .register_plugin(TimePlugin)
+            .register_plugin(WindowPlugin)
+            .register_plugin(HostedPlugin)
+            .register_plugin(PreviewHostPlugin)
+            .insert_resource(Window::new((640, 480), 1.0))
+            .insert_resource(ActiveEditor::default())
+            .insert_resource(AssetEditorRegistry::default())
+            .insert_resource(project)
+            .insert_resource(assets)
+            .insert_resource(UITheme::default())
+            .insert_resource(SceneRecipe {
+                recipe: scene_recipe,
+                gpu: None,
+                clipboard: None,
+                scene_plugins: Vec::new(),
+            })
+            .insert_resource(ViewportShown(Some(ViewportView {
+                origin: Vec2::ZERO,
+                size: (64, 64),
+                over: false,
+                typing: false,
+            })));
+        install(&mut app);
+        app.finish_plugin_build();
+        let editors = app.get_resource::<AssetEditorRegistry>().unwrap();
+        assert!(editors.preview(AnimationClip::name()).is_some());
+        for kind in [RetargetRig::name(), AnimationGraph::name()] {
+            assert!(editors.creatable().any(|(creatable, _)| creatable == kind));
+        }
+        let world = app.main_mut().world_mut();
+        let document = world.spawn((
+            EditorDocument {
+                asset_type: AnimationClip::name(),
+                title: "walk".into(),
+                current: None,
+                pending: Some(walk),
+                order: 1,
+                status: String::new(),
+                failed: None,
+            },
+            ClipDocument::default(),
+            ClipTransport::default(),
+        ));
+        world.get_resource_mut::<ActiveEditor>().unwrap().0 = Some(document);
+
+        let deadline = Instant::now() + Duration::from_secs(20);
+        loop {
+            app.update();
+            let followed = app
+                .main()
+                .world()
+                .get_component_for_entity::<ClipTransport>(document)
+                .unwrap();
+            if followed.time > 0.0 {
+                break;
+            }
+            assert!(Instant::now() < deadline, "the head never moved");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+}

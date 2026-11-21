@@ -1,17 +1,27 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use concerto_ecs::entity::Entity;
 use concerto_ecs::resource::Resource;
 use concerto_foundation::transform::Transform;
 use glam::Vec3;
 
-use crate::backend::PhysicsBackend;
+use crate::backend::{PhysicsBackend, SensorContactKind};
 use crate::body::BodyId;
 use crate::collider::{Collider, ColliderOffset};
 use crate::ground::{GroundContact, GroundState};
+use crate::query::{QueryFilter, ShapeHit};
 use crate::ray::RayHit;
 use crate::rigid_body::RigidBody;
+use crate::sensor::SensorContact;
 use crate::ActiveBackend;
+
+const MIN_SPHERE_CAST_RADIUS: f32 = 1e-3;
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+struct SensorOverlap {
+    sensor: BodyId,
+    other: BodyId,
+}
 
 /// Owns the physics world of the active backend, plus the engine-side
 /// body↔entity bookkeeping shared by every backend.
@@ -24,6 +34,8 @@ pub struct PhysicsState {
     ///
     /// [`Collider`]: crate::collider::Collider
     body_to_entity: HashMap<BodyId, Entity>,
+    overlaps: HashSet<SensorOverlap>,
+    sensor_contacts: Vec<SensorContact>,
 }
 
 impl PhysicsState {
@@ -31,6 +43,8 @@ impl PhysicsState {
         Self {
             backend: ActiveBackend::new(),
             body_to_entity: HashMap::new(),
+            overlaps: HashSet::new(),
+            sensor_contacts: Vec::new(),
         }
     }
 
@@ -65,10 +79,11 @@ impl PhysicsState {
         transform: &Transform,
         rigid_body: Option<&RigidBody>,
         offset: Option<&ColliderOffset>,
+        sensor: bool,
     ) -> BodyId {
         BodyId(
             self.backend
-                .create_body(collider, transform, rigid_body, offset),
+                .create_body(collider, transform, rigid_body, offset, sensor),
         )
     }
 
@@ -76,6 +91,60 @@ impl PhysicsState {
     /// `Collider::on_remove`.
     pub(crate) fn destroy_body(&mut self, body: BodyId) {
         self.backend.destroy_body(body.0);
+        let Self {
+            body_to_entity,
+            overlaps,
+            sensor_contacts,
+            ..
+        } = self;
+        overlaps.retain(|overlap| {
+            if overlap.sensor != body && overlap.other != body {
+                return true;
+            }
+            if let (Some(&sensor), Some(&other)) = (
+                body_to_entity.get(&overlap.sensor),
+                body_to_entity.get(&overlap.other),
+            ) {
+                sensor_contacts.push(SensorContact {
+                    sensor,
+                    other,
+                    kind: SensorContactKind::Exit,
+                });
+            }
+            false
+        });
+    }
+
+    pub(crate) fn gather_sensor_contacts(&mut self) {
+        let mut raw = Vec::new();
+        self.backend.drain_sensor_contacts(&mut raw);
+        for contact in raw {
+            let overlap = SensorOverlap {
+                sensor: BodyId(contact.sensor),
+                other: BodyId(contact.other),
+            };
+            let changed = match contact.kind {
+                SensorContactKind::Enter => self.overlaps.insert(overlap),
+                SensorContactKind::Exit => self.overlaps.remove(&overlap),
+            };
+            if !changed {
+                continue;
+            }
+            if let (Some(sensor), Some(other)) = (
+                self.get_entity(overlap.sensor),
+                self.get_entity(overlap.other),
+            ) {
+                self.sensor_contacts.push(SensorContact {
+                    sensor,
+                    other,
+                    kind: contact.kind,
+                });
+            }
+        }
+    }
+
+    pub(crate) fn take_sensor_contacts(&mut self) -> Vec<SensorContact> {
+        std::mem::take(&mut self.sensor_contacts)
     }
 
     /// Reports what `body` is standing on: the most upward-facing contact
@@ -118,19 +187,52 @@ impl PhysicsState {
     }
 
     /// Casts a ray from `origin` along `direction` — whose length is the
-    /// maximum cast distance — and returns the closest hit, if any.
-    pub fn cast_ray(&self, origin: Vec3, direction: Vec3) -> Option<RayHit> {
-        self.backend.cast_ray(origin, direction).map(|hit| {
-            let body = BodyId(hit.body);
+    /// maximum cast distance — and returns the closest hit, if any, skipping
+    /// the bodies `filter` ignores.
+    pub fn cast_ray(&self, origin: Vec3, direction: Vec3, filter: QueryFilter) -> Option<RayHit> {
+        let ignore: Vec<_> = filter.ignore.iter().map(|body| body.0).collect();
+        self.backend
+            .cast_ray(origin, direction, &ignore)
+            .map(|hit| {
+                let body = BodyId(hit.body);
 
-            RayHit {
-                body,
-                entity: self.get_entity(body),
-                fraction: hit.fraction,
-                point: origin + direction * hit.fraction,
-                normal: hit.normal,
-            }
-        })
+                RayHit {
+                    body,
+                    entity: self.get_entity(body),
+                    fraction: hit.fraction,
+                    point: origin + direction * hit.fraction,
+                    normal: hit.normal,
+                }
+            })
+    }
+
+    /// Sweeps a sphere of `radius` from `origin` along `direction`, whose length is the sweep's reach.
+    pub fn cast_sphere(
+        &self,
+        origin: Vec3,
+        radius: f32,
+        direction: Vec3,
+        filter: QueryFilter,
+    ) -> Option<ShapeHit> {
+        let ignore: Vec<_> = filter.ignore.iter().map(|body| body.0).collect();
+        self.backend
+            .cast_sphere(
+                origin,
+                radius.max(MIN_SPHERE_CAST_RADIUS),
+                direction,
+                &ignore,
+            )
+            .map(|hit| {
+                let body = BodyId(hit.body);
+
+                ShapeHit {
+                    body,
+                    entity: self.get_entity(body),
+                    fraction: hit.fraction,
+                    point: hit.point,
+                    normal: hit.normal,
+                }
+            })
     }
 
     pub fn add_impulse(&mut self, body: BodyId, impulse: Vec3) {

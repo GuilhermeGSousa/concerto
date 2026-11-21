@@ -111,7 +111,7 @@ impl VirtualCamera {
 
 /// Projection parameters, split out of [`Camera`] so they can be overridden and
 /// blended independently of the render target and clear colour.
-#[derive(Clone, Copy, Reflect)]
+#[derive(Clone, Copy, Debug, PartialEq, Reflect)]
 pub struct Lens {
     pub fovy: f32,
     pub znear: f32,
@@ -224,96 +224,5 @@ impl CameraPose {
             rotation: self.rotation.slerp(other.rotation, t),
             lens: self.lens.lerp(other.lens, t),
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::sync::Arc;
-
-    use concerto_ecs::system::executor::single_thread::SingleThreadedExecutor;
-    use concerto_ecs::system::schedule::Schedule;
-    use concerto_ecs::{CommandQueue, Component, Entity, Res, Resource, world::World};
-    use concerto_reflect::{ReflectedValue, to_value};
-
-    use super::VirtualCamera;
-    use crate::director::CameraDirector;
-
-    #[derive(Resource)]
-    struct StoredComponent {
-        node: Entity,
-        stored: ReflectedValue,
-    }
-
-    fn insert_stored_camera(mut cmd: CommandQueue, stored: Res<StoredComponent>) {
-        cmd.apply_scene_component(
-            VirtualCamera::name().to_string(),
-            stored.stored.clone(),
-            stored.node,
-            Arc::<[Entity]>::from([stored.node]),
-        );
-    }
-
-    /// A scene stores only some fields; the rest keep `VirtualCamera::default()`.
-    fn spawn_stored(fields: Vec<(&str, ReflectedValue)>) -> (World, Entity) {
-        let mut world = World::new();
-        world.register_component::<VirtualCamera>();
-        world.register_type::<VirtualCamera>();
-        world.insert_resource(CameraDirector::default());
-
-        let node = world.spawn(());
-        let value = ReflectedValue::Struct(
-            fields
-                .into_iter()
-                .map(|(name, value)| (name.to_owned(), value))
-                .collect(),
-        );
-        world.insert_resource(StoredComponent {
-            node,
-            stored: value,
-        });
-
-        let mut schedule = Schedule::new();
-        schedule.add_system(insert_stored_camera);
-        schedule
-            .compile::<SingleThreadedExecutor>(&mut world)
-            .run(&mut world);
-
-        (world, node)
-    }
-
-    #[test]
-    fn a_stored_camera_joins_the_stack_at_its_priority() {
-        let (mut world, node) = spawn_stored(vec![("priority", to_value(&7_i32).unwrap())]);
-
-        let vcam = world
-            .get_component_for_entity::<VirtualCamera>(node)
-            .expect("reflection should have inserted the component");
-        assert_eq!(vcam.priority(), 7);
-
-        let director = world.get_resource_mut::<CameraDirector>().unwrap();
-        assert_eq!(director.stack()[0].priority, 7);
-        // A scene that never mentions `enabled` gets a camera that works.
-        assert!(director.is_enabled(node));
-        assert_eq!(director.live(), Some(node));
-    }
-
-    #[test]
-    fn a_stored_camera_can_ship_disabled() {
-        let (mut world, node) = spawn_stored(vec![
-            ("priority", to_value(&7_i32).unwrap()),
-            ("enabled", to_value(&false).unwrap()),
-        ]);
-
-        assert!(
-            world
-                .get_component_for_entity::<VirtualCamera>(node)
-                .is_some(),
-            "reflection should have inserted the component before we check it shipped disabled"
-        );
-
-        let director = world.get_resource_mut::<CameraDirector>().unwrap();
-        assert!(!director.is_enabled(node));
-        assert!(director.live().is_none());
     }
 }

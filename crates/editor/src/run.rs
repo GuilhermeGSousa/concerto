@@ -86,11 +86,18 @@ pub(crate) fn parse_args(
     })
 }
 
+pub(crate) fn apply_plugins(app: &mut App, plugins: &[fn(&mut App)]) {
+    for plugin in plugins {
+        plugin(app);
+    }
+}
+
 pub(crate) fn register_editor(
     app: &mut App,
     recipe: fn(&mut App),
     project: PathBuf,
     decorated: bool,
+    plugins: &[fn(&mut App)],
 ) {
     app.register_plugin(MainSchedulePlugin)
         .register_plugin(AssetManagerPlugin)
@@ -103,11 +110,18 @@ pub(crate) fn register_editor(
             decorated,
             recipe,
         })
-        .register_plugin(concerto_ui::plugin::UIPlugin);
+        .register_plugin(concerto_ui::plugin::UIPlugin)
+        .insert_resource(crate::hosted::FinishBuildsOffThread);
+    apply_plugins(app, plugins);
 }
 
 /// Opens the editor for the game whose recipe is `recipe`, on the project at `project_root` unless `--project` names another; `--mcp` serves it over MCP on stdin and stdout instead of opening a window.
 pub fn run(recipe: fn(&mut App), project_root: impl Into<PathBuf>) {
+    run_with(recipe, project_root, &[]);
+}
+
+/// Runs the editor with `plugins` added to its `App`, after `EditorPlugin`.
+pub fn run_with(recipe: fn(&mut App), project_root: impl Into<PathBuf>, plugins: &[fn(&mut App)]) {
     let _ = env_logger::try_init();
     let mut arguments = std::env::args_os();
     let program = arguments.next();
@@ -122,125 +136,74 @@ pub fn run(recipe: fn(&mut App), project_root: impl Into<PathBuf>) {
             std::process::exit(2);
         }
     };
+    let plugins = plugins.to_vec();
     match options.mcp {
-        Some(size) => concerto_mcp::host::run(crate::mcp::editor(recipe, options.project), size),
+        Some(size) => {
+            concerto_mcp::host::run(crate::mcp::editor(recipe, options.project, plugins), size)
+        }
         None => concerto_winit::run(move |app| {
-            register_editor(app, recipe, options.project, options.decorated);
+            register_editor(app, recipe, options.project, options.decorated, &plugins);
         }),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::{ffi::OsString, path::PathBuf};
+    use concerto_app::{
+        App,
+        main_schedule::MainSchedulePlugin,
+        plugins::{AssetManagerPlugin, TimePlugin},
+    };
+    use concerto_ecs::Resource;
+    use concerto_window::plugin::WindowPlugin;
 
-    use super::{ArgsError, parse_args, usage};
+    use super::apply_plugins;
+    use crate::{
+        EditorPlugin,
+        asset_editor::{AssetEditorAppExt, AssetEditorRegistry},
+        hosted::testing::{PlainAsset, PlainEditor, plain_recipe},
+    };
 
-    fn args(list: &[&str]) -> Vec<OsString> {
-        list.iter().map(OsString::from).collect()
+    #[derive(Resource)]
+    struct Applied(Vec<&'static str>);
+
+    fn first_extension(app: &mut App) {
+        app.register_asset_editor::<PlainAsset, PlainEditor>()
+            .expect("the editor's registry is in place");
+        app.insert_resource(Applied(vec!["first"]));
+    }
+
+    fn second_extension(app: &mut App) {
+        app.get_resource_mut::<Applied>()
+            .expect("the first extension ran")
+            .0
+            .push("second");
     }
 
     #[test]
-    fn with_no_arguments_the_default_root_is_opened() {
-        let options = parse_args(args(&[]), PathBuf::from("game")).unwrap();
-        assert_eq!(options.project, PathBuf::from("game"));
-        assert!(!options.decorated);
-    }
+    fn plugins_are_applied_in_order_and_reach_what_the_editor_plugin_registered() {
+        let mut app = App::new();
+        app.register_plugin(MainSchedulePlugin)
+            .register_plugin(AssetManagerPlugin)
+            .register_plugin(TimePlugin)
+            .register_plugin(WindowPlugin)
+            .register_plugin(EditorPlugin {
+                project: None,
+                decorated: false,
+                recipe: plain_recipe,
+            });
 
-    #[test]
-    fn project_overrides_the_default_root() {
-        let options = parse_args(args(&["--project", "copy"]), PathBuf::from("game")).unwrap();
-        assert_eq!(options.project, PathBuf::from("copy"));
-    }
+        apply_plugins(&mut app, &[first_extension, second_extension]);
 
-    #[test]
-    fn decorated_is_read() {
+        assert_eq!(
+            app.get_resource::<Applied>().unwrap().0,
+            ["first", "second"]
+        );
         assert!(
-            parse_args(args(&["--decorated"]), PathBuf::from("game"))
+            app.get_resource::<AssetEditorRegistry>()
                 .unwrap()
-                .decorated
-        );
-    }
-
-    #[test]
-    fn without_mcp_the_editor_opens_a_window() {
-        assert_eq!(
-            parse_args(args(&["--decorated"]), PathBuf::new())
-                .unwrap()
-                .mcp,
-            None
-        );
-    }
-
-    #[test]
-    fn mcp_serves_at_the_default_size_and_ignores_decorated() {
-        let options = parse_args(args(&["--mcp", "--decorated"]), PathBuf::new()).unwrap();
-        assert_eq!(options.mcp, Some((1600, 900)));
-    }
-
-    #[test]
-    fn mcp_size_sets_the_size_in_either_order() {
-        for list in [
-            ["--mcp", "--mcp-size", "800x600"],
-            ["--mcp-size", "800x600", "--mcp"],
-        ] {
-            assert_eq!(
-                parse_args(args(&list), PathBuf::new()).unwrap().mcp,
-                Some((800, 600))
-            );
-        }
-    }
-
-    #[test]
-    fn a_bad_or_lone_mcp_size_is_an_error() {
-        for list in [
-            &["--mcp", "--mcp-size"][..],
-            &["--mcp", "--mcp-size", "800"],
-            &["--mcp", "--mcp-size", "800x"],
-            &["--mcp", "--mcp-size", "0x600"],
-            &["--mcp", "--mcp-size", "800x600x2"],
-            &["--mcp", "--mcp-size", "-800x600"],
-            &["--mcp-size", "800x600"],
-        ] {
-            assert!(
-                matches!(
-                    parse_args(args(list), PathBuf::new()),
-                    Err(ArgsError::Usage(_))
-                ),
-                "{list:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn help_and_bad_arguments_are_errors() {
-        assert!(matches!(
-            parse_args(args(&["--help"]), PathBuf::new()),
-            Err(ArgsError::Help)
-        ));
-        assert!(matches!(
-            parse_args(args(&["-h"]), PathBuf::new()),
-            Err(ArgsError::Help)
-        ));
-        assert!(matches!(
-            parse_args(args(&["--project"]), PathBuf::new()),
-            Err(ArgsError::Usage(_))
-        ));
-        assert!(matches!(
-            parse_args(args(&["--nope"]), PathBuf::new()),
-            Err(ArgsError::Usage(_))
-        ));
-    }
-
-    #[test]
-    fn the_usage_names_the_running_binary() {
-        assert_eq!(
-            usage(Some(OsString::from("/game/target/debug/my-game-editor"))),
-            "Usage: my-game-editor [--project <directory>] [--decorated] [--mcp [--mcp-size <width>x<height>]] [-h | --help]"
-        );
-        assert_eq!(
-            usage(None),
-            "Usage: editor [--project <directory>] [--decorated] [--mcp [--mcp-size <width>x<height>]] [-h | --help]"
+                .editor_kind("PlainAsset")
+                .is_some()
         );
     }
 }

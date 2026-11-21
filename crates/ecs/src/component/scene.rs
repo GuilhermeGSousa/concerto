@@ -138,6 +138,10 @@ impl FromType<SceneEntityRef> for ReflectSceneLeaf {
                     .ok_or_else(|| LeafError("not a SceneEntityRef".into()))?;
                 let mut index = 0_u64;
                 decode_leaf(&mut index, bytes)?;
+                if index == u64::MAX {
+                    *reference = SceneEntityRef::default();
+                    return Ok(());
+                }
                 let entity = spawn
                     .node_entities
                     .get(index as usize)
@@ -154,15 +158,22 @@ impl FromType<SceneEntityRef> for ReflectSceneLeaf {
                     .ok_or_else(|| LeafError("not a SceneEntityRef".into()))?;
                 let index = match *reference {
                     SceneEntityRef::Index(index) => index,
-                    SceneEntityRef::Entity(entity) => {
-                        capture.index_of(entity).ok_or_else(|| {
-                            LeafError(format!(
+                    SceneEntityRef::Entity(entity) => match capture.index_of(entity) {
+                        Some(index) => index,
+                        None => {
+                            capture.refer_outside(entity);
+                            return Err(LeafError(format!(
                                 "references {entity:?}, which is outside the scene being captured"
-                            ))
-                        })?
-                    }
+                            )));
+                        }
+                    },
                 };
-                encode_leaf(&(index as u64))
+                let stored = if index == usize::MAX {
+                    u64::MAX
+                } else {
+                    index as u64
+                };
+                encode_leaf(&stored)
             },
         }
     }

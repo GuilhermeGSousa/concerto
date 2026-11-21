@@ -13,9 +13,9 @@ const POINT_LIGHT = 0u;
 const SPOT_LIGHT = 1u;
 const DIRECTIONAL_LIGHT = 2u;
 
+const POINT_SHADOW_NEAR = 0.1;
+
 const PI = 3.14159265359;
-// Mirrored on the CPU by `camera_environment::DEFAULT_AMBIENT_INTENSITY`.
-const AMBIENT_INTENSITY = 0.03;
 // Roughness below this produces a near-singular specular lobe.
 const MIN_ROUGHNESS = 0.045;
 
@@ -40,6 +40,7 @@ struct Light {
     cos_cone_angle: f32,
     shadow_layer: i32,
     range: f32,
+    shadow_far: f32,
 };
 
 struct Lights {
@@ -64,6 +65,11 @@ struct CameraUniform {
     fog_color: vec4<f32>,
     fog_params: vec4<f32>,
     ambient: vec4<f32>,
+    inverse_view_proj: mat4x4<f32>,
+    sky_irradiance: array<vec4<f32>, 9>,
+    night_color: vec4<f32>,
+    night_ambient: vec4<f32>,
+    sky_lit: u32,
 };
 
 struct VertexInput {
@@ -194,6 +200,12 @@ var<uniform> material: MaterialUniform;
 @group(1) @binding(0)
 var<uniform> camera: CameraUniform;
 
+@group(1) @binding(1)
+var t_sky_radiance: texture_2d<f32>;
+
+@group(1) @binding(2)
+var s_sky_radiance: sampler;
+
 @group(2) @binding(0)
 var<uniform> lights: Lights;
 
@@ -241,8 +253,10 @@ fn pbr_fs(in: VertexOutput) -> vec4<f32> {
 
     // Normal mapping calculations
     let object_normal = sample_normal(in.tex_coords);
+    let normal_xy = object_normal.xy * 2.0 - 1.0;
+    let normal_z = sqrt(max(0.0, 1.0 - dot(normal_xy, normal_xy)));
     let TBN = mat3x3<f32>(in.world_tangent, in.world_bitangent, in.world_normal);
-    let mapped_normal = normalize(TBN * normalize(object_normal.xyz * 2.0 - 1.0));
+    let mapped_normal = normalize(TBN * vec3<f32>(normal_xy, normal_z));
 
     let view_dir = normalize(camera.view_pos - in.world_position);
     let NdotV = max(dot(mapped_normal, view_dir), 1e-4);
@@ -285,17 +299,17 @@ fn pbr_fs(in: VertexOutput) -> vec4<f32> {
             attenuation *= smoothstep(light.cos_cone_angle, cone_edge_softness, angle_cos);
         }
 
-        // Point-light shadow maps aren't rendered or sampled yet — only
-        // spot/directional casters get a real shadow factor here.
+        let geometric_normal = normalize(in.world_normal);
+        var reach = 10.0;
+        if light_type != DIRECTIONAL_LIGHT {
+            reach = length(light_delta);
+        }
+        let grazing = 1.5 - clamp(dot(geometric_normal, light_dir), 0.0, 1.0);
+        let offset = geometric_normal * (0.01 + 0.004 * reach) * grazing;
         var shadow = 1.0;
-        if light_type != POINT_LIGHT {
-            let geometric_normal = normalize(in.world_normal);
-            var reach = 10.0;
-            if light_type != DIRECTIONAL_LIGHT {
-                reach = length(light_delta);
-            }
-            let grazing = 1.5 - clamp(dot(geometric_normal, light_dir), 0.0, 1.0);
-            let offset = geometric_normal * (0.01 + 0.004 * reach) * grazing;
+        if light_type == POINT_LIGHT {
+            shadow = point_shadow_visibility(light, in.world_position + offset);
+        } else {
             shadow = shadow_visibility(light.shadow_layer, in.world_position + offset);
         }
 
@@ -318,7 +332,10 @@ fn pbr_fs(in: VertexOutput) -> vec4<f32> {
         total_light += (kd * diffuse_color / PI + specular) * radiance * NdotL;
     }
 
-    let ambient_light = select(vec3<f32>(AMBIENT_INTENSITY), camera.ambient.rgb, camera.ambient.a > 0.0);
+    var ambient_light = camera.ambient.rgb;
+    if camera.sky_lit != 0u {
+        ambient_light = sky_irradiance(mapped_normal) / PI + camera.night_ambient.rgb;
+    }
     let ambient = ambient_light * base_color.rgb * occlusion;
     var color = ambient + total_light + emissive;
 
@@ -326,7 +343,11 @@ fn pbr_fs(in: VertexOutput) -> vec4<f32> {
         let fog_distance = max(length(camera.view_pos - in.world_position) - camera.fog_params.y, 0.0);
         let fog_depth = fog_distance * camera.fog_params.x;
         let fog_amount = 1.0 - exp(-(fog_depth * fog_depth));
-        color = mix(color, camera.fog_color.rgb, fog_amount);
+        var fog_color = camera.fog_color.rgb;
+        if camera.sky_lit != 0u {
+            fog_color = sky_fog_color(in.world_position - camera.view_pos);
+        }
+        color = mix(color, fog_color, fog_amount);
     }
 
     // Tone map to LDR; the sRGB surface format applies gamma encoding.
@@ -360,17 +381,113 @@ fn shadow_visibility(shadow_layer: i32, world_position: vec3<f32>) -> f32 {
         return 1.0; // Outside the light's shadow frustum: treat as unshadowed.
     }
 
-    // Hardware PCF: the comparison sampler returns a bilinear-filtered
-    // fraction of samples passing `depth_ref <= stored_depth`, giving
-    // softened edges for one tap. A wider multi-tap kernel would soften
-    // further but isn't implemented yet.
-    return textureSampleCompareLevel(
-        t_shadow_spot_directional,
-        sampler_shadow_spot_directional,
-        shadow_uv,
-        shadow_layer,
-        light_ndc.z,
+    let texel = 1.0 / vec2<f32>(textureDimensions(t_shadow_spot_directional));
+    var lit = 0.0;
+    for (var y: i32 = -1; y <= 1; y = y + 1) {
+        for (var x: i32 = -1; x <= 1; x = x + 1) {
+            lit += textureSampleCompareLevel(
+                t_shadow_spot_directional,
+                sampler_shadow_spot_directional,
+                shadow_uv + vec2<f32>(f32(x), f32(y)) * texel,
+                shadow_layer,
+                light_ndc.z,
+            );
+        }
+    }
+    return lit / 9.0;
+}
+
+fn point_shadow_visibility(light: Light, world_position: vec3<f32>) -> f32 {
+    if light.shadow_layer < 0 {
+        return 1.0;
+    }
+
+    let from_light = world_position - light.position;
+    let extent = abs(from_light);
+    let distance = max(extent.x, max(extent.y, extent.z));
+    if distance >= light.shadow_far || distance <= POINT_SHADOW_NEAR {
+        return 1.0;
+    }
+
+    let far = light.shadow_far;
+    let depth = far * (distance - POINT_SHADOW_NEAR) / ((far - POINT_SHADOW_NEAR) * distance);
+    let direction = from_light * vec3<f32>(1.0, 1.0, -1.0) / distance;
+    let reference = select(
+        vec3<f32>(0.0, 1.0, 0.0),
+        vec3<f32>(1.0, 0.0, 0.0),
+        abs(direction.y) > abs(direction.x),
     );
+    let tangent = normalize(cross(direction, reference));
+    let bitangent = normalize(cross(direction, tangent));
+    let texel = 2.0 * length(direction) / f32(textureDimensions(t_shadow_point).x);
+    var lit = 0.0;
+    for (var y: i32 = -1; y <= 1; y = y + 1) {
+        for (var x: i32 = -1; x <= 1; x = x + 1) {
+            let tap = direction + (tangent * f32(x) + bitangent * f32(y)) * texel;
+            lit += sample_point_shadow(tap, light.shadow_layer, depth);
+        }
+    }
+    return lit / 9.0;
+}
+
+fn sample_point_shadow(direction: vec3<f32>, shadow_layer: i32, depth: f32) -> f32 {
+#ifdef NO_CUBE_ARRAY_TEXTURES_SUPPORT
+    return textureSampleCompareLevel(t_shadow_point, sampler_shadow_point, direction, depth);
+#else
+    return textureSampleCompareLevel(
+        t_shadow_point,
+        sampler_shadow_point,
+        direction,
+        shadow_layer,
+        depth,
+    );
+#endif
+}
+
+fn sky_irradiance(normal: vec3<f32>) -> vec3<f32> {
+    let x = normal.x;
+    let y = normal.y;
+    let z = normal.z;
+    let sh = camera.sky_irradiance;
+    let irradiance = sh[0].rgb * 0.2820948
+        + sh[1].rgb * (0.4886025 * y)
+        + sh[2].rgb * (0.4886025 * z)
+        + sh[3].rgb * (0.4886025 * x)
+        + sh[4].rgb * (1.0925484 * x * y)
+        + sh[5].rgb * (1.0925484 * y * z)
+        + sh[6].rgb * (0.3153916 * (3.0 * z * z - 1.0))
+        + sh[7].rgb * (1.0925484 * x * z)
+        + sh[8].rgb * (0.5462742 * (x * x - y * y));
+    return max(irradiance, vec3<f32>(0.0));
+}
+
+#ifdef SKY_RADIANCE_SQRT
+const SKY_RADIANCE_SCALE: f32 = f32(#{SKY_RADIANCE_SQRT});
+#endif
+
+fn sky_radiance_uv(direction: vec3<f32>) -> vec2<f32> {
+    return vec2<f32>(
+        atan2(direction.x, -direction.z) / (2.0 * PI) + 0.5,
+        0.5 - asin(clamp(direction.y, -1.0, 1.0)) / PI,
+    );
+}
+
+fn sky_radiance(direction: vec3<f32>) -> vec3<f32> {
+    let texel = textureSampleLevel(t_sky_radiance, s_sky_radiance, sky_radiance_uv(direction), 0.0).rgb;
+#ifdef SKY_RADIANCE_SQRT
+    return texel * texel * SKY_RADIANCE_SCALE;
+#else
+    return texel;
+#endif
+}
+
+fn sky_fog_color(to_fragment: vec3<f32>) -> vec3<f32> {
+    var level = vec3<f32>(to_fragment.x, max(to_fragment.y, 0.0), to_fragment.z);
+    if length(level.xz) < 1e-6 {
+        level = vec3<f32>(0.0, level.y, -1e-6);
+    }
+    let direction = normalize(level);
+    return sky_radiance(direction) + camera.night_color.rgb;
 }
 
 // Trowbridge-Reitz GGX normal distribution

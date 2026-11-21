@@ -3,7 +3,7 @@ use concerto_app::{
     schedule_groups::{LateUpdate, Startup, Update},
 };
 use concerto_ecs::{
-    Component, Entity, Query, Res, ResMut, Resource, World,
+    Component, Entity, IntoSystemConfig, Query, Res, ResMut, Resource, SystemSet, World,
     command::CommandQueue,
     component::bundle::IntoBundle,
     entity::{EntityStructuralVersion, hierarchy::Children},
@@ -12,31 +12,42 @@ use concerto_ecs::{
 };
 use std::any::TypeId;
 
-use concerto_reflect::PropertyPath;
-use concerto_ui::elements::prelude::*;
+use concerto_reflect::{PathSegment, PropertyPath};
+use concerto_ui::elements::{Stack, prelude::*};
 use concerto_ui::{
     interaction::{Interactable, UIDisabled},
     node::{UILayout, UINode, UIRect},
     scroll::{SCROLLBAR_WIDTH, UIScrollArea},
+    sets::UiSet,
     theme::UITheme,
     transform::UIValue,
 };
-use taffy::FlexDirection;
+use taffy::{AlignItems, FlexDirection};
 
 use crate::dock::{DockedApp, PanelDescriptor, PanelRegistry, Region};
-use crate::hosted::{EditTarget, EditWorld, EditWorldSignals};
-use crate::tools::{scene::SceneRoot, selection::Selection};
+use crate::hosted::{EditTarget, EditWorld, EditWorldSignals, HostedEventsAppExt};
+use crate::joint_picker::refresh_joint_rows;
+use crate::name_menu::close_name_menu;
+use crate::tools::{edits::PropertyCommitted, scene::SceneRoot, selection::Selection};
 
 mod add_component;
 mod boolean;
 mod color;
 mod component_menu;
+mod list;
 mod name_field;
+mod name_text;
 mod numeric;
+mod paths;
+mod reflect_rows;
 mod registry;
 mod rows;
 mod sync;
+mod target;
+mod text_field;
+mod values;
 mod variants;
+mod write;
 
 pub use crate::tools::edits::{ComponentEdit, ComponentEdits};
 use add_component::{
@@ -44,26 +55,58 @@ use add_component::{
 };
 pub use name_field::{FocusNameField, NameField};
 use name_field::{name_field, update_name_field};
-pub use sync::{InspectedComponent, standard_row_node};
-use sync::{build_property_widgets, sync_inspected_components};
+pub use sync::{InspectedComponent, InspectorHeader, ReadOnlyCard, standard_row_node};
+use sync::{
+    build_property_widgets, disable_read_only_cards, size_label_columns, sync_inspected_components,
+};
 
 use boolean::refresh_bool_fields;
 use color::{close_color_picker, refresh_color_swatches};
+use name_text::{cancel_name_fields, commit_name_fields, refresh_name_fields};
+#[cfg(any(test, feature = "testing"))]
+pub use numeric::commit_number;
 use numeric::{
     cancel_numeric_fields, commit_numeric_fields, refresh_numeric_fields, refresh_numeric_labels,
 };
+use text_field::{cancel_text_fields, commit_text_fields, refresh_text_fields};
 use variants::{refresh_option_fields, refresh_variant_labels};
 
 use crate::tools::edits::EditComponent;
+pub(crate) use list::{ListEdit, ListEditor};
+pub(crate) use paths::{
+    LIST_LIMIT, ListedPath, ShownPath, cut_note, find_path, listed_paths, shown_paths, unknown_path,
+};
+pub use reflect_rows::{ReflectRows, ReflectRowsPlugin};
 use registry::send_property_commits;
 pub use registry::{EditableApp, ErasedEditor, InspectorRegistry};
 pub(crate) use registry::{InspectionSource, current_editor};
 pub use rows::{
-    EditContext, EditError, Property, PropertyCommit, PropertyCommits, PropertyEditor, PropertyRow,
-    PropertyRowValue,
+    EditContext, EditError, PlainRow, Property, PropertyCommit, PropertyCommits, PropertyEditor,
+    PropertyKind, PropertyRow, PropertyRowValue,
+};
+pub use target::{
+    ComponentTarget, DocumentTypes, DocumentValue, PropertyAddress, PropertyTarget, TargetWorld,
+};
+pub use values::{
+    CommitValue, InspectedSnapshots, InspectedValues, RefreshInspector, ShownValue, ValueCard,
+    ValueSnapshot,
+};
+pub(crate) use values::{apply_value_commit, report_value_edit};
+use values::{
+    build_value_widgets, commit_value, read_inspected_values, refresh_inspected_values,
+    refresh_on_new_app, send_value_commits, sync_value_cards,
+};
+pub use write::WriteValue;
+use write::write_value_at;
+pub(crate) use write::{
+    EditSource, WriteRefusal, adapter_commit, gone, not_editable, reading, refusal_error, refused,
+    set_value,
 };
 
 pub const PANEL_ID: &str = "concerto.ecs";
+
+#[derive(SystemSet, Clone, PartialEq, Eq, Hash, Debug)]
+pub(crate) struct FieldCommits;
 
 /// Panel metadata. Component cards and property rows own inspection state in ECS.
 #[derive(Resource, Debug, Default, PartialEq)]
@@ -74,16 +117,21 @@ pub struct InspectorData {
     pub closable_scene_root: Option<Entity>,
 }
 
-const PROPERTY_LABEL_WIDTH: f32 = 72.0;
+const LABEL_SHARE: f32 = 0.38;
+const LABEL_MIN: f32 = 96.0;
+const LABEL_MAX: f32 = 260.0;
+const FORM_WIDTH: f32 = 760.0;
 
 fn label_for(path: &PropertyPath) -> String {
     let name = path
         .segments()
         .iter()
         .rev()
-        .find(|segment| segment.parse::<usize>().is_err())
-        .copied()
-        .unwrap_or(path.name())
+        .find(|segment| match segment {
+            PathSegment::Field(name) => name.parse::<usize>().is_err(),
+            PathSegment::Index(_) => true,
+        })
+        .map_or(path.name().to_string(), ToString::to_string)
         .split('_')
         .filter(|word| !word.is_empty())
         .collect::<Vec<_>>()
@@ -114,21 +162,50 @@ impl Plugin for InspectorPlugin {
         app.insert_resource(PropertyCommits::default());
         app.insert_resource(ComponentEdits::default());
         app.insert_resource(FocusNameField::default());
+        app.insert_resource(InspectedSnapshots::default());
         app.add_panel(PanelDescriptor {
             id: PANEL_ID,
             title: "Looking Glass",
-            region: Region::Side,
+            region: Region::Right,
         });
+        app.forward_hosted_event::<PropertyCommitted>();
         install_listeners(app.main_mut().world_mut());
         app.add_system(Startup, build_panel);
+        app.add_system(Update, close_name_menu);
         app.add_system(Update, send_property_commits)
+            .add_system(Update, send_value_commits)
             .add_system(Update, send_component_edits);
-        app.add_system(LateUpdate, commit_numeric_fields)
-            .add_system(LateUpdate, cancel_numeric_fields)
+        app.add_system(
+            LateUpdate,
+            (
+                commit_numeric_fields,
+                commit_name_fields,
+                commit_text_fields,
+            )
+                .in_set(FieldCommits)
+                .after(UiSet::Widgets),
+        );
+        app.add_system(LateUpdate, cancel_numeric_fields)
+            .add_system(LateUpdate, cancel_name_fields)
+            .add_system(LateUpdate, cancel_text_fields)
             .add_system(LateUpdate, collect_inspector_data)
             .add_system(LateUpdate, update_name_field)
             .add_system(LateUpdate, sync_inspected_components)
             .add_system(LateUpdate, build_property_widgets)
+            .add_system(
+                LateUpdate,
+                disable_read_only_cards.after(build_property_widgets),
+            )
+            .add_system(LateUpdate, size_label_columns)
+            .add_system(
+                LateUpdate,
+                (
+                    refresh_inspected_values,
+                    sync_value_cards,
+                    build_value_widgets,
+                )
+                    .chain(),
+            )
             .add_system(LateUpdate, add_highlighted_component)
             .add_system(LateUpdate, clear_add_component_search)
             .add_system(LateUpdate, populate_add_component_menu)
@@ -137,6 +214,9 @@ impl Plugin for InspectorPlugin {
             .add_system(LateUpdate, refresh_color_swatches)
             .add_system(LateUpdate, close_color_picker)
             .add_system(LateUpdate, refresh_bool_fields)
+            .add_system(LateUpdate, refresh_name_fields)
+            .add_system(LateUpdate, refresh_text_fields)
+            .add_system(LateUpdate, refresh_joint_rows)
             .add_system(LateUpdate, refresh_variant_labels)
             .add_system(LateUpdate, refresh_option_fields)
             .add_system(LateUpdate, sync_inspector_scroll);
@@ -151,6 +231,10 @@ pub(crate) fn install_listeners(world: &mut World) {
     world.add_listener(component_menu::forget_scene);
     world.add_listener(variants::forget_scene);
     world.add_listener(color::forget_scene);
+    world.add_listener(read_inspected_values);
+    world.add_listener(refresh_on_new_app);
+    world.add_listener(commit_value);
+    world.add_listener(write_value_at);
 }
 
 fn forget_scene(
@@ -162,8 +246,8 @@ fn forget_scene(
     if *data != InspectorData::default() {
         *data = InspectorData::default();
     }
-    if !commits.0.is_empty() {
-        commits.0.clear();
+    if commits.holds_for(TargetWorld::EditTarget) {
+        commits.take_for(TargetWorld::EditTarget);
     }
     if !edits.0.is_empty() {
         edits.0.clear();
@@ -204,7 +288,7 @@ fn build_panel(mut cmd: CommandQueue, registry: Res<PanelRegistry>, theme: Res<U
 
 pub fn spawn_panel(cmd: &mut CommandQueue, parent: Entity, theme: &UITheme) {
     cmd.entity(parent)
-        .add_child_with(theme.column().grow().clipped(), |mut details| {
+        .add_child_with(form_column(theme), |mut details| {
             details.add_child(name_field(theme)).add_child_with(
                 (
                     UINode::default()
@@ -236,6 +320,16 @@ pub fn spawn_panel(cmd: &mut CommandQueue, parent: Entity, theme: &UITheme) {
                 },
             );
         });
+}
+
+fn form_column(theme: &UITheme) -> Stack {
+    theme
+        .column()
+        .grow()
+        .clipped()
+        .width(UIValue::Percent(100.0))
+        .max_width(UIValue::Px(FORM_WIDTH))
+        .align_self(AlignItems::Center)
 }
 
 fn scrollbar_gutter(theme: &UITheme) -> f32 {
@@ -270,15 +364,15 @@ fn sync_inspector_scroll(
     }
 }
 
-/// The systems that build the inspector's rows from the selection and send their edits.
-#[cfg(test)]
-pub(crate) fn row_systems() -> Vec<concerto_ecs::system::BoxedSystem> {
+/// The systems that show the active document's values and send their edits.
+#[cfg(any(test, feature = "testing"))]
+pub fn value_systems() -> Vec<concerto_ecs::system::BoxedSystem> {
     use concerto_ecs::IntoSystem;
     vec![
-        collect_inspector_data.into_boxed_system(),
-        sync_inspected_components.into_boxed_system(),
-        build_property_widgets.into_boxed_system(),
-        send_property_commits.into_boxed_system(),
+        send_value_commits.into_boxed_system(),
+        refresh_inspected_values.into_boxed_system(),
+        sync_value_cards.into_boxed_system(),
+        build_value_widgets.into_boxed_system(),
     ]
 }
 

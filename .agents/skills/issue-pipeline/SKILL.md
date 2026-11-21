@@ -8,8 +8,9 @@ description: Use when running the Concerto issue pipeline, as the hourly cloud s
 Issues labelled `agent` are taken by a runner, in the cloud or on the owner's
 machine. The runner's session becomes the issue's driver: it opens one PR and
 carries it through implementation and review, and first through questions,
-spec and plan when the issue is labelled `agent:spec`. The owner approves those
-stages in the PR and merges. `docs/agent-pipeline.md` is the owner's view of
+spec and plan when the issue is labelled `agent:spec`. The owner answers the
+questions and approves the spec in the PR, and merges. The plan needs no
+approval. `docs/agent-pipeline.md` is the owner's view of
 the same procedure.
 
 Use the GitHub tools you have: the GitHub MCP server in the cloud, the GitHub
@@ -36,23 +37,41 @@ is `master`.
 |---|---|
 | `agent` | Agents may take this issue. |
 | `agent:local` | Only the local runner takes it: the change needs a look at the running program. |
-| `agent:spec` | Questions, spec and plan, each approved by the owner. |
+| `agent:spec` | Questions and a spec approved by the owner, then a plan. Only for large tasks that change foundational work. |
+| `agent:priority` | Runners take it, or its blockers while it is blocked, before issues without it. |
 | `documentation`, `lint` | Sorting only; no effect on the path. |
 | `agent:filed` | An agent opened this issue. |
 | `agent:claimed-cloud`, `agent:claimed-local` | Which runner owns the issue. |
 | `agent:needs-owner` | The PR waits on the owner. |
 
 An issue is eligible when it is open, labelled `agent`, opened under the
-owner's account, and has neither claim label.
+owner's account, has neither claim label, and is not blocked. Its body is
+blocked while it has a line `Blocked by #a, #b` and any of those issues is
+open.
+
+Runners pick in two tiers: issues labelled `agent:priority` first, then the
+rest, each tier oldest first. This is the tier order.
+
+In the priority tier, a priority issue that is blocked stands for its
+blockers. Walk the open issues on its `Blocked by` line, oldest first. The
+first one this runner may take is the pick, with or without `agent:priority`:
+it is eligible and, for the cloud runner, has no `agent:local`. A blocker that
+is blocked in turn is walked the same way, its own blockers before the next
+issue on the line, whatever its labels. Any other blocker this runner cannot
+take is skipped: it has no `agent` label, carries a claim label, was opened by
+someone else, or has `agent:local` and this is the cloud runner. An issue
+reached a second time in one walk is skipped. When the walk yields nothing, go
+on to the next priority issue.
 
 ## Cloud runner
 
 You are a fresh session started by the hourly scheduled task.
 
 1. Count open issues labelled `agent:claimed-cloud`. At 3 or more, end.
-2. List eligible issues without `agent:local`, oldest first. If there are none,
-   end without posting anything.
-3. Claim the oldest: add `agent:claimed-cloud`, then re-read its labels. If
+2. Pick the first eligible issue without `agent:local` in tier order, walking
+   blocked priority issues to their blockers. If there is none, end without
+   posting anything.
+3. Claim the first: add `agent:claimed-cloud`, then re-read its labels. If
    `agent:claimed-local` is also there, remove `agent:claimed-cloud` and end.
 4. Comment on the issue with this session's link.
 5. Drive it, from "Start: a newly claimed issue".
@@ -81,11 +100,31 @@ Each tick:
    `git show origin/master:.agents/skills/issue-pipeline/SKILL.md` and follow
    that version for the rest of the tick.
 2. For each worktree under `<parent>/concerto-issues/` whose issue is closed:
-   `git worktree remove` it and remove `agent:claimed-local` from the issue.
-3. For each open issue labelled `agent:claimed-local`: drive it, from "Start:
-   an issue you already hold", up to the next wait.
-4. If fewer than 2 open issues carry `agent:claimed-local`, claim one: the
-   oldest eligible `agent:local` issue, else the oldest eligible issue. Add
+   confirm `git status --porcelain` in it prints nothing, run
+   `git worktree remove --force` on it (a worktree with the Jolt submodule
+   initialised refuses removal without `--force`), and remove
+   `agent:claimed-local` from the issue. Ignored files go with the worktree.
+   If it prints anything, leave the worktree and the label, and comment on the
+   issue what is uncommitted, once.
+3. Let `<target>` be `<parent>/concerto-issues/target`, and read the free space
+   of its disk with `df -BG --output=avail <parent>/concerto-issues`. If it's
+   under 50 GB:
+   1. Run
+      `flock -n <target>/debug/.cargo-lock rm -rf <target>/debug/incremental`.
+      If the lock is held, a build is running: skip the rest of this step and
+      step 5.
+   2. If it's still under 50 GB and this session has no agent, build, test run,
+      game or editor running, run `rm -rf <target>`. Cargo's lock doesn't cover
+      a test run or a running binary, so it isn't enough here. If something is
+      running, skip step 5.
+   3. If `<target>` is gone and it's still under 50 GB, something else is taking
+      the space. Send a push notification saying so and end the tick.
+4. For each open issue labelled `agent:claimed-local`: drive it, from "Start:
+   an issue you already hold", up to the next wait. Drive first the issue whose
+   worktree `<target>/.last-worktree` names.
+5. If fewer than 2 open issues carry `agent:claimed-local`, claim one: the
+   first eligible issue in tier order, walking blocked priority issues to
+   their blockers, and preferring `agent:local` ones within each tier. Add
    `agent:claimed-local`, re-read its labels, and if `agent:claimed-cloud` is
    also there remove `agent:claimed-local` and stop here. Otherwise comment on
    the issue that the local runner took it, and drive it from "Start: a newly
@@ -93,6 +132,41 @@ Each tick:
 
 GitHub does not wake the local runner. Each tick reads the PR's comments since
 your last marked comment and acts on them.
+
+### Switching worktrees
+
+Every worktree builds into the same `<target>`. Cargo names a workspace member's
+artifacts by its path inside the workspace, so worktrees share those names, and
+an artifact built in another worktree would be reused, along with any path baked
+into it. `<target>/.last-worktree` holds the absolute path of the worktree that
+last used `<target>`.
+
+Before any cargo command, test run, game, editor or role in issue `<n>`'s
+worktree, read `<target>/.last-worktree`. If it holds that worktree's absolute
+path, go on. A missing file counts as another worktree. Otherwise:
+
+1. If this session has an agent, build, test run, game or editor running in
+   another worktree, run none of these in issue `<n>`'s worktree this tick.
+   Reading and answering the PR, and editing its description, go on.
+2. From issue `<n>`'s worktree, run
+   ```sh
+   cargo clean --workspace
+   cargo clean --workspace --release
+   cargo clean --workspace --profile profiling
+   cargo clean --workspace --target wasm32-unknown-unknown
+   cargo clean --workspace --target wasm32-unknown-unknown --release
+   rm -rf <target>/*/*-content <target>/*/*/*-content
+   ```
+   These remove the workspace members' artifacts and build-script output,
+   Jolt's included, and keep third-party crates. The `rm` removes the
+   `content/` copies the examples' build scripts make, which cargo does not
+   track. If a command fails, do not write the file, and run nothing in that
+   worktree this tick.
+3. `mkdir -p <target>`, then write the worktree's absolute path to
+   `<target>/.last-worktree`.
+
+The first build after a switch rebuilds every workspace member. A role runs in
+one worktree, so check before starting it.
 
 ## Driving an issue
 
@@ -128,15 +202,20 @@ assume an earlier copy still exists.
 ### Waiting on the owner
 
 Before a wait on the owner, add `agent:needs-owner` to the PR. When the wait is
-spec discussion (questions, spec approval, plan approval), also send a push
+spec discussion (questions, spec approval), also send a push
 notification that names the issue and links the PR. Remove the label when the
 owner next comments or reviews.
 
 ### Checks
 
-- Cloud: `cargo fmt --all -- --check` when Rust changed. Clippy, tests and the
-  wasm build are CI's.
-- Local: the done gate from `AGENTS.md`, every command, and
+- Cloud: `cargo fmt --all -- --check` and
+  `python3 .github/scripts/test_budget.py` when Rust changed, and
+  `cargo metadata --format-version 1 > /dev/null` when a `Cargo.toml` changed,
+  committing the `Cargo.lock` it rewrites. Clippy, tests and the wasm build are
+  CI's; when CI does not run them, they are reported as not run, as "When CI
+  does not run" says.
+- Local: the per-task gate from `AGENTS.md` after each plan task, the full
+  done gate once before review, and
   `visual-verification` where `AGENTS.md` asks for a look at the running
   program.
 
@@ -159,21 +238,24 @@ other issue takes the short path, "Without `agent:spec`".
   path from its step 2: the owner's removal settles whether it needs design, so
   do not add the label back. A draft `## Spec` stays in the description as
   notes, and `branch-reviewer` reviews against the issue body. After the spec
-  is approved, the issue finishes the full path, plan approval included.
+  is approved, the issue finishes the full path.
 - A label change takes effect at your next wake or tick. A cloud driver does
   not wake on one; the owner comments after changing a label.
 
 ### Without `agent:spec`
 
-1. Read the issue, `AGENTS.md` and the code. If the change needs design (an
-   open decision only the owner can make, or more than a small fix, size medium
-   or more), add `agent:spec` to the issue, comment on the PR why, and continue
-   on the other path from its step 1.
+1. Read the issue, `AGENTS.md` and the code. If the change is a large task
+   that changes foundational work (the ECS, scheduling, the frame loop, the
+   render architecture, the asset pipeline, or a public API that several crates
+   or games build on), add `agent:spec` to the issue, comment on the PR why,
+   and continue on the other path from its step 1. Any other open decision only
+   the owner can make goes in one PR comment; wait on the owner, then go on
+   here.
 2. Make the change yourself, test-first where code changes, and run the
-   checks. No `implementer` runs: that role works from an approved plan. If a
-   design decision comes up while you work, escalate as in step 1, unless the
-   owner removed `agent:spec`; then ask the question in a PR comment and wait
-   on the owner.
+   checks. No `implementer` runs: that role works from a plan. If a design
+   decision comes up while you work, handle it as in step 1, unless the owner
+   removed `agent:spec`; then ask the question in a PR comment and wait on the
+   owner.
 3. Commit and push.
 4. Review. The issue body stands in for the spec.
 
@@ -187,7 +269,9 @@ other issue takes the short path, "Without `agent:spec`".
    whose only line is `/approve` approves; any other owner comment is
    feedback: revise and ask again.
 3. **Plan.** Write the plan into the PR description under `## Plan`, as
-   numbered tasks, and ask for `/approve` the same way.
+   numbered tasks, and go on to implement without waiting on the owner. An
+   owner comment on the plan is feedback: revise the plan and the tasks not yet
+   done.
 4. **Implement.** Run one `implementer` per task, giving it the plan copy's
    path and the task, and telling it whether it runs in a cloud or local
    session. Push after each task.
@@ -196,16 +280,39 @@ other issue takes the short path, "Without `agent:spec`".
 ### Review
 
 1. Wait for CI to finish on the head commit.
-2. CI red: fix it, as under After review. Do not review a red head.
-3. CI green: run `branch-reviewer` with the branch and the spec copy, or the
+2. CI red: fix it, as under After review. Do not review a red head. A job
+   that did not run is not red; see "When CI does not run".
+3. CI green, or every job that is not green did not run: run
+   `branch-reviewer` with the branch and the spec copy, or the
    issue body without `agent:spec`, telling it whether it runs in a cloud or
    local session. Fix what it finds, push, and return to step 1. After 2
    rounds that still leave findings, post them and wait on the owner.
 4. Post the report as a comment. In the cloud, when the change touches
    rendering, UI or the editor, list the visual checks the owner must make.
-   Locally, report what `visual-verification` showed.
+   Locally, report what `visual-verification` showed. When CI did not run on
+   the head, say so as "When CI does not run" asks.
 5. Mark the PR ready for review and wait on the owner. GitHub takes no review
    request for a PR's own author, so the label is the request.
+
+### When CI does not run
+
+The repository's Actions minutes can run out. GitHub then fails every job
+without starting it: the job has no steps and no log, and its annotation says
+it was not started because of billing or the spending limit. Such a job did
+not run. It is neither red nor green, and it never blocks you.
+
+- Read the failed job before calling CI red. A job that ran a step and failed
+  is red, whatever happened to the others.
+- Never try to fix a job that did not run, never push to make it run again,
+  and do not wait for it or for the owner because of it. A push that leaves
+  only such jobs failed does not count towards the 3 red pushes under After
+  review, and such a job on `master` does not make `master` red.
+- Locally, the done gate you ran stands in for CI.
+- In the cloud, go on with your own checks alone. The review comment names
+  the jobs that did not run and lists, as not run, the done gate commands that
+  nothing has run on the head commit. The owner or the local runner runs them
+  before the merge.
+- If CI later runs on the head and is red, fix it as under After review.
 
 ### After review
 

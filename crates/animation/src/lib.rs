@@ -1,34 +1,53 @@
 pub mod blackboard;
 pub mod clip;
 pub mod evaluation;
+pub mod event;
 pub mod graph;
+pub mod ik;
+pub mod inertialization;
+pub mod look_at;
+pub mod mask;
+pub mod mirror;
 pub mod node;
+pub mod param;
 pub mod player;
 pub mod plugin;
 pub mod pose;
+pub mod retarget;
 pub mod root;
 pub mod target;
 pub mod transition;
 
+pub use target::{animate_targets, update_animation_players};
+pub use transition::TransitionBlender;
+
+#[cfg(test)]
+mod testing;
+
 #[cfg(test)]
 mod tests {
     use concerto_foundation::assets::{
-        Asset, asset_server::AssetServer, asset_store::AssetStore, handle::AssetHandle,
+        LoadableAsset, asset_server::AssetServer, asset_store::AssetStore, handle::AssetHandle,
     };
+    use concerto_name::{Name, name};
+    use glam::Vec3;
     use uuid::Uuid;
 
-    use crate::blackboard::{AnimationBlackboard, AnimationBlackboardValue};
+    use crate::blackboard::AnimationBlackboard;
     use crate::clip::{AnimationChanelOutput, AnimationChannel, AnimationClip};
-    use crate::evaluation::AnimationGraphContext;
+    use crate::evaluation::RootBone;
+    use crate::event::AnimationEvent;
     use crate::graph::AnimationGraph;
     use crate::node::AnimationPlayMode::PlayOnce;
     use crate::node::state_machine::{
-        AnimationFSMTrigger, AnimationStateMachine, AnimationStateMachineInstance,
+        AnimationFSMTrigger, AnimationStateMachine, AnimationStateMachineState,
     };
     use crate::node::{
-        AnimationClipNode, AnimationClipNodeInstance, AnimationNodeInstance, AnimationNodeKind,
+        AnimationClipNode, AnimationClipNodeState, AnimationNode, ErasedAnimationNode, NodeState,
     };
-    use crate::pose::PosePool;
+    use crate::pose::{FiredEvent, FramePool, JointPose, RootMotion};
+    use crate::testing::{Walks, made_live};
+    use crate::transition::TransitionBlender;
 
     fn unit_duration_clip() -> AnimationClip {
         let mut clip = AnimationClip::default();
@@ -44,80 +63,76 @@ mod tests {
         clip
     }
 
-    fn current_time(instance: &dyn AnimationNodeInstance) -> f32 {
-        instance
-            .as_any()
-            .downcast_ref::<AnimationClipNodeInstance>()
+    fn erased<T: AnimationNode>(node: T) -> Box<dyn ErasedAnimationNode> {
+        Box::new(node)
+    }
+
+    fn current_time(node_state: &NodeState) -> f32 {
+        node_state
+            .downcast_ref::<AnimationClipNodeState>()
             .unwrap()
             .current_time()
     }
 
-    #[test]
-    fn looping_clip_starts_and_wraps_at_start_time() {
-        let mut server = AssetServer::new();
-        let mut clips = AssetStore::<AnimationClip>::new();
-        server.register_asset(&clips);
-        let handle = server.add(AnimationClip::default());
-        clips.insert(handle.id(), unit_duration_clip());
-        let graphs = AssetStore::<AnimationGraph>::new();
-        let blackboard = AnimationBlackboard::default();
-
-        let context = AnimationGraphContext {
-            animation_clips: &clips,
-            animation_graphs: &graphs,
-            blackboard: &blackboard,
-        };
-
-        let node = AnimationNodeKind::Clip(AnimationClipNode::new(handle).with_start_time(0.4));
-        let mut instance = node.create_instance(&context);
-        assert_eq!(current_time(instance.as_ref()), 0.4);
-
-        instance.update(&node, 0.3, &context);
-        assert!((current_time(instance.as_ref()) - 0.7).abs() < 1e-5);
-        assert!(!instance.is_finished());
-
-        instance.update(&node, 0.4, &context);
-        assert_eq!(current_time(instance.as_ref()), 0.4);
-        assert!(instance.is_finished());
-
-        instance.update(&node, 0.1, &context);
-        assert!((current_time(instance.as_ref()) - 0.5).abs() < 1e-5);
-        assert!(!instance.is_finished());
-
-        instance.reset();
-        assert_eq!(current_time(instance.as_ref()), 0.4);
-        assert!(!instance.is_finished());
+    fn state_name(node_state: &NodeState) -> Name {
+        node_state
+            .downcast_ref::<AnimationStateMachineState>()
+            .unwrap()
+            .current_state_name()
+            .unwrap()
     }
 
     #[test]
-    fn play_once_clip_starts_at_start_time_and_finishes() {
+    fn a_clip_node_starts_at_its_start_time_wraps_when_looping_finishes_once_and_resets_to_it() {
         let mut server = AssetServer::new();
         let mut clips = AssetStore::<AnimationClip>::new();
         server.register_asset(&clips);
         let handle = server.add(AnimationClip::default());
         clips.insert(handle.id(), unit_duration_clip());
-        let graphs = AssetStore::<AnimationGraph>::new();
+        let walks = Walks::new(clips, AssetStore::<AnimationGraph>::new());
         let blackboard = AnimationBlackboard::default();
-        let context = AnimationGraphContext {
-            animation_clips: &clips,
-            animation_graphs: &graphs,
-            blackboard: &blackboard,
+        let update = |node: &dyn ErasedAnimationNode, node_state: &mut NodeState, dt: f32| {
+            walks.update(&blackboard, |context| node.update(node_state, dt, context));
         };
 
-        let node = AnimationNodeKind::Clip(
+        let looping = erased(AnimationClipNode::new(handle.clone()).with_start_time(0.4));
+        let mut node_state = walks
+            .create(&blackboard, |context| looping.create_state(context))
+            .unwrap();
+        assert_eq!(current_time(&node_state), 0.4);
+
+        update(looping.as_ref(), &mut node_state, 0.3);
+        assert!((current_time(&node_state) - 0.7).abs() < 1e-5);
+        assert!(!looping.is_finished(&node_state));
+
+        update(looping.as_ref(), &mut node_state, 0.4);
+        assert_eq!(current_time(&node_state), 0.4);
+        assert!(looping.is_finished(&node_state));
+
+        update(looping.as_ref(), &mut node_state, 0.1);
+        assert!((current_time(&node_state) - 0.5).abs() < 1e-5);
+        assert!(!looping.is_finished(&node_state));
+
+        looping.reset(&mut node_state);
+        assert_eq!(current_time(&node_state), 0.4);
+        assert!(!looping.is_finished(&node_state));
+
+        let once = erased(
             AnimationClipNode::new(handle)
                 .with_play_mode(PlayOnce)
                 .with_start_time(0.4),
         );
-        let mut instance = node.create_instance(&context);
-        assert_eq!(current_time(instance.as_ref()), 0.4);
+        let mut node_state = walks
+            .create(&blackboard, |context| once.create_state(context))
+            .unwrap();
+        assert_eq!(current_time(&node_state), 0.4);
 
-        instance.update(&node, 0.7, &context);
-        assert!(instance.is_finished());
+        update(once.as_ref(), &mut node_state, 0.7);
+        assert!(once.is_finished(&node_state));
 
-        instance.reset();
-        assert_eq!(current_time(instance.as_ref()), 0.4);
-        assert!(!instance.is_finished());
+        once.reset(&mut node_state);
+        assert_eq!(current_time(&node_state), 0.4);
+        assert!(!once.is_finished(&node_state));
     }
 
     fn clip_with_duration(duration: f32) -> AnimationClip {
@@ -134,7 +149,7 @@ mod tests {
         clip
     }
 
-    fn add_asset<A: Asset + Default + 'static>(
+    fn add_asset<A: LoadableAsset + Default + 'static>(
         server: &AssetServer,
         store: &mut AssetStore<A>,
         asset: A,
@@ -144,11 +159,8 @@ mod tests {
         handle
     }
 
-    /// A state entered while an earlier transition is still fading in must not be stranded
-    /// when that older fade completes: landing mid-air-blend used to hand the blend stack
-    /// back to the air state while the machine stayed in `land`, freezing the character.
     #[test]
-    fn state_entered_mid_transition_is_not_superseded_by_the_older_fade() {
+    fn a_state_entered_mid_transition_plays_out_and_a_state_entered_again_replays_its_clip() {
         const FRAME: f32 = 1.0 / 60.0;
 
         let mut server = AssetServer::new();
@@ -165,112 +177,98 @@ mod tests {
         let movement = add_asset(
             &server,
             &mut graphs,
-            AnimationGraph::from_node(AnimationNodeKind::Clip(AnimationClipNode::new(
+            made_live(AnimationGraph::from_node(AnimationClipNode::new(
                 movement_clip,
             ))),
         );
         let jump_start = add_asset(
             &server,
             &mut graphs,
-            AnimationGraph::from_node(AnimationNodeKind::Clip(
+            made_live(AnimationGraph::from_node(
                 AnimationClipNode::new(jump_start_clip).with_play_mode(PlayOnce),
             )),
         );
         let air = add_asset(
             &server,
             &mut graphs,
-            AnimationGraph::from_node(AnimationNodeKind::Clip(AnimationClipNode::new(
+            made_live(AnimationGraph::from_node(AnimationClipNode::new(
                 jump_loop_clip,
             ))),
         );
         let land = add_asset(
             &server,
             &mut graphs,
-            AnimationGraph::from_node(AnimationNodeKind::Clip(
+            made_live(AnimationGraph::from_node(
                 AnimationClipNode::new(jump_land_clip).with_play_mode(PlayOnce),
             )),
         );
 
         // The air state fades in slowly (0.1s) while land snaps in (0.01s), so landing early
         // leaves the air fade in flight after the machine has already moved on to land.
-        let fsm = AnimationStateMachine::from_initial_state("movement", movement, |transition| {
-            transition.to(
-                "jump_start",
-                AnimationFSMTrigger::on_bool("jumped", true),
-                0.01,
-            );
-        })
-        .state("jump_start", jump_start, |transition| {
-            transition.to("air", AnimationFSMTrigger::OnAnimationEnd, 0.1);
-        })
-        .state("air", air, |transition| {
-            transition.to(
-                "land",
-                AnimationFSMTrigger::on_bool("is_grounded", true),
-                0.01,
-            );
-        })
-        .state("land", land, |transition| {
-            transition.to("movement", AnimationFSMTrigger::OnAnimationEnd, 0.1);
-        })
-        .build();
-        let fsm = AnimationNodeKind::StateMachine(fsm);
+        let fsm =
+            AnimationStateMachine::from_initial_state(name!("movement"), movement, |transition| {
+                transition.to(
+                    name!("jump_start"),
+                    AnimationFSMTrigger::on_bool(name!("jumped"), true),
+                    0.01,
+                );
+            })
+            .state(name!("jump_start"), jump_start, |transition| {
+                transition.to(name!("air"), AnimationFSMTrigger::OnAnimationEnd, 0.1);
+            })
+            .state(name!("air"), air, |transition| {
+                transition.to(
+                    name!("land"),
+                    AnimationFSMTrigger::on_bool(name!("is_grounded"), true),
+                    0.01,
+                );
+            })
+            .state(name!("land"), land, |transition| {
+                transition.to(name!("movement"), AnimationFSMTrigger::OnAnimationEnd, 0.1);
+            })
+            .build();
+        let fsm = erased(fsm);
 
         let mut blackboard = AnimationBlackboard::default();
-        let mut instance = {
-            let context = AnimationGraphContext {
-                animation_clips: &clips,
-                animation_graphs: &graphs,
-                blackboard: &blackboard,
-            };
-            fsm.create_instance(&context)
+        let walks = Walks::new(clips, graphs);
+        let mut node_state = walks
+            .create(&blackboard, |context| fsm.create_state(context))
+            .unwrap();
+
+        let step = |node_state: &mut NodeState, blackboard: &AnimationBlackboard| {
+            walks.update(blackboard, |context| fsm.update(node_state, FRAME, context));
+            state_name(node_state)
         };
 
-        let step = |instance: &mut Box<dyn AnimationNodeInstance>,
-                    blackboard: &AnimationBlackboard| {
-            let context = AnimationGraphContext {
-                animation_clips: &clips,
-                animation_graphs: &graphs,
-                blackboard,
-            };
-            instance.update(&fsm, FRAME, &context);
-            instance
-                .as_any()
-                .downcast_ref::<AnimationStateMachineInstance>()
-                .unwrap()
-                .current_state_name()
-                .to_string()
+        let until = |node_state: &mut NodeState, blackboard: &AnimationBlackboard, target: &str| {
+            let mut frames = 0;
+            loop {
+                frames += 1;
+                if step(node_state, blackboard) == target {
+                    return frames;
+                }
+                assert!(frames < 120, "{target} was never reached");
+            }
+        };
+        let jump = |node_state: &mut NodeState, blackboard: &mut AnimationBlackboard| {
+            blackboard.set(name!("jumped"), true);
+            assert_eq!(step(node_state, blackboard), "jump_start");
+            blackboard.set(name!("jumped"), false);
+            until(node_state, blackboard, "air")
         };
 
-        blackboard.set("jumped", AnimationBlackboardValue::Bool(true));
-        assert_eq!(step(&mut instance, &blackboard), "jump_start");
-        blackboard.set("jumped", AnimationBlackboardValue::Bool(false));
+        let first_jump = jump(&mut node_state, &mut blackboard);
+        blackboard.set(name!("is_grounded"), true);
+        assert_eq!(step(&mut node_state, &blackboard), "land");
+        until(&mut node_state, &blackboard, "movement");
+        blackboard.set(name!("is_grounded"), false);
+        let second_jump = jump(&mut node_state, &mut blackboard);
 
-        let mut state = String::new();
-        for _ in 0..30 {
-            state = step(&mut instance, &blackboard);
-            if state == "air" {
-                break;
-            }
-        }
-        assert_eq!(state, "air", "jump_start should end and hand off to air");
-
-        // Land immediately, while the 0.1s air fade is only ~1 frame in.
-        blackboard.set("is_grounded", AnimationBlackboardValue::Bool(true));
-        assert_eq!(step(&mut instance, &blackboard), "land");
-
-        // The land clip must actually play out and end the state, rather than being frozen
-        // by the stale air fade completing underneath it.
-        for _ in 0..60 {
-            state = step(&mut instance, &blackboard);
-            if state == "movement" {
-                break;
-            }
-        }
-        assert_eq!(
-            state, "movement",
-            "land clip never finished: the blend stack stranded the land state"
+        assert!(
+            first_jump >= 10,
+            "jump_start ended after {first_jump} frames"
         );
+        assert_eq!(second_jump, first_jump);
     }
 
     fn constant_x_clip(bone: Uuid, x: f32) -> AnimationClip {
@@ -285,197 +283,270 @@ mod tests {
         clip
     }
 
-    /// A transition still cross-fades (not a hard cut), and once it completes the blend stack
-    /// collapses to exactly the target — proving the newest entry is the single source of truth
-    /// rather than one authority lagging behind another.
-    #[test]
-    fn transition_cross_fades_then_settles_on_the_target() {
-        const FRAME: f32 = 1.0 / 60.0;
+    const MACHINE_FRAME: f32 = 1.0 / 60.0;
 
-        let mut server = AssetServer::new();
-        let mut clips = AssetStore::<AnimationClip>::new();
-        let mut graphs = AssetStore::<AnimationGraph>::new();
-        server.register_asset(&clips);
-        server.register_asset(&graphs);
-
-        let bone = Uuid::new_v4();
-        let a_clip = add_asset(&server, &mut clips, constant_x_clip(bone, 0.0));
-        let b_clip = add_asset(&server, &mut clips, constant_x_clip(bone, 10.0));
-        let a = add_asset(
-            &server,
-            &mut graphs,
-            AnimationGraph::from_node(AnimationNodeKind::Clip(AnimationClipNode::new(a_clip))),
+    fn linear_x_clip(bone: Uuid, slope: f32) -> AnimationClip {
+        let mut clip = AnimationClip::default();
+        clip.add_channel(
+            bone,
+            AnimationChannel::new(
+                vec![0.0, 100.0],
+                AnimationChanelOutput::from_translation(
+                    [[0.0, 0.0, 0.0], [slope * 100.0, 0.0, 0.0]].into_iter(),
+                ),
+            ),
         );
-        let b = add_asset(
-            &server,
-            &mut graphs,
-            AnimationGraph::from_node(AnimationNodeKind::Clip(AnimationClipNode::new(b_clip))),
-        );
-
-        let fsm = AnimationStateMachine::from_initial_state("a", a, |transition| {
-            transition.to("b", AnimationFSMTrigger::on_bool("go", true), 0.1);
-        })
-        .state("b", b, |_| {})
-        .build();
-        let fsm = AnimationNodeKind::StateMachine(fsm);
-
-        let mut blackboard = AnimationBlackboard::default();
-        blackboard.set("go", AnimationBlackboardValue::Bool(true));
-
-        let mut instance = {
-            let context = AnimationGraphContext {
-                animation_clips: &clips,
-                animation_graphs: &graphs,
-                blackboard: &blackboard,
-            };
-            fsm.create_instance(&context)
-        };
-
-        let step = |instance: &mut Box<dyn AnimationNodeInstance>| {
-            let context = AnimationGraphContext {
-                animation_clips: &clips,
-                animation_graphs: &graphs,
-                blackboard: &blackboard,
-            };
-            instance.update(&fsm, FRAME, &context);
-        };
-
-        let sample_x = |instance: &dyn AnimationNodeInstance| -> f32 {
-            let context = AnimationGraphContext {
-                animation_clips: &clips,
-                animation_graphs: &graphs,
-                blackboard: &blackboard,
-            };
-            let mut pool = PosePool::new(1);
-            let mut pose = pool.acquire();
-            instance.evaluate(&fsm, &context, &[bone], &[], &mut pool, &mut pose);
-            pose.get_joint_pose(0).unwrap().translation.x
-        };
-
-        // One frame into the 0.1s fade: a genuine blend between the two poses, not a hard cut.
-        step(&mut instance);
-        let mid = sample_x(&*instance);
-        assert!(
-            mid > 0.0 && mid < 10.0,
-            "expected a cross-fade, got x={mid}"
-        );
-
-        // After the fade completes the stack collapses to the target and samples it exactly.
-        for _ in 0..30 {
-            step(&mut instance);
-        }
-        let settled = sample_x(&*instance);
-        assert!(
-            (settled - 10.0).abs() < 1e-4,
-            "expected to settle on the target pose, got x={settled}"
-        );
-
-        let name = instance
-            .as_any()
-            .downcast_ref::<AnimationStateMachineInstance>()
-            .unwrap()
-            .current_state_name()
-            .to_string();
-        assert_eq!(name, "b");
+        clip
     }
 
-    /// Re-entering a state restarts its clip: `OnAnimationEnd` is anchored to entry, so a second
-    /// visit plays the whole clip again instead of firing instantly on a stale completion flag.
-    #[test]
-    fn re_entering_a_state_replays_its_clip_from_the_start() {
-        const FRAME: f32 = 1.0 / 60.0;
+    struct Machine {
+        _server: AssetServer,
+        walks: Walks,
+        fsm: Box<dyn ErasedAnimationNode>,
+        blackboard: AnimationBlackboard,
+        node_state: NodeState,
+        bone: Uuid,
+        pool: FramePool,
+        root_motion: RootMotion,
+        events: Vec<FiredEvent>,
+    }
 
-        let mut server = AssetServer::new();
-        let mut clips = AssetStore::<AnimationClip>::new();
-        let mut graphs = AssetStore::<AnimationGraph>::new();
-        server.register_asset(&clips);
-        server.register_asset(&graphs);
+    impl Machine {
+        fn new(
+            bone: Uuid,
+            a_clip: AnimationClip,
+            b_clip: AnimationClip,
+            blend_time: f32,
+            blender: TransitionBlender,
+        ) -> Self {
+            let mut server = AssetServer::new();
+            let mut clips = AssetStore::<AnimationClip>::new();
+            let mut graphs = AssetStore::<AnimationGraph>::new();
+            server.register_asset(&clips);
+            server.register_asset(&graphs);
 
-        let movement_clip = add_asset(&server, &mut clips, clip_with_duration(1.0));
-        let jump_clip = add_asset(&server, &mut clips, clip_with_duration(0.3));
-        let movement = add_asset(
-            &server,
-            &mut graphs,
-            AnimationGraph::from_node(AnimationNodeKind::Clip(AnimationClipNode::new(
-                movement_clip,
-            ))),
-        );
-        let jump = add_asset(
-            &server,
-            &mut graphs,
-            AnimationGraph::from_node(AnimationNodeKind::Clip(
-                AnimationClipNode::new(jump_clip).with_play_mode(PlayOnce),
-            )),
-        );
-
-        let fsm = AnimationStateMachine::from_initial_state("movement", movement, |transition| {
-            transition.to("jump", AnimationFSMTrigger::on_bool("jump", true), 0.01);
-        })
-        .state("jump", jump, |transition| {
-            transition.to("movement", AnimationFSMTrigger::OnAnimationEnd, 0.01);
-        })
-        .build();
-        let fsm = AnimationNodeKind::StateMachine(fsm);
-
-        let mut blackboard = AnimationBlackboard::default();
-        let mut instance = {
-            let context = AnimationGraphContext {
-                animation_clips: &clips,
-                animation_graphs: &graphs,
-                blackboard: &blackboard,
+            let mut graph_for = |clip: AnimationClip| {
+                let clip = add_asset(&server, &mut clips, clip);
+                add_asset(
+                    &server,
+                    &mut graphs,
+                    made_live(AnimationGraph::from_node(AnimationClipNode::new(clip))),
+                )
             };
-            fsm.create_instance(&context)
-        };
+            let a = graph_for(a_clip);
+            let b = graph_for(b_clip);
 
-        let step = |instance: &mut Box<dyn AnimationNodeInstance>,
-                    blackboard: &AnimationBlackboard|
-         -> String {
-            let context = AnimationGraphContext {
-                animation_clips: &clips,
-                animation_graphs: &graphs,
+            let fsm = AnimationStateMachine::from_initial_state(name!("a"), a, |transition| {
+                transition.to(
+                    name!("b"),
+                    AnimationFSMTrigger::on_bool(name!("to_b"), true),
+                    blend_time,
+                );
+            })
+            .state(name!("b"), b, |_| {})
+            .blender(blender)
+            .build();
+            let fsm = erased(fsm);
+
+            let blackboard = AnimationBlackboard::default();
+            let walks = Walks::new(clips, graphs);
+            let node_state = walks
+                .create(&blackboard, |context| fsm.create_state(context))
+                .unwrap();
+
+            Self {
+                _server: server,
+                walks,
+                fsm,
                 blackboard,
-            };
-            instance.update(&fsm, FRAME, &context);
-            instance
-                .as_any()
-                .downcast_ref::<AnimationStateMachineInstance>()
-                .unwrap()
-                .current_state_name()
-                .to_string()
-        };
-
-        // Enter jump, then count frames from entry until OnAnimationEnd hands back to movement.
-        let frames_in_jump = |instance: &mut Box<dyn AnimationNodeInstance>,
-                              blackboard: &mut AnimationBlackboard|
-         -> usize {
-            blackboard.set("jump", AnimationBlackboardValue::Bool(true));
-            assert_eq!(step(instance, blackboard), "jump");
-            blackboard.set("jump", AnimationBlackboardValue::Bool(false));
-
-            let mut frames = 0;
-            loop {
-                let state = step(instance, blackboard);
-                frames += 1;
-                if state == "movement" {
-                    break;
-                }
-                assert!(frames < 120, "jump state never ended");
+                node_state,
+                bone,
+                pool: FramePool::new(1),
+                root_motion: RootMotion::IDENTITY,
+                events: Vec::new(),
             }
-            frames
-        };
+        }
 
-        let first = frames_in_jump(&mut instance, &mut blackboard);
-        let second = frames_in_jump(&mut instance, &mut blackboard);
+        fn set(&mut self, name: Name, value: bool) {
+            self.blackboard.set(name, value);
+        }
 
-        // The 0.3s clip at 60fps is ~18 frames; a stale completion flag would end it in ~1.
-        assert!(first >= 12, "first jump ended too fast: {first} frames");
-        assert!(
-            second >= 12,
-            "re-entered jump replayed instantly ({second} frames): clip not anchored to entry"
+        fn step(&mut self) -> f32 {
+            let root = RootBone {
+                index: 0,
+                rest: JointPose::IDENTITY,
+                up: Vec3::X,
+            };
+            self.walks.update(&self.blackboard, |context| {
+                self.fsm
+                    .update(&mut self.node_state, MACHINE_FRAME, context)
+            });
+            let mut frame = self.pool.acquire();
+            self.walks
+                .evaluate(&self.blackboard, Some(root), |context| {
+                    self.fsm.evaluate(
+                        &mut self.node_state,
+                        context,
+                        &[self.bone],
+                        &[],
+                        &mut self.pool,
+                        &mut frame,
+                    )
+                });
+            let x = frame.joint(0).unwrap().translation.x;
+            self.root_motion = frame.root_motion();
+            self.events = frame.events().to_vec();
+            self.pool.release(frame);
+            x
+        }
+
+        fn run(&mut self, frames: usize) -> f32 {
+            let mut x = 0.0;
+            for _ in 0..frames {
+                x = self.step();
+            }
+            x
+        }
+
+        fn state(&self) -> Name {
+            state_name(&self.node_state)
+        }
+    }
+
+    #[test]
+    fn inertialize_velocity_step_is_bounded_by_the_destination_velocity() {
+        let bone = Uuid::new_v4();
+        let mut machine = Machine::new(
+            bone,
+            linear_x_clip(bone, 2.0),
+            constant_x_clip(bone, 10.0),
+            1.0,
+            TransitionBlender::Inertialization,
         );
+        machine.run(9);
+        let before_last = machine.step();
+        let last = machine.step();
+        let velocity_before = (last - before_last) / MACHINE_FRAME;
+        assert!((velocity_before - 2.0).abs() < 1e-2);
+
+        machine.set(name!("to_b"), true);
+        let on_transition = machine.step();
+        machine.set(name!("to_b"), false);
+        let after = machine.step();
+        let velocity_after = (after - on_transition) / MACHINE_FRAME;
+
+        let destination_velocity = 0.0;
         assert!(
-            (first as i32 - second as i32).abs() <= 3,
-            "re-entry length {second} should match the first play {first}"
+            (velocity_after - velocity_before).abs() <= destination_velocity + 0.5,
+            "velocity went from {velocity_before} to {velocity_after}"
         );
+    }
+
+    fn with_event(mut clip: AnimationClip, time: f32) -> AnimationClip {
+        clip.add_event(
+            time,
+            AnimationEvent {
+                name: name!("step"),
+            },
+        );
+        clip
+    }
+
+    #[derive(Debug)]
+    struct TimeWeight {
+        time: f32,
+        weight: f32,
+    }
+
+    fn time_weight(time: f32, weight: f32) -> TimeWeight {
+        TimeWeight { time, weight }
+    }
+
+    fn fired_by_time(machine: &Machine) -> Vec<TimeWeight> {
+        let mut fired: Vec<_> = machine
+            .events
+            .iter()
+            .map(|event| time_weight(event.time, event.weight))
+            .collect();
+        fired.sort_by(|a, b| a.time.total_cmp(&b.time));
+        fired
+    }
+
+    fn assert_fired(actual: &[TimeWeight], expected: &[TimeWeight]) {
+        assert_eq!(actual.len(), expected.len(), "fired {actual:?}");
+        for (fired, expected_fired) in actual.iter().zip(expected) {
+            assert!(
+                (fired.time - expected_fired.time).abs() < 1e-6
+                    && (fired.weight - expected_fired.weight).abs() < 1e-5,
+                "expected {expected:?}, fired {actual:?}"
+            );
+        }
+    }
+
+    struct BlenderCase {
+        blender: TransitionBlender,
+        x: f32,
+        root_x: f32,
+        fired: Vec<TimeWeight>,
+    }
+
+    #[test]
+    fn each_blender_weighs_the_pose_root_motion_and_events_its_own_way_and_settles_on_the_target() {
+        let entered = MACHINE_FRAME / 0.1;
+        let cases = [
+            BlenderCase {
+                blender: TransitionBlender::CrossFade,
+                x: (12.0 + (8.0 - 12.0) * entered) * MACHINE_FRAME,
+                root_x: (2.0 + (8.0 - 2.0) * entered) * MACHINE_FRAME,
+                fired: vec![
+                    time_weight(0.0, entered),
+                    time_weight(5.5 * MACHINE_FRAME, 1.0 - entered),
+                ],
+            },
+            BlenderCase {
+                blender: TransitionBlender::Inertialization,
+                x: 10.0 * MACHINE_FRAME,
+                root_x: 8.0 * MACHINE_FRAME,
+                fired: vec![time_weight(0.0, 1.0)],
+            },
+        ];
+
+        for case in cases {
+            let bone = Uuid::new_v4();
+            let mut machine = Machine::new(
+                bone,
+                with_event(linear_x_clip(bone, 2.0), 5.5 * MACHINE_FRAME),
+                with_event(linear_x_clip(bone, 8.0), 0.0),
+                0.1,
+                case.blender,
+            );
+            machine.run(5);
+            machine.set(name!("to_b"), true);
+
+            let x = machine.step();
+
+            assert!(
+                (x - case.x).abs() < 1e-4,
+                "{:?}: expected the pose at {}, got {x}",
+                case.blender,
+                case.x
+            );
+            assert!(
+                (machine.root_motion.translation.x - case.root_x).abs() < 1e-4,
+                "{:?}: expected {}, got {}",
+                case.blender,
+                case.root_x,
+                machine.root_motion.translation.x
+            );
+            assert_fired(&fired_by_time(&machine), &case.fired);
+
+            let settled = machine.run(60);
+            assert_eq!(machine.state(), "b");
+            assert!(
+                (settled - 8.0 * 61.0 * MACHINE_FRAME).abs() < 1e-3,
+                "{:?}: settled at {settled}",
+                case.blender
+            );
+        }
     }
 }

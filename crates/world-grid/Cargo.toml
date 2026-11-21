@@ -6,9 +6,6 @@ description.workspace = true
 repository.workspace = true
 license.workspace = true
 
-[lib]
-crate-type = ["cdylib", "rlib"]
-
 [dependencies]
 concerto-app.workspace = true
 concerto-ecs.workspace = true
@@ -18,9 +15,3 @@ concerto-mesh.workspace = true
 concerto-color.workspace = true
 bytemuck = { version = "1.22.0", features = ["derive"] }
 serde    = { version = "1", features = ["derive"] }
-wgpu     = { version = "24.0.1", default-features = false, features = [
-    "wgsl",
-    "metal",
-    "naga-ir",
-    "fragile-send-sync-non-atomic-wasm",
-] }

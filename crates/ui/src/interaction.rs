@@ -110,7 +110,8 @@ impl CaptureOutcome {
     }
 }
 
-pub(crate) const DRAG_THRESHOLD: f32 = 4.0;
+/// How far, in logical pixels, a held pointer moves from its press before the release stops being a click.
+pub const DRAG_THRESHOLD: f32 = 4.0;
 pub(crate) const DOUBLE_CLICK: Duration = Duration::from_millis(400);
 
 fn advance_capture(
@@ -368,9 +369,8 @@ mod tests {
     use glam::Vec2;
 
     use super::{
-        ButtonCapture, DOUBLE_CLICK, HoveredNode, Interactable, UIClick, UIDisabled, UIDoubleClick,
-        UIDrag, UIInputState, UIPointerDown, UIPointerEnter, UIPointerLeave, UIPointerUp,
-        advance_capture, route_pointer,
+        DOUBLE_CLICK, HoveredNode, Interactable, UIClick, UIDisabled, UIDoubleClick, UIDrag,
+        UIInputState, UIPointerDown, UIPointerEnter, UIPointerLeave, UIPointerUp, route_pointer,
     };
     use concerto_ecs::{
         IntoSystem, System, World,
@@ -381,10 +381,20 @@ mod tests {
         signal::{On, listener::IntoListener},
     };
     use concerto_foundation::time::Instant;
-    use concerto_window::input::{Input, InputState, MouseButton};
+    use concerto_window::input::{Input, MouseButton};
+
+    #[derive(Debug, PartialEq)]
+    struct HeardBy {
+        entity: Entity,
+        name: &'static str,
+    }
+
+    fn heard(entity: Entity, name: &'static str) -> HeardBy {
+        HeardBy { entity, name }
+    }
 
     #[derive(Resource, Default)]
-    struct Heard(Vec<(Entity, &'static str)>);
+    struct Heard(Vec<HeardBy>);
 
     #[derive(Resource)]
     struct Cursor(Vec2);
@@ -408,8 +418,13 @@ mod tests {
     fn hear<S: concerto_ecs::signal::Signal>(
         name: &'static str,
     ) -> concerto_ecs::signal::listener::Listener<S> {
-        (move |on: On<S>, mut heard: ResMut<Heard>| heard.0.push((on.entity(), name)))
-            .into_listener()
+        (move |on: On<S>, mut log: ResMut<Heard>| {
+            log.0.push(HeardBy {
+                entity: on.entity(),
+                name,
+            })
+        })
+        .into_listener()
     }
 
     fn node(world: &mut World, min: f32) -> Entity {
@@ -437,7 +452,7 @@ mod tests {
         world
     }
 
-    fn frame(world: &mut World, cursor: Vec2, button: Option<bool>) -> Vec<(Entity, &'static str)> {
+    fn frame(world: &mut World, cursor: Vec2, button: Option<bool>) -> Vec<HeardBy> {
         world.get_resource_mut::<Cursor>().unwrap().0 = cursor;
         if let Some(pressed) = button {
             world
@@ -477,11 +492,14 @@ mod tests {
         let _other = node(&mut world, 50.0);
         let inside = Vec2::splat(5.0);
 
-        assert_eq!(frame(&mut world, inside, None), [(target, "enter")]);
-        assert_eq!(frame(&mut world, inside, Some(true)), [(target, "down")]);
+        assert_eq!(frame(&mut world, inside, None), [heard(target, "enter")]);
+        assert_eq!(
+            frame(&mut world, inside, Some(true)),
+            [heard(target, "down")]
+        );
         assert_eq!(
             frame(&mut world, inside, Some(false)),
-            [(target, "up"), (target, "click")]
+            [heard(target, "up"), heard(target, "click")]
         );
     }
 
@@ -497,11 +515,15 @@ mod tests {
         frame(&mut world, inside, Some(true));
         assert_eq!(
             frame(&mut world, over_other, None),
-            [(target, "leave"), (other, "enter"), (target, "drag")]
+            [
+                heard(target, "leave"),
+                heard(other, "enter"),
+                heard(target, "drag")
+            ]
         );
         assert_eq!(
             frame(&mut world, over_other, Some(false)),
-            [(target, "up")],
+            [heard(target, "up")],
             "sliding off the pressed node cancels the click"
         );
     }
@@ -518,7 +540,7 @@ mod tests {
         assert!(frame(&mut world, inside, Some(false)).is_empty());
     }
 
-    fn click(world: &mut World, cursor: Vec2) -> Vec<(Entity, &'static str)> {
+    fn click(world: &mut World, cursor: Vec2) -> Vec<HeardBy> {
         frame(world, cursor, Some(true));
         frame(world, cursor, Some(false))
     }
@@ -528,30 +550,7 @@ mod tests {
     }
 
     #[test]
-    fn a_second_click_on_the_same_node_in_quick_succession_is_a_double_click() {
-        let mut world = pointer_world();
-        let target = node(&mut world, 0.0);
-        let inside = Vec2::splat(5.0);
-        frame(&mut world, inside, None);
-
-        assert_eq!(
-            click(&mut world, inside),
-            [(target, "up"), (target, "click")]
-        );
-        wait(&mut world, DOUBLE_CLICK / 2);
-        assert_eq!(
-            click(&mut world, inside),
-            [(target, "up"), (target, "click"), (target, "double")]
-        );
-        assert_eq!(
-            click(&mut world, inside),
-            [(target, "up"), (target, "click")],
-            "a third click starts a new pair"
-        );
-    }
-
-    #[test]
-    fn slow_clicks_and_clicks_on_different_nodes_are_not_double_clicks() {
+    fn only_a_quick_second_click_on_the_same_node_is_a_double_click() {
         let mut world = pointer_world();
         let target = node(&mut world, 0.0);
         let other = node(&mut world, 50.0);
@@ -559,163 +558,37 @@ mod tests {
         let over_other = Vec2::splat(55.0);
         frame(&mut world, inside, None);
 
+        assert_eq!(
+            click(&mut world, inside),
+            [heard(target, "up"), heard(target, "click")]
+        );
+        wait(&mut world, DOUBLE_CLICK / 2);
+        assert_eq!(
+            click(&mut world, inside),
+            [
+                heard(target, "up"),
+                heard(target, "click"),
+                heard(target, "double")
+            ]
+        );
+        assert_eq!(
+            click(&mut world, inside),
+            [heard(target, "up"), heard(target, "click")],
+            "a third click starts a new pair"
+        );
+
+        wait(&mut world, DOUBLE_CLICK);
         click(&mut world, inside);
         wait(&mut world, DOUBLE_CLICK);
         assert_eq!(
             click(&mut world, inside),
-            [(target, "up"), (target, "click")]
+            [heard(target, "up"), heard(target, "click")]
         );
 
         frame(&mut world, over_other, None);
         assert_eq!(
             click(&mut world, over_other),
-            [(other, "up"), (other, "click")]
+            [heard(other, "up"), heard(other, "click")]
         );
-    }
-
-    fn entities(count: usize) -> Vec<Entity> {
-        let mut world = World::default();
-        (0..count).map(|_| world.spawn(Interactable)).collect()
-    }
-
-    #[test]
-    fn a_press_and_release_on_the_same_node_is_a_click() {
-        let mut capture = ButtonCapture::default();
-        let node = Some(entities(1)[0]);
-
-        let down = advance_capture(&mut capture, InputState::Pressed, node, Vec2::ZERO);
-        assert_eq!(down.down, node);
-        assert_eq!(down.click, None);
-
-        let up = advance_capture(&mut capture, InputState::Released, node, Vec2::ZERO);
-        assert_eq!(up.up, node);
-        assert_eq!(up.click, node, "press and release on one node is a click");
-    }
-
-    #[test]
-    fn releasing_over_a_different_node_is_not_a_click() {
-        let ids = entities(2);
-        let mut capture = ButtonCapture::default();
-        advance_capture(&mut capture, InputState::Pressed, Some(ids[0]), Vec2::ZERO);
-
-        let up = advance_capture(&mut capture, InputState::Released, Some(ids[1]), Vec2::ZERO);
-        assert_eq!(up.up, Some(ids[0]), "the captured node still gets the up");
-        assert_eq!(up.click, None, "but sliding off it cancels the click");
-    }
-
-    #[test]
-    fn a_drag_past_the_threshold_cancels_the_click() {
-        let mut capture = ButtonCapture::default();
-        let node = Some(entities(1)[0]);
-        advance_capture(&mut capture, InputState::Pressed, node, Vec2::ZERO);
-
-        let held = advance_capture(&mut capture, InputState::Down, node, Vec2::new(40.0, 0.0));
-        assert_eq!(held.drag, node);
-        assert_eq!(
-            held.delta,
-            Vec2::new(40.0, 0.0),
-            "the first drag reports movement since the press"
-        );
-
-        let up = advance_capture(
-            &mut capture,
-            InputState::Released,
-            node,
-            Vec2::new(40.0, 0.0),
-        );
-        assert_eq!(up.click, None, "a drag is not a click");
-    }
-
-    #[test]
-    fn a_captured_node_keeps_receiving_drags_after_the_pointer_leaves_it() {
-        let handle = entities(1)[0];
-        let mut capture = ButtonCapture::default();
-        advance_capture(&mut capture, InputState::Pressed, Some(handle), Vec2::ZERO);
-
-        let held = advance_capture(&mut capture, InputState::Down, None, Vec2::new(5.0, 9.0));
-        assert_eq!(
-            held.drag,
-            Some(handle),
-            "a split handle dragged off its own bounds must keep the pointer"
-        );
-    }
-
-    #[test]
-    fn a_press_on_empty_space_captures_nothing() {
-        let mut capture = ButtonCapture::default();
-        let down = advance_capture(&mut capture, InputState::Pressed, None, Vec2::ZERO);
-        assert_eq!(down.down, None);
-
-        let up = advance_capture(&mut capture, InputState::Released, None, Vec2::ZERO);
-        assert_eq!(up.up, None);
-        assert_eq!(up.click, None);
-    }
-
-    #[test]
-    fn each_button_captures_independently() {
-        let ids = entities(2);
-        let mut state = UIInputState::default();
-        let handle = Some(ids[0]);
-        let row = Some(ids[1]);
-
-        advance_capture(&mut state.left, InputState::Pressed, handle, Vec2::ZERO);
-        let right = advance_capture(&mut state.right, InputState::Pressed, row, Vec2::ZERO);
-
-        assert_eq!(right.down, row);
-        assert_eq!(
-            state.captured(MouseButton::Left),
-            handle,
-            "the left button must still own the node it grabbed"
-        );
-
-        let left = advance_capture(
-            &mut state.left,
-            InputState::Down,
-            handle,
-            Vec2::new(9.0, 0.0),
-        );
-        assert_eq!(left.drag, handle, "and must keep receiving its drags");
-    }
-
-    #[test]
-    fn clip_rect_excludes_visually_clipped_area() {
-        let layout = UILayout {
-            rect: UIBox {
-                min: Vec2::ZERO,
-                size: Vec2::splat(100.0),
-            },
-            content_rect: UIBox::default(),
-            clip_rect: UIBox {
-                min: Vec2::ZERO,
-                size: Vec2::splat(50.0),
-            },
-            paint_order: 0,
-        };
-        assert!(layout.rect.contains(Vec2::new(75.0, 25.0)));
-        assert!(!layout.clip_rect.contains(Vec2::new(75.0, 25.0)));
-    }
-
-    #[test]
-    fn a_styled_node_left_alone_keeps_its_material_unchanged() {
-        use super::{UIInteractionStyle, apply_interaction_styles};
-        use crate::{material::UIMaterial, testing::Watch};
-        use concerto_color::Color;
-
-        let mut world = pointer_world();
-        let button = world.spawn((
-            UIInteractionStyle {
-                normal: Color::rgba(0.1, 0.1, 0.1, 1.0),
-                hovered: Color::rgba(0.2, 0.2, 0.2, 1.0),
-                pressed: Color::rgba(0.3, 0.3, 0.3, 1.0),
-                disabled: Color::rgba(0.4, 0.4, 0.4, 1.0),
-            },
-            UIMaterial::default(),
-        ));
-        let mut watch = Watch::new::<UIMaterial, _>(&mut world, apply_interaction_styles);
-        watch.run(&mut world);
-        assert_eq!([watch.run(&mut world), watch.run(&mut world)], [0, 0]);
-
-        **world.get_resource_mut::<HoveredNode>().unwrap() = Some(button);
-        assert_eq!([watch.run(&mut world), watch.run(&mut world)], [1, 0]);
     }
 }

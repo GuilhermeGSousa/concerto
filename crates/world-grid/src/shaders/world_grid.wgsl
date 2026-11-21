@@ -24,6 +24,9 @@ struct Light {
     direction: vec3<f32>,
     light_type: u32,
     cos_cone_angle: f32,
+    shadow_layer: i32,
+    range: f32,
+    shadow_far: f32,
 };
 
 struct Lights {
@@ -151,7 +154,13 @@ fn fs_main(in: VertexOutput) -> FragOutput {
         if L.light_type != DIRECTIONAL_LIGHT {
             let delta = L.position - world_pos;
             light_dir = normalize(delta);
-            attenuation = 1.0 / max(dot(delta, delta), 1e-4);
+            let distance_sq = dot(delta, delta);
+            attenuation = 1.0 / max(distance_sq, 1e-4);
+            if L.range > 0.0 {
+                let ratio = distance_sq / (L.range * L.range);
+                let window = clamp(1.0 - ratio * ratio, 0.0, 1.0);
+                attenuation *= window * window;
+            }
         }
         if L.light_type == SPOT_LIGHT {
             let angle_cos = dot(light_dir, normalize(-L.direction));

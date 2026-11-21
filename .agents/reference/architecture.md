@@ -6,12 +6,12 @@ Every directory under `crates/` is the package `concerto-<dir>`.
 
 | Layer | Crates | What they hold |
 |---|---|---|
-| Core | `ecs`, `tasks`, `app`, `foundation` | ECS, signals, schedules; task pools; `App`, plugins, sub-apps, extract; assets, transforms, time, math |
-| Assets | `asset-format`, `asset-import`, `asset-build`, `import`, `gltf`, `obj` | `AssetId` and `.gasset` framing; the `Importer` trait; `asset_id!` build tracking and the registry a game embeds; the import library behind the editor's Import…; the glTF and OBJ importers |
-| Rendering | `render`, `mesh`, `skybox`, `world-grid`, `debug-gizmos`, `color`, `terminal-renderer` | wgpu renderer and materials; mesh data, bounds, ray tests; extra passes; a renderer that draws to a terminal |
-| Simulation | `physics`, `jolt-ffi`, `animation`, `scene`, `director`, `gameplay` | Jolt and Rapier backends behind one API; the Jolt C++ bindings; animation graphs; scene spawn and capture; the virtual-camera stack; player and movement helpers |
+| Core | `ecs`, `tasks`, `app`, `foundation`, `name`, `noise` | ECS, signals, schedules; task pools; `App`, plugins, sub-apps, extract; assets, transforms, time, math; interned names; seeded hashes and noise |
+| Assets | `asset-format`, `asset-import`, `asset-build`, `import`, `gltf`, `obj`, `bvh` | `AssetId` and `.gasset` framing; the `Importer` trait; `asset_id!` build tracking and the registry a game embeds; the import library behind the editor's Import…; the glTF, OBJ and BVH importers |
+| Rendering | `render`, `mesh`, `skybox`, `world-grid`, `debug-gizmos`, `motion-matching-gizmos`, `procedural-animation-gizmos`, `navigation-gizmos`, `color`, `terminal-renderer` | wgpu renderer and materials; mesh data and primitives, bounds, ray tests; the sun and the sky (CPU atmosphere tables and lighting, the sky-view and sky passes); the world grid and debug drawing passes; the debug drawing of motion matching, in the running game and the database preview; the debug drawing of foot locks in the running game; the debug drawing of the nav graph, in the game and at edit time, of each loaded navmesh, in the game and at edit time through its component gizmo while its entity is selected, and of each agent's route; a renderer that draws to a terminal |
+| Simulation | `physics`, `jolt-ffi`, `motion-matching`, `animation`, `procedural-animation`, `navigation`, `scene`, `director`, `gameplay`, `audio` | Jolt and Rapier backends behind one API; the Jolt C++ bindings; the spring character simulation that drives the physics body and predicts its trajectory, and the motion database derived from its clips; animation graphs; procedural animation graph nodes, foot placement, foot locking, look-at, aim and procedural motion, kept out of `animation` so it has no physics dependency; the graph of hand-placed nav points and links, its path queries, the navmesh baked from colliders and its path queries, and agents that route on the navmesh or else the graph and write steering toward a destination; scene spawn and capture; the virtual-camera stack; player and movement helpers, and the copy of nav steering into `DesiredMotion`; sound clips played by `AudioPlayer` through kira on four mixer buses |
 | Interface | `window`, `winit`, `ui` | the window, input, and their events as plain data; the winit host; the engine's own UI |
-| Tooling | `editor`, `reflect`, `project`, `mcp` | the editor; structural, path-addressed access to a value's fields and the `TypeRegistry` of what each type supports, which the ECS holds per world as `AppTypeRegistry` and the inspector and scenes read; `cargo concerto`, which creates game projects and their editor crates; an MCP server whose tools are systems answering `McpCall` events |
+| Tooling | `editor`, `animation-editor`, `motion-matching-editor`, `navigation-editor`, `reflect`, `project`, `mcp` | the editor, with the timeline and graph canvas widgets its tabs share; its extension crates: the clip, rig and graph tabs of `animation-editor`, the graph tab showing an `AnimationGraph` on the canvas and playing it in its preview, the motion database tab of `motion-matching-editor`, and the navmesh gizmo of `navigation-editor`; structural, path-addressed access to a value's fields and the `TypeRegistry` of what each type supports, which the ECS holds per world as `AppTypeRegistry`, a shared `Arc<RwLock<TypeRegistry>>` that the inspector, scenes and the `AssetServer`'s asset loads read; `cargo concerto`, which creates game projects and their editor crates; an MCP server whose tools are systems answering `McpCall` events |
 
 `ecs`, `foundation`, `render`, and `reflect` each have a `macros` sub-crate.
 `jolt-ffi` builds Jolt from the submodule at `crates/jolt-ffi/vendor/JoltPhysics`.
@@ -49,9 +49,16 @@ Draw work in the render world is ordered with `RenderSet`
 
 An `App` does not run itself. A host builds it, feeds it, and steps it:
 
-1. Create the `App` and insert a `Gpu`, a `DrawTarget`, and a `Window`.
+1. Create the `App` and insert a `Gpu`, a `DrawTarget`, and a `Window`. The
+   cook is the exception: it inserts none of them before applying the recipe
+   (`WindowPlugin::build` still inserts a default `Window`), never polls
+   `plugin_state()`, never calls `finish_plugin_build()`, and never runs a schedule, so a plugin's `build` must not need the device;
+   device work goes in `finish`.
 2. Apply the recipe, a function that registers plugins and systems.
 3. Poll `plugin_state()` until `Ready`, then call `finish_plugin_build()`.
+   A host may run `finish_plugin_build()` on another thread, as the editor
+   does; it then gives the `App` a `MainThreadExecutor` for that thread while
+   it runs, so non-`Send` `Startup` systems run there, and puts its own back.
 4. Each frame, push `WindowEvent`s into the main world, call `update()`, and
    read `Window` for what the game asked for.
 
@@ -63,7 +70,7 @@ render world.
 
 `concerto::run` is the winit host: it owns the event loop, the OS window, the
 surface, and the device. `concerto::headless` builds an `App` with a device and
-no window, for tests. `concerto_terminal_renderer::run` drives one from a
+no window, for tests, on kira's mock audio backend. `concerto_terminal_renderer::run` drives one from a
 terminal. `concerto_mcp::host::run` serves one over MCP on stdin and stdout
 with no window: it runs one frame before it starts the server, so no call is
 served before that frame ends, then runs frames only while a call or the `App`
@@ -72,7 +79,10 @@ answers read-only calls between frames with `serve(McpRead)`, and quits when
 stdin closes or the `App` closes its window; the editor's `--mcp` uses it. A `DrawTarget::Texture` makes an
 `App` draw its window into a texture the host can sample.
 
-A host never touches the render world once frames are running.
+A host never touches the render world once frames are running. The one
+exception: between frames it may call `render_assets_settled(&app)`, which
+reads whether the last frame prepared or deferred any render asset under the
+`RenderAssetBytesPerFrame` upload budget.
 
 ## ECS
 
@@ -86,29 +96,53 @@ A host never touches the render world once frames are running.
   `cmd.trigger(signal)` queues the dispatch for the next sync point.
 - Ordering is by reference, never by registration: see
   [docs/scheduling.md](../../docs/scheduling.md).
+- Under the multi-threaded executor, a `Send` system runs on a pool thread,
+  or on the thread that found it ready when it is the only one ready and
+  nothing else runs. An exclusive system runs on the thread that runs the
+  schedule. A non-`Send` system runs on the `MainThreadExecutor`'s thread, or
+  on the thread that runs the schedule when there is none.
+- Commands apply on the thread that runs the schedule, when the executor
+  reaches their sync point.
 
 ## Assets
 
-Source files (`.glb`, `.gltf`, `.obj`, images) are imported once, ahead of
-time. The running game never reads them.
+Source files (`.glb`, `.gltf`, `.obj`, `.bvh`, images, and `.ogg` and `.wav`
+sounds) are imported once, ahead of time. The running game never reads them.
 
-- The editor's Import… writes one `.gasset` per sub-asset under
-  `content/<stem>/` and writes `<source>.import.toml` beside the source to pin
-  each sub-asset's UUID. It returns an `AssetEntry` for each output, and the
+- The editor's Import… writes a source's outputs under `content/<stem>/`: a
+  `scene.gasset` that holds the scene with its meshes, materials and skeletons
+  embedded, each an asset with its own UUID, and one `.gasset` for each
+  texture, clip and other output. A source with no scene writes one file per
+  output. It writes `<source>.import.toml` beside the source to pin each
+  sub-asset's UUID. Only an import, or `pack-imports`, which converts a
+  project's older one-file-per-output imports in place, writes a file with
+  embedded assets; a save over one is refused, so an import's scene is
+  read-only. It returns an `AssetEntry` for each output, and the
   editor adds them to its registry. There is no import command line.
-- Code names an asset with `asset_id!("content/hero/mesh_0.gasset")`, resolved
-  at compile time. The runtime finds files by UUID through the registry.
+- Code names an asset with `asset_id!("content/hero/scene.gasset")`, or an
+  embedded one with `asset_id!("content/hero/scene.gasset#mesh/0")`, resolved
+  at compile time. The runtime finds assets by UUID through the registry.
 - No registry file exists, committed or at runtime. A game's `build.rs` calls
   `concerto_asset_build::track_assets`, which scans `content/` and writes the
-  registry to `OUT_DIR`. `concerto::content_registry!()` embeds it, and
-  `concerto::run` installs it. A `.gasset` moved or added in a file explorer
+  registry to `OUT_DIR` and records the package directory as
+  `CONCERTO_PROJECT_ROOT`. `concerto::content_registry!()` embeds both, and
+  `concerto::run` installs the registry and, natively, keeps derived data under
+  that root's `derived-cache/`. A `.gasset` moved or added in a file explorer
   or by git is picked up at the next build.
-- `AssetRegistry` is the one catalogue of content on disk: id, address, kind.
+- `AssetRegistry` is the one catalogue of content on disk: id, address, kind,
+  and for an embedded asset the id of its host and its name inside the host's
+  file. A file is identified by the id of its host (a loose asset is its own),
+  never by its address: `AssetEntry::file()` gives it.
   It is a resource; `registry.of_type::<T>()` lists assets without loading
   them. `AssetServer` resolves loads against a snapshot of it, refreshed by
-  `sync_asset_registry` in `First` when the resource changes. The editor builds
+  `sync_asset_registry` in `First` when the resource changes. It loads by
+  file: one task per file reads it once and decodes the assets requested from
+  it, so a scene's embedded meshes and materials come from one read of the
+  scene's file, and the task ends when no request is left. Removing a host
+  from the registry removes the entries embedded in its file. The editor builds
   it by scanning headers once, when a project opens. An import inserts its
-  entries and a scene save upserts the scene's, both in memory, with no rescan.
+  entries, a New in the Asset Browser inserts the created asset's, and a scene
+  save upserts the scene's, all in memory, with no rescan.
   The editor gives each hosted `App` the project root and a copy when the
   `App` is created, and the new registry whenever it changes.
 - A scene is a tree of nodes whose components are stored by type name as
@@ -118,8 +152,96 @@ time. The running game never reads them.
   Asset handles are stored as their `AssetId` and entity references as node
   indices, through `ReflectSceneLeaf` type data; capture lists every asset a
   handle names in `referenced_assets`.
+- Each scene node has a `NodeId`, unique within its scene. An importer derives
+  it from the node's name path (`NodeId::from_name_path`), the nodes it adds
+  itself, such as a glTF mesh's `<node>.primitive<k>` children, included, so a
+  re-import keeps it while the name path is unchanged. A spawned entity carries
+  its node's id as `SceneNodeId`, and capture writes it back; an entity without
+  one gets the id of its name path in the captured scene, made unique. The
+  editor gives an entity it creates, duplicates or places a fresh id.
+- A scene node may be a link: the `SceneLink` component names another scene and
+  holds the changes made to its nodes (`Scene` format version 2, `SceneNode::link`).
+  `request_link_spawns` runs in `Update`: once the linked scene has loaded it
+  spawns the scene's nodes under the link's entity, each tagged
+  `LinkedNode { link, node }` with its node's id and kept in the link's
+  `NodeId → Entity` table, applies the changes, each addressed by a `LinkPath`
+  of node ids, one per link level, outermost first, and sets
+  `SceneLinkState::Spawned`, or `Refused` with the reason; a scene still
+  loading leaves it `Waiting`. A reloaded scene
+  sets its links back to `Waiting` in `LateUpdate`, so they spawn again. Placing a scene
+  and a startup scene make links, and the editor's settle waits on `Waiting` ones.
+  The `LinkRoot` resource names the scene a world's top-level links sit in; the
+  editor sets it when a scene opens, so a link that reaches that scene again is
+  `Refused`. A save or an import does not reload anything by itself: the
+  editor's `LinksPlugin` reads `SceneSaved` and `ImportFinished` and calls
+  `HostedApp::reload_files` on every edit, parked and pending `App` but a
+  playing game's, which runs `AssetServer::reload_file` for each rewritten file.
+- An asset that holds trait objects by type name (`AnimationGraph`'s nodes,
+  the feature channels of a `MotionDatabase`)
+  keeps each one as a data enum: `Stored { type_name, value }` as decoded and
+  `Live { type_name, <boxed value> }` once built (`AnimationNodeData`,
+  `FeatureChannelData`). Serde writes the type name and the reflected value for
+  every variant and always decodes `Stored`. `on_load` builds the live values
+  once, with `context.type_registry()`; after that nothing takes a
+  `TypeRegistry`, and a value still `Stored` where a live one is needed is an
+  error. A value that cannot be built stays `Stored` with a warning, or, when the
+  asset must still play, becomes a `Placeholder` that keeps its value so a save
+  loses nothing. Do not keep a parallel `#[serde(skip)]` list of live values,
+  rebuild them from the registry at each use, or pass a registry into runtime
+  code to do it.
+- An asset whose runtime part is computed from other content assets
+  implements `DerivedData` and is registered with `register_derived_asset`
+  (`MotionDatabase` and its `BakedDatabase`; `NavMesh`, whose polygons are
+  baked from the colliders of its scenes). Whether an asset derives is
+  decided per asset by `is_derived()`, `true` by default: one that doesn't
+  loads as it is, is accepted as another derived asset's input, and isn't
+  cooked; `DerivedInputs::read` asks a derived kind's `file_is_derived` and
+  refuses an input that derives. Its file holds only the
+  definition; a load of one that derives reads the inputs it names, then the
+  `further_inputs` those first inputs name (such as the meshes a scene's
+  colliders use), which `read_more` reads once more into the same inputs under
+  the same rules. It derives the blob from them, or reads it
+  from the project's `derived-cache/` under the key the type computes, and
+  applies it before `Loaded`. The blob holds computed data only: values a user
+  can tune without re-deriving, such as a channel's weight, are read from the
+  live definition at use.
+- A record may carry an uncooked section, a type that implements
+  `UncookedData` and names its asset, with a version of its own: loads never
+  read it, a derive reads its own on a cache
+  miss through `DerivedInputs::own_uncooked`, tools read it with
+  `read_uncooked`, and a cook drops it.
+- A sampled `Texture` derives from its own file, with no inputs: its payload
+  holds its `role`, its `TextureSettings` and a `SourceSummary` (width, height,
+  hash) of the imported image, whose bytes (`TextureSource`) are the file's
+  uncooked section. The key is the summary's hash, the settings and the
+  role, so a cache hit or a cooked blob never reads the source. On a miss
+  `derive` takes the section, refuses one whose hash differs from the
+  summary's, and `derive_levels` decodes it, resolves `Auto` from the role,
+  fits `max_size` (to whole 4×4 blocks for BC), builds the mips and encodes
+  each level in BC1, BC4, BC5, BC7 or RGBA8; `apply_derived` keeps the levels
+  and the summary. A version-2 file, with its source in the payload, migrates
+  to the summary and has no section, so it derives only from a cached blob
+  until it is imported again. The encoder is native only, so an uncooked web run
+  derives RGBA8. `Texture::new` builds the mip chain from its RGBA8 level; it
+  never derives, and `Texture` has no `on_load` work.
+- A packaged build can carry the blob in the file. Every `concerto::run`
+  binary run as `<game> --cook <out>` calls `concerto::cook`: it builds the
+  recipe headless (see Hosts), publishes the embedded registry with the
+  project root as the content root and the project's `derived-cache/`, empties
+  `<out>` (refusing a non-empty directory that holds no `.concerto-cook` marker
+  from an earlier cook), and has `AssetServer::cook` write each registry entry of a
+  registered derived kind whose asset derives to `<out>/<address>`, skipping
+  and leaving out of the report one that doesn't: the committed header and
+  payload byte for byte, plus a trailing derived section with the blob. It
+  prints each address and a total, or the error, and exits 0 or 1. A load that
+  finds a section of the type's current `DERIVED_VERSION` applies it without
+  reading the inputs; any other section falls back to deriving. Committed
+  content never carries a section.
 - Re-importing a source keeps its asset IDs. An output whose header no longer
-  carries import provenance was saved by the editor and is not rewritten.
+  carries import provenance was saved by the editor with
+  `save_content_asset_into` and is not rewritten. An output saved with
+  `resave_content_asset` keeps its provenance, so the next re-import overwrites
+  it.
 
 Each example is a self-contained project: its `build.rs` copies `content/` to
 `<exe-dir>/<package>-content/content/`, so examples sharing one `target/` do not
@@ -129,24 +251,28 @@ executable's directory otherwise.
 
 ## Editor
 
-A game that has an editor is a library plus a thin binary; `tech-demo` is the
-one example built that way, and the other four are binaries only. The library
+A game that has an editor is a library plus a thin binary; `tech-demo` and
+`one-more-night`, in their own repositories beside this one, are built that
+way, and `ui-showcase` is a binary only. The library
 exposes one recipe, `pub fn game(app: &mut App)`, which registers the game's
 plugins, components, systems, and startup scene; `main` is
 `concerto::run(<game>::game, concerto::content_registry!())`. The editor is a
 library too, built per game: the game's `editor/` crate, named `<game>-editor`
 and generated by `cargo concerto editor`, depends on the game's library and calls
-`concerto_editor::run(<game>::game, <project root>)`. A game without an
+`concerto_editor::run(<game>::game, <project root>)`, or
+`concerto_editor::run_with(<game>::game, <project root>, <plugins>)` when the
+game's `Cargo.toml` lists editor extension crates. A game without an
 `editor/` crate has no editor:
 
 ```sh
-cargo run -p tech-demo-editor -- --project <scratch copy of examples/tech-demo>
+cd ../tech-demo
+cargo run -p tech-demo-editor -- --project <scratch copy of the tech demo>
 ```
 
 `--project <dir>` opens that project's `content/` tree instead of the game's
 own.
 
-The editor is a host as well as a hosted program. Three kinds of `App` exist
+The editor is a host as well as a hosted program. Four kinds of `App` exist
 while it runs:
 
 - **The editor `App`,** driven by the winit host, or by the MCP host under
@@ -161,26 +287,45 @@ while it runs:
   `World::add_listener` or inserted on an entity, including from a plugin's
   `build`, is never filtered. Its render world runs everything. It is
   held as a `HostedApp` component on the scene's document, and dropped with
-  it. It holds the scene's entities and the scene tools: the editor camera, the
-  grid, picking, and the gizmo. It draws its window into a texture that the
+  it. Like a play `App`, it is stepped hidden after its build until its loads
+  and uploads settle, and only then becomes the `HostedApp`. It holds the scene's entities and the scene tools: the editor camera, the
+  grid, picking, the component gizmos, and the transform gizmo, then the plugins
+  that editor extensions add with `add_scene_tools_plugin`. It draws its window into a texture that the
   viewport panel shows.
 - **A play `App`,** while the Scene tab plays its scene. Play (the tab's
   button, or Ctrl+P) saves the scene if needed, then builds an `App` with the
   game role, `App::new()`, from the same recipe plus `EditToolsCorePlugin`
-  (selection and edits, no viewport tools), with the project's content and the
+  (selection, edits, `DebugGizmosPlugin` and the component gizmos, no viewport
+  tools), then the plugins added with `add_scene_tools_plugin`, with the project's content and the
   open scene's saved file as its startup scene. While it builds it is a
-  `PendingPlayApp` beside the edit `App`. Once ready, the edit `App` moves to
+  `PendingPlayApp` beside the edit `App`. Once built, it is stepped hidden,
+  with no input, until its loads, scene spawns and render uploads settle, or
+  for at most `WARM_UP_LIMIT` (10 s), or the editor's `WarmUpLimit` resource
+  when it has one. Then the edit `App` moves to
   `ParkedEditApp`, where it is not stepped, and the play `App` becomes the
   document's `HostedApp`, so the stepping, the viewport, input, and the panels
   follow it. Stop drops it and puts the parked edit `App` back. The document's
   `PlayState` (`Editing`, `Starting`, `Playing`) says which is which, and
   `InputOwner` says whether the game or the editor has the window's input.
+- **A preview `App`,** one per open document whose asset editor returns a
+  `PreviewSpec` from `AssetEditor::preview`. `PreviewHostPlugin`
+  (`crates/editor/src/preview.rs`) builds it with the preview role,
+  `App::for_previewing()`, from the same recipe plus `PreviewPlugin` (an orbit
+  camera, the grid, a light) and the spec's `build`, and holds it as the
+  document's `HostedApp` with `HostRole::Preview`. It runs the main-world
+  systems and listeners marked `.at_edit_time()` or `.at_preview_time()` (the
+  `Preview` tag), so animation plays in it while the startup scene and the
+  game's unmarked systems stay out. It has no scene file and no scene tools.
+  The asset editor drives it with signals through `PreviewSignals` and reads
+  its events as `Hosted<E>`.
 
 `crates/editor/src/hosted/` is the host. Each frame, in `First`, it steps the
-document's `HostedApp` on the active tab, the edit `App` or, while playing,
-the play `App`, while the viewport is visible, after pushing the viewport's
-size and input into it. An edit `App` that is not stepped still
-takes signals, which is how a tab that is not in front is saved.
+document's `HostedApp` on the active tab, the edit `App`, the play `App` while
+playing, or the preview, while the viewport is visible, after pushing the
+viewport's size and input into it. That document carries `ViewportTarget`;
+every role but a preview also carries `EditTarget`, which the panels read. An
+edit `App` that is not stepped still takes signals, which is how a tab that is
+not in front is saved; a preview in the background is frozen.
 
 Panels reach the edit `App`, or the play `App` while playing, through two
 system parameters: `EditWorld<T>` reads its world, and `EditWorldSignals` triggers
@@ -193,7 +338,8 @@ editor's world, which systems read with `EventReader<Hosted<E>>`. Whether the
 scene has unsaved edits is state, `SceneDirty`, kept in the edit `App`: edits set
 it and a successful save clears it, and the editor's `Unsaved` follows it. A save
 asks the edit `App` for the scene directly with `HostedApp::capture_scene`.
-The inspector edits components through `PropertyEditor<T>` adapters over
-`reflect`. Each asset type has one editor, registered with
-`register_asset_editor`. [crates/editor/README.md](../../crates/editor/README.md)
+The inspector edits reflected values through `PropertyEditor<T>` adapters over
+`reflect`: a `PropertyTarget` addresses each one, a component in the edit
+target's world or a value a document holds in the editor's. Each asset type has
+one editor, registered with `register_asset_editor`. [crates/editor/README.md](../../crates/editor/README.md)
 covers all of it.

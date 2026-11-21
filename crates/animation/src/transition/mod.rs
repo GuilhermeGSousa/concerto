@@ -1,36 +1,67 @@
+use concerto_foundation::assets::asset_store::AssetStore;
 use uuid::Uuid;
 
 use crate::{
     evaluation::AnimationGraphContext,
-    graph::{AnimationGraphInstances, GraphId},
-    pose::{Pose, PosePool},
+    graph::{AnimationGraph, AnimationGraphStates, GraphId},
+    pose::{AnimationFrame, FramePool},
 };
 
 pub(crate) mod blend_stack;
 pub(crate) mod inertialization_blender;
 
-pub(crate) trait AnimationTransitionBlender {
+/// How a state machine moves between states: `blend_time` is the cross-fade duration or the inertialization halflife.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    concerto_reflect::Reflect,
+    serde::Serialize,
+    serde::Deserialize,
+)]
+pub enum TransitionBlender {
+    #[default]
+    CrossFade,
+    Inertialization,
+}
+
+pub(crate) struct BlendInFlight {
+    pub(crate) from: GraphId,
+    pub(crate) to: GraphId,
+    pub(crate) progress: f32,
+}
+
+pub(crate) trait AnimationTransitionBlender: Send + Sync {
+    fn current(&self) -> GraphId;
+
+    fn in_flight(&self) -> Option<BlendInFlight>;
+
     fn sample(
-        &self,
+        &mut self,
         bone_ids: &[Uuid],
-        graph_instances: &AnimationGraphInstances,
+        graph_states: &mut AnimationGraphStates,
+        graphs: &AssetStore<AnimationGraph>,
         context: &AnimationGraphContext<'_>,
-        pool: &mut PosePool,
-        output: &mut Pose,
+        pool: &mut FramePool,
+        output: &mut AnimationFrame,
     );
 
     fn update(
         &mut self,
         delta_time: f32,
-        graph_instances: &mut AnimationGraphInstances,
+        graph_states: &mut AnimationGraphStates,
+        graphs: &AssetStore<AnimationGraph>,
         context: &AnimationGraphContext<'_>,
     );
 
     fn transition(
         &mut self,
         next_graph: GraphId,
-        graph_instances: &mut AnimationGraphInstances,
-        transition_time: f32,
-        context: &AnimationGraphContext<'_>,
+        graph_states: &mut AnimationGraphStates,
+        blend_time: f32,
+        graphs: &AssetStore<AnimationGraph>,
     );
 }

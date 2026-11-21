@@ -4,7 +4,7 @@ use concerto_ecs::{
 };
 use concerto_render::{
     components::camera::RenderCamera, device::RenderDevice,
-    render_asset::render_window::RenderWindow,
+    render_asset::render_window::RenderWindow, resources::RenderContext,
 };
 use wgpu::util::DeviceExt;
 
@@ -32,6 +32,7 @@ pub(crate) fn render_gizmos(
     pipeline: Res<GizmoPipeline>,
     render_cameras: Query<&RenderCamera>,
     render_window: Res<RenderWindow>,
+    context: Res<RenderContext>,
 ) {
     if storage.vertices.is_empty() && storage.wide.is_empty() {
         return;
@@ -57,8 +58,8 @@ pub(crate) fn render_gizmos(
         .iter()
         .map(|render_camera| {
             wide.as_ref()?;
-            let target = render_camera.depth_texture().texture();
-            let size = [target.width() as f32, target.height() as f32, 0.0, 0.0];
+            let rect = render_camera.viewport_rect(render_camera.target_size(&context));
+            let size = [rect.width as f32, rect.height as f32, 0.0, 0.0];
             let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("Gizmo Viewport Buffer"),
                 contents: bytemuck::cast_slice(&size),
@@ -78,6 +79,10 @@ pub(crate) fn render_gizmos(
     let encoder = device.command_encoder();
 
     for (render_camera, viewport) in render_cameras.iter().zip(&viewports) {
+        let rect = render_camera.viewport_rect(render_camera.target_size(&context));
+        if rect.is_empty() {
+            continue;
+        }
         let swapchain_view = render_window.get_view();
         let color_view: &wgpu::TextureView = match &render_camera.render_target {
             Some(rt) => &rt.view,
@@ -88,8 +93,10 @@ pub(crate) fn render_gizmos(
         };
 
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            multiview_mask: None,
             label: Some("Gizmo Render Pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                depth_slice: None,
                 view: color_view,
                 resolve_target: None,
                 ops: wgpu::Operations {
@@ -101,6 +108,7 @@ pub(crate) fn render_gizmos(
             occlusion_query_set: None,
             timestamp_writes: None,
         });
+        rect.apply(&mut render_pass);
 
         render_pass.set_bind_group(0, &render_camera.camera_bind_group, &[]);
         if let Some(lines) = &lines {

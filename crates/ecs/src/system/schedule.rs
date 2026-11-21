@@ -126,7 +126,10 @@ impl Schedule {
         filter: &TagFilter,
     ) -> CompiledSchedule {
         self.stand_in_for_inactive(filter);
-        self.setup_systems_for_compilation();
+        self.systems
+            .iter_mut()
+            .for_each(|system| system.initialize(world));
+        self.setup_systems_for_compilation(world);
 
         let mut graph = SystemDependencyGraph::new();
         let nodes: Vec<SystemNodeIndex> = self
@@ -194,10 +197,6 @@ impl Schedule {
 
         add_implicit_edges(&mut graph, &nodes, &mut reachability);
 
-        self.systems
-            .iter_mut()
-            .for_each(|system| system.initialize(world));
-
         let compiled_data = build_compiled_data(self.systems, &graph, &nodes);
 
         CompiledSchedule {
@@ -207,7 +206,7 @@ impl Schedule {
         }
     }
 
-    fn setup_systems_for_compilation(&mut self) {
+    fn setup_systems_for_compilation(&mut self, world: &mut World) {
         let mut systems = Vec::with_capacity(self.systems.len());
         let mut configs = Vec::with_capacity(self.configs.len());
 
@@ -221,7 +220,9 @@ impl Schedule {
             configs.push(config);
 
             if needs_sync {
-                systems.push(Box::new(SyncPoint));
+                let mut sync_point: Box<dyn System<In = ()>> = Box::new(SyncPoint);
+                sync_point.initialize(world);
+                systems.push(sync_point);
                 configs.push(NodeConfig::default());
             }
         }
@@ -566,406 +567,11 @@ pub(crate) fn is_sync_point(system: &dyn System<In = ()>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::system::{
-        config::IntoSystemConfig, executor::single_thread::SingleThreadedExecutor,
-    };
-    use petgraph::graph::NodeIndex;
+    use crate::system::executor::single_thread::SingleThreadedExecutor;
 
-    use crate::system::tag::{SystemTag, TagFilter};
-
-    #[derive(SystemTag, Clone, PartialEq, Eq, Hash, Debug)]
-    struct Kept;
-
-    #[derive(SystemTag, Clone, PartialEq, Eq, Hash, Debug)]
-    struct Dropped;
-
-    #[derive(crate::Resource, Default)]
-    struct Ran(Vec<&'static str>);
-
-    fn mark_a(mut ran: crate::ResMut<Ran>) {
-        ran.0.push("a");
-    }
-
-    fn mark_b(mut ran: crate::ResMut<Ran>) {
-        ran.0.push("b");
-    }
-
-    fn mark_x(mut ran: crate::ResMut<Ran>) {
-        ran.0.push("x");
-    }
-
-    fn run_once(schedule: Schedule, filter: &TagFilter) -> Vec<&'static str> {
-        let mut world = World::new();
-        world.insert_resource(Ran::default());
-        schedule
-            .compile_filtered::<SingleThreadedExecutor>(&mut world, filter)
-            .run(&mut world);
-        std::mem::take(&mut world.get_resource_mut::<Ran>().unwrap().0)
-    }
-
-    fn including(tag: impl SystemTag) -> TagFilter {
-        TagFilter {
-            include: vec![tag.intern()],
-            exclude: Vec::new(),
-        }
-    }
-
-    fn excluding(tag: impl SystemTag) -> TagFilter {
-        TagFilter {
-            include: Vec::new(),
-            exclude: vec![tag.intern()],
-        }
-    }
-
-    #[test]
-    fn without_a_filter_tags_change_nothing() {
-        let mut schedule = Schedule::new();
-        schedule.add_system((mark_a.tagged(Kept), mark_b).chain());
-        let mut world = World::new();
-        world.insert_resource(Ran::default());
-        schedule
-            .compile::<SingleThreadedExecutor>(&mut world)
-            .run(&mut world);
-        assert_eq!(world.get_resource::<Ran>().unwrap().0, vec!["a", "b"]);
-
-        let mut schedule = Schedule::new();
-        schedule.add_system((mark_a.tagged(Kept), mark_b).chain());
-        assert_eq!(run_once(schedule, &TagFilter::default()), vec!["a", "b"]);
-    }
-
-    #[test]
-    fn an_include_filter_runs_only_tagged_systems() {
-        let mut schedule = Schedule::new();
-        schedule.add_system((mark_a.tagged(Kept), mark_b).chain());
-        assert_eq!(run_once(schedule, &including(Kept)), vec!["a"]);
-    }
-
-    #[test]
-    fn an_exclude_filter_drops_tagged_systems_and_wins_over_include() {
-        let mut schedule = Schedule::new();
-        schedule.add_system((mark_a.tagged(Dropped), mark_b).chain());
-        assert_eq!(run_once(schedule, &excluding(Dropped)), vec!["b"]);
-
-        let mut schedule = Schedule::new();
-        schedule.add_system((mark_a.tagged(Kept).tagged(Dropped), mark_b.tagged(Kept)).chain());
-        let filter = TagFilter {
-            include: vec![Kept.intern()],
-            exclude: vec![Dropped.intern()],
-        };
-        assert_eq!(run_once(schedule, &filter), vec!["b"]);
-    }
-
-    #[test]
-    fn an_explicit_order_through_a_stand_in_still_holds() {
-        let mut schedule = Schedule::new();
-        schedule
-            .add_system(mark_a.tagged(Kept).after(mark_x))
-            .add_system(mark_b.tagged(Kept))
-            .add_system(mark_x.after(mark_b));
-        assert_eq!(run_once(schedule, &including(Kept)), vec!["b", "a"]);
-    }
-
-    #[test]
-    fn tagging_a_tuple_tags_every_system_in_it() {
-        let mut schedule = Schedule::new();
-        schedule.add_system((mark_a, mark_b).tagged(Kept));
-        schedule.add_system(mark_x);
-        assert_eq!(run_once(schedule, &including(Kept)), vec!["a", "b"]);
-    }
-
-    #[derive(crate::Resource, Default)]
-    struct Hooked(u32);
-
-    struct Watched;
-
-    impl crate::Component for Watched {
-        fn on_add() -> Option<crate::component::ComponentLifecycleCallback> {
-            Some(|mut world, _| {
-                if let Some(hooked) = world.get_resource_mut::<Hooked>() {
-                    hooked.0 += 1;
-                }
-            })
-        }
-    }
-
-    fn watch(_watched: crate::Query<&Watched>) {}
-
-    fn hooks_fired(filter: &TagFilter) -> u32 {
-        let mut schedule = Schedule::new();
-        schedule.add_system(watch);
-        let mut world = World::new();
-        world.insert_resource(Hooked::default());
-        let _compiled = schedule.compile_filtered::<SingleThreadedExecutor>(&mut world, filter);
-        world.spawn(Watched);
-        world.get_resource::<Hooked>().unwrap().0
-    }
-
-    #[test]
-    fn a_stood_in_system_is_never_initialized() {
-        assert_eq!(hooks_fired(&TagFilter::default()), 1);
-        assert_eq!(hooks_fired(&including(Kept)), 0);
-    }
-
-    fn queue_nothing(_cmd: crate::CommandQueue, _ran: crate::ResMut<Ran>) {}
-
-    #[test]
-    fn a_stand_in_has_no_access_and_no_sync_point() {
-        let mut schedule = Schedule::new();
-        schedule
-            .add_system(mark_a.tagged(Kept))
-            .add_system(mark_x)
-            .add_system(queue_nothing)
-            .add_system(mark_b.tagged(Kept));
-        let mut world = World::new();
-        world.insert_resource(Ran::default());
-        let compiled =
-            schedule.compile_filtered::<SingleThreadedExecutor>(&mut world, &including(Kept));
-        let data = &compiled.compiled_data;
-
-        assert_eq!(data.systems.len(), 4);
-        assert!(
-            data.systems
-                .iter()
-                .all(|system| !is_sync_point(system.as_ref()))
-        );
-        assert_eq!(data.dependency_count[1], 0);
-        assert!(data.dependants[1].is_empty());
-        assert_eq!(data.dependency_count[2], 0);
-    }
-
-    #[test]
-    fn schedule_new() {
-        let schedule = Schedule::new();
-        assert_eq!(schedule.systems.len(), 0);
-    }
-
-    #[test]
-    fn add_system_builder_style() {
-        let mut schedule = Schedule::new();
-        schedule.add_system(|| {}).add_system(|| {});
-
-        assert_eq!(schedule.systems.len(), 2);
-    }
-
-    #[test]
-    fn multiple_systems_added() {
-        let mut schedule = Schedule::new();
-        schedule
-            .add_system(|| {})
-            .add_system(|| {})
-            .add_system(|| {});
-
-        assert_eq!(schedule.systems.len(), 3);
-    }
-
-    #[test]
-    fn compile_and_run() {
-        let mut schedule = Schedule::new();
-        schedule
-            .add_system(|| print!("First"))
-            .add_system(|| print!("First"))
-            .add_system(|| print!("First"));
-
-        let mut world = World::new();
-        schedule
-            .compile::<SingleThreadedExecutor>(&mut world)
-            .run(&mut world);
-    }
-
-    #[test]
-    fn a_constraint_does_not_register_its_target() {
-        fn dep() {}
-        fn main_sys() {}
-
-        let mut schedule = Schedule::new();
-        schedule.add_system(main_sys.after(dep));
-
-        assert_eq!(schedule.systems.len(), 1);
-    }
-
-    #[test]
-    fn a_system_added_twice_is_two_nodes() {
-        fn sys() {}
-
-        let mut schedule = Schedule::new();
-        schedule.add_system(sys).add_system(sys);
-
-        assert_eq!(schedule.systems.len(), 2);
-    }
-
-    #[test]
-    fn chain_adds_one_edge_between_consecutive_systems() {
-        fn sys_a() {}
-        fn sys_b() {}
-        fn sys_c() {}
-
-        let mut schedule = Schedule::new();
-        schedule.add_system((sys_a, sys_b, sys_c).chain());
-
-        let mut world = World::new();
-        let compiled = schedule.compile::<SingleThreadedExecutor>(&mut world);
-
-        assert_eq!(compiled.graph.edge_count(), 2);
-        assert!(
-            compiled
-                .graph
-                .contains_edge(NodeIndex::new(0), NodeIndex::new(1))
-        );
-        assert!(
-            compiled
-                .graph
-                .contains_edge(NodeIndex::new(1), NodeIndex::new(2))
-        );
-    }
-
-    #[test]
-    fn chaining_a_nested_group_orders_it_as_a_unit() {
-        fn sys_a() {}
-        fn sys_b() {}
-        fn sys_c() {}
-        fn sys_d() {}
-
-        let mut schedule = Schedule::new();
-        schedule.add_system((sys_a, (sys_b, sys_c), sys_d).chain());
-
-        let mut world = World::new();
-        let compiled = schedule.compile::<SingleThreadedExecutor>(&mut world);
-
-        let edges = [(0, 1), (0, 2), (1, 3), (2, 3)];
-        assert_eq!(compiled.graph.edge_count(), edges.len());
-        for (from, to) in edges {
-            assert!(
-                compiled
-                    .graph
-                    .contains_edge(NodeIndex::new(from), NodeIndex::new(to))
-            );
-        }
-    }
-
-    #[test]
-    fn after_and_before_produce_one_edge_each() {
-        fn sys_a() {}
-        fn sys_b() {}
-        fn sys_c() {}
-
-        let mut schedule = Schedule::new();
-        schedule
-            .add_system(sys_c)
-            .add_system(sys_b.after(sys_a).before(sys_c))
-            .add_system(sys_a);
-
-        let mut world = World::new();
-        let compiled = schedule.compile::<SingleThreadedExecutor>(&mut world);
-
-        assert_eq!(compiled.graph.node_count(), 3);
-        assert_eq!(compiled.graph.edge_count(), 2);
-        assert!(
-            compiled
-                .graph
-                .contains_edge(NodeIndex::new(2), NodeIndex::new(1))
-        );
-        assert!(
-            compiled
-                .graph
-                .contains_edge(NodeIndex::new(1), NodeIndex::new(0))
-        );
-    }
-
-    #[test]
-    fn a_self_referential_constraint_does_not_deadlock_compile() {
-        fn sys() {}
-
-        let mut schedule = Schedule::new();
-        schedule.add_system(sys.after(sys));
-
-        let mut world = World::new();
-        schedule
-            .compile::<SingleThreadedExecutor>(&mut world)
-            .run(&mut world);
-    }
-
-    #[test]
-    #[should_panic(expected = "Cycle in schedule ordering")]
-    fn contradicting_explicit_constraints_panic() {
-        fn a() {}
-        fn b() {}
-
-        let mut schedule = Schedule::new();
-        schedule.add_system(a.before(b));
-        schedule.add_system(b.before(a));
-
-        let mut world = World::new();
-        let _ = schedule.compile::<SingleThreadedExecutor>(&mut world);
-    }
-
-    #[test]
-    fn a_cycle_panic_names_both_systems() {
-        fn cycle_a() {}
-        fn cycle_b() {}
-
-        let result = std::panic::catch_unwind(|| {
-            let mut schedule = Schedule::new();
-            schedule.add_system(cycle_a.before(cycle_b));
-            schedule.add_system(cycle_b.before(cycle_a));
-
-            let mut world = World::new();
-            let _ = schedule.compile::<SingleThreadedExecutor>(&mut world);
-        });
-
-        let payload = result.unwrap_err();
-        let message = payload.downcast_ref::<String>().unwrap();
-        assert!(message.contains("cycle_a"), "{message}");
-        assert!(message.contains("cycle_b"), "{message}");
-    }
-
-    #[test]
-    fn an_explicit_constraint_across_a_sync_point_compiles() {
-        use crate::command::CommandQueue;
-        use crate::resource::ResMut;
-
-        #[derive(crate::Resource, Default)]
-        struct Order(Vec<&'static str>);
-
-        fn deferred(_commands: CommandQueue, mut order: ResMut<Order>) {
-            order.0.push("deferred");
-        }
-        fn reader(mut order: ResMut<Order>) {
-            order.0.push("reader");
-        }
-
-        let mut schedule = Schedule::new();
-        schedule.add_system(deferred);
-        schedule.add_system(reader.before(deferred));
-
-        let mut world = World::new();
-        world.insert_resource(Order::default());
-        schedule
-            .compile::<SingleThreadedExecutor>(&mut world)
-            .run(&mut world);
-
-        assert_eq!(
-            world.get_resource::<Order>().unwrap().0,
-            vec!["reader", "deferred"]
-        );
-    }
+    use crate::testing::{Inner, Outer};
 
     // ── World::run_schedule reentrancy ──────────────────────────────────────
-
-    #[derive(Clone, PartialEq, Eq, Hash, Debug)]
-    struct Outer;
-    impl ScheduleLabel for Outer {
-        fn dyn_clone(&self) -> Box<dyn ScheduleLabel> {
-            Box::new(self.clone())
-        }
-    }
-
-    #[derive(Clone, PartialEq, Eq, Hash, Debug)]
-    struct Inner;
-    impl ScheduleLabel for Inner {
-        fn dyn_clone(&self) -> Box<dyn ScheduleLabel> {
-            Box::new(self.clone())
-        }
-    }
 
     #[derive(crate::Resource, Default)]
     struct Counter(u32);

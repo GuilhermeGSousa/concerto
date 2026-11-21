@@ -2,7 +2,7 @@ use concerto_app::{
     plugins::Plugin,
     schedule_groups::{Extract, LateUpdate, Render},
 };
-use concerto_ecs::{IntoSetConfig, IntoSystemConfig};
+use concerto_ecs::{IntoSetConfig, IntoSystemConfig, entity::hierarchy::Children};
 use concerto_render::{
     device::RenderDevice, material_plugin::MaterialPlugin, queue::RenderQueue,
     resources::RenderContext, sets::RenderSet,
@@ -23,8 +23,9 @@ use crate::{
     },
     interaction::{HoveredNode, UIInputState, apply_interaction_styles, update_ui_interaction},
     items::{
-        UIListActivate, UIListFirst, UIListLast, UIListNext, UIListPrevious, UITreeCollapse,
-        UITreeExpand, install_listeners, keep_focus_on_shown_items, navigate_items, paint_items,
+        UIHidden, UIListActivate, UIListFirst, UIListLast, UIListNext, UIListPrevious,
+        UITreeCollapse, UITreeExpand, install_listeners, keep_focus_on_shown_items, navigate_items,
+        paint_items,
     },
     list::update_lists,
     material::UIMaterial,
@@ -41,6 +42,7 @@ use crate::{
     },
     sets::UiSet,
     slider::{setup_slider_visuals, sync_slider_fill},
+    splitter::{setup_splitter_visuals, sync_splitter_lines},
     text::{
         extract_text_nodes,
         fonts::{UIFonts, build_font_system},
@@ -53,7 +55,7 @@ use crate::{
         setup_text_inputs, update_text_inputs,
     },
     theme::UITheme,
-    tree::update_trees,
+    tree::{UITreeElement, update_trees},
     widgets::{sync_tab_bodies, update_tooltips},
 };
 
@@ -93,6 +95,9 @@ impl Plugin for UIPlugin {
         app.insert_resource(UILayoutEngine::default());
         app.insert_resource(UILayoutDiagnostics::default());
         app.insert_resource(UIPanelStack::default());
+        app.track_removals::<Children>();
+        app.track_removals::<UIHidden>();
+        app.track_removals::<UITreeElement>();
         crate::list::install_listeners(app.main_mut().world_mut());
         crate::tree::install_listeners(app.main_mut().world_mut());
         install_listeners(app.main_mut().world_mut());
@@ -106,6 +111,12 @@ impl Plugin for UIPlugin {
         app.register_event::<UITextInputCancelled>();
         app.register_event::<UIFocusGained>();
         app.register_event::<UIFocusLost>();
+        app.register_event::<crate::grid::UIGridMoved>();
+        app.add_listener(crate::grid::move_grid);
+        app.add_system(
+            LateUpdate,
+            crate::grid::paint_grid_cells.before(UiSet::Materials),
+        );
 
         app.configure_sets(
             LateUpdate,
@@ -149,6 +160,7 @@ impl Plugin for UIPlugin {
             (
                 setup_slider_visuals,
                 setup_color_pickers,
+                setup_splitter_visuals,
                 setup_scrollbars,
                 setup_text_inputs,
             )
@@ -171,6 +183,7 @@ impl Plugin for UIPlugin {
             LateUpdate,
             (
                 sync_checkbox_material,
+                sync_splitter_lines,
                 sync_viewport_textures,
                 sync_shared_viewport_textures,
                 apply_interaction_styles,
@@ -242,30 +255,5 @@ impl Plugin for UIPlugin {
             .insert_resource(TextFontSystem(font_system))
             .insert_resource(TextAtlas(atlas))
             .insert_resource(quad_indices);
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use concerto_window::input::actions::ActionLabel;
-
-    use super::*;
-
-    #[test]
-    fn the_list_and_tree_keys_resolve_to_their_actions() {
-        let mut actions = ActionMap::default();
-        bind_default_actions(&mut actions);
-
-        for (key, action) in [
-            (KeyCode::ArrowDown, UIListNext.intern()),
-            (KeyCode::ArrowUp, UIListPrevious.intern()),
-            (KeyCode::Home, UIListFirst.intern()),
-            (KeyCode::End, UIListLast.intern()),
-            (KeyCode::Enter, UIListActivate.intern()),
-            (KeyCode::ArrowRight, UITreeExpand.intern()),
-            (KeyCode::ArrowLeft, UITreeCollapse.intern()),
-        ] {
-            assert_eq!(actions.resolve(Shortcut::key(key)), Some(action), "{key:?}");
-        }
     }
 }

@@ -22,9 +22,12 @@ fix the entry in the same commit as the change that made it false.
   clamped. A tick kept anywhere other than a component, a resource or a
   schedule's system clamps itself in a `CheckChangeTicks` listener. Listener
   ticks are never clamped, as in Bevy.
-- **Transform propagation writes every frame.** `propagate_global_transforms`
-  calls `set_matrix` on every hierarchy member each frame, so
-  `Changed<GlobalTransform>` does not mean "this entity moved".
+- **Transform propagation recomputes every hierarchy each frame, but stamps
+  only what moved.** `propagate_global_transforms` writes each
+  `GlobalTransform` with `set_if_neq`, so `Changed<GlobalTransform>` means the
+  world transform changed. `extract_meshes` relies on it to re-extract only the
+  meshes that moved, and `extract_skeletons` to rewrite only the bone palettes
+  of skeletons whose bones moved.
 - **A command-using system's sync point sits at its registration position,
   not after it in the run order.** The scheduler inserts the sync point next
   to the system in registration order, and orders it against other systems
@@ -39,8 +42,9 @@ fix the entry in the same commit as the change that made it false.
   register `a` before `b`.
 - **A missing resource skips the system and warns every frame.** A system
   input declines through `SystemInput::get_data`, which returns a
-  `ValidationError`. `Res`, `ResMut`, `EventReader`, `EventWriter` and
-  `Extracted` decline as `Missing`, which logs a warning on every skipped run;
+  `ValidationError`. `Res`, `ResMut`, `EventReader`, `EventWriter`,
+  `RemovedComponents` and `Extracted` decline as `Missing`, which logs a
+  warning on every skipped run;
   `EditWorld<T>` and `EditWorldSignals` decline as `Skip`, which is silent. A warning
   flood in the log names the system and the missing type. Use `Option<Res<T>>`
   or `Option<ResMut<T>>` where absence is normal.
@@ -55,7 +59,13 @@ fix the entry in the same commit as the change that made it false.
 - **A system a `TagFilter` rejects is a silent stand-in.** Nothing is logged. A
   component that only stand-ins would have queried is never registered in that
   world, so its lifecycle callbacks never fire. Likewise, in an edit `App` an
-  unmarked listener given to `App::add_listener` is silently dropped.
+  unmarked listener given to `App::add_listener` is silently dropped. A game
+  `App` keeps everything. `App::for_editing()` keeps only what is marked
+  `.at_edit_time()` (the `EditTime` tag). `App::for_previewing()` keeps what is
+  marked `.at_edit_time()` or `.at_preview_time()` (the `Preview` tag), so a
+  preview plays animation but never spawns the startup scene or runs a game's
+  unmarked systems. Both marks work on systems and listeners. `is_editing()` is
+  true in a preview too; `is_previewing()` tells the two apart.
 - **Lifecycle signals run inside the operation.** `On<Add<T>>`, `Replace<T>`,
   `Remove<T>` and `Despawn<T>` listeners run right after `T`'s hook, in the
   middle of the spawn, insert, remove or despawn. They see the new value on add
@@ -70,8 +80,8 @@ fix the entry in the same commit as the change that made it false.
 - **A lifecycle callback maintains data and is not game behaviour.** It runs in
   every `App`. Put behaviour in a system or a listener.
 - **A plugin's `build` may check `app.is_editing()` only to skip resources that
-  its unmarked systems alone use.** Anything else it builds the same way in both
-  roles.
+  its unmarked systems alone use.** Anything else it builds the same way in
+  every role.
 - **`SystemLocal<T>` needs `T: FromWorld`,** and its field is private. Give the
   local type a named field and implement `FromWorld` for it.
 - **An entity carries one `Listener<S>` per signal type.** Two features that
@@ -91,6 +101,12 @@ fix the entry in the same commit as the change that made it false.
   requires another can be inserted before the stored value of the required one.
   The default is added first and the stored value replaces it
   (`Replace<T>`, then `Add<T>`; `Added<T>` is false for the second write).
+- **An `InputSet<K>` holds what was registered before its system was
+  initialized.** Schedules initialize their systems when they compile, so
+  `register_input::<K, P>()` belongs in a plugin's `build`; a member registered
+  later is in no system's access, and `get` refuses it. Read an `InputSet`
+  system's access only after `initialize`: before it, the system declares a
+  read of the whole world.
 
 ## Rendering
 
@@ -102,21 +118,85 @@ fix the entry in the same commit as the change that made it false.
   mesh gets it only when `RenderPlugin` is built. An entity with none of these
   still needs it explicitly, for example one the editor creates. A scene that
   renders black is usually an entity that has none of them.
+- **A light no camera sees is not sent to the GPU.** A point or spot light is
+  culled by the sphere of its `range` against every camera's frustum. A
+  `range` of 0 is unbounded, so that light is never culled and always takes one of the 128 light slots and, when
+  it casts shadows, a shadow map. An `App` with no camera has no visible
+  light: a test that reads shadow layers or `RenderLights::written` spawns a
+  camera.
 - **`RenderPlugin::build` registers the mesh and skeleton requirement,** so
   register the plugin before anything spawns meshes, or the registration
   panics. `entity_ops.rs` keeps `SyncWithRenderWorld` on purpose: an
   editor-created `Name` + `Transform` entity requires nothing.
-- **Extract only inserts and updates.** Removing `Light`, `Camera`, a mesh, a
-  material, or a skeleton from a living entity leaves its render-world copy in
-  place, so a removed light keeps shining. Mirrors go away only when the main
-  entity is despawned. Do not fix this in passing.
-- **Skinned meshes use an identity instance matrix.** The bone palette carries
-  the world transform, and the shader applies it to the position. Giving a
-  skinned mesh entity a real world transform as well transforms it twice.
-- **`Pose::identity` has zero translation per joint.** Applying a pose that was
-  never evaluated collapses every bone to the origin and the mesh folds onto
-  itself. `AnimationPlayer::evaluate` returns early when no graph evaluated;
-  keep that guard in any new pose path.
+- **Extract only inserts and updates, except for meshes and materials.**
+  Removing `MeshComponent` from a living entity drops it from
+  `RenderMeshInstances` and frees its instance slot, through
+  `RemovedComponents<MeshComponent>`. Removing a `MaterialComponent<M>`, or
+  setting its handle to nil, takes its render-world copy away, and the mesh
+  draws with the renderer's grey fallback material from the next frame.
+  Removing `Light`, `Camera`, or a skeleton still leaves its render-world
+  copy in place, so a removed light keeps shining. Those mirrors go away only
+  when the main entity is despawned. Do not fix this in passing.
+- **A mesh with no material draws grey; it is not hidden.**
+  `assign_fallback_material` gives every render-world mesh entity that no
+  `MaterialPlugin<M>` marked with `HasMaterial` a
+  `RenderMaterialComponent<StandardMaterial>` naming a material that exists
+  only in the render world. It needs `MaterialPlugin<StandardMaterial>`;
+  without it such a mesh is still not drawn.
+- **Skinned meshes use an identity instance matrix, and are neither batched
+  nor culled.** The bone palette carries the world transform, and the shader
+  applies it to the position. Giving a skinned mesh entity a real world
+  transform as well transforms it twice.
+- **A mesh whose shader ignores its vertices or its model matrix needs
+  `NoFrustumCulling`.** Culling judges a mesh by its `Aabb` under its
+  `GlobalTransform`, so such a mesh disappears whenever that box is out of
+  view. The world grid, whose three vertices sit at the origin, requires
+  `NoFrustumCulling` and `NotShadowCaster` for this reason.
+- **A normal map's blue channel is ignored.** The standard shader reads x and
+  y and rebuilds `z = sqrt(max(0, 1 - x² - y²))`, because BC5, the default for
+  normal maps, has no blue channel. A shader that samples a normal map itself
+  rebuilds z the same way, and a tangent-space normal with z below 0 cannot
+  be stored.
+- **A BC texture needs `TEXTURE_COMPRESSION_BC` on the device.** `Gpu`
+  requests it when the adapter has it, and `RenderCapabilities::bc_textures`
+  says whether it did. Without it, preparing a BC texture logs an error naming
+  the texture and binds a `FallbackTextures` stand-in by the texture's role:
+  opaque white for `Color`, a flat normal for `Normal`, white for `Data`.
+  Nothing decodes BC on the CPU.
+- **`Pose::identity` and `AnimationFrame::identity` have zero translation per
+  joint.** Applying a pose that was never evaluated collapses every bone to the
+  origin and the mesh folds onto itself. A frame from `FramePool::acquire` starts at the skeleton's rest pose,
+  recycled ones too, so a node that writes nothing leaves rest; don't overwrite
+  `output` with identity. A pool that was never given a rest pose, as in a test,
+  hands out identity. `AnimationPlayer::evaluate` calls `set_rest` first, and
+  returns early when no graph evaluated; keep that guard in any new pose path.
+- **An animation node is registered with `register_animation_node`, not
+  `register_type`.** `register_type` alone makes the node load into a graph,
+  but its inputs are in no walk's input set, so every walk skips the node with
+  a warning each frame and its pose stays rest.
+- **The `SkyRadianceMap` encoding is written in three shaders.** The standard
+  shader's `sky_radiance_uv` and `sky_radiance` and the skybox crate's
+  `sky.wgsl` read the map, and `sky_view.wgsl` writes it with the inverse
+  mapping: equirectangular, `u = atan2(d.x, -d.z) / 2π + 0.5`,
+  `v = 0.5 - asin(d.y) / π`, `Rgba16Float`, or `Rgba8Unorm` holding
+  `sqrt(radiance / SKY_RADIANCE_SCALE)` when `SKY_RADIANCE_SQRT` is defined.
+  Change one and change all three. The skybox replaces the render crate's
+  1×1 black map once in `finish` and then renders into it in place, so
+  `rebind_sky_radiance` rebuilds camera bind groups only then.
+- **The sky shader copies `CameraUniform`.** The skybox crate's `sky.wgsl`
+  declares the whole struct to reach `inverse_view_proj` and `night_color`,
+  and nothing checks it against the Rust layout in `camera.rs`. A change to
+  `CameraUniform` changes the render crate's `shader.wgsl` and `sky.wgsl`
+  together.
+- **Blended instances cast no shadow, and blended assets of different
+  material types do not interleave.** `flag_blended_instances<M>` sets
+  `RenderMeshInstanceFlags::BLENDED` every frame from the prepared material's
+  alpha mode, because `extract_mesh` overwrites the flags whenever it
+  extracts the mesh again, and `queue_shadow_meshes` skips the flag. Each
+  `MaterialPlugin<M>` sorts and draws only its own blended instances in
+  `RenderSet::Transparent`, so where blended surfaces of two types overlap,
+  one type is drawn wholly over the other whatever their distance; one sorted
+  phase across types is #898.
 - **Present mode is whatever the surface lists first,** usually vsync. Frame
   rate is not a measure of CPU cost; see [docs/profiling.md](../../docs/profiling.md).
 
@@ -132,6 +212,17 @@ fix the entry in the same commit as the change that made it false.
   content and its `UILayout` says where it is drawn.
 - **A write to `UIScrollArea` causes a walk of the whole tree,** so compare
   before writing it.
+- **A `UITree` lays out its rows again only when it is stale.** `update_trees`
+  runs a tree's body only when, since it last ran, the tree's `UITree`,
+  `UIScrollArea` or `UILayout` changed; `Children` changed on, or was removed
+  from, the tree or an entity that resolves to it; `UITreeElement` was added
+  to, changed on or removed from such an entity; `UIHidden` was added to or
+  removed from one; or `UITheme` changed. An entity resolves to a tree when it
+  is the tree, through its `UIItem`'s owner, or through its `ChildOf` parent by
+  either of those. A write that bypasses these, such as an item's `UINode`
+  padding, is overwritten only on the tree's next stale run. A world that runs
+  `update_trees` without `UIPlugin` calls `tree::install_listeners`, which
+  tracks the three removals; without the channels the system is skipped.
 - **Changing a label's text lays it out again unless its size cannot depend on
   the text.** That holds when its width and height are `Px` and it cannot
   shrink below them: `flex_shrink` is 0, or each axis has a minimum size or a
@@ -150,6 +241,18 @@ fix the entry in the same commit as the change that made it false.
 
 ## Scenes and assets
 
+- **A respawned link takes its linked nodes away.** Spawning a link again
+  despawns every `LinkedNode` of it, so state on one is lost unless a change
+  records it. An entity that is not a linked node and sits under one, put
+  there by a game, a placement or `create_entity`, is lifted onto the link
+  before the respawn and given `LinkParent { path }` when it has none, which
+  parents it again afterwards; capture writes that path too. A path is a
+  `LinkPath` of node ids, one per link level, so a node keeps its changes and
+  lodgers while its id does: an import derives the id from the name path, and a
+  rename in the source orphans them.
+- **Linked scenes' editor rules are off in play.** The read-only refusals and
+  the recording of edits as changes apply to the edit target's scene, never to
+  a playing game, and a save never reloads a playing game's assets.
 - **A type nothing registered is invisible.** Scenes spawn and capture, and the
   inspector shows, only types registered with `app.register_type::<T>()` in that
   `App`. The derive's `#[reflect(...)]` says what a type supports; registering
@@ -166,14 +269,69 @@ fix the entry in the same commit as the change that made it false.
 - **`#[reflect(opaque)]` makes a type a serde leaf.** It is stored as bytes
   through its `Serialize` and `Deserialize`, so it needs both. Use it only for
   values with no reflected inside; structs and enums derive `Reflect` plainly.
+- **`#[reflect(skip)]` hides a struct field from everything reflective.** The
+  inspector, MCP, property paths and scenes do not see it, its type need not be
+  `Reflect`, and a load leaves it at its default.
 - **A handle type must be registered to load from a scene.** Registering the
   component that holds `AssetHandle<A>` registers it. A handle whose type
   nothing registered spawns weak and loads nothing, with a warning.
+- **`AppTypeRegistry` is one shared lock.** It is a `Clone` handle on an
+  `Arc<parking_lot::RwLock<TypeRegistry>>`; `read()` and `write()` return the
+  guards. `get_type_data::<D>(id)` copies a `Copy` type data out under the read
+  lock. `TypeRegistry::get`, `get_by_name` and `iter` return
+  `Arc<TypeRegistration>`, so they outlive the guard.
+- **Registry lock rules.** Never hold a read guard while calling anything that
+  registers a type: it takes the write lock and deadlocks. Never hold a guard
+  across an `.await` in a load task. A second `read()` on a thread that holds
+  one can deadlock when a writer queues between them, so take one `read()` and
+  pass the guard down. `AssetServer::add` runs `on_load` inline on the caller's
+  thread, so do not call it while holding a registry guard.
+- **`.type_id()` on an `Arc<TypeRegistration>` is the `Arc`'s.** With
+  `std::any::Any` in scope the call resolves to the `Arc`, not the
+  registration's type. Write `(*registration).type_id()`.
+- **An asset's `on_load` reads the world's registry through its context.**
+  `AssetLoadContext::type_registry()` returns the registry the server holds
+  when that load's `on_load` starts, since the context is built just before
+  `on_load`, after the file read. `AssetManagerPlugin::build` links the world's
+  registry to the server it inserts. A server inserted some other way has its
+  own empty registry until `set_type_registry` is called, and `on_load` then
+  finds no type data. A `set_type_registry` made while a load is still reading
+  its file is seen by that load; one made after its `on_load` began is not. A
+  load requested from inside another plugin's
+  `build` sees a partial registry, since plugins register their types in
+  `build`, before `Startup`.
+- **An asset's bytes do not change with its in-memory type.** The
+  `check_encoding` fixtures under each crate's `tests/encoding` fail when they
+  do. Keep the old layout with a private mirror struct behind a hand-written
+  `Serialize` and `Deserialize`. Bumping `FORMAT_VERSION` is no way out for
+  data a type registry would compute: `Asset::migrate` gets no registry.
+- **An `AssetStore<A>` reads as changed when an asset of type `A` is
+  inserted, removed or edited through `ResMut`.** A system that only drains or
+  inspects a store through `ResMut` marks it changed on every run; take the
+  borrow through `ResMut::bypass_change_detection` and call `mark_changed` when
+  the contents change. A load or an `AssetServer::add` also sends
+  `AssetLoaded<A>`, which says which asset landed; a direct `AssetStore::insert`
+  sends nothing. `register_asset::<A>()` does nothing for a type already
+  registered, so two plugins may both register it.
+- **`AssetServer::add` takes a `LoadableAsset` and runs `on_load` before the
+  `Loaded` event.** When `on_load` fails, it logs an error and inserts nothing:
+  the handle it returned never resolves.
 - **Examples share one `target/` directory.** Each copies its `content/` to its
   own `<package>-content/` directory beside the binary. After changing an
   example's sources or content, build that example, not just the workspace.
-- **Large scenes take a long time to load in a debug build.** `render-test`
-  loads Sponza and needs more than 40 seconds before anything but the clear
+  `cargo concerto build --cook` stages cooked files over that copy; they stay
+  until `build.rs` next reruns, which only a change to `content/` or
+  `content.toml` causes.
+- **A cooked section is trusted as it is.** A load applies it without checking
+  its key. A change to how a derived input decodes or migrates, made without
+  raising `DERIVED_VERSION`, leaves a staged cooked blob (and a cached one)
+  derived by the old code; cook again, or delete `derived-cache/`.
+- **Cooked files hold no uncooked section.** A cook drops every one, so a
+  cooked asset whose blob is refused cannot derive: its load fails. A cook
+  writes a payload as it is, so a version-2 `Texture`, whose payload holds its
+  source, ships it until its source is imported again; the cook warns.
+- **Large scenes take a long time to load in a debug build.** A scene
+  such as Sponza can need more than 40 seconds before anything but the clear
   colour and the grid appears. That looks exactly like a broken renderer.
 
 ## Editor
@@ -182,12 +340,27 @@ fix the entry in the same commit as the change that made it false.
   `EntityEdit`, `Select`, or `SetGizmoMode`; they do not mutate the scene, the
   selection, or the gizmo themselves. The listeners live in
   `crates/editor/src/tools/`, which names no document, tab, or panel type.
+  `CommitValue`, which edits a value a document holds, is the exception: it
+  needs `EditorDocument`, so its listener lives in
+  `crates/editor/src/inspector/values.rs`.
 - **Hosted events arrive in the editor a frame after a signal wrote them.**
   `forward_events::<E>` runs in `First`, after the hosted step. An event written
   during the step reaches `EventReader<Hosted<E>>` systems in the same frame;
   one written by a signal (`EditWorldSignals`, `hosted::trigger_on`) arrives on the
   next frame. Decisions that must not lag, such as Play's "save first", read
-  the edit `App`'s state (`HostedApp::scene_dirty`) instead of an event.
+  the edit `App`'s state (`HostedApp::scene_dirty`) instead of an event. A
+  value's `Hosted<PropertyCommitted>` does not lag: the value lives in the
+  editor's world, and the event is written there directly.
+- **Events written by a warming-up `App` are never forwarded.** An edit or
+  play `App` is stepped hidden after its build until it settles, and it is not
+  a `HostedApp` yet, so `forward_events` does not read it. A `SceneStatus` or
+  `SceneEdited` it writes then is gone by the time it is shown.
+- **The inspector's one `ComponentStack` has two owners.** Entity cards and
+  value cards share it, because it is the scroll area's content.
+  `sync_value_cards` returns while a document has `EditTarget`, despawns only
+  `ValueCard`s, and never writes `ComponentStack`;
+  `sync_inspected_components`' rebuild clears the stack's children, which
+  removes any value card left there.
 - **`Unsaved` on a Scene document follows the edit `App`'s `SceneDirty`.**
   `follow_unsaved_edits` inserts or removes it each frame while the document is
   `Editing`. Clearing `Unsaved` by hand does not stick; mark the scene saved
@@ -202,6 +375,13 @@ fix the entry in the same commit as the change that made it false.
   including signals sent through `EditWorldSignals` and direct writes by the
   host. Its first look at a newly targeted world, another scene or a play
   `App`, sees as added and changed everything stamped within `MAX_CHANGE_AGE`.
+- **Hosted `App`s track removals of `Children`, `Name`, `Camera`, `Light` and
+  `MeshComponent` for the editor's panels,** which read them through
+  `EditWorld<RemovedComponents<T>>`. `build_core` does it, so every edit and
+  play `App` has the channels. A panel that needs another removal adds it in
+  `build_core`; without it the system is skipped with a warning every frame.
+  The reader's cursor starts again at the beginning of the channel of each new
+  target world.
 - **A scene id is not an editor entity.** Both are `Entity`. A field in the
   editor's world that holds a scene id is named `scene_…` and is only ever
   looked up through `EditWorld<…>`.
@@ -210,27 +390,45 @@ fix the entry in the same commit as the change that made it false.
   there for its hooks to fire. A tool's system or listener must be marked
   `.at_edit_time()`, or it is a stand-in or is dropped there. A play `App`
   gets only `EditToolsCorePlugin`, the tools that select, edit, and capture,
-  so nothing from the viewport half runs in a game. Changes made while
+  and the component gizmos, with `DebugGizmosPlugin` when the game has a
+  renderer, so nothing else from the viewport half runs in a game. Changes made while
   playing are made to the play `App`'s world and are lost on Stop; they never
   mark the document unsaved.
+- **A placeable asset kind is registered in the game's recipe, not in the
+  editor `App`.** `PlaceAsset` runs in the edit `App` and reads its
+  `PlaceableAssets`, which `app.register_placeable_asset::<A>()` fills there.
+  The same call on the editor `App` places nothing and marks nothing: the
+  editor's `PlaceableKinds` is a copy of the names taken from the edit `App`
+  each time a scene opens, and it is empty until one has. An editor extension
+  that brings a placeable kind must have the recipe register it.
 - **`EditWorld<T>` and `EditWorldSignals` skip their system** while no document
-  has `EditTarget`: no scene is open in the front tab, or its game is
-  starting. Whatever such a system drew stays on screen unless an
+  has `EditTarget`: no scene is open in the front tab, the front tab's `App` is
+  a preview, or its game is starting. Whatever such a system drew stays on screen unless an
   `On<Remove<EditTarget>>` listener empties it. A skipped system does not
   advance its event readers either, so on its next run it reads the events of
   the frame it missed.
 - **Change the edit target with `SetEditTarget`, never by moving the marker.**
-  Its one listener moves `EditTarget` and enforces that at most the front tab's
-  document holds it, and only once it has an `App`. Re-targeting the same
-  document removes the marker and adds it again, so Play and Stop are a
-  `Remove` followed by an `Add`.
-- **`InViewport` follows `EditTarget` while the viewport is shown.**
+  Its one listener moves `ViewportTarget` and `EditTarget` and enforces that at
+  most the front tab's document holds them, and only once it has an `App`.
+  `ViewportTarget` goes on any hosted `App`; `EditTarget` goes on every role but
+  `HostRole::Preview`. A `SetEditTarget(Some(document))` for a document that is
+  not the front tab changes nothing, so an `App` finishing, failing to play, or
+  stopping in the background leaves the front tab's markers alone.
+  Re-targeting the same document removes the markers and adds them again, so
+  Play and Stop are a `Remove` followed by an `Add`.
+- **`InViewport` follows `ViewportTarget` while the viewport is shown.**
   `sync_in_viewport` keeps it in step in `First`, before the step. Its `Add`
-  focuses the `App`; its `Remove` unfocuses it and steps it once.
+  focuses the `App`; its `Remove` unfocuses it and steps it once. Only the
+  document with both is stepped, by `step_viewport_target`, and only it gets
+  routed input.
 - **Only the editor camera draws in an edit `App`.** The viewport tools insert
   `ExclusiveCamera` naming it at `Startup`, and `extract_cameras` skips every
   other camera while the resource exists, so a scene camera never gets a render
-  camera. Nothing removes one afterwards.
+  camera. Nothing removes one afterwards. The scene `MainCamera`'s `Sky` and
+  `CameraEnvironment` reach the viewport only because `ViewportEnvironmentPlugin`
+  copies them onto the editor camera; another camera's are ignored, and another
+  per-camera setting does not show while editing unless it is mirrored the same
+  way.
 - **The scene root in the hierarchy is the editor's wrapper,** not part of the
   scene. It cannot be deleted, duplicated, or renamed.
 - **Entity edits pick their rules from whether the world has a `SceneRoot`.**
@@ -255,11 +453,12 @@ fix the entry in the same commit as the change that made it false.
   `POINTER_GONE`, off the picture, so a hovered gizmo handle lets go. When the
   viewport is under the pointer again, the host moves it to where the editor's
   pointer is, so a press or a wheel before the next move lands in place.
-- **A panic in an edit `App` is caught only while it is built.** A panic in
+- **A panic in an edit `App` is caught only until it is shown.** A panic in
   the recipe or a plugin's `build`, in a plugin's `ready` or `finish`, in
-  `Startup`, or in the ready step that publishes the content and opens the
-  scene becomes the open request's error. A panic while the `App` is stepped
-  or takes a signal still takes the editor down. Catching a panic from a
+  `Startup`, in the ready step that publishes the content and opens the
+  scene, or in a hidden step while it warms up becomes the open request's
+  error. A panic while the shown `App` is stepped or takes a signal still
+  takes the editor down. Catching a panic from a
   schedule is safe only because `TaskPool::scope` re-raises a task's panic
   after every task it spawned has finished; the panicked system's dependants
   never run.
@@ -268,23 +467,27 @@ fix the entry in the same commit as the change that made it false.
   `asset_request_is_current`. A result for a replaced or cancelled request is
   discarded; a closed tab, and every tab after a project switch, is gone. A
   late result of a request repeated for the same asset is accepted, since it
-  read the same file.
+  read the same file. Work started after a document has opened cannot use it,
+  since `pending` is then empty: it compares `current` with the captured entry
+  and requires `pending` to be empty, as `finish_build` does.
 - **A closed `InputGate` hides input from that `App`.** Its `Input` sees no
-  keys, buttons, wheel, or raw motion, and closing the gate releases whatever
-  was held; the cursor position is still folded. The editor closes its own
-  gate while a game has input.
+  keys, mouse buttons, wheel, or raw motion, and closing the gate releases the
+  keys and mouse buttons held; the cursor position and pad events are still
+  folded, and pads keep their state. The editor closes its own gate while a
+  game has input, so its UI and `ActionMap` see no keys or mouse, but pads
+  reach the playing game under either owner.
 - **While a game has input, Esc and every other key go to the game.** The
   editor's UI and `ActionMap` see nothing until input is released by a click
   anywhere but the viewport's picture, Shift+F1, or the window losing focus.
   A press counts as on the picture only if the viewport was the hovered node in
-  the frame before and the pointer is inside its rectangle, so the tab strip
-  and the panels drawn over the viewport take the click. A shortcut that
+  the frame before and the pointer is inside its rectangle, so the tab strip,
+  the panels and the splitters beside the viewport take the click. A shortcut that
   must work while playing cannot be an `ActionMap` binding; the host reads
   Ctrl+P and Shift+F1 from the raw window events in `route_play_input`
   (`hosted/input.rs`). That system decides the gate for the frame, so it runs
   before `concerto_window::FoldInput`; the click that releases input is then
   folded in the same frame and reaches the panel under it. While playing,
-  `step_edit_target` routes nothing, including on the frame Stop happens.
+  `step_viewport_target` routes nothing, including on the frame Stop happens.
 
 ## wasm
 
@@ -297,5 +500,6 @@ fix the entry in the same commit as the change that made it false.
 - **There are no system fonts on wasm.** The UI embeds DejaVu Sans Mono and
   uses it for every generic family.
 - **Assets are fetched over HTTP on wasm,** so `content/` must be served from
-  the page's origin. An example's `index.html` does this with a `copy-dir` link.
+  the page's origin. An example's `index.html` does this with `copy-dir` and
+  `copy-file` links, and a file no link copies is a 404.
 - **wasm has no threads.** Jolt is not built there; physics is Rapier.

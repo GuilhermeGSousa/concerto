@@ -1,6 +1,7 @@
 //! The document tab strip.
 use concerto_app::{App, Plugin, schedule_groups::LateUpdate};
-use concerto_ecs::query::filter::With;
+use concerto_color::Color;
+use concerto_ecs::query::filter::{With, Without};
 use concerto_ecs::{
     Component, Entity, IntoSystemConfig, Query, Res, ResMut,
     command::CommandQueue,
@@ -12,7 +13,8 @@ use concerto_ui::{
     elements::prelude::*,
     interaction::HoveredNode,
     interaction::{Interactable, UIClick, UIInteractionStyle},
-    node::{UILayout, UINode, UIRect},
+    material::UIMaterial,
+    node::{UIInset, UILayout, UINode, UIRect},
     sets::UiSet,
     text::UIText,
     theme::{ButtonVariant, UITheme},
@@ -27,11 +29,17 @@ use crate::{
         ActiveEditor, AssetEditorCommand, AssetEditorCommands, AssetEditorRegistry, EditorDocument,
         Unsaved,
     },
-    fonts::{glyph, icon},
+    fonts::{
+        AssetIcons, ICON_COLUMN, ICON_SIZE, SEMIBOLD, button_icon, draw_row_icon, glyph, icon,
+    },
     hosted::{PlayState, toggle_play},
 };
 use concerto_foundation::assets::Asset;
 use concerto_scene::scene::Scene;
+
+const PLAY_HEIGHT: f32 = 24.0;
+const PLAY_INSET: f32 = 9.0;
+const PLAY_GLYPH: f32 = 13.0;
 
 /// Entity in the tab bar that activates the associated document.
 #[derive(Component)]
@@ -52,7 +60,17 @@ pub struct EditorTabPlay {
 }
 
 #[derive(Component)]
+struct PlayGlyph {
+    document: Entity,
+}
+
+#[derive(Component)]
 struct TabLabel {
+    document: Entity,
+}
+
+#[derive(Component)]
+struct TabIcon {
     document: Entity,
 }
 
@@ -72,6 +90,9 @@ pub struct TabsPlugin;
 
 impl Plugin for TabsPlugin {
     fn build(&self, app: &mut App) {
+        if app.get_resource::<AssetIcons>().is_none() {
+            app.insert_resource(AssetIcons::default());
+        }
         app.add_system(LateUpdate, scroll_tabs)
             .add_system(LateUpdate, sync_tabs.before(UiSet::Materials))
             .add_system(
@@ -140,11 +161,91 @@ pub(crate) fn press_play(
     );
 }
 
-fn sync_play_buttons(buttons: Query<(&EditorTabPlay, &mut UIText)>, states: Query<&PlayState>) {
-    for (play, mut text) in buttons.iter() {
-        let label = play_label(states.get_entity(play.document));
+struct PlayLook {
+    glyph: char,
+    ink: Color,
+    border: Color,
+    style: UIInteractionStyle,
+}
+
+fn play_look(theme: &UITheme, state: Option<&PlayState>) -> PlayLook {
+    let wash = |color: Color, alpha: f32| {
+        let color = color.to_srgba();
+        Color::srgba(color.r, color.g, color.b, alpha)
+    };
+    match state {
+        Some(PlayState::Playing) => PlayLook {
+            glyph: glyph::STOP,
+            ink: theme.error,
+            border: theme.error,
+            style: UIInteractionStyle {
+                normal: wash(theme.error, 0.14),
+                hovered: wash(theme.error, 0.3),
+                pressed: wash(theme.error, 0.45),
+                disabled: Color::TRANSPARENT,
+            },
+        },
+        Some(PlayState::Starting) => PlayLook {
+            glyph: glyph::PLAY,
+            ink: theme.text_muted,
+            border: theme.border,
+            style: UIInteractionStyle {
+                normal: Color::TRANSPARENT,
+                hovered: theme.surface_hovered,
+                pressed: theme.surface_hovered,
+                disabled: Color::TRANSPARENT,
+            },
+        },
+        Some(PlayState::Editing) | None => PlayLook {
+            glyph: glyph::PLAY,
+            ink: theme.canvas,
+            border: theme.accent,
+            style: UIInteractionStyle {
+                normal: theme.accent,
+                hovered: theme.accent_hovered,
+                pressed: theme.accent_secondary,
+                disabled: theme.accent,
+            },
+        },
+    }
+}
+
+fn sync_play_buttons(
+    buttons: Query<(
+        &EditorTabPlay,
+        &mut UIText,
+        &mut UIInteractionStyle,
+        &mut UIMaterial,
+    )>,
+    glyphs: Query<(&PlayGlyph, &mut UIText), Without<EditorTabPlay>>,
+    states: Query<&PlayState>,
+    theme: Res<UITheme>,
+) {
+    for (play, mut text, mut interaction, mut material) in buttons.iter() {
+        let state = states.get_entity(play.document);
+        let label = play_label(state);
+        let look = play_look(&theme, state);
         if text.text != label {
             text.text = label.into();
+        }
+        if text.color != look.ink {
+            text.color = look.ink;
+        }
+        if interaction.normal != look.style.normal {
+            **interaction = look.style;
+        }
+        let border = look.border.to_linear();
+        if material.border_color != border {
+            material.border_color = border;
+        }
+    }
+    for (mark, mut text) in glyphs.iter() {
+        let look = play_look(&theme, states.get_entity(mark.document));
+        if !text.text.chars().eq([look.glyph]) {
+            text.text = look.glyph.to_string();
+        }
+        if text.color != look.ink {
+            text.color = look.ink;
         }
     }
 }
@@ -154,13 +255,16 @@ fn sync_tabs(
     contents: Query<Entity, With<TabStripContent>>,
     documents: Query<(Entity, &EditorDocument)>,
     unsaved: Query<&Unsaved>,
-    labels: Query<(&TabLabel, &mut UIText)>,
+    (labels, tab_icons): (
+        Query<(&TabLabel, &mut UIText)>,
+        Query<(&TabIcon, &mut UIText), Without<TabLabel>>,
+    ),
     existing_tabs: Query<&EditorTab>,
     tab_button_entities: Query<(Entity, &EditorTab)>,
     tab_buttons: Query<(&EditorTab, &mut UIInteractionStyle)>,
     active: Res<ActiveEditor>,
     theme: Res<UITheme>,
-    registry: Res<AssetEditorRegistry>,
+    (registry, icons): (Res<AssetEditorRegistry>, Res<AssetIcons>),
     states: Query<&PlayState>,
 ) {
     let Some(content) = contents.iter().next() else {
@@ -183,7 +287,7 @@ fn sync_tabs(
                 document
                     .current
                     .as_ref()
-                    .map(|asset| asset.name().to_owned())
+                    .map(|asset| asset.name().into_owned())
             })
             .unwrap_or_else(|| {
                 if document.status.is_empty() {
@@ -204,6 +308,10 @@ fn sync_tabs(
             .map(|asset| asset.kind.as_str())
             .unwrap_or("Asset");
         let is_active = active.0 == Some(entity);
+        let mark = icons.glyph(kind);
+        if let Some((_, mut text)) = tab_icons.iter().find(|(icon, _)| icon.document == entity) {
+            draw_row_icon(&mut text, &theme, mark, is_active);
+        }
         if let Some((_, mut label)) = labels.iter().find(|(label, _)| label.document == entity) {
             if label.text != title {
                 label.text = title.clone();
@@ -226,11 +334,6 @@ fn sync_tabs(
             }
         }
         if !existing_tabs.iter().any(|tab| tab.document == entity) {
-            let mark = match kind {
-                "Scene" => glyph::CUBE,
-                "Texture" => glyph::IMAGE,
-                _ => glyph::FILE,
-            };
             let ink = if is_active {
                 theme.text
             } else {
@@ -238,14 +341,16 @@ fn sync_tabs(
             };
             let closable = registry.closable(document.asset_type);
             let plays = document.asset_type == Scene::name();
-            let play = play_label(states.get_entity(entity));
+            let state = states.get_entity(entity);
+            let play = play_label(state);
+            let look = play_look(&theme, state);
             cmd.entity(content).add_child_with(
                 (
                     theme
                         .pressable()
                         .tab()
                         .selected(is_active)
-                        .radius(0.0)
+                        .radius_md()
                         .height(UIValue::Px(30.0))
                         .row()
                         .padding(UIRect::axes(0.0, theme.spacing_sm))
@@ -258,9 +363,15 @@ fn sync_tabs(
                     let button = button
                         .add_child((
                             UINode::default()
-                                .with_width(UIValue::Px(16.0))
-                                .with_flex_shrink(0.0),
-                            icon(&theme, mark, theme.font_size_sm).color(ink),
+                                .with_width(UIValue::Px(ICON_COLUMN))
+                                .with_flex_shrink(0.0)
+                                .with_padding(UIRect::axes(0.0, (ICON_COLUMN - ICON_SIZE) / 2.0))
+                                .with_margin(UIRect {
+                                    right: theme.spacing_xs,
+                                    ..UIRect::default()
+                                }),
+                            icon(&theme, mark, ICON_SIZE).color(ink),
+                            TabIcon { document: entity },
                         ))
                         .add_child((
                             theme
@@ -273,32 +384,71 @@ fn sync_tabs(
                     if closable {
                         button.add_child((
                             UINode::default()
-                                .with_size(UIValue::Px(18.0), UIValue::Px(24.0))
-                                .with_padding(UIRect::axes(3.0, 3.0))
+                                .with_size(
+                                    UIValue::Px(theme.control_height),
+                                    UIValue::Px(theme.control_height),
+                                )
+                                .with_padding(UIRect::axes(
+                                    (theme.control_height - theme.line_height(ICON_SIZE)) / 2.0,
+                                    (theme.control_height - ICON_SIZE) / 2.0,
+                                ))
                                 .with_flex_shrink(0.0)
                                 .with_z_index(71),
-                            icon(&theme, glyph::X, theme.font_size_sm).muted(),
+                            button_icon(&theme, glyph::X),
                             Interactable,
                             EditorTabClose { document: entity },
                             close_tab.into_listener(),
                             WindowChromeControl,
                         ));
                     } else if plays {
-                        button.add_child((
-                            theme
-                                .button(play)
-                                .height(UIValue::Px(22.0))
-                                .padding(UIRect::axes(0.0, theme.spacing_sm))
-                                .margin(UIRect {
-                                    left: theme.spacing_sm,
+                        button.add_child_with(
+                            UINode::default()
+                                .with_flex_shrink(0.0)
+                                .with_margin(UIRect {
+                                    left: theme.spacing_md,
                                     ..UIRect::default()
                                 })
-                                .small()
-                                .z_index(71)
-                                .on_click(press_play),
-                            EditorTabPlay { document: entity },
-                            WindowChromeControl,
-                        ));
+                                .with_z_index(71),
+                            |mut pill| {
+                                pill.add_child((
+                                    theme
+                                        .button(play)
+                                        .height(UIValue::Px(PLAY_HEIGHT))
+                                        .padding(UIRect {
+                                            left: PLAY_INSET + PLAY_GLYPH + theme.spacing_xs,
+                                            right: PLAY_INSET + 2.0,
+                                            top: (PLAY_HEIGHT
+                                                - theme.line_height(theme.font_size_md))
+                                                / 2.0,
+                                            bottom: 0.0,
+                                        })
+                                        .radius(PLAY_HEIGHT / 2.0)
+                                        .border(look.border, 1.0)
+                                        .normal(look.style.normal)
+                                        .hovered(look.style.hovered)
+                                        .pressed(look.style.pressed)
+                                        .disabled_color(look.style.disabled)
+                                        .weight(SEMIBOLD)
+                                        .color(look.ink)
+                                        .on_click(press_play),
+                                    EditorTabPlay { document: entity },
+                                    WindowChromeControl,
+                                ))
+                                .add_child((
+                                    UINode::default()
+                                        .with_position(taffy::Position::Absolute)
+                                        .with_inset(UIInset {
+                                            left: UIValue::Px(PLAY_INSET),
+                                            top: UIValue::Px(
+                                                (PLAY_HEIGHT - theme.line_height(PLAY_GLYPH)) / 2.0,
+                                            ),
+                                            ..Default::default()
+                                        }),
+                                    icon(&theme, look.glyph, PLAY_GLYPH).color(look.ink),
+                                    PlayGlyph { document: entity },
+                                ));
+                            },
+                        );
                     }
                 },
             );

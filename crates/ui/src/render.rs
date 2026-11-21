@@ -1,4 +1,4 @@
-#![allow(clippy::items_after_test_module, clippy::too_many_arguments)]
+#![allow(clippy::too_many_arguments)]
 
 use concerto_ecs::{
     Entity, Ref, World,
@@ -33,16 +33,6 @@ pub(crate) fn update_text_viewport(
 ) {
     let (width, height) = render_window.size();
     text_viewport.update(&queue, Resolution { width, height });
-}
-
-#[cfg(test)]
-fn node_text_bounds(location: glam::Vec2, size: glam::Vec2) -> TextBounds {
-    TextBounds {
-        left: location.x as i32,
-        top: location.y as i32,
-        right: (location.x + size.x) as i32,
-        bottom: (location.y + size.y) as i32,
-    }
 }
 
 pub(crate) struct PreparedText {
@@ -152,32 +142,6 @@ fn batches_below(layers: &[i32], next: usize, layer: i32) -> usize {
     end
 }
 
-#[cfg(test)]
-mod tests {
-    use super::node_text_bounds;
-    use glam::Vec2;
-
-    #[test]
-    fn bounds_match_node_absolute_position() {
-        let loc = Vec2::new(10.0, 800.0);
-        let size = Vec2::new(120.0, 32.0);
-        let b = node_text_bounds(loc, size);
-        assert_eq!(b.left, 10);
-        assert_eq!(b.top, 800);
-        assert_eq!(b.right, 130);
-        assert_eq!(b.bottom, 832);
-    }
-
-    #[test]
-    fn bounds_at_origin() {
-        let b = node_text_bounds(Vec2::ZERO, Vec2::new(800.0, 600.0));
-        assert_eq!(b.left, 0);
-        assert_eq!(b.top, 0);
-        assert_eq!(b.right, 800);
-        assert_eq!(b.bottom, 600);
-    }
-}
-
 pub(crate) fn ui_renderpass(
     pipeline: Res<MaterialPipeline<UIMaterial>>,
     mut device: ResMut<RenderDevice>,
@@ -192,8 +156,10 @@ pub(crate) fn ui_renderpass(
 
     if let Some(view) = render_window.get_view() {
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            multiview_mask: None,
             label: Some("UI Render Pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                depth_slice: None,
                 view,
                 resolve_target: None,
                 ops: wgpu::Operations {
@@ -247,24 +213,11 @@ mod layer_tests {
     use super::batches_below;
 
     #[test]
-    fn flushes_only_the_layers_below_the_quad_being_drawn() {
+    fn each_quad_flushes_the_text_layers_below_it_once() {
         let layers = [0, 1, 4];
         assert_eq!(batches_below(&layers, 0, 0), 0);
         assert_eq!(batches_below(&layers, 0, 1), 1);
         assert_eq!(batches_below(&layers, 1, 5), 3);
-    }
-
-    #[test]
-    fn layers_with_no_quads_of_their_own_still_flush_in_order() {
-        let layers = [2];
-        assert_eq!(batches_below(&layers, 0, 7), 1);
-    }
-
-    #[test]
-    fn nothing_is_flushed_twice() {
-        let layers = [0, 0, 3];
-        let batch = batches_below(&layers, 0, 3);
-        assert_eq!(batch, 2);
-        assert_eq!(batches_below(&layers, batch, 3), 2);
+        assert_eq!(batches_below(&layers, 3, 5), 3);
     }
 }

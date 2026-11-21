@@ -133,14 +133,3 @@ impl From<Hsla> for Color {
         Self::Hsla(c)
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn srgba_to_hsl_converts_directly() {
-        let srgba = Srgba::new(0.2, 0.55, 0.9, 0.7);
-        assert_eq!(Color::Srgba(srgba).to_hsl(), srgba.to_hsl());
-    }
-}

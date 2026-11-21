@@ -20,8 +20,9 @@ const REGISTRY_FILE: &str = "concerto_registry.toml";
 /// macros. This reads no asset payloads and works on stable Rust. Register one
 /// common directory containing all assets referenced by the package's macros.
 /// It also writes the registry of the content tree `content.toml` names through
-/// [`write_registry_into`], which `concerto::content_registry!()` embeds; a
-/// duplicate id or an unreadable header fails the build. Cargo also watches that
+/// [`write_registry_into`], which `concerto::content_registry!()` embeds with
+/// the package directory, `CONCERTO_PROJECT_ROOT`; a duplicate id or an
+/// unreadable header fails the build. Cargo also watches that
 /// tree and `content.toml` when they exist; one created later is read the next
 /// time the build script runs.
 pub fn track_assets(directory: impl AsRef<Path>) -> io::Result<()> {
@@ -34,6 +35,10 @@ pub fn track_assets(directory: impl AsRef<Path>) -> io::Result<()> {
     println!(
         "cargo:rustc-env=CONCERTO_ASSET_ROOT={}",
         build_script_path(&directory)?
+    );
+    println!(
+        "cargo:rustc-env=CONCERTO_PROJECT_ROOT={}",
+        build_script_path(Path::new(&manifest))?
     );
     for path in watched_paths(Path::new(&manifest), directory) {
         println!("cargo:rerun-if-changed={}", build_script_path(&path)?);
@@ -56,6 +61,15 @@ pub fn write_registry_into(manifest: &Path, out_dir: &Path) -> anyhow::Result<()
     let path = out_dir.join(REGISTRY_FILE);
     std::fs::write(&path, write_registry(&entries))
         .with_context(|| format!("failed to write '{}'", path.display()))
+}
+
+/// The profile directory a build script's `out_dir` sits under, where Cargo puts the package's executable: the parent of the nearest `build` directory above it, in Cargo's flat and nested `build/` layouts alike.
+pub fn profile_dir(out_dir: &Path) -> Option<PathBuf> {
+    out_dir
+        .ancestors()
+        .find(|path| path.file_name().is_some_and(|name| name == "build"))
+        .and_then(Path::parent)
+        .map(Path::to_path_buf)
 }
 
 fn watched_paths(manifest: &Path, directory: PathBuf) -> Vec<PathBuf> {

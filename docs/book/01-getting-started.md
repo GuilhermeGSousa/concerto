@@ -3,11 +3,12 @@
 ## Install
 
 Follow the prerequisites in the [README](../../README.md#prerequisites): Rust,
-this repository with its Jolt submodule, the Linux system packages, and, for
-the browser, the wasm target and Trunk. Then check that an example runs:
+Git LFS, this repository with its Jolt submodule, the Linux system packages,
+and, for the browser, the wasm target and Trunk. Then check that an example
+runs:
 
 ```sh
-cargo run -p tech-demo
+cargo run -p ui-showcase
 ```
 
 The first build compiles Jolt, a C++ physics library, and takes a few minutes.
@@ -50,7 +51,8 @@ pub fn game(app: &mut App) {
 
 `game` is the **recipe**: one function that says what the game is made of.
 `src/main.rs` hands it to `concerto::run`, which opens a window and runs it
-with the asset registry `build.rs` wrote, embedded by `content_registry!()`;
+with the asset registry `build.rs` wrote and the project root it recorded,
+both embedded by `content_registry!()`;
 the editor calls the same function to build the worlds it edits. Chapter 2
 explains why that matters.
 
@@ -60,7 +62,7 @@ Add `glam` to `Cargo.toml`:
 
 ```toml
 [dependencies]
-glam = "0.30"
+glam = "0.33"
 ```
 
 Then give the game a camera, a light and a grid, and make the camera circle

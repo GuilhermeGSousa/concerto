@@ -1,4 +1,5 @@
 use concerto_ecs::resource::Res;
+use concerto_foundation::assets::AssetId;
 use wgpu::util::DeviceExt;
 
 use crate::{
@@ -19,6 +20,7 @@ impl RenderAsset for RenderMesh {
     type PreparationParams = (Res<'static, RenderDevice>,);
 
     fn prepare_asset(
+        _id: AssetId,
         source_asset: &Self::SourceAsset,
         params: &mut concerto_ecs::system::input::SystemInputData<Self::PreparationParams>,
     ) -> Result<Self, AssetPreparationError> {
@@ -46,5 +48,12 @@ impl RenderAsset for RenderMesh {
             indices,
             index_count,
         })
+    }
+
+    fn byte_len(source: &Self::SourceAsset) -> Option<usize> {
+        Some(
+            std::mem::size_of_val(source.vertices.as_slice())
+                + std::mem::size_of_val(source.indices.as_slice()),
+        )
     }
 }

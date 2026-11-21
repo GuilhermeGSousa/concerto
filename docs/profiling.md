@@ -16,16 +16,18 @@ Both need symbols. The stock `release` profile strips them, so use the
 `profiling` cargo profile (release speed + debug symbols):
 
 ```sh
-cargo build --profile profiling -p render-test
+cargo build --profile profiling -p ui-showcase
 ```
+
+The gameplay workload is the tech demo, in its own repository beside this
+one. Its commands below run from `../tech-demo`, which has the same
+`profiling` profile and builds into its own `target/`.
 
 ## The benchmark scenes
 
 | Workload | Command | What it stresses |
 |---|---|---|
-| Rendering (Sponza) | `cargo run --profile profiling -p render-test` | draw submission, materials, wgpu |
-| Gameplay / animation | `cargo run --profile profiling -p tech-demo` | full stack: ECS, animation, physics, render |
-| Physics | `cargo run --profile profiling -p physics-test` | Jolt step, transform write-back |
+| Gameplay / animation | `cargo run --profile profiling` in `../tech-demo` | full stack: ECS, animation, physics, render |
 | UI | `cargo run --profile profiling -p ui-showcase`, then select the Stress tab | layout, text measurement, UI extraction |
 
 For comparable captures: keep the window size fixed, don't move the camera,
@@ -37,14 +39,20 @@ let the scene warm up ~10 s, then capture ~30 s.
 > waits — that's idle time, not a hotspot. Judge CPU cost by zone times in
 > Tracy rather than by frame rate until a present-mode override exists.
 
+Repeatable timings of engine work a game feels, such as a UI frame or a burst
+of asset loads, are `criterion` benchmarks in `crates/benches`, run with
+`cargo bench -p concerto-benches --features run`; see
+[testing.md](testing.md).
+
 ## Sampling profilers (zero instrumentation)
 
 ### samply (Linux, macOS, Windows — recommended first tool)
 
 ```sh
 cargo install samply
-cargo build --profile profiling -p render-test
-samply record ./target/profiling/render-test
+cd ../tech-demo
+cargo build --profile profiling
+samply record ./target/profiling/tech-demo
 ```
 
 Opens the Firefox Profiler UI: per-thread timelines, flame graph, inverted
@@ -54,13 +62,14 @@ call tree. Worker threads show up by name (`compute-N`, `asset-load-N`).
 
 ```sh
 cargo install flamegraph
-cargo flamegraph --profile profiling -p render-test
+cd ../tech-demo
+cargo flamegraph --profile profiling
 ```
 
 or raw perf:
 
 ```sh
-perf record --call-graph dwarf ./target/profiling/render-test
+perf record --call-graph dwarf ./target/profiling/tech-demo
 perf report
 ```
 
@@ -71,12 +80,19 @@ If perf complains about permissions:
 
 The engine is instrumented with the `profiling` crate. The macros compile to
 **nothing** unless a backend feature is enabled, so shipping builds pay zero
-cost. Enable the Tracy backend with the root `tracy` feature:
+cost. Enable the Tracy backend with the root `tracy` feature, which a game
+forwards from its own `tracy` feature:
 
 ```sh
-cargo run --profile profiling --features tracy -p render-test
-# examples forward the feature; equivalently:
-cargo run --profile profiling -p tech-demo --features tracy
+cd ../tech-demo
+cargo run --profile profiling --features tracy
+```
+
+A game's generated `editor/` crate has the same feature, forwarded to
+`concerto-editor/tracy`, so the editor profiles the same way:
+
+```sh
+cargo run --profile profiling -p tech-demo-editor --features tracy -- --project <scratch copy of the tech demo>
 ```
 
 Then connect the Tracy server (GUI) to the running process. Install a Tracy
@@ -93,7 +109,14 @@ What you should see:
   mark frames.
 - Zones: `App::update` → `schedule::update` / `schedule::render` / … →
   `system` zones, one per ECS system, running in parallel across the named
-  `compute-N` threads. `fixed_update_step` zones tick at ~30 Hz.
+  `compute-N` threads. A system that is the only one ready while nothing else
+  runs shows its zone on the thread that found it ready, which can be the
+  thread that runs the schedule. `fixed_update_step` zones tick at ~30 Hz.
+- When an `App` finishes building: one `Plugin::finish` zone per plugin,
+  with the plugin's name as its text, then `App::compile_schedules`,
+  `App::compile_render_schedules`, and `Startup` around the startup schedules
+  of both worlds. In the editor these zones are on the `hosted-build` thread,
+  which finishes each hosted `App`'s build off the editor's frame.
 - `apply_deferred` zones at sync points — long gaps right before them mean
   the scheduler is stalled waiting on one straggler system.
 - wgpu-core's own zones (device/queue internals) appear automatically: wgpu
@@ -119,14 +142,42 @@ Instrumentation cost with `--features tracy` is normally low single-digit
 percent. If you need a number for your machine: run a scene for 60 s with and
 without the feature and compare average frame time from the frame-stats log.
 
+## Which GPU renders
+
+`Gpu::request` asks wgpu for the high-performance adapter, so a hybrid laptop
+renders on its discrete GPU, and logs the adapter it got at `info`. Native
+logging shows only errors unless `RUST_LOG` is set, so run with `RUST_LOG=info`
+(or `RUST_LOG=concerto_render=info`) to see it:
+
+```
+Rendering on NVIDIA GeForce RTX 3060 Laptop GPU (DiscreteGpu, Vulkan)
+```
+
+Check that line before reading a capture: a frame bound on the integrated GPU
+shows up as time in `vkAcquireNextImageKHR`, not in any engine zone. Two
+environment variables override the choice:
+
+- `WGPU_POWER_PREF=low|high|none` sets the power preference.
+- `WGPU_ADAPTER_NAME=<substring>` takes the first adapter whose name contains
+  it, ignoring case, among those that can present to the window. wgpu panics
+  when none matches.
+
+```sh
+WGPU_ADAPTER_NAME=intel RUST_LOG=info cargo run --profile profiling -p ui-showcase
+```
+
 ## Frame stats without any profiler
 
 A `FrameStats` resource (inserted by `TimePlugin`) keeps a rolling window of
 CPU frame times and logs a summary once per second (avg / p99 / worst, FPS):
 
 ```sh
-RUST_LOG=info cargo run --profile profiling -p render-test
+RUST_LOG=info cargo run --profile profiling -p ui-showcase
 ```
+
+The render world's `RenderDrawStats` resource
+(`concerto_render::batching::RenderDrawStats`) holds, for the last frame, the
+batches queued and the mesh instances culled for each camera and shadow layer.
 
 Apps using `DefaultPlugins` also get a small on-screen
 frame-time overlay in the top-left corner (`FrameStatsOverlayPlugin` in the
@@ -134,7 +185,7 @@ frame-time overlay in the top-left corner (`FrameStatsOverlayPlugin` in the
 
 ## How to actually find "the code that needs improvement most"
 
-1. Run samply on `render-test` and `tech-demo`. Anything unexpected dominating
+1. Run samply on `tech-demo`. Anything unexpected dominating
    the inverted call tree is your first target.
 2. Run the same scene with Tracy. Sort *Statistics* by total self time;
    inspect the frame timeline for spikes and for scheduler gaps (threads idle
@@ -154,5 +205,5 @@ frame-time overlay in the top-left corner (`FrameStatsOverlayPlugin` in the
   resolve queries before submit in `RenderDevice::finish`. With its `tracy`
   feature the GPU appears as its own row in Tracy.
 - Benchmark repeatability: present-mode override (e.g. `ENGINE_PRESENT_MODE`),
-  fixed-camera flag in render-test, and a headless scheduler micro-benchmark
+  fixed-camera flag in tech-demo, and a headless scheduler micro-benchmark
   built on `concerto::headless`.

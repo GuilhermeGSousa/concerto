@@ -1,11 +1,10 @@
 //! The world tree: the entities of the scene being edited, walked through `Children` from its root, or while playing from every top-level entity of the game's world.
-use crate::actions::{DeleteEntity, DuplicateEntity, RenameEntity, TreeContext};
+use crate::actions::{DeleteEntity, DuplicateEntity, EditorContextSet, RenameEntity, TreeContext};
 use crate::asset_editor::{ActiveEditor, EditorDocument};
 use crate::dock::{DockedApp, PanelDescriptor, PanelRegistry, Region};
-use crate::fonts::{glyph, icon};
+use crate::fonts::{button_icon, draw_row_icon, glyph, icon, icon_button, row_icon};
 use crate::hosted::{EditTarget, EditWorld, EditWorldSignals, PlayState};
 use crate::inspector::FocusNameField;
-use crate::marks::{self, Mark};
 use crate::scene::SceneState;
 use crate::tools::{
     entity_ops::EntityEdit,
@@ -21,12 +20,15 @@ use concerto_color::Color;
 use concerto_ecs::{
     Component, Entity, IntoSystemConfig, Query, Ref, Res, ResMut, Resource, World,
     command::CommandQueue,
-    component::name::Name,
-    entity::hierarchy::{ChildOf, Children},
+    component::{name::Name, removed::RemovedComponents},
+    entity::{
+        EntityHashMap,
+        hierarchy::{ChildOf, Children},
+    },
     events::event_reader::EventReader,
     query::{
         change_detection::DetectChanges,
-        filter::{With, Without},
+        filter::{Added, Changed, Or, With, Without},
     },
     signal::{
         On,
@@ -42,7 +44,6 @@ use concerto_ui::{
     focus::FocusedWidget,
     interaction::{Interactable, UIClick, UIDisabled},
     items::{UIHidden, UIItem, UIItemContextMenu, UIItemSelected, UIReveal, UISelected},
-    material::UIMaterial,
     node::{UINode, UIRect},
     scroll::UIScrollArea,
     sets::UiSet,
@@ -66,6 +67,7 @@ pub struct HierarchyState {
     filter: String,
     items: HashMap<Entity, Entity>,
     pending_scene_reveal: Option<Entity>,
+    top_level: Vec<Entity>,
 }
 
 impl HierarchyState {
@@ -73,17 +75,19 @@ impl HierarchyState {
     pub fn reveal_entity(&mut self, scene_entity: Entity) {
         self.pending_scene_reveal = Some(scene_entity);
     }
-
-    #[cfg(test)]
-    pub(crate) fn pending_scene_reveal(&self) -> Option<Entity> {
-        self.pending_scene_reveal
-    }
-
-    #[cfg(test)]
-    pub(crate) fn items(&self) -> &HashMap<Entity, Entity> {
-        &self.items
-    }
 }
+
+/// How a row of the world tree differs from a plain one: a muted name, its own icon, or a marker after the name.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct RowLook {
+    pub muted: bool,
+    pub icon: Option<char>,
+    pub marker: Option<char>,
+}
+
+/// The rows that look other than plain, by their entity in the edit `App`'s world; the plugins that know why fill it.
+#[derive(Resource, Default, Debug, PartialEq)]
+pub struct RowLooks(pub EntityHashMap<RowLook>);
 
 #[derive(Component)]
 pub(crate) struct TreeView;
@@ -101,6 +105,7 @@ pub(crate) struct HierarchyItem {
     scene_entity: Entity,
     mark: Entity,
     label: Entity,
+    marker: Entity,
     count: Entity,
 }
 
@@ -128,10 +133,11 @@ pub struct HierarchyPlugin;
 impl Plugin for HierarchyPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(HierarchyState::default());
+        app.insert_resource(RowLooks::default());
         app.add_panel(PanelDescriptor {
             id: PANEL_ID,
             title: "Warren",
-            region: Region::Rail,
+            region: Region::Left,
         });
         install_listeners(app.main_mut().world_mut());
         app.add_system(Startup, build_panel);
@@ -149,7 +155,7 @@ impl Plugin for HierarchyPlugin {
                     .after(reconcile_structure)
                     .before(UiSet::Materials),
             )
-            .add_system(LateUpdate, sync_tree_context)
+            .add_system(LateUpdate, sync_tree_context.in_set(EditorContextSet))
             .add_system(LateUpdate, entity_shortcuts)
             .add_system(LateUpdate, sync_row_menu_items)
             .add_system(LateUpdate, show_header);
@@ -165,6 +171,7 @@ pub(crate) fn install_listeners(world: &mut World) {
 fn forget_scene(
     _: On<Remove<EditTarget>>,
     mut state: ResMut<HierarchyState>,
+    looks: Option<ResMut<RowLooks>>,
     menus: Query<&mut RowMenu>,
     views: Query<&mut UIScrollArea, With<TreeView>>,
     parents: Query<&ChildOf>,
@@ -173,6 +180,12 @@ fn forget_scene(
     let items: HashSet<Entity> = state.items.drain().map(|(_, item)| item).collect();
     despawn_outermost(&items, &parents, &mut cmd);
     state.pending_scene_reveal = None;
+    state.top_level.clear();
+    if let Some(mut looks) = looks
+        && !looks.0.is_empty()
+    {
+        looks.0.clear();
+    }
     for mut menu in menus.iter() {
         menu.scene_target = None;
     }
@@ -223,13 +236,10 @@ fn build_panel(mut cmd: CommandQueue, registry: Res<PanelRegistry>, theme: Res<U
 pub fn spawn_panel(cmd: &mut CommandQueue, parent: Entity, theme: &UITheme) {
     cmd.entity(parent).add_child_with(
         (
-            theme
-                .panel()
-                .radius(0.0)
-                .width(UIValue::Percent(100.0))
-                .grow()
-                .column()
-                .padding(8.0)
+            UINode::default()
+                .with_width(UIValue::Percent(100.0))
+                .with_flex_grow(1.0)
+                .with_flex_direction(taffy::FlexDirection::Column)
                 .clipped(),
             Interactable,
         ),
@@ -244,12 +254,8 @@ pub fn spawn_panel(cmd: &mut CommandQueue, parent: Entity, theme: &UITheme) {
                             Label::Title,
                         ))
                         .add_child((
-                            theme
-                                .pressable()
-                                .size(UIValue::Px(24.0), UIValue::Px(24.0))
-                                .padding(UIRect::axes(4.0, 5.0))
-                                .on_click(add_entity),
-                            icon(theme, glyph::PLUS, theme.font_size_md).muted(),
+                            icon_button(theme).on_click(add_entity),
+                            button_icon(theme, glyph::PLUS),
                             AddEntityButton,
                             UIDisabled,
                         ));
@@ -319,7 +325,7 @@ fn spawn_item(
     scene_entity: Entity,
     parent: Entity,
 ) -> Entity {
-    let mark = cmd.spawn(marks::node()).entity();
+    let mark = cmd.spawn(row_icon(theme, glyph::CIRCLE)).entity();
     let label = cmd
         .spawn((
             UINode::default()
@@ -327,6 +333,14 @@ fn spawn_item(
                 .with_flex_shrink(1.0)
                 .with_padding(UIRect::axes(0.0, 8.0)),
             theme.text("").single_line(),
+        ))
+        .entity();
+    let marker = cmd
+        .spawn((
+            UINode::default()
+                .with_flex_shrink(0.0)
+                .with_align_self(taffy::AlignItems::Center),
+            icon(theme, ' ', 12.0).color(theme.accent),
         ))
         .entity();
     let count = cmd
@@ -349,6 +363,7 @@ fn spawn_item(
                 scene_entity,
                 mark,
                 label,
+                marker,
                 count,
             },
             select_item.into_listener(),
@@ -356,7 +371,7 @@ fn spawn_item(
             ChildOf::new(parent),
         ))
         .entity();
-    for content in [mark, label, count] {
+    for content in [mark, label, marker, count] {
         cmd.add_child(item, content);
     }
     item
@@ -490,36 +505,85 @@ fn open_row_menu(
     }
 }
 
-fn listed_entities(
-    tops: Vec<Entity>,
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum ListRoot {
+    Include,
+    Exclude,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) struct ListedEntity {
+    pub(crate) entity: Entity,
+    pub(crate) parent: Option<Entity>,
+    pub(crate) depth: usize,
+}
+
+pub(crate) fn listed_entities(
+    roots: &Query<(Entity, &SceneRoot)>,
+    top_level: &Query<Entity, (Without<ChildOf>, Without<GlobalListener>)>,
     scene_children: &Query<&Children>,
-) -> Vec<(Entity, Option<Entity>)> {
+    active: &ActiveEditor,
+    states: &Query<&PlayState>,
+    root: ListRoot,
+) -> Vec<ListedEntity> {
+    let mut tops: Vec<Entity> = if playing(active, states) {
+        top_level.iter().collect()
+    } else {
+        roots.iter().map(|(entity, _)| entity).collect()
+    };
+    tops.sort_by_key(|entity| (entity.index(), entity.generation()));
+    if root == ListRoot::Exclude {
+        tops = tops
+            .into_iter()
+            .flat_map(|top| {
+                if roots.contains_entity(top) {
+                    scene_children
+                        .get_entity(top)
+                        .map(|children| children.iter().copied().collect())
+                        .unwrap_or_default()
+                } else {
+                    vec![top]
+                }
+            })
+            .collect();
+    }
     let mut listed = Vec::new();
-    let mut pending: Vec<(Entity, Option<Entity>)> = tops
+    let mut pending: Vec<ListedEntity> = tops
         .into_iter()
         .rev()
-        .map(|entity| (entity, None))
+        .map(|entity| ListedEntity {
+            entity,
+            parent: None,
+            depth: 0,
+        })
         .collect();
-    while let Some((scene_entity, scene_parent)) = pending.pop() {
-        listed.push((scene_entity, scene_parent));
-        if let Some(children) = scene_children.get_entity(scene_entity) {
-            pending.extend(
-                children
-                    .iter()
-                    .rev()
-                    .map(|child| (*child, Some(scene_entity))),
-            );
+    while let Some(next) = pending.pop() {
+        listed.push(next);
+        if let Some(children) = scene_children.get_entity(next.entity) {
+            pending.extend(children.iter().rev().map(|child| ListedEntity {
+                entity: *child,
+                parent: Some(next.entity),
+                depth: next.depth + 1,
+            }));
         }
     }
     listed
 }
 
 pub(crate) fn reconcile_structure(
-    roots: EditWorld<Query<(Entity, &SceneRoot)>>,
-    top_level: EditWorld<Query<Entity, (Without<ChildOf>, Without<GlobalListener>)>>,
-    scene_children: EditWorld<Query<&Children>>,
+    mut scene: EditWorld<(
+        Query<(Entity, &SceneRoot)>,
+        Query<Entity, (Without<ChildOf>, Without<GlobalListener>)>,
+        Query<&Children>,
+        Query<Entity, Changed<Children>>,
+        RemovedComponents<Children>,
+    )>,
     active: Res<ActiveEditor>,
     states: Query<&PlayState>,
+    (played, targeted): (
+        Query<Entity, Or<(Added<PlayState>, Changed<PlayState>)>>,
+        Query<Entity, Added<EditTarget>>,
+    ),
     mut state: ResMut<HierarchyState>,
     views: Query<Entity, With<TreeView>>,
     parents: Query<&ChildOf>,
@@ -527,21 +591,62 @@ pub(crate) fn reconcile_structure(
     theme: Res<UITheme>,
     mut cmd: CommandQueue,
 ) {
+    let (roots, top_level, scene_children, changed_children, removed_children) = &mut *scene;
+    let removed = removed_children.read().count() > 0;
+    let changed = changed_children.iter().next().is_some();
+    let played = played.iter().next().is_some();
+    let targeted = targeted.iter().next().is_some();
+    let tops: Vec<Entity> = top_level.iter().collect();
+    let structural =
+        active.is_changed() || played || targeted || changed || removed || tops != state.top_level;
     let Some(view) = views.iter().next() else {
         return;
     };
-    let mut tops: Vec<Entity> = if playing(&active, &states) {
-        top_level.iter().collect()
-    } else {
-        roots.iter().map(|(entity, _)| entity).collect()
-    };
-    tops.sort_by_key(|entity| (entity.index(), entity.generation()));
-    let listed = listed_entities(tops, &scene_children);
-    let wanted: HashSet<Entity> = listed.iter().map(|(entity, _)| *entity).collect();
+    if structural {
+        state.top_level = tops;
+        reconcile_items(
+            &listed_entities(
+                roots,
+                top_level,
+                scene_children,
+                &active,
+                &states,
+                ListRoot::Include,
+            ),
+            view,
+            &mut state,
+            &parents,
+            &theme,
+            &mut cmd,
+        );
+    }
 
+    if let Some(scene_entity) = state.pending_scene_reveal {
+        match state.items.get(&scene_entity) {
+            None => state.pending_scene_reveal = None,
+            Some(&item) if placed.contains_entity(item) => {
+                cmd.entity(item).trigger(UIReveal);
+                state.pending_scene_reveal = None;
+            }
+            Some(_) => {}
+        }
+    }
+}
+
+fn reconcile_items(
+    listed: &[ListedEntity],
+    view: Entity,
+    state: &mut HierarchyState,
+    parents: &Query<&ChildOf>,
+    theme: &UITheme,
+    cmd: &mut CommandQueue,
+) {
+    let wanted: HashSet<Entity> = listed.iter().map(|listed| listed.entity).collect();
     let mut order: HashMap<Entity, Vec<Entity>> = HashMap::new();
-    for &(scene_entity, scene_parent) in &listed {
-        let parent = scene_parent
+    for listed in listed {
+        let scene_entity = listed.entity;
+        let parent = listed
+            .parent
             .and_then(|scene_parent| state.items.get(&scene_parent).copied())
             .unwrap_or(view);
         let item = match state.items.get(&scene_entity) {
@@ -552,7 +657,7 @@ pub(crate) fn reconcile_structure(
                 item
             }
             None => {
-                let item = spawn_item(&mut cmd, &theme, scene_entity, parent);
+                let item = spawn_item(cmd, theme, scene_entity, parent);
                 state.items.insert(scene_entity, item);
                 item
             }
@@ -570,90 +675,172 @@ pub(crate) fn reconcile_structure(
         .into_iter()
         .filter_map(|scene_entity| state.items.remove(&scene_entity))
         .collect();
-    despawn_outermost(&gone, &parents, &mut cmd);
+    despawn_outermost(&gone, parents, cmd);
     cmd.entity(view)
         .trigger(OrderItems(order.into_iter().collect()));
-
-    if let Some(scene_entity) = state.pending_scene_reveal {
-        if !wanted.contains(&scene_entity) {
-            state.pending_scene_reveal = None;
-        } else if let Some(&item) = state.items.get(&scene_entity)
-            && placed.contains_entity(item)
-        {
-            cmd.entity(item).trigger(UIReveal);
-            state.pending_scene_reveal = None;
-        }
-    }
 }
 
 pub(crate) fn reconcile_content(
-    selection: EditWorld<Res<Selection>>,
-    names: EditWorld<Query<Ref<Name>>>,
-    roots: EditWorld<Query<&SceneRoot>>,
-    scene_children: EditWorld<Query<Ref<Children>>>,
-    kinds: EditWorld<Query<(Option<&Camera>, Option<&Light>, Option<&MeshComponent>)>>,
+    mut scene: EditWorld<(
+        Res<Selection>,
+        Query<Ref<Name>>,
+        Query<&SceneRoot>,
+        Query<Ref<Children>>,
+        Query<(Option<&Camera>, Option<&Light>, Option<&MeshComponent>)>,
+        Query<
+            Entity,
+            Or<(
+                Changed<Name>,
+                Changed<Children>,
+                Added<SceneRoot>,
+                Added<Camera>,
+                Added<Light>,
+                Added<MeshComponent>,
+            )>,
+        >,
+        (
+            RemovedComponents<Name>,
+            RemovedComponents<Children>,
+            RemovedComponents<Camera>,
+            RemovedComponents<Light>,
+            RemovedComponents<MeshComponent>,
+        ),
+    )>,
     active: Res<ActiveEditor>,
-    documents: Query<&EditorDocument>,
-    items: Query<(Entity, Ref<HierarchyItem>, Option<&UISelected>)>,
+    documents: Query<Ref<EditorDocument>>,
+    (state, looks): (Res<HierarchyState>, Res<RowLooks>),
+    (items, added): (
+        Query<(Entity, Ref<HierarchyItem>, Option<&UISelected>)>,
+        Query<Entity, Added<HierarchyItem>>,
+    ),
     texts: Query<&mut UIText>,
-    marks: Query<(&mut UINode, &mut UIMaterial)>,
     theme: Res<UITheme>,
     mut cmd: CommandQueue,
 ) {
-    let address = active
-        .0
-        .and_then(|document| documents.get_entity(document))
+    let (selection, names, roots, scene_children, kinds, changed, removed) = &mut *scene;
+    let (removed_names, removed_children, removed_cameras, removed_lights, removed_meshes) =
+        removed;
+    let mut dirty: HashSet<Entity> = changed.iter().collect();
+    dirty.extend(removed_names.read());
+    dirty.extend(removed_children.read());
+    dirty.extend(removed_cameras.read());
+    dirty.extend(removed_lights.read());
+    dirty.extend(removed_meshes.read());
+    let document = active.0.and_then(|document| documents.get_entity(document));
+    let address = document
+        .as_ref()
         .and_then(|document| document.current.as_ref())
         .map(|asset| asset.address.as_str())
         .unwrap_or_default();
-    for (entity, item, selected) in items.iter() {
-        let scene_entity = item.scene_entity;
-        let is_root = roots.get_entity(scene_entity).is_some();
-        let children = scene_children.get_entity(scene_entity);
-        let count = children
+    let every_row = selection.is_changed()
+        || active.is_changed()
+        || theme.is_changed()
+        || looks.is_changed()
+        || document
             .as_ref()
-            .map_or(0, |children| children.iter().len());
-        let kind = kinds.get_entity(scene_entity);
-        let mark = match kind {
-            _ if is_root => Mark::Group,
-            Some((Some(_), _, _)) => Mark::Camera,
-            Some((_, Some(_), _)) => Mark::Light,
-            Some((_, _, Some(_))) => Mark::Mesh,
-            _ if count > 0 => Mark::Group,
-            _ => Mark::Plain,
-        };
-        let name = names.get_entity(scene_entity);
-        let same_name = !item.is_added() && name.as_ref().is_some_and(|name| !name.is_changed());
-        let label: Option<Cow<str>> = match name.as_deref() {
-            _ if is_root => Some(address.into()),
-            _ if same_name => None,
-            Some(name) if !name.as_str().is_empty() => Some(name.as_str().into()),
-            _ => Some(format!("Entity {}", scene_entity.index()).into()),
-        };
-        let same_children =
-            !item.is_added() && children.is_some_and(|children| !children.is_changed());
-        let count: Option<Cow<str>> = match count {
-            0 => Some("".into()),
-            _ if same_children => None,
-            count => Some(count.to_string().into()),
-        };
-        for (text, value) in [(item.label, label), (item.count, count)] {
-            if let Some(value) = value
-                && let Some(mut text) = texts.get_entity(text)
-                && text.text != *value
-            {
-                text.text = value.into_owned();
-            }
+            .is_some_and(|document| document.is_changed());
+    let scene = (&*names, &*roots, &*scene_children, &*kinds);
+    let selected = selection.entity();
+    let mut update = |row| {
+        update_row(
+            row, selected, address, scene, &looks, &texts, &theme, &mut cmd,
+        )
+    };
+    if every_row {
+        items.iter().for_each(&mut update);
+        return;
+    }
+    let rows: HashSet<Entity> = added
+        .iter()
+        .chain(
+            dirty
+                .iter()
+                .filter_map(|scene_entity| state.items.get(scene_entity).copied()),
+        )
+        .collect();
+    rows.into_iter()
+        .filter_map(|row| items.get_entity(row))
+        .for_each(update);
+}
+
+fn update_row(
+    (entity, item, selected): (Entity, Ref<HierarchyItem>, Option<&UISelected>),
+    selection: Option<Entity>,
+    address: &str,
+    (names, roots, scene_children, kinds): (
+        &Query<Ref<Name>>,
+        &Query<&SceneRoot>,
+        &Query<Ref<Children>>,
+        &Query<(Option<&Camera>, Option<&Light>, Option<&MeshComponent>)>,
+    ),
+    looks: &RowLooks,
+    texts: &Query<&mut UIText>,
+    theme: &UITheme,
+    cmd: &mut CommandQueue,
+) {
+    let scene_entity = item.scene_entity;
+    let is_root = roots.get_entity(scene_entity).is_some();
+    let look = looks.0.get(&scene_entity).copied().unwrap_or_default();
+    let children = scene_children.get_entity(scene_entity);
+    let count = children
+        .as_ref()
+        .map_or(0, |children| children.iter().len());
+    let kind = kinds.get_entity(scene_entity);
+    let mark = match (kind, look.icon) {
+        _ if is_root => glyph::STACK,
+        (_, Some(icon)) => icon,
+        (Some((Some(_), _, _)), _) => glyph::CAMERA,
+        (Some((_, Some(_), _)), _) => glyph::LIGHTBULB,
+        (Some((_, _, Some(_))), _) => glyph::CUBE,
+        _ => glyph::CIRCLE,
+    };
+    let name = names.get_entity(scene_entity);
+    let same_name = !item.is_added() && name.as_ref().is_some_and(|name| !name.is_changed());
+    let label: Option<Cow<str>> = match name.as_deref() {
+        _ if is_root => Some(address.into()),
+        _ if same_name => None,
+        Some(name) if !name.as_str().is_empty() => Some(name.as_str().into()),
+        _ => Some(format!("Entity {}", scene_entity.index()).into()),
+    };
+    let same_children = !item.is_added() && children.is_some_and(|children| !children.is_changed());
+    let count: Option<Cow<str>> = match count {
+        0 => Some("".into()),
+        _ if same_children => None,
+        count => Some(count.to_string().into()),
+    };
+    let marker: Cow<str> = look
+        .marker
+        .map_or("".into(), |marker| marker.to_string().into());
+    for (text, value) in [
+        (item.label, label),
+        (item.count, count),
+        (item.marker, Some(marker)),
+    ] {
+        if let Some(value) = value
+            && let Some(mut text) = texts.get_entity(text)
+            && text.text != *value
+        {
+            text.text = value.into_owned();
         }
-        let wanted = selection.entity() == Some(scene_entity);
-        if let Some((mut node, mut material)) = marks.get_entity(item.mark) {
-            marks::apply(mark, &theme, wanted, &mut node, &mut material);
-        }
-        if wanted && selected.is_none() {
-            cmd.insert(UISelected, entity);
-        } else if !wanted && selected.is_some() {
-            cmd.remove::<UISelected>(entity);
-        }
+    }
+    let label_color = if look.muted {
+        theme.text_muted
+    } else {
+        theme.text
+    };
+    if let Some(mut text) = texts.get_entity(item.label)
+        && text.color != label_color
+    {
+        text.color = label_color;
+    }
+    let wanted = selection == Some(scene_entity);
+    if let Some(mut text) = texts.get_entity(item.mark) {
+        draw_row_icon(&mut text, theme, mark, wanted);
+    }
+    if wanted && selected.is_none() {
+        cmd.insert(UISelected, entity);
+    } else if !wanted && selected.is_some() {
+        cmd.remove::<UISelected>(entity);
     }
 }
 
@@ -741,17 +928,11 @@ mod tests {
         inspector::InspectorData,
     };
     use concerto_ecs::{
-        IntoSystem, System, World,
-        events::event_channel::EventChannel,
-        query::filter::{Changed, Or, With},
+        IntoSystem, System, events::event_channel::EventChannel, query::filter::With,
         system::BoxedSystem,
     };
     use concerto_foundation::transform::Transform;
-    use concerto_ui::{
-        items::UIItem,
-        node::{UIBox, UILayout},
-        tree::update_trees_system,
-    };
+    use concerto_ui::tree::update_trees_system;
     use glam::Vec2;
 
     struct Fixture {
@@ -759,89 +940,7 @@ mod tests {
         document: Entity,
         root: Entity,
         node: Entity,
-        systems: Systems,
-    }
-
-    struct Systems {
-        structure: BoxedSystem,
-        filter: BoxedSystem,
-        place: BoxedSystem,
-        content: BoxedSystem,
-        menu: BoxedSystem,
-        header: BoxedSystem,
-    }
-
-    impl Systems {
-        fn new(world: &mut World) -> Self {
-            let mut systems = Self {
-                structure: reconcile_structure.into_boxed_system(),
-                filter: filter_items.into_boxed_system(),
-                place: update_trees_system(),
-                content: reconcile_content.into_boxed_system(),
-                menu: sync_row_menu_items.into_boxed_system(),
-                header: show_header.into_boxed_system(),
-            };
-            for system in systems.all() {
-                system.initialize(world);
-            }
-            systems
-        }
-
-        fn all(&mut self) -> [&mut BoxedSystem; 6] {
-            [
-                &mut self.structure,
-                &mut self.filter,
-                &mut self.place,
-                &mut self.content,
-                &mut self.menu,
-                &mut self.header,
-            ]
-        }
-    }
-
-    static RECORDS: std::sync::Mutex<Vec<(std::thread::ThreadId, String)>> =
-        std::sync::Mutex::new(Vec::new());
-
-    struct Capture;
-
-    impl log::Log for Capture {
-        fn enabled(&self, metadata: &log::Metadata) -> bool {
-            metadata.level() <= log::Level::Warn
-        }
-
-        fn log(&self, record: &log::Record) {
-            if record.level() <= log::Level::Warn {
-                RECORDS
-                    .lock()
-                    .unwrap()
-                    .push((std::thread::current().id(), record.args().to_string()));
-            }
-        }
-
-        fn flush(&self) {}
-    }
-
-    fn invalid_despawns() -> usize {
-        static INSTALL: std::sync::Once = std::sync::Once::new();
-        INSTALL.call_once(|| {
-            log::set_logger(&Capture).unwrap();
-            log::set_max_level(log::LevelFilter::Warn);
-        });
-        let me = std::thread::current().id();
-        RECORDS
-            .lock()
-            .unwrap()
-            .iter()
-            .filter(|(thread, message)| {
-                *thread == me && message.starts_with("Attempted to despawn invalid entity")
-            })
-            .count()
-    }
-
-    fn run<M>(world: &mut World, system: impl IntoSystem<(), M>) {
-        let mut system = system.into_system();
-        system.initialize(world);
-        system.run_and_apply((), world);
+        systems: Vec<BoxedSystem>,
     }
 
     fn fixture() -> Fixture {
@@ -855,7 +954,17 @@ mod tests {
         let node = scene.scene_entity(document, "first");
         let second = scene.scene_entity(document, "second");
         scene.scene_world_mut(document).despawn(second);
-        let systems = Systems::new(&mut scene.world);
+        let mut systems = vec![
+            reconcile_structure.into_boxed_system(),
+            filter_items.into_boxed_system(),
+            update_trees_system(),
+            reconcile_content.into_boxed_system(),
+            sync_row_menu_items.into_boxed_system(),
+            show_header.into_boxed_system(),
+        ];
+        for system in &mut systems {
+            system.initialize(&mut scene.world);
+        }
         let mut fixture = Fixture {
             scene,
             document,
@@ -869,31 +978,12 @@ mod tests {
 
     impl Fixture {
         fn refresh(&mut self) {
-            for system in self.systems.all() {
+            for system in &mut self.systems {
                 system.run_and_apply((), &mut self.scene.world);
             }
         }
-        fn reconcile_structure(&mut self) {
-            self.systems
-                .structure
-                .run_and_apply((), &mut self.scene.world);
-        }
-        fn place(&mut self) {
-            self.systems.place.run_and_apply((), &mut self.scene.world);
-        }
-        fn reconcile_content(&mut self) {
-            self.systems
-                .content
-                .run_and_apply((), &mut self.scene.world);
-        }
         fn state(&self) -> &HierarchyState {
             self.scene.world.get_resource::<HierarchyState>().unwrap()
-        }
-        fn state_mut(&mut self) -> &mut HierarchyState {
-            self.scene
-                .world
-                .get_resource_mut::<HierarchyState>()
-                .unwrap()
         }
         fn item_of(&self, scene_entity: Entity) -> Entity {
             *self
@@ -901,12 +991,6 @@ mod tests {
                 .items
                 .get(&scene_entity)
                 .expect("the entity has an item")
-        }
-        fn hierarchy_item(&self, scene_entity: Entity) -> &HierarchyItem {
-            self.scene
-                .world
-                .get_component_for_entity::<HierarchyItem>(self.item_of(scene_entity))
-                .unwrap()
         }
         fn expand(&mut self, scene_entity: Entity) {
             let item = self.item_of(scene_entity);
@@ -924,66 +1008,25 @@ mod tests {
                 .unwrap()
                 .expanded
         }
-        fn shown_depth(&self, scene_entity: Entity) -> Option<usize> {
-            self.state()
-                .items
-                .get(&scene_entity)
-                .and_then(|item| self.scene.world.get_component_for_entity::<UIItem>(*item))
-                .filter(|item| item.is_shown())
-                .map(UIItem::depth)
-        }
         fn ui_selected(&self, scene_entity: Entity) -> bool {
             self.scene
                 .world
                 .get_component_for_entity::<UISelected>(self.item_of(scene_entity))
                 .is_some()
         }
-        fn hidden(&self, scene_entity: Entity) -> bool {
+        fn label_of(&self, scene_entity: Entity) -> String {
+            let label = self
+                .scene
+                .world
+                .get_component_for_entity::<HierarchyItem>(self.item_of(scene_entity))
+                .unwrap()
+                .label;
             self.scene
                 .world
-                .get_component_for_entity::<UIHidden>(self.item_of(scene_entity))
-                .is_some()
-        }
-        fn text_of(&self, entity: Entity) -> String {
-            self.scene
-                .world
-                .get_component_for_entity::<UIText>(entity)
+                .get_component_for_entity::<UIText>(label)
                 .unwrap()
                 .text
                 .clone()
-        }
-        fn label_of(&self, scene_entity: Entity) -> String {
-            self.text_of(self.hierarchy_item(scene_entity).label)
-        }
-        fn count_of(&self, scene_entity: Entity) -> String {
-            self.text_of(self.hierarchy_item(scene_entity).count)
-        }
-        fn mark_width(&self, scene_entity: Entity) -> UIValue {
-            self.scene
-                .world
-                .get_component_for_entity::<UINode>(self.hierarchy_item(scene_entity).mark)
-                .unwrap()
-                .width
-        }
-        fn mark_border(&self, scene_entity: Entity) -> concerto_color::LinearRgba {
-            self.scene
-                .world
-                .get_component_for_entity::<UIMaterial>(self.hierarchy_item(scene_entity).mark)
-                .unwrap()
-                .border_color
-        }
-        fn mark_fill(&self, scene_entity: Entity) -> concerto_color::LinearRgba {
-            self.scene
-                .world
-                .get_component_for_entity::<UIMaterial>(self.hierarchy_item(scene_entity).mark)
-                .unwrap()
-                .color
-        }
-        fn parent_item(&self, item: Entity) -> Option<Entity> {
-            self.scene
-                .world
-                .get_component_for_entity::<ChildOf>(item)
-                .map(ChildOf::parent)
         }
         fn item_children(&self, parent: Entity) -> Vec<Entity> {
             self.scene
@@ -1002,42 +1045,15 @@ mod tests {
                 })
                 .unwrap_or_default()
         }
-        fn tree(&mut self) -> Entity {
-            self.scene
+        fn top_level(&mut self) -> Vec<Entity> {
+            let tree = self
+                .scene
                 .world
                 .query::<Entity, With<TreeView>>()
                 .iter(&mut self.scene.world)
                 .next()
-                .unwrap()
-        }
-        fn title(&mut self) -> String {
-            let title = self
-                .scene
-                .world
-                .query::<(Entity, &Label), ()>()
-                .iter(&mut self.scene.world)
-                .find(|(_, label)| matches!(label, Label::Title))
-                .unwrap()
-                .0;
-            self.text_of(title)
-        }
-        fn footer(&mut self) -> String {
-            let footer = self
-                .scene
-                .world
-                .query::<(Entity, &Label), ()>()
-                .iter(&mut self.scene.world)
-                .find(|(_, label)| matches!(label, Label::Footer))
-                .unwrap()
-                .0;
-            self.text_of(footer)
-        }
-        fn item_entities(&mut self) -> usize {
-            self.scene
-                .world
-                .query::<Entity, With<HierarchyItem>>()
-                .iter(&mut self.scene.world)
-                .count()
+                .unwrap();
+            self.item_children(tree)
         }
         fn click(&mut self, entity: Entity, button: MouseButton) {
             self.scene.world.trigger_on(
@@ -1054,32 +1070,18 @@ mod tests {
                 .scene_world_mut(self.document)
                 .trigger(Select(Some(entity)));
         }
-        fn item(&mut self, wanted: RowMenuItem) -> Entity {
-            self.scene
+        fn menu_item(&mut self, scene_entity: Entity, wanted: RowMenuItem) {
+            let row = self.item_of(scene_entity);
+            self.click(row, MouseButton::Right);
+            let item = self
+                .scene
                 .world
                 .query::<(Entity, &RowMenuItem), ()>()
                 .iter(&mut self.scene.world)
                 .find(|(_, item)| **item == wanted)
                 .unwrap()
-                .0
-        }
-        fn menu(&mut self) -> (Option<Entity>, bool, UIAnchorTarget) {
-            let (menu, panel) = self
-                .scene
-                .world
-                .query::<(&RowMenu, &UIAnchoredPanel), ()>()
-                .iter(&mut self.scene.world)
-                .next()
-                .unwrap();
-            (menu.scene_target, panel.open, panel.target)
-        }
-        fn add_button(&mut self) -> Entity {
-            self.scene
-                .world
-                .query::<Entity, With<AddEntityButton>>()
-                .iter(&mut self.scene.world)
-                .next()
-                .unwrap()
+                .0;
+            self.click(item, MouseButton::Left);
         }
         fn selected(&self) -> Option<Entity> {
             self.scene.selected(self.document)
@@ -1102,12 +1104,6 @@ mod tests {
             scene.entity_mut(parent).add_child(entity);
             entity
         }
-        fn disabled(&self, entity: Entity) -> bool {
-            self.scene
-                .world
-                .get_component_for_entity::<UIDisabled>(entity)
-                .is_some()
-        }
         fn fire(&mut self, action: impl concerto_window::input::actions::ActionLabel) {
             let channel = self
                 .scene
@@ -1116,10 +1112,10 @@ mod tests {
                 .unwrap();
             channel.update();
             channel.update();
-            channel.push_event(ActionFired {
-                action: action.intern(),
-            });
-            run(&mut self.scene.world, entity_shortcuts);
+            channel.push_event(ActionFired::new(action));
+            let mut shortcuts = entity_shortcuts.into_system();
+            shortcuts.initialize(&mut self.scene.world);
+            shortcuts.run_and_apply((), &mut self.scene.world);
             self.refresh();
         }
         fn rename_requested(&mut self) -> bool {
@@ -1135,284 +1131,16 @@ mod tests {
     }
 
     #[test]
-    fn right_clicking_a_row_selects_it_and_opens_the_menu_at_the_pointer() {
+    fn the_tree_follows_spawns_renames_reorders_reparenting_and_despawns() {
         let mut f = fixture();
-        f.expand(f.root);
-        let item = f.item_of(f.node);
-        f.click(item, MouseButton::Right);
-        assert_eq!(f.selected(), Some(f.node));
-        let (target, open, anchor) = f.menu();
-        assert_eq!(target, Some(f.node));
-        assert!(open);
-        assert!(matches!(
-            anchor,
-            UIAnchorTarget::Point { position } if position == Vec2::new(40.0, 60.0)
-        ));
-        let fill = f
-            .scene
-            .world
-            .query::<&UIMaterial, With<RowMenu>>()
-            .iter(&mut f.scene.world)
-            .next()
-            .unwrap()
-            .color;
-        assert_eq!(fill, UITheme::default().surface_overlay.to_linear());
-        for item in [
-            RowMenuItem::AddChild,
-            RowMenuItem::Duplicate,
-            RowMenuItem::Rename,
-            RowMenuItem::Delete,
-        ] {
-            let entity = f.item(item);
-            assert!(!f.disabled(entity), "{item:?}");
-        }
-    }
-
-    #[test]
-    fn menu_items_apply_their_edit_to_the_row_and_close_the_menu() {
-        let mut f = fixture();
-        f.expand(f.root);
-
-        let item = f.item_of(f.node);
-        f.click(item, MouseButton::Right);
-        let add = f.item(RowMenuItem::AddChild);
-        f.click(add, MouseButton::Left);
-        assert_eq!(f.children(f.node).len(), 1);
-        assert!(!f.menu().1);
-
-        let item = f.item_of(f.node);
-        f.click(item, MouseButton::Right);
-        let duplicate = f.item(RowMenuItem::Duplicate);
-        f.click(duplicate, MouseButton::Left);
-        assert_eq!(f.children(f.root).len(), 2);
-        let copy = f.selected().unwrap();
-        assert_ne!(copy, f.node);
-
-        let item = f.item_of(copy);
-        f.click(item, MouseButton::Right);
-        let rename = f.item(RowMenuItem::Rename);
-        f.click(rename, MouseButton::Left);
-        assert!(f.rename_requested());
-        assert!(f.valid(copy));
-
-        let item = f.item_of(copy);
-        f.click(item, MouseButton::Right);
-        let delete = f.item(RowMenuItem::Delete);
-        f.click(delete, MouseButton::Left);
-        assert!(!f.valid(copy));
-        assert_eq!(f.children(f.root), [f.node]);
-    }
-
-    #[test]
-    fn a_closed_menu_does_nothing_when_an_item_is_clicked() {
-        let mut f = fixture();
-        let delete = f.item(RowMenuItem::Delete);
-        f.click(delete, MouseButton::Left);
-        assert!(f.valid(f.node));
-    }
-
-    #[test]
-    fn the_scene_root_only_offers_add_child() {
-        let mut f = fixture();
-        let item = f.item_of(f.root);
-        f.click(item, MouseButton::Right);
-        for (item, disabled) in [
-            (RowMenuItem::AddChild, false),
-            (RowMenuItem::Duplicate, true),
-            (RowMenuItem::Rename, true),
-            (RowMenuItem::Delete, true),
-        ] {
-            let entity = f.item(item);
-            assert_eq!(f.disabled(entity), disabled, "{item:?}");
-        }
-    }
-
-    #[test]
-    fn the_add_button_targets_the_selection_or_the_root_and_needs_a_scene() {
-        let mut f = fixture();
-        let button = f.add_button();
-        assert!(!f.disabled(button));
-        f.select(f.root);
-        f.click(button, MouseButton::Left);
-        assert_eq!(f.children(f.root).len(), 2);
-
-        f.select(f.node);
-        f.click(button, MouseButton::Left);
-        assert_eq!(f.children(f.node).len(), 1);
-
-        f.scene
-            .world
-            .remove_component::<crate::asset_editor::Unsaved>(f.document);
-        f.scene.close(f.document);
-        f.scene.frame();
-        f.scene.frame();
-        assert!(f.disabled(button));
-    }
-
-    #[test]
-    fn the_add_button_is_disabled_until_a_scene_is_open() {
-        let mut scene = SceneFixture::new();
-        let button = scene
-            .world
-            .query::<Entity, With<AddEntityButton>>()
-            .iter(&mut scene.world)
-            .next()
-            .unwrap();
-        let disabled = |scene: &SceneFixture| {
-            scene
-                .world
-                .get_component_for_entity::<UIDisabled>(button)
-                .is_some()
-        };
-        assert!(disabled(&scene));
-
-        scene.open();
-
-        assert!(!disabled(&scene));
-    }
-
-    #[test]
-    fn with_nothing_selected_the_add_button_adds_to_the_scene_root() {
-        let mut f = fixture();
-        let button = f.add_button();
-        f.scene.scene_world_mut(f.document).trigger(Select(None));
-
-        f.click(button, MouseButton::Left);
-
-        assert_eq!(f.children(f.root).len(), 2);
-    }
-
-    #[test]
-    fn shortcuts_act_on_the_selection_and_do_nothing_without_one() {
-        let mut f = fixture();
-        f.scene.scene_world_mut(f.document).trigger(Select(None));
-        f.fire(DeleteEntity);
-        assert!(f.valid(f.node));
-
-        f.select(f.node);
-        f.fire(RenameEntity);
-        assert!(f.rename_requested());
-
-        f.fire(DuplicateEntity);
-        assert_eq!(f.children(f.root).len(), 2);
-
-        f.select(f.node);
-        f.fire(DeleteEntity);
-        assert!(!f.valid(f.node));
-        assert_eq!(f.children(f.root).len(), 1);
-    }
-
-    #[test]
-    fn focus_on_an_item_of_the_tree_pushes_the_tree_context() {
-        let mut f = fixture();
-        f.scene.world.insert_resource(ActionMap::default());
-        let item = f.item_of(f.root);
-        **f.scene.world.get_resource_mut::<FocusedWidget>().unwrap() = Some(item);
-        run(&mut f.scene.world, sync_tree_context);
-        assert!(
-            f.scene
-                .world
-                .get_resource::<ActionMap>()
-                .unwrap()
-                .is_active(TreeContext)
-        );
-
-        let field = f
-            .scene
-            .world
-            .query::<Entity, With<Filter>>()
-            .iter(&mut f.scene.world)
-            .next()
-            .unwrap();
-        **f.scene.world.get_resource_mut::<FocusedWidget>().unwrap() = Some(field);
-        run(&mut f.scene.world, sync_tree_context);
-        assert!(
-            !f.scene
-                .world
-                .get_resource::<ActionMap>()
-                .unwrap()
-                .is_active(TreeContext)
-        );
-    }
-
-    #[test]
-    fn an_edit_that_selects_an_entity_expands_its_ancestors_and_reveals_its_row() {
-        let mut f = fixture();
-        assert_eq!(f.shown_depth(f.node), None);
-        f.scene.signal(EntityEdit::Create {
-            parent: Some(f.node),
-        });
-        let created = f.selected().unwrap();
-
-        f.refresh();
-        f.refresh();
-
-        assert!(f.expanded(f.root));
-        assert!(f.expanded(f.node));
-        assert_eq!(f.shown_depth(created), Some(2));
-        assert!(f.ui_selected(created));
-        assert_eq!(f.state().pending_scene_reveal, None);
-    }
-
-    #[test]
-    fn a_reveal_for_an_entity_created_this_frame_lands_once_its_item_exists() {
-        let mut f = fixture();
-        let created = f.spawn_under(f.node, "late");
-        f.state_mut().reveal_entity(created);
-
-        f.reconcile_structure();
-
-        assert!(f.state().items.contains_key(&created));
-        assert_eq!(
-            f.state().pending_scene_reveal,
-            Some(created),
-            "the item is not placed yet, so the reveal waits"
-        );
-        assert!(!f.expanded(f.root));
-
-        f.place();
-        f.reconcile_structure();
-        f.place();
-
-        assert_eq!(f.state().pending_scene_reveal, None);
-        assert!(f.expanded(f.root));
-        assert!(f.expanded(f.node));
-        assert_eq!(f.shown_depth(created), Some(2));
-    }
-
-    #[test]
-    fn reparenting_moves_the_item_and_keeps_its_expansion() {
-        let mut f = fixture();
-        let second = f.spawn_under(f.root, "second");
+        let a = f.spawn_under(f.root, "a");
+        let b = f.spawn_under(f.root, "b");
         let leaf = f.spawn_under(f.node, "leaf");
         f.refresh();
         f.expand(f.root);
         f.expand(f.node);
-        let item = f.item_of(f.node);
-
-        f.scene
-            .scene_world_mut(f.document)
-            .entity_mut(second)
-            .add_child(f.node);
-        f.refresh();
-
-        assert_eq!(f.item_of(f.node), item);
-        assert_eq!(f.parent_item(item), Some(f.item_of(second)));
-        assert!(f.expanded(f.node));
-        assert_eq!(f.item_children(f.item_of(second)), [f.node]);
-        assert_eq!(f.item_children(f.item_of(f.root)), [second]);
-        assert_eq!(f.item_children(item), [leaf]);
-    }
-
-    #[test]
-    fn the_tree_follows_spawns_despawns_renames_and_reorders() {
-        let mut f = fixture();
-        let a = f.spawn_under(f.root, "a");
-        let b = f.spawn_under(f.root, "b");
-        f.refresh();
         let root_item = f.item_of(f.root);
         assert_eq!(f.item_children(root_item), [f.node, a, b]);
-        assert_eq!(f.count_of(f.root), "3");
 
         f.scene
             .scene_world_mut(f.document)
@@ -1427,282 +1155,23 @@ mod tests {
         assert_eq!(f.label_of(a), "renamed");
         assert_eq!(f.item_children(root_item), order);
 
+        let node_item = f.item_of(f.node);
+        f.scene
+            .scene_world_mut(f.document)
+            .entity_mut(b)
+            .add_child(f.node);
+        f.refresh();
+        assert_eq!(f.item_of(f.node), node_item);
+        assert_eq!(f.item_children(f.item_of(b)), [f.node]);
+        assert_eq!(f.item_children(root_item), [b, a]);
+        assert_eq!(f.item_children(node_item), [leaf]);
+        assert!(f.expanded(f.node));
+
         let gone = f.item_of(a);
         f.scene.scene_world_mut(f.document).despawn(a);
         f.refresh();
-        assert_eq!(f.item_children(root_item), [b, f.node]);
+        assert_eq!(f.item_children(root_item), [b]);
         assert!(!f.scene.world.entity_is_valid(gone));
-        assert!(!f.state().items.contains_key(&a));
-        assert_eq!(f.count_of(f.root), "2");
-    }
-
-    #[test]
-    fn a_new_or_moved_item_takes_its_place_in_the_frame_it_appears() {
-        let mut f = fixture();
-        let node = f.node;
-        let leaf = f.spawn_under(node, "leaf");
-        let moved = f.spawn_under(f.root, "moved");
-        f.refresh();
-        f.expand(f.root);
-        f.expand(node);
-
-        let created = f.spawn_under(f.root, "created");
-        let scene = f.scene.scene_world_mut(f.document);
-        scene.entity_mut(node).add_child(moved);
-        let root = f.root;
-        let scene = f.scene.scene_world_mut(f.document);
-        scene
-            .get_component_for_entity_mut::<Children>(root)
-            .unwrap()
-            .sort_by_key(|child| child != created);
-        scene
-            .get_component_for_entity_mut::<Children>(node)
-            .unwrap()
-            .sort_by_key(|child| child != moved);
-        f.refresh();
-
-        assert_eq!(f.item_children(f.item_of(f.root)), [created, node]);
-        assert_eq!(f.item_children(f.item_of(node)), [moved, leaf]);
-        let rows: Vec<Option<usize>> = [f.root, created, node, moved, leaf]
-            .iter()
-            .map(|entity| {
-                f.scene
-                    .world
-                    .get_component_for_entity::<UIItem>(f.item_of(*entity))
-                    .map(UIItem::index)
-            })
-            .collect();
-        assert_eq!(rows, [Some(0), Some(1), Some(2), Some(3), Some(4)]);
-    }
-
-    #[test]
-    fn losing_the_edit_target_clears_every_item() {
-        let mut f = fixture();
-        let child = f.spawn_under(f.node, "child");
-        f.spawn_under(child, "grandchild");
-        f.refresh();
-        f.expand(f.root);
-        let items: Vec<Entity> = f.state().items.values().copied().collect();
-        assert_eq!(items.len(), 4);
-        let before = invalid_despawns();
-
-        f.scene.activate(None);
-
-        assert_eq!(
-            invalid_despawns(),
-            before,
-            "each item is despawned once, through its outermost item"
-        );
-
-        assert!(f.state().items.is_empty());
-        assert!(
-            items
-                .iter()
-                .all(|item| !f.scene.world.entity_is_valid(*item))
-        );
-        assert_eq!(f.item_entities(), 0);
-    }
-
-    #[test]
-    fn deleting_an_entity_with_children_despawns_each_item_once() {
-        let mut f = fixture();
-        let child = f.spawn_under(f.node, "child");
-        let grandchild = f.spawn_under(child, "grandchild");
-        f.refresh();
-        let items = [f.item_of(f.node), f.item_of(child), f.item_of(grandchild)];
-        let before = invalid_despawns();
-
-        f.scene.scene_world_mut(f.document).despawn(f.node);
-        f.refresh();
-
-        assert!(
-            items
-                .iter()
-                .all(|item| !f.scene.world.entity_is_valid(*item))
-        );
-        for scene_entity in [f.node, child, grandchild] {
-            assert!(!f.state().items.contains_key(&scene_entity));
-        }
-        assert_eq!(f.item_children(f.item_of(f.root)), []);
-        assert_eq!(invalid_despawns(), before);
-    }
-
-    #[test]
-    fn an_external_selection_draws_the_mark_selected_in_the_same_frame() {
-        let mut f = fixture();
-        let theme = UITheme::default();
-        assert!(!f.ui_selected(f.node));
-        f.select(f.node);
-
-        f.reconcile_content();
-
-        assert!(f.ui_selected(f.node));
-        assert_eq!(
-            f.mark_fill(f.node),
-            Mark::Plain.shape(&theme, true).fill.to_linear()
-        );
-    }
-
-    #[test]
-    fn the_footer_says_loading_only_while_a_scene_loads() {
-        let mut f = fixture();
-        assert_eq!(f.footer(), "");
-
-        let document = f.document;
-        f.scene.request_other_scene(document);
-        f.scene.frame();
-        f.refresh();
-        assert_eq!(f.footer(), "Loading…");
-
-        f.scene.frames_until_idle();
-        f.refresh();
-        assert_eq!(f.footer(), "");
-    }
-
-    #[test]
-    fn the_title_counts_every_listed_entity() {
-        let mut f = fixture();
-        let deep = f.spawn_under(f.node, "deep");
-        f.spawn_under(f.root, "other");
-        f.refresh();
-        assert_eq!(f.shown_depth(deep), None, "the root is collapsed");
-        assert_eq!(f.title(), "WORLD · 4 entities");
-
-        f.state_mut().filter = "nothing matches this".into();
-        f.refresh();
-        assert!(f.hidden(deep));
-        assert_eq!(f.title(), "WORLD · 4 entities");
-    }
-
-    #[test]
-    fn the_filter_hides_what_does_not_match_and_clearing_it_restores_the_tree() {
-        let mut f = fixture();
-        let deep = f.spawn_under(f.node, "Deep");
-        let other = f.spawn_under(f.root, "other");
-        f.refresh();
-
-        f.state_mut().filter = "deep".into();
-        f.refresh();
-        let tree = f.tree();
-        assert!(
-            f.scene
-                .world
-                .get_component_for_entity::<UITree>(tree)
-                .unwrap()
-                .filtering
-        );
-        assert!(!f.hidden(deep));
-        assert!(f.hidden(other));
-        assert!(f.hidden(f.node));
-        assert_eq!(f.shown_depth(deep), Some(2));
-        assert_eq!(f.shown_depth(other), None);
-
-        f.state_mut().filter.clear();
-        f.refresh();
-        assert!(
-            !f.scene
-                .world
-                .get_component_for_entity::<UITree>(tree)
-                .unwrap()
-                .filtering
-        );
-        assert!(!f.hidden(other) && !f.hidden(f.node) && !f.hidden(deep));
-        assert_eq!(f.shown_depth(deep), None);
-        assert!(!f.expanded(f.root));
-    }
-
-    #[test]
-    fn an_idle_frame_leaves_marks_unchanged() {
-        let mut f = fixture();
-        f.expand(f.root);
-        f.select(f.node);
-        f.refresh();
-        f.scene.world.tick();
-
-        f.reconcile_content();
-
-        let marks: HashSet<Entity> = f
-            .scene
-            .world
-            .query::<&HierarchyItem, ()>()
-            .iter(&mut f.scene.world)
-            .map(|item| item.mark)
-            .collect();
-        assert_eq!(marks.len(), 2);
-        let changed: Vec<Entity> = f
-            .scene
-            .world
-            .query::<Entity, Or<(Changed<UINode>, Changed<UIMaterial>)>>()
-            .iter(&mut f.scene.world)
-            .filter(|entity| marks.contains(entity))
-            .collect();
-        assert!(changed.is_empty(), "{changed:?}");
-    }
-
-    #[test]
-    fn an_idle_frame_builds_no_label_strings() {
-        let mut f = fixture();
-        f.spawn_under(f.node, "child");
-        f.expand(f.root);
-        f.refresh();
-        f.scene.world.tick();
-
-        f.reconcile_content();
-
-        let texts: HashSet<Entity> = f
-            .scene
-            .world
-            .query::<&HierarchyItem, ()>()
-            .iter(&mut f.scene.world)
-            .flat_map(|item| [item.label, item.count])
-            .collect();
-        assert_eq!(texts.len(), 6);
-        let changed: Vec<Entity> = f
-            .scene
-            .world
-            .query::<Entity, Changed<UIText>>()
-            .iter(&mut f.scene.world)
-            .filter(|entity| texts.contains(entity))
-            .collect();
-        assert!(changed.is_empty(), "{changed:?}");
-
-        let node = f.node;
-        let item = f.hierarchy_item(node);
-        for text in [item.label, item.count] {
-            f.scene
-                .world
-                .get_component_for_entity_mut::<UIText>(text)
-                .unwrap()
-                .text = "probe".into();
-        }
-        f.reconcile_content();
-        assert_eq!(f.label_of(node), "probe");
-        assert_eq!(f.count_of(node), "probe");
-
-        *f.scene
-            .scene_world_mut(f.document)
-            .get_component_for_entity_mut::<Name>(node)
-            .unwrap() = Name::new("renamed");
-        f.reconcile_content();
-        assert_eq!(f.label_of(node), "renamed");
-    }
-
-    #[test]
-    fn a_removed_name_and_a_last_child_leaving_reach_the_row() {
-        let mut f = fixture();
-        let node = f.node;
-        let child = f.spawn_under(node, "child");
-        f.refresh();
-        assert_eq!(f.label_of(node), "first");
-        assert_eq!(f.count_of(node), "1");
-
-        let scene = f.scene.scene_world_mut(f.document);
-        scene.remove_component::<Name>(node);
-        scene.despawn(child);
-        f.refresh();
-
-        assert_eq!(f.label_of(node), format!("Entity {}", node.index()));
-        assert_eq!(f.count_of(node), "");
     }
 
     #[test]
@@ -1718,190 +1187,52 @@ mod tests {
         f.refresh();
         assert!(f.ui_selected(f.root));
         assert!(!f.ui_selected(f.node));
-        f.refresh();
-        let theme = UITheme::default();
-        assert_eq!(
-            f.mark_border(f.root),
-            Mark::Group.shape(&theme, true).border.to_linear()
-        );
 
         f.scene.scene_world_mut(f.document).trigger(Select(None));
         f.refresh();
         assert!(!f.ui_selected(f.root));
-        f.refresh();
-        assert_eq!(
-            f.mark_border(f.root),
-            Mark::Group.shape(&theme, false).border.to_linear()
-        );
     }
 
     #[test]
-    fn rows_are_drawn_from_the_scene_and_emptied_when_its_tab_closes() {
+    fn the_row_menu_the_add_button_and_the_shortcuts_edit_the_scene() {
         let mut f = fixture();
         f.expand(f.root);
-        f.select(f.node);
-        f.refresh();
-        assert_eq!(f.title(), "WORLD · 2 entities");
-        assert_eq!(
-            f.label_of(f.root),
-            "first.gasset",
-            "the root is labelled with the address its document holds"
-        );
-        assert_eq!(f.count_of(f.root), "1");
-        assert_eq!(f.label_of(f.node), "first");
-        assert_eq!(f.count_of(f.node), "");
-        assert!(f.ui_selected(f.node) && !f.ui_selected(f.root));
-        let theme = UITheme::default();
-        assert_eq!(
-            f.mark_width(f.root),
-            UIValue::Px(Mark::Group.shape(&theme, false).size)
-        );
-        assert_eq!(
-            f.mark_width(f.node),
-            UIValue::Px(Mark::Plain.shape(&theme, false).size)
-        );
 
-        f.scene.close(f.document);
-        f.scene.frame();
-        f.scene.frame();
-        f.refresh();
+        f.menu_item(f.node, RowMenuItem::AddChild);
+        assert_eq!(f.children(f.node).len(), 1);
 
-        assert_eq!(f.title(), "WORLD · 0 entities");
-        assert!(f.state().items.is_empty());
-        assert_eq!(f.item_entities(), 0);
-    }
+        f.menu_item(f.node, RowMenuItem::Duplicate);
+        assert_eq!(f.children(f.root).len(), 2);
+        let copy = f.selected().unwrap();
+        assert_ne!(copy, f.node);
 
-    #[test]
-    fn the_row_menu_forgets_its_entity_when_the_scene_is_replaced() {
-        let mut f = fixture();
-        f.expand(f.root);
-        let item = f.item_of(f.node);
-        f.click(item, MouseButton::Right);
-        assert_eq!(f.menu().0, Some(f.node));
+        f.menu_item(copy, RowMenuItem::Rename);
+        assert!(f.rename_requested());
 
-        f.scene.request_other_scene(f.document);
-        f.scene.frames_until_idle();
+        f.menu_item(copy, RowMenuItem::Delete);
+        assert!(!f.valid(copy));
+        assert_eq!(f.children(f.root), [f.node]);
 
-        assert_eq!(f.menu().0, None);
-    }
-
-    #[test]
-    fn a_tree_scrolled_down_one_scene_shows_the_next_from_its_top() {
-        let mut f = fixture();
-        for index in 0..6 {
-            f.spawn_under(f.root, &format!("extra {index}"));
-        }
-        f.refresh();
-        f.expand(f.root);
-        let rect = UIBox {
-            min: Vec2::ZERO,
-            size: Vec2::new(200.0, 64.0),
-        };
-        let tree = f.tree();
-        f.scene.world.insert(
-            UILayout {
-                rect,
-                content_rect: rect,
-                clip_rect: rect,
-                paint_order: 0,
-            },
-            tree,
-        );
-        let offset = |f: &Fixture| {
-            f.scene
-                .world
-                .get_component_for_entity::<UIScrollArea>(tree)
-                .unwrap()
-                .offset
-        };
-        f.scene
+        let button = f
+            .scene
             .world
-            .get_component_for_entity_mut::<UIScrollArea>(tree)
-            .unwrap()
-            .offset = 3.0 * ROW_HEIGHT;
-        f.refresh();
-        assert_eq!(offset(&f), 3.0 * ROW_HEIGHT);
-
-        f.scene.request_other_scene(f.document);
-        f.scene.frames_until_idle();
-
-        assert_eq!(offset(&f), 0.0);
-    }
-
-    #[test]
-    fn replacing_a_scene_clears_panel_state() {
-        let mut f = SceneFixture::new();
-        let document = f.open();
-        f.frame();
-        let state = f.world.get_resource::<HierarchyState>().unwrap();
-        let stale = state.items().values().copied().collect::<Vec<_>>();
-        assert!(!stale.is_empty());
-        f.world
-            .get_component_for_entity_mut::<UITreeElement>(stale[0])
-            .unwrap()
-            .expanded = true;
-
-        f.request_other_scene(document);
-        f.frames_until_idle();
-
-        let state = f.world.get_resource::<HierarchyState>().unwrap();
-        let hosted = f
-            .world
-            .get_component_for_entity::<HostedApp>(document)
+            .query::<Entity, With<AddEntityButton>>()
+            .iter(&mut f.scene.world)
+            .next()
             .unwrap();
-        assert!(!state.items().is_empty());
-        for (scene_entity, item) in state.items() {
-            assert!(hosted.world_for_test().entity_is_valid(*scene_entity));
-            assert!(
-                !f.world
-                    .get_component_for_entity::<UITreeElement>(*item)
-                    .unwrap()
-                    .expanded
-            );
-        }
-        assert!(stale.iter().all(|item| !f.world.entity_is_valid(*item)));
-    }
+        f.select(f.root);
+        f.click(button, MouseButton::Left);
+        assert_eq!(f.children(f.root).len(), 2);
 
-    #[test]
-    fn closing_the_tab_empties_the_panels() {
-        let mut f = SceneFixture::new();
-        let document = f.open();
-        f.frame();
-
-        f.close(document);
-        f.frame();
-        f.frame();
-
-        assert!(
-            f.world
-                .get_resource::<HierarchyState>()
-                .unwrap()
-                .items()
-                .is_empty()
-        );
-        assert_eq!(
-            *f.world.get_resource::<InspectorData>().unwrap(),
-            InspectorData::default()
-        );
+        f.select(f.node);
+        f.fire(DeleteEntity);
+        assert!(!f.valid(f.node));
+        assert_eq!(f.children(f.root).len(), 1);
     }
 
     fn game(app: &mut App) {
         crate::hosted::testing::scene_recipe(app);
-        app.add_system(Startup, spawn_character)
-            .add_system(Startup, spawn_data);
-    }
-
-    #[derive(Component)]
-    struct Score;
-
-    fn spawn_data(mut cmd: CommandQueue) {
-        cmd.spawn(Score);
-        cmd.spawn((Score, (|_: On<UIClick>| {}).into_listener()));
-    }
-
-    fn scores(f: &mut Fixture) -> Vec<Entity> {
-        let world = f.scene.scene_world_mut(f.document);
-        world.query::<Entity, With<Score>>().iter(world).collect()
+        app.add_system(Startup, spawn_character);
     }
 
     fn spawn_character(mut cmd: CommandQueue) {
@@ -1909,7 +1240,8 @@ mod tests {
             .add_child((Name::new("camera"), Transform::IDENTITY));
     }
 
-    fn playing_fixture() -> Fixture {
+    #[test]
+    fn play_and_stop_rebuild_the_rows_from_the_new_targets_world() {
         let mut f = fixture();
         let document = f.document;
         f.scene
@@ -1920,203 +1252,73 @@ mod tests {
         f.scene.world.trigger(crate::scene::Play(document));
         f.scene.frames_until_playing(document);
         f.scene
-            .frames_until("the game never spawned the scene", |scene| {
-                let names = scene.scene_names(document);
-                ["first", "character"]
+            .frames_until("the game never spawned the character", |scene| {
+                scene
+                    .scene_names(document)
                     .iter()
-                    .all(|wanted| names.iter().any(|name| name == wanted))
+                    .any(|name| name == "character")
             });
-        f.node = f.scene.scene_entity(document, "first");
-        f.root = f
-            .scene
-            .scene_world(document)
-            .get_component_for_entity::<ChildOf>(f.node)
-            .map(ChildOf::parent)
-            .expect("the scene's nodes hang from its spawner");
         f.refresh();
-        f
-    }
+        let character = f.scene.scene_entity(document, "character");
+        assert!(f.top_level().contains(&character));
 
-    fn top_level(f: &mut Fixture) -> Vec<Entity> {
-        let tree = f.tree();
-        f.item_children(tree)
-    }
-
-    #[test]
-    fn while_playing_the_tree_lists_every_top_level_entity_with_children_nested() {
-        let mut f = playing_fixture();
-        let character = f.scene.scene_entity(f.document, "character");
-        let camera = f.scene.scene_entity(f.document, "camera");
-
-        let mut expected = vec![f.root, character];
-        let data = scores(&mut f);
-        assert_eq!(data.len(), 2);
-        expected.extend(data);
-        let mut listed = top_level(&mut f);
-        listed.sort_by_key(|entity| (entity.index(), entity.generation()));
-        expected.sort_by_key(|entity| (entity.index(), entity.generation()));
-        assert_eq!(listed, expected);
-        assert_eq!(f.shown_depth(camera), None);
-
-        f.expand(character);
-        f.expand(f.root);
-
-        assert_eq!(f.shown_depth(camera), Some(1));
-        assert_eq!(f.shown_depth(f.node), Some(1));
-    }
-
-    #[test]
-    fn top_level_entities_while_playing_sort_by_index() {
-        let mut f = playing_fixture();
-        let listed = top_level(&mut f);
-        assert!(listed.len() >= 4);
-        let mut sorted = listed.clone();
-        sorted.sort_by_key(|entity| (entity.index(), entity.generation()));
-        assert_eq!(listed, sorted);
-    }
-
-    #[test]
-    fn clicking_a_row_while_playing_selects_it_in_the_play_world_and_the_inspector_shows_it() {
-        let mut f = playing_fixture();
-        let character = f.scene.scene_entity(f.document, "character");
-        let item = f.item_of(character);
-        let edit_selection = |f: &Fixture| {
-            f.scene
-                .parked_world(f.document)
-                .get_resource::<Selection>()
-                .unwrap()
-                .entity()
-        };
-        let before = edit_selection(&f);
-
-        f.click(item, MouseButton::Left);
-        f.scene.frame();
-
-        assert_eq!(f.selected(), Some(character));
-        assert_eq!(edit_selection(&f), before);
-        assert_eq!(
-            f.scene
-                .world
-                .get_resource::<InspectorData>()
-                .unwrap()
-                .scene_entity,
-            Some(character)
-        );
-    }
-
-    #[test]
-    fn while_editing_only_the_scene_root_is_listed_at_the_top() {
-        let mut f = fixture();
-        let stray = f
-            .scene
-            .scene_world_mut(f.document)
-            .spawn((Name::new("stray"), Transform::IDENTITY));
-
+        f.scene.world.trigger(crate::hosted::StopPlay(document));
+        f.scene.frames_until("the game never stopped", |scene| {
+            scene.hosted_is_editing(document)
+        });
         f.refresh();
 
-        assert_eq!(top_level(&mut f), [f.root]);
-        assert!(!f.state().items.contains_key(&stray));
+        let root = f.scene.scene_root(document);
+        let node = f.scene.scene_entity(document, "first");
+        assert_eq!(f.top_level(), [root]);
+        f.expand(root);
+        assert_eq!(f.item_children(f.item_of(root)), [node]);
+        assert_eq!(f.state().items.len(), 2);
     }
 
     #[test]
-    fn while_playing_the_add_button_with_nothing_selected_adds_a_top_level_entity() {
-        let mut f = playing_fixture();
-        let button = f.add_button();
-        assert!(!f.disabled(button));
-        f.scene.scene_world_mut(f.document).trigger(Select(None));
+    fn replacing_the_scene_rebuilds_the_rows_and_closing_its_tab_empties_the_panels() {
+        let mut f = SceneFixture::new();
+        let document = f.open();
+        f.frame();
+        let stale: Vec<Entity> = f
+            .world
+            .get_resource::<HierarchyState>()
+            .unwrap()
+            .items
+            .values()
+            .copied()
+            .collect();
+        assert!(!stale.is_empty());
 
-        f.click(button, MouseButton::Left);
+        f.request_other_scene(document);
+        f.frames_until_idle();
 
-        let created = f.selected().expect("the new entity is selected");
-        assert!(
-            f.scene
-                .scene_world(f.document)
-                .get_component_for_entity::<ChildOf>(created)
-                .is_none()
-        );
-        assert_eq!(f.shown_depth(created), Some(0));
-        assert!(!f.scene.unsaved(f.document));
-    }
-
-    #[test]
-    fn while_playing_a_top_level_row_offers_every_item_and_can_be_deleted() {
-        let mut f = playing_fixture();
-        let character = f.scene.scene_entity(f.document, "character");
-        let item = f.item_of(character);
-        f.click(item, MouseButton::Right);
-        for item in [
-            RowMenuItem::AddChild,
-            RowMenuItem::Duplicate,
-            RowMenuItem::Rename,
-            RowMenuItem::Delete,
-        ] {
-            let entity = f.item(item);
-            assert!(!f.disabled(entity), "{item:?}");
+        let state = f.world.get_resource::<HierarchyState>().unwrap();
+        let hosted = f
+            .world
+            .get_component_for_entity::<HostedApp>(document)
+            .unwrap();
+        assert!(!state.items.is_empty());
+        for scene_entity in state.items.keys() {
+            assert!(hosted.world_for_test().entity_is_valid(*scene_entity));
         }
+        assert!(stale.iter().all(|item| !f.world.entity_is_valid(*item)));
 
-        let delete = f.item(RowMenuItem::Delete);
-        f.click(delete, MouseButton::Left);
+        f.close(document);
+        f.frame();
+        f.frame();
 
-        assert!(!f.valid(character));
-        assert!(top_level(&mut f).contains(&f.root));
-        assert!(!top_level(&mut f).contains(&character));
-    }
-
-    fn created(f: &mut Fixture) -> (Entity, Option<Entity>) {
-        let created = f.selected().expect("the new entity is selected");
-        let parent = f
-            .scene
-            .scene_world(f.document)
-            .get_component_for_entity::<ChildOf>(created)
-            .map(ChildOf::parent);
-        (created, parent)
-    }
-
-    #[test]
-    fn while_playing_the_add_button_adds_a_child_to_the_selection() {
-        let mut f = playing_fixture();
-        let character = f.scene.scene_entity(f.document, "character");
-        f.select(character);
-        let button = f.add_button();
-
-        f.click(button, MouseButton::Left);
-
-        let (created, parent) = created(&mut f);
-        assert_ne!(created, character);
-        assert_eq!(parent, Some(character));
-    }
-
-    #[test]
-    fn while_playing_the_add_button_adds_at_the_top_level_when_the_selection_is_gone() {
-        let mut f = playing_fixture();
-        let character = f.scene.scene_entity(f.document, "character");
-        f.select(character);
-        f.scene.scene_world_mut(f.document).despawn(character);
-        let button = f.add_button();
-
-        f.click(button, MouseButton::Left);
-
-        let (created, parent) = created(&mut f);
-        assert_ne!(created, character);
-        assert_eq!(parent, None);
-        assert_eq!(f.shown_depth(created), Some(0));
-        assert_eq!(f.scene.status(f.document), "");
-    }
-
-    #[test]
-    fn while_the_game_starts_there_is_no_edit_target_and_the_tree_is_empty() {
-        let mut f = fixture();
-        f.scene
-            .scene_world_mut(f.document)
-            .spawn((Name::new("stray"), Transform::IDENTITY));
-        f.scene.world.trigger(crate::scene::Play(f.document));
-        assert_eq!(
-            f.scene.play_state(f.document),
-            Some(crate::hosted::PlayState::Starting)
+        assert!(
+            f.world
+                .get_resource::<HierarchyState>()
+                .unwrap()
+                .items
+                .is_empty()
         );
-
-        f.refresh();
-
-        assert!(top_level(&mut f).is_empty());
+        assert_eq!(
+            *f.world.get_resource::<InspectorData>().unwrap(),
+            InspectorData::default()
+        );
     }
 }

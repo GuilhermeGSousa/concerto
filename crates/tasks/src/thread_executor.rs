@@ -43,6 +43,11 @@ impl<'task> ThreadExecutor<'task> {
         None
     }
 
+    /// Whether the calling thread is the one this executor runs its tasks on.
+    pub fn is_current_thread(&self) -> bool {
+        thread::current().id() == self.thread_id
+    }
+
     pub fn spawn<T: Send + 'task>(
         &self,
         future: impl Future<Output = T> + Send + 'task,

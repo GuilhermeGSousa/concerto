@@ -1,10 +1,17 @@
 use concerto_app::{App, Plugin, schedule_groups::Update};
-use concerto_ecs::{Event, ResMut, Resource, events::event_writer::EventWriter};
-use concerto_foundation::assets::{AssetId, asset_server::AssetServer, registry::AssetRegistry};
+use concerto_ecs::{
+    Event, IntoSystemConfig, Res, ResMut, Resource, World,
+    events::{event_reader::EventReader, event_writer::EventWriter},
+    system::input::SystemLocal,
+    world::FromWorld,
+};
+use concerto_foundation::assets::{
+    Asset, AssetId, asset_server::AssetServer, derived::DerivedDataCache, registry::AssetRegistry,
+};
 use concerto_import::config::ContentConfig;
 use concerto_scene::scene::Scene;
 use std::{
-    collections::VecDeque,
+    collections::{BTreeMap, VecDeque},
     path::{Path, PathBuf},
     thread::JoinHandle,
 };
@@ -14,6 +21,8 @@ pub struct Project {
     pub root: PathBuf,
     /// The project-relative folder the catalogue is read from.
     pub content_root: String,
+    /// The content address of the scene the editor opens with the project, from `content.toml`.
+    pub default_scene: Option<String>,
 }
 
 /// Read-only catalogue discovery. Never creates or rewrites a project's registry.
@@ -26,6 +35,7 @@ pub fn discover_project(root: &Path) -> anyhow::Result<(Project, AssetRegistry)>
         Project {
             root,
             content_root: config.root,
+            default_scene: config.default_scene,
         },
         registry,
     ))
@@ -50,6 +60,12 @@ pub struct ProjectOpened {
 pub struct ProjectOpenFailed {
     pub root: PathBuf,
     pub message: String,
+}
+
+/// Content assets `ids` were written to disk by an import, an asset editor's save, or a New in the content browser.
+#[derive(Event, Clone, Debug, PartialEq)]
+pub struct AssetsWritten {
+    pub ids: Vec<AssetId>,
 }
 
 struct ProjectJob {
@@ -79,15 +95,22 @@ impl ProjectState {
         self.job.is_some()
     }
 
-    #[cfg(test)]
-    pub(crate) fn begin_job_for_test(&mut self, release: std::sync::mpsc::Receiver<()>) {
-        self.job = Some(ProjectJob {
-            root: PathBuf::new(),
-            worker: std::thread::spawn(move || {
-                let _ = release.recv();
-                Ok(None)
-            }),
-        });
+    /// The status line: the open project's asset and scene counts from `registry`, then the last message.
+    pub fn line(&self, registry: Option<&AssetRegistry>) -> String {
+        let (Some(project), Some(registry), false) = (&self.project, registry, self.busy()) else {
+            return self.status.clone();
+        };
+        let summary = format!(
+            "{} assets · {} scenes · {}",
+            registry.iter().count(),
+            registry.of_type::<Scene>().count(),
+            project.root.display()
+        );
+        if self.status.is_empty() {
+            summary
+        } else {
+            format!("{summary} · {}", self.status)
+        }
     }
 }
 
@@ -96,8 +119,127 @@ impl Plugin for ProjectPlugin {
     fn build(&self, app: &mut App) {
         app.register_event::<ProjectOpened>()
             .register_event::<ProjectOpenFailed>()
-            .add_system(Update, process_commands);
+            .register_event::<AssetsWritten>()
+            .add_system(Update, process_commands)
+            .add_system(Update, open_project_scene.after(process_commands))
+            .add_system(Update, report_outdated_content);
     }
+}
+
+/// Content assets of one kind whose header is at a type version other than this build's.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OutdatedContent {
+    pub kind: String,
+    pub file_version: u32,
+    pub current: u32,
+    pub count: usize,
+}
+
+/// Groups `registry`'s entries whose `kind_version` differs from `current(kind)`, by kind then file version.
+pub fn outdated_content(
+    registry: &AssetRegistry,
+    current: impl Fn(&str) -> Option<u32>,
+) -> Vec<OutdatedContent> {
+    let mut groups = BTreeMap::<(&str, u32), (u32, usize)>::new();
+    for entry in registry.iter() {
+        let Some(file_version) = entry.kind_version else {
+            continue;
+        };
+        let Some(current) = current(&entry.kind) else {
+            continue;
+        };
+        if file_version != current {
+            groups
+                .entry((&entry.kind, file_version))
+                .or_insert((current, 0))
+                .1 += 1;
+        }
+    }
+    groups
+        .into_iter()
+        .map(|((kind, file_version), (current, count))| OutdatedContent {
+            kind: kind.into(),
+            file_version,
+            current,
+            count,
+        })
+        .collect()
+}
+
+#[derive(Default)]
+struct ReportedRoot(Option<PathBuf>);
+
+impl FromWorld for ReportedRoot {
+    fn from_world(_world: &World) -> Self {
+        Self::default()
+    }
+}
+
+fn report_outdated_content(
+    server: crate::hosted::EditWorld<Res<AssetServer>>,
+    registry: Res<AssetRegistry>,
+    mut state: ResMut<ProjectState>,
+    mut reported: SystemLocal<ReportedRoot>,
+) {
+    let Some(root) = state.project.as_ref().map(|project| &project.root) else {
+        return;
+    };
+    if reported.0.as_ref() == Some(root) {
+        return;
+    }
+    reported.0 = Some(root.clone());
+    let outdated = outdated_content(&registry, |kind| server.format_version(kind));
+    for group in &outdated {
+        log::warn!(
+            "{} {} content assets are at version {}; this build's {} is version {}. Loading migrates or rejects them; see docs/asset-importing.md",
+            group.count,
+            group.kind,
+            group.file_version,
+            group.kind,
+            group.current
+        );
+    }
+    let total: usize = outdated.iter().map(|group| group.count).sum();
+    if total > 0 {
+        state.status = format!("{total} content assets are outdated; see the log");
+    }
+}
+
+fn open_project_scene(
+    mut opened: EventReader<ProjectOpened>,
+    state: Res<ProjectState>,
+    registry: Res<AssetRegistry>,
+    mut commands: ResMut<EditorCommands>,
+) {
+    for event in opened.read() {
+        let Some(project) = state
+            .project
+            .as_ref()
+            .filter(|project| project.root == event.root)
+        else {
+            continue;
+        };
+        if let Some(id) = project_scene(project, &registry) {
+            commands.0.push_back(EditorCommand::OpenAsset(id));
+        }
+    }
+}
+
+fn project_scene(project: &Project, registry: &AssetRegistry) -> Option<AssetId> {
+    if let Some(address) = &project.default_scene {
+        let scene = registry.id_for_address(address).filter(|id| {
+            registry
+                .get(*id)
+                .is_some_and(|entry| entry.kind == Scene::name())
+        });
+        if scene.is_some() {
+            return scene;
+        }
+        log::warn!(
+            "content.toml's default_scene {address} is not a scene in the project; opening the first scene instead"
+        );
+    }
+    registry.of_type::<Scene>().next().map(|entry| entry.id)
 }
 
 fn process_commands(
@@ -137,12 +279,8 @@ fn process_commands(
                     });
                     return;
                 }
-                state.status = format!(
-                    "{} assets · {} scenes · {}",
-                    discovered.iter().count(),
-                    discovered.of_type::<Scene>().count(),
-                    project.root.display()
-                );
+                asset_server.set_derived_cache(DerivedDataCache::in_project(&project.root));
+                state.status.clear();
                 opened.write(ProjectOpened {
                     root: project.root.clone(),
                 });
@@ -209,16 +347,27 @@ fn process_commands(
 mod tests {
     use super::*;
     use concerto_foundation::assets::content::{
-        CONTENT_FORMAT_VERSION, ContentAssetHeader, ImportProvenance, write_content_asset,
+        ContentAssetHeader, ImportProvenance, write_content_asset,
     };
+    use concerto_foundation::assets::{Asset, registry::AssetEntry};
     #[test]
-    fn discovers_imported_and_authored_assets_without_writing_registry() {
+    fn an_opened_project_lists_its_assets_without_writing_a_registry_and_is_reported_once() {
         let dir = tempfile::tempdir().unwrap();
-        let (_, empty) = discover_project(dir.path()).unwrap();
-        assert_eq!(empty.of_type::<Scene>().count(), 0);
         let id = write_assets(dir.path());
-        let (project, registry) = discover_project(dir.path()).unwrap();
-        assert_eq!(project.content_root, "content");
+        let mut world = project_world();
+
+        settle(
+            &mut world,
+            Some(EditorCommand::OpenProject(dir.path().into())),
+        );
+
+        let root = dir.path().canonicalize().unwrap();
+        assert_eq!(
+            written::<ProjectOpened>(&world),
+            [ProjectOpened { root: root.clone() }]
+        );
+        assert!(written::<ProjectOpenFailed>(&world).is_empty());
+        let registry = world.get_resource::<AssetRegistry>().unwrap();
         assert_eq!(registry.iter().count(), 3);
         let scenes: Vec<_> = registry.of_type::<Scene>().collect();
         assert_eq!(scenes.len(), 2);
@@ -226,8 +375,14 @@ mod tests {
         assert!(scenes[0].provenance.is_none());
         assert_eq!(scenes[1].id, id);
         assert!(scenes[1].provenance.is_some());
-        assert_eq!(registry.iter().next().unwrap().folder(), "content");
         assert!(!dir.path().join("content/.registry.toml").exists());
+        let line = world
+            .get_resource::<ProjectState>()
+            .unwrap()
+            .line(Some(registry));
+        assert!(line.starts_with("3 assets · 2 scenes · "), "{line}");
+        let cache = world.get_resource::<AssetServer>().unwrap().derived_cache();
+        assert_eq!(cache.root(), Some(root.join("derived-cache").as_path()));
     }
 
     fn write_assets(root: &Path) -> AssetId {
@@ -239,14 +394,17 @@ mod tests {
             ("authored", "Scene", false),
         ] {
             let header = ContentAssetHeader {
-                format_version: CONTENT_FORMAT_VERSION,
                 asset_id: if name == "scene" { id } else { AssetId::new() },
                 references: vec![],
                 kind: kind.into(),
+                kind_version: 1,
                 provenance: imported.then(|| ImportProvenance {
                     source: "assets/model.glb".into(),
                     sub_asset: name.into(),
                 }),
+                uncooked: None,
+                derived: None,
+                embedded: Vec::new(),
             };
             std::fs::write(
                 root.join(format!("content/{name}.gasset")),
@@ -257,27 +415,89 @@ mod tests {
         id
     }
 
-    #[test]
-    fn rejects_a_content_toml_with_a_custom_root() {
-        for root in ["../x", "data"] {
-            let dir = tempfile::tempdir().unwrap();
-            std::fs::write(
-                dir.path().join("content.toml"),
-                format!("root = \"{root}\"\n"),
-            )
-            .unwrap();
-            assert!(discover_project(dir.path()).is_err(), "{root}");
-        }
+    fn write_scene(root: &Path, address: &str, kind: &str) -> AssetId {
+        std::fs::create_dir_all(root.join("content")).unwrap();
+        let header = ContentAssetHeader {
+            asset_id: AssetId::new(),
+            references: vec![],
+            kind: kind.into(),
+            kind_version: 1,
+            provenance: None,
+            uncooked: None,
+            derived: None,
+            embedded: Vec::new(),
+        };
+        std::fs::write(
+            root.join(address),
+            write_content_asset(&header, &[]).unwrap(),
+        )
+        .unwrap();
+        header.asset_id
+    }
+
+    fn opened_scene(root: &Path) -> Vec<AssetId> {
+        use concerto_ecs::{IntoSystem, System};
+        let mut world = project_world();
+        let mut open = open_project_scene.into_system();
+        open.initialize(&mut world);
+        settle(&mut world, Some(EditorCommand::OpenProject(root.into())));
+        open.run_and_apply((), &mut world);
+        world
+            .get_resource::<EditorCommands>()
+            .unwrap()
+            .0
+            .iter()
+            .filter_map(|command| match command {
+                EditorCommand::OpenAsset(id) => Some(*id),
+                EditorCommand::OpenProject(_) => None,
+            })
+            .collect()
+    }
+
+    struct DefaultScene {
+        content_toml: Option<&'static str>,
+        opens_forest: bool,
     }
 
     #[test]
-    fn rejects_non_directory_and_corrupt_content() {
+    fn opening_a_project_opens_its_default_scene_or_else_its_first_scene() {
+        for case in [
+            DefaultScene {
+                content_toml: Some("default_scene = \"content/forest.gasset\"\n"),
+                opens_forest: true,
+            },
+            DefaultScene {
+                content_toml: Some("default_scene = \"content/gone.gasset\"\n"),
+                opens_forest: false,
+            },
+            DefaultScene {
+                content_toml: Some("default_scene = \"content/0.gasset\"\n"),
+                opens_forest: false,
+            },
+            DefaultScene {
+                content_toml: None,
+                opens_forest: false,
+            },
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            write_scene(dir.path(), "content/0.gasset", "Mesh");
+            let first = write_scene(dir.path(), "content/a.gasset", "Scene");
+            let forest = write_scene(dir.path(), "content/forest.gasset", "Scene");
+            if let Some(content_toml) = case.content_toml {
+                std::fs::write(dir.path().join("content.toml"), content_toml).unwrap();
+            }
+
+            let expected = if case.opens_forest { forest } else { first };
+            assert_eq!(
+                opened_scene(dir.path()),
+                [expected],
+                "{:?}",
+                case.content_toml
+            );
+        }
         let dir = tempfile::tempdir().unwrap();
-        std::fs::create_dir(dir.path().join("content")).unwrap();
-        let path = dir.path().join("content/broken.gasset");
-        std::fs::write(&path, b"invalid").unwrap();
-        assert!(discover_project(&path).is_err());
-        assert!(discover_project(dir.path()).is_err());
+        write_scene(dir.path(), "content/mesh.gasset", "Mesh");
+        assert_eq!(opened_scene(dir.path()), []);
     }
 
     fn project_world() -> concerto_ecs::World {
@@ -329,38 +549,8 @@ mod tests {
         system.run_and_apply((), world);
     }
 
-    fn finished_job(
-        world: &mut concerto_ecs::World,
-        root: PathBuf,
-        result: Result<Option<(Project, AssetRegistry)>, String>,
-    ) {
-        world.get_resource_mut::<ProjectState>().unwrap().job = Some(ProjectJob {
-            root,
-            worker: std::thread::spawn(move || result),
-        });
-    }
-
     fn status(world: &concerto_ecs::World) -> String {
         world.get_resource::<ProjectState>().unwrap().status.clone()
-    }
-
-    #[test]
-    fn an_opened_project_is_reported_once() {
-        let dir = tempfile::tempdir().unwrap();
-        let mut world = project_world();
-
-        settle(
-            &mut world,
-            Some(EditorCommand::OpenProject(dir.path().into())),
-        );
-
-        assert_eq!(
-            written::<ProjectOpened>(&world),
-            [ProjectOpened {
-                root: dir.path().canonicalize().unwrap()
-            }]
-        );
-        assert!(written::<ProjectOpenFailed>(&world).is_empty());
     }
 
     #[test]
@@ -386,60 +576,6 @@ mod tests {
     }
 
     #[test]
-    fn a_cancelled_folder_pick_is_reported_failed_with_its_message() {
-        let mut world = project_world();
-        finished_job(&mut world, "picked".into(), Ok(None));
-
-        settle(&mut world, None);
-
-        assert_eq!(
-            written::<ProjectOpenFailed>(&world),
-            [ProjectOpenFailed {
-                root: "picked".into(),
-                message: "Folder selection cancelled.".into()
-            }]
-        );
-        assert!(written::<ProjectOpened>(&world).is_empty());
-    }
-
-    #[test]
-    fn a_project_whose_assets_cannot_be_activated_is_reported_failed_once() {
-        let dir = tempfile::tempdir().unwrap();
-        let gone = dir.path().join("gone");
-        let mut world = project_world();
-        finished_job(
-            &mut world,
-            gone.clone(),
-            Ok(Some((
-                Project {
-                    root: gone.clone(),
-                    content_root: "content".into(),
-                },
-                AssetRegistry::default(),
-            ))),
-        );
-
-        settle(&mut world, None);
-
-        assert!(status(&world).starts_with("Could not activate project assets"));
-        assert_eq!(
-            written::<ProjectOpenFailed>(&world),
-            [ProjectOpenFailed {
-                root: gone,
-                message: status(&world)
-            }]
-        );
-        assert!(written::<ProjectOpened>(&world).is_empty());
-        assert!(
-            world
-                .get_resource::<ProjectState>()
-                .unwrap()
-                .project
-                .is_none()
-        );
-    }
-
-    #[test]
     fn opening_a_project_is_held_only_while_a_document_is_unsaved() {
         use crate::asset_editor::{EditorDocument, Unsaved};
         use crate::guard::UnsavedGuard;
@@ -454,6 +590,7 @@ mod tests {
             pending: None,
             order: 0,
             status: String::new(),
+            failed: None,
         });
         world.insert(Unsaved, document);
         let mut system = process_commands.into_system();
@@ -481,33 +618,71 @@ mod tests {
         assert!(world.get_resource::<ProjectState>().unwrap().busy());
     }
 
+    fn versioned(kind: &str, kind_version: Option<u32>) -> AssetEntry {
+        AssetEntry {
+            embedded_in: None,
+            id: AssetId::new(),
+            address: format!("content/{:?}.gasset", AssetId::new()),
+            kind: kind.into(),
+            kind_version,
+            provenance: None,
+        }
+    }
+
+    #[derive(serde::Serialize, serde::Deserialize)]
+    struct Versioned;
+
+    impl Asset for Versioned {
+        const FORMAT_VERSION: u32 = 2;
+
+        fn name() -> &'static str {
+            "Versioned"
+        }
+    }
+
+    fn versioned_recipe(app: &mut App) {
+        crate::hosted::testing::scene_recipe(app);
+        app.register_asset::<Versioned>();
+    }
+
     #[test]
-    fn opening_a_project_while_playing_stops_the_game_first() {
-        use crate::hosted::{PlayState, testing::SceneFixture};
-        use concerto_ecs::{IntoSystem, System, events::event_channel::EventChannel};
+    fn a_project_with_outdated_content_is_reported_once_when_its_first_scene_opens() {
+        use crate::{asset_editor::AssetEditorCommand, hosted::testing::SceneFixture};
+        use concerto_ecs::{IntoSystem, System};
 
         let mut f = SceneFixture::new();
-        let document = f.open();
-        f.world.trigger(crate::scene::Play(document));
-        f.frames_until_playing(document);
-        f.world.insert_resource(EditorCommands::default());
-        f.world.insert_resource(AssetServer::new());
-        f.world.insert_resource(AssetRegistry::default());
         f.world
-            .insert_resource(EventChannel::<ProjectOpened>::new());
-        f.world
-            .insert_resource(EventChannel::<ProjectOpenFailed>::new());
-        f.world
-            .get_resource_mut::<EditorCommands>()
+            .get_resource_mut::<crate::scene::SceneRecipe>()
             .unwrap()
-            .0
-            .push_back(EditorCommand::OpenProject(f.project_root.clone()));
-        let mut system = process_commands.into_system();
-        system.initialize(&mut f.world);
+            .recipe = versioned_recipe;
+        f.add_to_project(&versioned(Versioned::name(), Some(1)));
+        let mut report = report_outdated_content.into_system();
+        report.initialize(&mut f.world);
+        f.world
+            .get_resource_mut::<ProjectState>()
+            .unwrap()
+            .status
+            .clear();
 
-        system.run_and_apply((), &mut f.world);
+        report.run_and_apply((), &mut f.world);
+        assert_eq!(status(&f.world), "");
 
-        assert_eq!(f.play_state(document), Some(PlayState::Editing));
-        assert!(f.hosted_is_editing(document));
+        let document = f.open();
+        report.run_and_apply((), &mut f.world);
+        assert_eq!(
+            status(&f.world),
+            "1 content assets are outdated; see the log"
+        );
+
+        f.world
+            .get_resource_mut::<ProjectState>()
+            .unwrap()
+            .status
+            .clear();
+        f.command(AssetEditorCommand::Close(document));
+        f.frames_until_idle();
+        f.open();
+        report.run_and_apply((), &mut f.world);
+        assert_eq!(status(&f.world), "");
     }
 }

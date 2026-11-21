@@ -6,7 +6,7 @@
 
 use std::path::Path;
 
-use concerto_asset_import::{ImportContext, ImportError, Importer, hash_file_contents};
+use concerto_asset_import::{ImportContext, ImportError, Importer, NoSettings};
 use concerto_color::Color;
 use concerto_foundation::assets::AssetId;
 use concerto_foundation::assets::handle::AssetHandle;
@@ -16,16 +16,30 @@ use concerto_mesh::vertex::Vertex;
 use concerto_reflect::Reflect;
 use concerto_render::assets::material::StandardMaterial;
 use concerto_render::components::material::MaterialComponent;
+use concerto_scene::node_id::{NodeId, derive_ids};
 use concerto_scene::scene::{Scene, SceneNode};
 
 pub struct ObjImporter;
 
 impl Importer for ObjImporter {
+    type Settings = NoSettings;
+    type AssetSettings = NoSettings;
+
+    fn name(&self) -> &'static str {
+        "obj"
+    }
+
     fn supported_extensions(&self) -> &'static [&'static str] {
         &["obj"]
     }
 
-    fn import(&self, source_path: &Path, ctx: &mut ImportContext) -> Result<(), ImportError> {
+    fn import(
+        &self,
+        source_path: &Path,
+        _settings: &NoSettings,
+        _asset_settings: Option<&NoSettings>,
+        ctx: &mut ImportContext,
+    ) -> Result<(), ImportError> {
         let (models, _materials) = tobj::load_obj(
             source_path,
             &tobj::LoadOptions {
@@ -50,9 +64,11 @@ impl Importer for ObjImporter {
         let mut referenced_assets: Vec<AssetId> = Vec::new();
         for (index, model) in models.iter().enumerate() {
             let mut node = SceneNode {
+                id: NodeId::default(),
                 name: model.name.clone(),
                 children: vec![],
                 components: Vec::new(),
+                link: None,
             };
             push_node_component(&mut node, &Transform::default())?;
 
@@ -78,6 +94,7 @@ impl Importer for ObjImporter {
 
             nodes.push(node);
         }
+        derive_ids(&mut nodes);
 
         ctx.emit(
             "scene",
@@ -128,14 +145,18 @@ fn import_material(
     let mtl_dir = source_path.parent().unwrap_or_else(|| Path::new(""));
     let mtl_path = mtl_dir.join(&mtl_name);
 
-    let mtl_hash = hash_file_contents(&mtl_path)?;
-    ctx.track_dependency(mtl_path.clone(), mtl_hash);
+    let mtl_bytes = std::fs::read(&mtl_path).map_err(|err| ImportError::SourceUnreadable {
+        source_path: mtl_path.clone(),
+        message: err.to_string(),
+    })?;
+    ctx.track_dependency(mtl_path.clone());
 
-    let (mats, _name_to_index) =
-        tobj::load_mtl(&mtl_path).map_err(|err| ImportError::MalformedSource {
+    let (mats, _name_to_index) = tobj::load_mtl_buf(&mut mtl_bytes.as_slice()).map_err(|err| {
+        ImportError::MalformedSource {
             source_path: mtl_path.clone(),
             message: format!("failed to parse MTL file: {err}"),
-        })?;
+        }
+    })?;
 
     // Collapse every `newmtl` entry into one StandardMaterial — a verbatim
     // port of the runtime MTLLoader quirk, deliberately preserved here.
@@ -184,10 +205,7 @@ fn import_material(
 }
 
 fn track_texture_dependency(ctx: &mut ImportContext, mtl_dir: &Path, texture_name: &str) {
-    let texture_path = mtl_dir.join(texture_name);
-    if let Ok(hash) = hash_file_contents(&texture_path) {
-        ctx.track_dependency(texture_path, hash);
-    }
+    ctx.track_dependency(mtl_dir.join(texture_name));
 }
 
 /// Per-vertex assembly plus the normal/tangent fallback — a verbatim port of

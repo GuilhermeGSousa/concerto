@@ -1,6 +1,6 @@
 use std::{
     any::{Any, TypeId},
-    collections::HashMap,
+    sync::Arc,
 };
 
 use concerto_asset_format::AssetId;
@@ -8,13 +8,32 @@ use concerto_reflect::{
     EncodeError, FromType, LeafError, LeafHook, Reflect, ReflectDefault, ReflectedValue, TypeData,
     TypeRegistration, TypeRegistry, ValueWarning, apply_value_with, to_value_with,
 };
-use derive_more::{Deref, DerefMut};
+use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 
-use crate::{Component, Entity, Resource, World, system::input::ComponentMetadata};
+use crate::{
+    Component, Entity, Resource, World, entity::EntityHashMap, system::input::ComponentMetadata,
+};
 
-/// The world's type registry.
-#[derive(Resource, Default, Deref, DerefMut)]
-pub struct AppTypeRegistry(pub TypeRegistry);
+/// The world's type registry, shared by every clone; take one guard at a time.
+#[derive(Resource, Clone, Default)]
+pub struct AppTypeRegistry(Arc<RwLock<TypeRegistry>>);
+
+impl AppTypeRegistry {
+    /// Locks the registry for reading.
+    pub fn read(&self) -> RwLockReadGuard<'_, TypeRegistry> {
+        self.0.read()
+    }
+
+    /// Locks the registry for writing.
+    pub fn write(&self) -> RwLockWriteGuard<'_, TypeRegistry> {
+        self.0.write()
+    }
+
+    /// A copy of the type data `D` registered for `id`, taken under the read lock.
+    pub fn get_type_data<D: TypeData + Copy>(&self, id: TypeId) -> Option<D> {
+        self.0.read().get_type_data::<D>(id).copied()
+    }
+}
 
 /// How to read, change, add and remove a reflected component on a world.
 #[derive(Clone, Copy)]
@@ -31,7 +50,7 @@ impl ReflectComponent {
         let Some(default) = world
             .get_resource::<AppTypeRegistry>()
             .and_then(|registry| registry.get_type_data::<ReflectDefault>(id))
-            .map(ReflectDefault::default)
+            .map(|data| data.default())
         else {
             return false;
         };
@@ -133,7 +152,7 @@ fn capture<T: Component + Reflect>(
     Some(to_value_with(
         value,
         &mut CaptureHook {
-            registry: world.get_resource::<AppTypeRegistry>(),
+            registry: world.get_resource::<AppTypeRegistry>().map(|r| r.read()),
             capture,
         },
     ))
@@ -158,21 +177,33 @@ pub struct SceneSpawn<'w> {
 /// What a scene capture collects beside the values: node indices in, referenced assets out.
 #[derive(Default)]
 pub struct SceneCapture {
-    node_indices: HashMap<Entity, usize>,
+    node_indices: EntityHashMap<usize>,
     referenced_assets: Vec<AssetId>,
+    outside: Option<Entity>,
 }
 
 impl SceneCapture {
-    pub fn new(node_indices: HashMap<Entity, usize>) -> Self {
+    pub fn new(node_indices: EntityHashMap<usize>) -> Self {
         Self {
             node_indices,
             referenced_assets: Vec::new(),
+            outside: None,
         }
     }
 
     /// The node index `entity` is captured as, if it is in the scene.
     pub fn index_of(&self, entity: Entity) -> Option<usize> {
         self.node_indices.get(&entity).copied()
+    }
+
+    /// Records that a captured value referenced `entity`, which is not in the scene.
+    pub fn refer_outside(&mut self, entity: Entity) {
+        self.outside = Some(entity);
+    }
+
+    /// The last entity outside the scene that a captured value referenced.
+    pub fn outside(&self) -> Option<Entity> {
+        self.outside
     }
 
     /// Records an asset the captured values refer to; the nil id is not an asset.
@@ -210,14 +241,15 @@ impl LeafHook for SpawnHook<'_> {
 }
 
 struct CaptureHook<'a> {
-    registry: Option<&'a AppTypeRegistry>,
+    registry: Option<RwLockReadGuard<'a, TypeRegistry>>,
     capture: &'a mut SceneCapture,
 }
 
 impl LeafHook for CaptureHook<'_> {
     fn encode(&mut self, leaf: &dyn Reflect) -> Option<Result<Vec<u8>, LeafError>> {
         let capture = self
-            .registry?
+            .registry
+            .as_ref()?
             .get_type_data::<ReflectSceneLeaf>((leaf as &dyn Any).type_id())?
             .capture;
         Some(capture(leaf, self.capture))
@@ -229,13 +261,13 @@ impl LeafHook for CaptureHook<'_> {
 }
 
 /// A scene component an entity carries, as `World::component_types` lists it.
-pub struct SceneComponentType<'w> {
-    registration: &'w TypeRegistration,
+pub struct SceneComponentType {
+    registration: Arc<TypeRegistration>,
     scene: ReflectSceneComponent,
 }
 
-impl<'w> SceneComponentType<'w> {
-    pub(crate) fn new(registration: &'w TypeRegistration, scene: ReflectSceneComponent) -> Self {
+impl SceneComponentType {
+    pub(crate) fn new(registration: Arc<TypeRegistration>, scene: ReflectSceneComponent) -> Self {
         Self {
             registration,
             scene,
@@ -252,8 +284,8 @@ impl<'w> SceneComponentType<'w> {
         self.registration.short_name()
     }
 
-    pub fn registration(&self) -> &'w TypeRegistration {
-        self.registration
+    pub fn registration(&self) -> &TypeRegistration {
+        &self.registration
     }
 
     /// The component's value off `entity` as scene data, mapping entities and recording assets in `capture`.

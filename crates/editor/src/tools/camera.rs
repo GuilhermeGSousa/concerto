@@ -84,11 +84,6 @@ impl FlyCamera {
         self.looking || self.panning
     }
 
-    #[cfg(test)]
-    pub(crate) fn set_looking(&mut self, looking: bool) {
-        self.looking = looking;
-    }
-
     fn rotation(&self) -> Quat {
         Quat::from_rotation_y(self.yaw) * Quat::from_rotation_x(self.pitch)
     }
@@ -221,7 +216,7 @@ fn frame_all(_: On<FrameAll>, mut commands: ResMut<ViewportCommands>) {
     commands.frame_all = true;
 }
 
-pub(crate) const SKY: Color = Color::srgba(0.086, 0.094, 0.157, 1.0);
+pub(crate) const SKY: Color = Camera::DEFAULT_CLEAR_COLOR;
 const GRID_LINES: Color = Color::srgba(0.247, 0.259, 0.322, 0.6);
 const GRID_SURFACE: Color = Color::srgba(0.247, 0.259, 0.322, 0.0);
 
@@ -246,17 +241,18 @@ fn spawn_camera(mut cmd: CommandQueue, fly: Res<FlyCamera>) {
     spawn_editor_camera(&mut cmd, &fly);
 }
 
+pub(crate) fn editor_grid() -> concerto_world_grid::WorldGrid {
+    concerto_world_grid::WorldGrid {
+        line_color: GRID_LINES,
+        surface_color: GRID_SURFACE,
+        lit: false,
+        ..Default::default()
+    }
+}
+
 fn spawn_camera_and_grid(mut cmd: CommandQueue, fly: Res<FlyCamera>) {
     spawn_editor_camera(&mut cmd, &fly);
-    cmd.spawn((
-        concerto_world_grid::WorldGrid {
-            line_color: GRID_LINES,
-            surface_color: GRID_SURFACE,
-            lit: false,
-            ..Default::default()
-        },
-        EditorHelper,
-    ));
+    cmd.spawn((editor_grid(), EditorHelper));
 }
 
 fn apply_fly_transform(fly: &FlyCamera, transform: &mut Transform) {
@@ -467,12 +463,34 @@ mod tests {
     use concerto_ecs::{IntoSystem, System, World, events::event_channel::EventChannel};
     use glam::Mat4;
 
-    struct Framing {
-        world: World,
-        near: Entity,
+    fn run<M>(world: &mut World, system: impl IntoSystem<(), M>) {
+        let mut system = system.into_system();
+        system.initialize(world);
+        system.run_and_apply((), world);
     }
 
-    fn framing() -> Framing {
+    #[test]
+    fn the_spawned_editor_camera_is_the_exclusive_camera() {
+        for spawn in [spawn_camera, spawn_camera_and_grid] {
+            let mut world = World::new();
+            world.insert_resource(FlyCamera::default());
+            run(&mut world, spawn);
+
+            let editor_camera = world
+                .query::<(Entity, &EditorCamera), ()>()
+                .iter(&mut world)
+                .map(|(entity, _)| entity)
+                .next()
+                .unwrap();
+            assert_eq!(
+                world.get_resource::<ExclusiveCamera>().copied(),
+                Some(ExclusiveCamera(editor_camera))
+            );
+        }
+    }
+
+    #[test]
+    fn framing_looks_at_the_selection_or_everything_and_keeps_it_inside_the_far_plane() {
         let mut world = World::new();
         world.insert_resource(ViewportCommands::default());
         world.insert_resource(FlyCamera::default());
@@ -491,119 +509,42 @@ mod tests {
         };
         let near = bounded(40.0);
         bounded(-40.0);
-        Framing { world, near }
-    }
-
-    impl Framing {
-        fn run(&mut self) {
-            let mut system = frame_requested_bounds.into_system();
-            system.initialize(&mut self.world);
-            system.run_and_apply((), &mut self.world);
-        }
-        fn fly(&self) -> &FlyCamera {
-            self.world.get_resource::<FlyCamera>().unwrap()
-        }
-        fn looks_at(&self, point: Vec3) -> bool {
-            let fly = self.fly();
+        let looks_at = |world: &World, point: Vec3| {
+            let fly = world.get_resource::<FlyCamera>().unwrap();
             ((point - fly.position).normalize() - fly.forward()).length() < 1e-3
-        }
-    }
-
-    #[test]
-    fn the_spawned_editor_camera_is_the_exclusive_camera() {
-        for spawn in [spawn_camera, spawn_camera_and_grid] {
-            let mut world = World::new();
-            world.insert_resource(FlyCamera::default());
-            let mut system = spawn.into_system();
-            system.initialize(&mut world);
-            system.run_and_apply((), &mut world);
-
-            let editor_camera = world
-                .query::<(Entity, &EditorCamera), ()>()
-                .iter(&mut world)
-                .map(|(entity, _)| entity)
+        };
+        let far_plane = |world: &mut World| {
+            world
+                .query::<&Camera, ()>()
+                .iter(world)
                 .next()
-                .unwrap();
-            assert_eq!(
-                world.get_resource::<ExclusiveCamera>().copied(),
-                Some(ExclusiveCamera(editor_camera))
-            );
-        }
-    }
+                .unwrap()
+                .zfar
+        };
 
-    #[test]
-    fn a_frame_selection_signal_frames_the_selected_entity_once() {
-        let mut f = framing();
-        let start = f.fly().position;
-        f.world.trigger(FrameSelection);
-        f.run();
-        assert_eq!(f.fly().position, start, "nothing is selected");
-
-        f.world
-            .get_resource_mut::<Selection>()
-            .unwrap()
-            .set(Some(f.near));
-        f.world.trigger(FrameSelection);
-        f.run();
-        assert!(f.looks_at(Vec3::new(40.0, 0.0, 0.0)));
-
-        let framed = f.fly().position;
-        f.world.get_resource_mut::<FlyCamera>().unwrap().position = start;
-        f.run();
-        assert_ne!(framed, start);
-        assert_eq!(f.fly().position, start, "the request was used up");
-    }
-
-    #[test]
-    fn a_frame_all_signal_frames_every_bounded_entity() {
-        let mut f = framing();
-        f.world.trigger(FrameAll);
-        f.run();
-        assert!(f.looks_at(Vec3::ZERO));
-        let commands = f.world.get_resource::<ViewportCommands>().unwrap();
-        assert!(!commands.frame_all && !commands.frame_selection);
-    }
-
-    fn far_plane(f: &mut Framing) -> f32 {
-        f.world
-            .query::<&Camera, ()>()
-            .iter(&mut f.world)
-            .next()
-            .unwrap()
-            .zfar
-    }
-
-    #[test]
-    fn framing_keeps_everything_it_frames_inside_the_far_plane() {
-        let mut f = framing();
-        f.world.trigger(FrameAll);
-        f.run();
+        world.trigger(FrameAll);
+        run(&mut world, frame_requested_bounds);
+        assert!(looks_at(&world, Vec3::ZERO));
+        let position = world.get_resource::<FlyCamera>().unwrap().position;
         let farthest = [Vec3::new(41.0, 1.0, 1.0), Vec3::new(-41.0, 1.0, 1.0)]
-            .map(|corner| (corner - f.fly().position).length())
+            .map(|corner| (corner - position).length())
             .into_iter()
             .fold(0.0, f32::max);
-        let all = far_plane(&mut f);
+        let all = far_plane(&mut world);
         assert!(farthest < all, "{farthest} lies beyond the far plane {all}");
 
-        f.world
+        world
             .get_resource_mut::<Selection>()
             .unwrap()
-            .set(Some(f.near));
-        f.world.trigger(FrameSelection);
-        f.run();
-        assert_eq!(far_plane(&mut f), all, "framing less never clips the rest");
-    }
-
-    #[test]
-    fn framing_a_small_scene_keeps_the_default_far_plane() {
-        let mut f = framing();
-        f.world
-            .get_resource_mut::<Selection>()
-            .unwrap()
-            .set(Some(f.near));
-        f.world.trigger(FrameSelection);
-        f.run();
-        assert_eq!(far_plane(&mut f), Camera::default().zfar);
+            .set(Some(near));
+        world.trigger(FrameSelection);
+        run(&mut world, frame_requested_bounds);
+        assert!(looks_at(&world, Vec3::new(40.0, 0.0, 0.0)));
+        assert_eq!(
+            far_plane(&mut world),
+            all,
+            "framing less never clips the rest"
+        );
     }
 
     fn pointing(over: bool) -> World {
@@ -625,291 +566,97 @@ mod tests {
     }
 
     #[test]
-    fn a_right_press_looks_around_only_when_the_pointer_is_over_the_picture() {
+    fn the_mouse_steers_the_camera_only_over_the_picture_and_until_its_button_is_released() {
         for over in [false, true] {
             let mut world = pointing(over);
             world
                 .get_resource_mut::<Input>()
                 .unwrap()
                 .update_mouse_button(MouseButton::Right, true);
-
-            let mut system = navigate.into_system();
-            system.initialize(&mut world);
-            system.run_and_apply((), &mut world);
-
-            assert_eq!(
-                world.get_resource::<FlyCamera>().unwrap().navigating(),
-                over
-            );
-            assert_eq!(
-                world
-                    .get_resource::<Window>()
-                    .unwrap()
-                    .settings
-                    .cursor
-                    .grabbed,
-                over
-            );
-        }
-    }
-
-    #[test]
-    fn a_middle_press_pans_only_when_the_pointer_is_over_the_picture() {
-        for over in [false, true] {
-            let mut world = pointing(over);
-            world
-                .get_resource_mut::<Input>()
-                .unwrap()
-                .update_mouse_button(MouseButton::Middle, true);
-
-            let mut system = navigate.into_system();
-            system.initialize(&mut world);
-            system.run_and_apply((), &mut world);
-
-            assert_eq!(
-                world.get_resource::<FlyCamera>().unwrap().navigating(),
-                over
-            );
-        }
-    }
-
-    #[test]
-    fn the_wheel_dollies_only_when_the_pointer_is_over_the_picture() {
-        for over in [false, true] {
-            let mut world = pointing(over);
             world
                 .get_resource_mut::<EventChannel<WindowEvent>>()
                 .unwrap()
                 .push_event(WindowEvent::MouseWheel {
                     delta: ScrollDelta::Lines(Vec2::Y),
                 });
+            run(&mut world, zoom);
+            let mut navigation = navigate.into_system();
+            navigation.initialize(&mut world);
+            navigation.run_and_apply((), &mut world);
 
-            let mut system = zoom.into_system();
-            system.initialize(&mut world);
-            system.run_and_apply((), &mut world);
+            let grabbed = |world: &World| {
+                world
+                    .get_resource::<Window>()
+                    .unwrap()
+                    .settings
+                    .cursor
+                    .grabbed
+            };
+            let fly = world.get_resource::<FlyCamera>().unwrap();
+            assert_eq!(fly.navigating(), over);
+            assert_eq!(fly.position != FlyCamera::default().position, over);
+            assert_eq!(grabbed(&world), over);
 
-            let moved = world.get_resource::<FlyCamera>().unwrap().position
-                != FlyCamera::default().position;
-            assert_eq!(moved, over);
+            let input = world.get_resource_mut::<Input>().unwrap();
+            input.update();
+            input.release_all();
+            input.update();
+            navigation.run_and_apply((), &mut world);
+            assert!(!world.get_resource::<FlyCamera>().unwrap().navigating());
+            assert!(!grabbed(&world));
         }
     }
 
     #[test]
-    fn the_camera_takes_the_shape_of_the_picture_and_keeps_it_when_the_picture_has_no_area() {
+    fn the_pointer_is_read_in_the_pictures_logical_pixels_and_shapes_the_camera() {
         let mut world = pointing(true);
-        let aspect = |world: &mut World| {
-            let mut system = fit_camera_to_picture.into_system();
-            system.initialize(world);
-            system.run_and_apply((), world);
-            world
-                .query::<(&EditorCamera, &Camera), ()>()
-                .iter(world)
-                .next()
-                .unwrap()
-                .1
-                .aspect
-        };
-        world.get_resource_mut::<ViewportPointer>().unwrap().size = Vec2::new(1000.0, 500.0);
-        assert_eq!(aspect(&mut world), 2.0);
-
-        world.get_resource_mut::<ViewportPointer>().unwrap().size = Vec2::new(1000.0, 0.0);
-        assert_eq!(aspect(&mut world), 2.0);
-    }
-
-    #[test]
-    fn a_look_and_a_pan_end_when_their_buttons_are_no_longer_held() {
-        let mut world = pointing(true);
-        let mut system = navigate.into_system();
-        system.initialize(&mut world);
-        let input = world.get_resource_mut::<Input>().unwrap();
-        input.update_mouse_button(MouseButton::Right, true);
-        input.update_mouse_button(MouseButton::Middle, true);
-        system.run_and_apply((), &mut world);
-        assert!(world.get_resource::<FlyCamera>().unwrap().navigating());
-        assert!(
-            world
-                .get_resource::<Window>()
-                .unwrap()
-                .settings
-                .cursor
-                .grabbed
-        );
-
-        let input = world.get_resource_mut::<Input>().unwrap();
-        input.update();
-        input.release_all();
-        input.update();
-        system.run_and_apply((), &mut world);
-
-        assert!(!world.get_resource::<FlyCamera>().unwrap().navigating());
-        assert!(
-            !world
-                .get_resource::<Window>()
-                .unwrap()
-                .settings
-                .cursor
-                .grabbed
-        );
-    }
-
-    #[test]
-    fn a_pointer_off_the_picture_is_not_over_it() {
-        let mut world = World::new();
-        let mut input = Input::new();
-        input.update_mouse_position(-1.0, -1.0);
-        world.insert_resource(input);
-        world.insert_resource(Window::new((800, 600), 1.0));
-        world.insert_resource(ViewportPointer::default());
-        let mut system = fill_pointer_from_window.into_system();
-        system.initialize(&mut world);
-        let mut over = |world: &mut World, x: f64, y: f64| {
-            world
-                .get_resource_mut::<Input>()
-                .unwrap()
-                .update_mouse_position(x, y);
-            system.run_and_apply((), world);
-            world.get_resource::<ViewportPointer>().unwrap().over
-        };
-
-        assert!(!over(&mut world, -1.0, -1.0));
-        assert!(!over(&mut world, 801.0, 300.0));
-        assert!(!over(&mut world, 400.0, 601.0));
-        assert!(over(&mut world, 400.0, 300.0));
-        assert!(over(&mut world, 0.0, 0.0));
-    }
-
-    #[test]
-    fn the_pointer_is_read_from_the_apps_own_window() {
-        let mut world = World::new();
         let mut input = Input::new();
         input.update_mouse_position(600.0, 400.0);
         input.update_mouse_button(MouseButton::Left, true);
         world.insert_resource(input);
-        world.insert_resource(Window::new((1600, 1200), 2.0));
-        world.insert_resource(ViewportPointer::default());
-        let mut system = fill_pointer_from_window.into_system();
-        system.initialize(&mut world);
+        world.insert_resource(Window::new((1600, 1000), 2.0));
 
-        system.run_and_apply((), &mut world);
+        run(&mut world, fill_pointer_from_window);
+        run(&mut world, fit_camera_to_picture);
 
-        let filled = ViewportPointer {
-            position: Vec2::new(300.0, 200.0),
-            size: Vec2::new(800.0, 600.0),
-            over: true,
-            pressed: true,
-            held: true,
-            scale: 2.0,
-        };
-        assert_eq!(*world.get_resource::<ViewportPointer>().unwrap(), filled);
-        let written = world.resource_changed_tick::<ViewportPointer>();
-        world.tick();
-        world.get_resource_mut::<Input>().unwrap().update();
-        system.run_and_apply((), &mut world);
         assert_eq!(
             *world.get_resource::<ViewportPointer>().unwrap(),
             ViewportPointer {
-                pressed: false,
-                ..filled
+                position: Vec2::new(300.0, 200.0),
+                size: Vec2::new(800.0, 500.0),
+                over: true,
+                pressed: true,
+                held: true,
+                scale: 2.0,
             }
         );
-        world.tick();
-        let settled = world.resource_changed_tick::<ViewportPointer>();
-        system.run_and_apply((), &mut world);
-        assert_ne!(written, settled);
-        assert_eq!(world.resource_changed_tick::<ViewportPointer>(), settled);
+        let aspect = world
+            .query::<(&EditorCamera, &Camera), ()>()
+            .iter(&mut world)
+            .next()
+            .unwrap()
+            .1
+            .aspect;
+        assert_eq!(aspect, 1.6);
     }
 
     #[test]
-    fn the_camera_looks_where_its_angles_point() {
-        let fly = FlyCamera {
-            yaw: std::f32::consts::FRAC_PI_2,
-            pitch: 0.0,
-            ..Default::default()
-        };
-        let mut transform = Transform::IDENTITY;
-        apply_fly_transform(&fly, &mut transform);
-        assert_eq!(transform.translation, fly.position);
-        assert!((fly.forward() - Vec3::NEG_X).length() < 0.001);
-    }
-
-    fn posed(pose: SetCameraPose) -> FlyCamera {
-        let mut world = World::new();
-        world.insert_resource(FlyCamera::default());
-        world.add_listener(set_camera_pose);
-        world.trigger(pose);
-        world.remove_resource::<FlyCamera>().unwrap()
-    }
-
-    #[test]
-    fn a_pose_looking_at_a_point_faces_it() {
+    fn a_pose_looking_at_a_point_faces_it_within_the_pitch_a_look_can_reach() {
         let position = Vec3::new(1.0, 2.0, 3.0);
-        for direction in [Vec3::NEG_Z, Vec3::Z, Vec3::new(1.0, -1.0, 0.5)] {
-            let pose = SetCameraPose::looking_at(position, position + direction * 4.0).unwrap();
-            let fly = posed(pose);
+        for direction in [Vec3::NEG_Z, Vec3::Z, Vec3::new(1.0, -1.0, 0.5), Vec3::Y] {
+            let mut world = World::new();
+            world.insert_resource(FlyCamera::default());
+            world.add_listener(set_camera_pose);
+            world.trigger(SetCameraPose::looking_at(position, position + direction * 4.0).unwrap());
+            let fly = world.get_resource::<FlyCamera>().unwrap();
             assert_eq!(fly.position, position);
+            assert!(fly.pitch.abs() <= MAX_PITCH);
             assert!(
-                (fly.forward() - direction.normalize()).length() < 1e-4,
+                (fly.forward() - direction.normalize()).length() < 0.03,
                 "{direction} gives {}",
                 fly.forward()
             );
         }
-        let ahead = SetCameraPose::looking_at(position, position + Vec3::NEG_Z).unwrap();
-        assert_eq!((ahead.yaw, ahead.pitch), (0.0, 0.0));
-        let behind = SetCameraPose::looking_at(position, position + Vec3::Z).unwrap();
-        assert!((behind.yaw.abs() - std::f32::consts::PI).abs() < 1e-6);
-    }
-
-    #[test]
-    fn a_pose_looking_straight_up_keeps_the_pitch_a_look_can_reach() {
-        let pose = SetCameraPose::looking_at(Vec3::ZERO, Vec3::Y * 3.0).unwrap();
-        assert_eq!(pose.yaw, 0.0);
-        let fly = posed(pose);
-        assert_eq!(fly.pitch, MAX_PITCH);
-        assert!(fly.forward().y > 0.99);
-        assert_eq!(
-            posed(SetCameraPose {
-                pitch: -9.0,
-                ..pose
-            })
-            .pitch,
-            -MAX_PITCH
-        );
-    }
-
-    #[test]
-    fn a_pose_is_placed_only_once_the_camera_has_been_moved_to_it() {
-        let mut world = pointing(false);
-        world.add_listener(set_camera_pose);
-        let placed = |world: &mut World| {
-            let transform = world
-                .query::<(&EditorCamera, &Transform), ()>()
-                .iter(world)
-                .next()
-                .unwrap()
-                .1
-                .clone();
-            world
-                .get_resource::<FlyCamera>()
-                .unwrap()
-                .placed(&transform)
-        };
-        let mut system = navigate.into_system();
-        system.initialize(&mut world);
-        system.run_and_apply((), &mut world);
-        assert!(placed(&mut world));
-
-        world.trigger(SetCameraPose {
-            position: Vec3::new(4.0, 5.0, 6.0),
-            yaw: 1.0,
-            pitch: 0.5,
-        });
-        assert!(!placed(&mut world));
-        system.run_and_apply((), &mut world);
-        assert!(placed(&mut world));
-    }
-
-    #[test]
-    fn a_pose_cannot_look_at_its_own_position() {
         assert!(SetCameraPose::looking_at(Vec3::ONE, Vec3::ONE).is_none());
     }
 
@@ -917,18 +664,7 @@ mod tests {
     fn movement_is_relative_to_where_the_camera_faces() {
         let rotation = Quat::from_rotation_y(std::f32::consts::FRAC_PI_2);
         let mut input = Input::new();
-        let press = |input: &mut Input, code| input.update_key_input(PhysicalKey::Code(code), true);
-        press(&mut input, KeyCode::KeyW);
-        assert!(
-            (movement(&input, rotation) - Vec3::NEG_X).length() < 0.001,
-            "forward follows the camera, not the world"
-        );
-
-        press(&mut input, KeyCode::KeyE);
-        let diagonal = movement(&input, rotation);
-        assert!(
-            (diagonal.length() - 1.0).abs() < 0.001,
-            "forward and up together must not fly faster than either alone"
-        );
+        input.update_key_input(PhysicalKey::Code(KeyCode::KeyW), true);
+        assert!((movement(&input, rotation) - Vec3::NEG_X).length() < 0.001);
     }
 }

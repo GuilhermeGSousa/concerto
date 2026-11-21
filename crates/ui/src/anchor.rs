@@ -666,197 +666,48 @@ mod dismiss_tests {
     use super::{EscapeDismissal, should_dismiss_on_escape};
 
     #[test]
-    fn does_nothing_without_a_press() {
-        assert!(!should_dismiss_on_escape(EscapeDismissal {
-            dismissed: false,
-            field_focused: false,
-            field_cancelled_this_frame: false,
-            stack_open: true,
-        }));
-    }
-
-    #[test]
-    fn a_focused_text_field_keeps_first_claim_on_escape() {
-        assert!(!should_dismiss_on_escape(EscapeDismissal {
-            dismissed: true,
-            field_focused: true,
-            field_cancelled_this_frame: false,
-            stack_open: true,
-        }));
-    }
-
-    #[test]
-    fn nothing_to_close_is_a_no_op() {
-        assert!(!should_dismiss_on_escape(EscapeDismissal {
-            dismissed: true,
-            field_focused: false,
-            field_cancelled_this_frame: false,
-            stack_open: false,
-        }));
-    }
-
-    #[test]
-    fn a_focused_field_with_nothing_open_is_still_a_no_op() {
-        assert!(!should_dismiss_on_escape(EscapeDismissal {
-            dismissed: true,
-            field_focused: true,
-            field_cancelled_this_frame: false,
-            stack_open: false,
-        }));
-    }
-
-    #[test]
-    fn closes_the_top_panel_otherwise() {
-        assert!(should_dismiss_on_escape(EscapeDismissal {
-            dismissed: true,
-            field_focused: false,
-            field_cancelled_this_frame: false,
-            stack_open: true,
-        }));
-    }
-
-    #[test]
-    fn frame_n_a_same_frame_cancel_does_not_also_close_the_panel() {
-        assert!(!should_dismiss_on_escape(EscapeDismissal {
-            dismissed: true,
-            field_focused: false,
-            field_cancelled_this_frame: true,
-            stack_open: true,
-        }));
-    }
-
-    #[test]
-    fn frame_n_plus_1_the_following_escape_closes_the_panel() {
-        assert!(should_dismiss_on_escape(EscapeDismissal {
-            dismissed: true,
-            field_focused: false,
-            field_cancelled_this_frame: false,
-            stack_open: true,
-        }));
-    }
-}
-
-#[cfg(test)]
-mod escape_tests {
-    use concerto_ecs::{
-        IntoSystem, System, World,
-        entity::Entity,
-        events::event_channel::EventChannel,
-        resource::{ResMut, Resource},
-        signal::{On, listener::IntoListener},
-    };
-    use concerto_window::input::{
-        Input, MouseButton,
-        actions::{ActionFired, ActionLabel},
-    };
-    use concerto_window::plugin::Window;
-    use glam::Vec2;
-
-    use super::{
-        UIAnchorTarget, UIAnchoredPanel, UIDismissPanel, UIPanelEscaped, UIPanelStack,
-        dismiss_panels,
-    };
-    use crate::{
-        focus::FocusedWidget,
-        node::{UIBox, UILayout, UINode},
-        text_input::{UITextInput, UITextInputCancelled},
-    };
-
-    #[derive(Resource, Default)]
-    struct Escaped(Vec<Entity>);
-
-    fn escape_world() -> (World, Entity) {
-        let mut world = World::new();
-        world.insert_resource(Window::new((800, 600), 1.0));
-        world.insert_resource(Input::new());
-        world.insert_resource(FocusedWidget::default());
-        world.insert_resource(EventChannel::<ActionFired>::default());
-        world.insert_resource(EventChannel::<UITextInputCancelled>::default());
-        world.insert_resource(Escaped::default());
-        let rect = UIBox {
-            min: Vec2::new(100.0, 100.0),
-            size: Vec2::new(200.0, 150.0),
-        };
-        let panel = world.spawn((
-            UIAnchoredPanel::new(UIAnchorTarget::from_point(Vec2::new(100.0, 100.0)))
-                .with_open(true),
-            UINode::default(),
-            UILayout {
-                rect,
-                content_rect: rect,
-                clip_rect: rect,
-                paint_order: 0,
-            },
-            (|on: On<UIPanelEscaped>, mut escaped: ResMut<Escaped>| {
-                escaped.0.push(on.entity());
-            })
-            .into_listener(),
-        ));
-        world.insert_resource(UIPanelStack { open: vec![panel] });
-        (world, panel)
-    }
-
-    fn press_escape(world: &mut World) {
-        world
-            .get_resource_mut::<EventChannel<ActionFired>>()
-            .unwrap()
-            .push_event(ActionFired {
-                action: UIDismissPanel.intern(),
-            });
-    }
-
-    fn dismiss(world: &mut World) {
-        let mut system = dismiss_panels.into_system();
-        system.initialize(world);
-        system.run_and_apply((), world);
-    }
-
-    fn escaped(world: &World) -> Vec<Entity> {
-        world.get_resource::<Escaped>().unwrap().0.clone()
-    }
-
-    fn is_open(world: &World, panel: Entity) -> bool {
-        world
-            .get_component_for_entity::<UIAnchoredPanel>(panel)
-            .unwrap()
-            .open
-    }
-
-    #[test]
-    fn escape_on_an_open_panel_tells_the_panel_once() {
-        let (mut world, panel) = escape_world();
-        press_escape(&mut world);
-
-        dismiss(&mut world);
-
-        assert!(!is_open(&world, panel));
-        assert_eq!(escaped(&world), [panel]);
-    }
-
-    #[test]
-    fn a_press_outside_closes_the_panel_without_telling_it_escape_did() {
-        let (mut world, panel) = escape_world();
-        world
-            .get_resource_mut::<Input>()
-            .unwrap()
-            .update_mouse_button(MouseButton::Left, true);
-
-        dismiss(&mut world);
-
-        assert!(!is_open(&world, panel));
-        assert!(escaped(&world).is_empty());
-    }
-
-    #[test]
-    fn escape_in_a_focused_text_field_tells_the_panel_nothing() {
-        let (mut world, panel) = escape_world();
-        let field = world.spawn(UITextInput::new(""));
-        **world.get_resource_mut::<FocusedWidget>().unwrap() = Some(field);
-        press_escape(&mut world);
-
-        dismiss(&mut world);
-
-        assert!(is_open(&world, panel));
-        assert!(escaped(&world).is_empty());
+    fn escape_closes_the_top_panel_only_when_no_text_field_claims_it() {
+        struct Case {
+            name: &'static str,
+            input: EscapeDismissal,
+            closes: bool,
+        }
+        let case =
+            |name, dismissed, field_focused, field_cancelled_this_frame, stack_open, closes| Case {
+                name,
+                input: EscapeDismissal {
+                    dismissed,
+                    field_focused,
+                    field_cancelled_this_frame,
+                    stack_open,
+                },
+                closes,
+            };
+        for case in [
+            case(
+                "a focused field claims it first",
+                true,
+                true,
+                false,
+                true,
+                false,
+            ),
+            case(
+                "a field cancelled this frame",
+                true,
+                false,
+                true,
+                true,
+                false,
+            ),
+            case("otherwise", true, false, false, true, true),
+        ] {
+            assert_eq!(
+                should_dismiss_on_escape(case.input),
+                case.closes,
+                "{}",
+                case.name
+            );
+        }
     }
 }

@@ -279,172 +279,106 @@ fn triangulate(points: &[Vec2]) -> Vec<Triangle> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
 
-    fn sorted(t: &Triangle) -> [usize; 3] {
-        let mut idx = [t.a, t.b, t.c];
-        idx.sort_unstable();
-        idx
+    struct Count {
+        points: Vec<Vec2>,
+        triangles: usize,
     }
 
     #[test]
-    fn single_triangle() {
-        let pts = vec![
-            Vec2::new(0.0, 0.0),
-            Vec2::new(1.0, 0.0),
-            Vec2::new(0.5, 1.0),
+    fn a_triangulation_has_two_n_minus_hull_minus_two_triangles() {
+        let cases = [
+            Count {
+                points: vec![Vec2::ZERO, Vec2::ONE],
+                triangles: 0,
+            },
+            Count {
+                points: square(),
+                triangles: 4,
+            },
         ];
-        let t = Triangulation2D::build(pts);
-        assert_eq!(t.triangles.len(), 1);
-        assert_eq!(sorted(&t.triangles[0]), [0, 1, 2]);
-    }
-
-    #[test]
-    fn square_gives_two_triangles() {
-        let pts = vec![
-            Vec2::new(0.0, 0.0),
-            Vec2::new(1.0, 0.0),
-            Vec2::new(1.0, 1.0),
-            Vec2::new(0.0, 1.0),
-        ];
-        let t = Triangulation2D::build(pts);
-        assert_eq!(t.triangles.len(), 2);
-    }
-
-    #[test]
-    fn five_points_with_interior() {
-        // Square with a center point: convex hull = 4, n = 5
-        // Euler formula: T = 2n - h - 2 = 10 - 4 - 2 = 4
-        let pts = vec![
-            Vec2::new(0.0, 0.0),
-            Vec2::new(2.0, 0.0),
-            Vec2::new(2.0, 2.0),
-            Vec2::new(0.0, 2.0),
-            Vec2::new(1.0, 1.0),
-        ];
-        let t = Triangulation2D::build(pts);
-        assert_eq!(t.triangles.len(), 4);
-        for tri in &t.triangles {
-            assert!(tri.a < 5 && tri.b < 5 && tri.c < 5);
+        for case in cases {
+            let count = case.points.len();
+            let triangulation = Triangulation2D::build(case.points);
+            assert_eq!(triangulation.triangles().len(), case.triangles);
+            for triangle in triangulation.triangles() {
+                let mut corners = [triangle.a, triangle.b, triangle.c];
+                corners.sort_unstable();
+                assert!(corners[0] < corners[1] && corners[1] < corners[2] && corners[2] < count);
+            }
         }
     }
 
-    #[test]
-    fn fewer_than_three_points_is_empty() {
-        let t = Triangulation2D::build(vec![Vec2::ZERO, Vec2::ONE]);
-        assert!(t.triangles.is_empty());
-    }
-
-    #[test]
-    fn locate_center_of_triangle() {
-        let pts = vec![
-            Vec2::new(0.0, 0.0),
-            Vec2::new(1.0, 0.0),
-            Vec2::new(0.5, 1.0),
-        ];
-        let t = Triangulation2D::build(pts);
-        let centroid = Vec2::new(0.5, 1.0 / 3.0);
-        let loc = t.locate(centroid).expect("centroid should be inside");
-        assert_eq!(loc.triangle, 0);
-        // At the centroid all barycentric coordinates equal 1/3.
-        let eps = 1e-5;
-        assert!((loc.lambda_a - 1.0 / 3.0).abs() < eps);
-        assert!((loc.lambda_b - 1.0 / 3.0).abs() < eps);
-        assert!((loc.lambda_c - 1.0 / 3.0).abs() < eps);
-    }
-
-    #[test]
-    fn locate_at_vertex() {
-        let pts = vec![
-            Vec2::new(0.0, 0.0),
-            Vec2::new(1.0, 0.0),
-            Vec2::new(0.5, 1.0),
-        ];
-        let t = Triangulation2D::build(pts);
-        // Point exactly at vertex a should give λa = 1, λb = 0, λc = 0.
-        let tri = &t.triangles[0];
-        let va = t.points[tri.a];
-        let loc = t.locate(va).expect("vertex should be inside");
-        let eps = 1e-5;
-        assert!((loc.lambda_a - 1.0).abs() < eps);
-        assert!(loc.lambda_b.abs() < eps);
-        assert!(loc.lambda_c.abs() < eps);
-    }
-
-    #[test]
-    fn locate_or_nearest_projects_to_boundary() {
-        // Diamond: (0,1) (1,0) (0,-1) (-1,0). Point (1,1) is outside.
-        let pts = vec![
-            Vec2::new(0.0, 1.0),
-            Vec2::new(1.0, 0.0),
-            Vec2::new(0.0, -1.0),
-            Vec2::new(-1.0, 0.0),
-        ];
-        let t = Triangulation2D::build(pts.clone());
-        let loc = t.locate_or_nearest(Vec2::new(1.0, 1.0));
-
-        // Weights must be valid.
-        assert!(loc.lambda_a >= 0.0 && loc.lambda_b >= 0.0 && loc.lambda_c >= 0.0);
-        assert!((loc.lambda_a + loc.lambda_b + loc.lambda_c - 1.0).abs() < 1e-5);
-
-        // The reconstructed point is the nearest point on the hull to (1,1),
-        // which is the midpoint of the (0,1)-(1,0) edge: (0.5, 0.5).
-        let tri = &t.triangles[loc.triangle];
-        let reconstructed =
-            pts[tri.a] * loc.lambda_a + pts[tri.b] * loc.lambda_b + pts[tri.c] * loc.lambda_c;
-        assert!((reconstructed - Vec2::new(0.5, 0.5)).length() < 1e-5);
-    }
-
-    #[test]
-    fn locate_or_nearest_exact_when_inside() {
-        let pts = vec![
-            Vec2::new(0.0, 0.0),
-            Vec2::new(1.0, 0.0),
-            Vec2::new(0.5, 1.0),
-        ];
-        let t = Triangulation2D::build(pts);
-        let centroid = Vec2::new(0.5, 1.0 / 3.0);
-        let via_locate = t.locate(centroid).unwrap();
-        let via_nearest = t.locate_or_nearest(centroid);
-        assert_eq!(via_locate.triangle, via_nearest.triangle);
-        assert!((via_locate.lambda_a - via_nearest.lambda_a).abs() < 1e-6);
-        assert!((via_locate.lambda_b - via_nearest.lambda_b).abs() < 1e-6);
-        assert!((via_locate.lambda_c - via_nearest.lambda_c).abs() < 1e-6);
-    }
-
-    #[test]
-    fn locate_outside_returns_none() {
-        let pts = vec![
-            Vec2::new(0.0, 0.0),
-            Vec2::new(1.0, 0.0),
-            Vec2::new(0.5, 1.0),
-        ];
-        let t = Triangulation2D::build(pts);
-        assert!(t.locate(Vec2::new(5.0, 5.0)).is_none());
-    }
-
-    #[test]
-    fn barycentric_coords_sum_to_one() {
-        let pts = vec![
+    fn square() -> Vec<Vec2> {
+        vec![
             Vec2::new(0.0, 0.0),
             Vec2::new(2.0, 0.0),
             Vec2::new(2.0, 2.0),
             Vec2::new(0.0, 2.0),
             Vec2::new(1.0, 1.0),
-        ];
-        let t = Triangulation2D::build(pts);
-        let probe = Vec2::new(0.5, 0.5);
-        if let Some(loc) = t.locate(probe) {
-            assert!(
-                (loc.lambda_a + loc.lambda_b + loc.lambda_c - 1.0).abs() < 1e-5,
-                "coords must sum to 1"
+        ]
+    }
+
+    fn rebuilt(triangulation: &Triangulation2D, located: &TriangulatedPoint2D) -> Vec2 {
+        let triangle = &triangulation.triangles()[located.triangle];
+        let points = triangulation.points();
+        points[triangle.a] * located.lambda_a
+            + points[triangle.b] * located.lambda_b
+            + points[triangle.c] * located.lambda_c
+    }
+
+    fn assert_weights(located: &TriangulatedPoint2D) -> Result<(), TestCaseError> {
+        let weights = [located.lambda_a, located.lambda_b, located.lambda_c];
+        prop_assert!(
+            weights.iter().all(|weight| *weight >= -1.0e-5),
+            "{weights:?}"
+        );
+        prop_assert!(
+            (weights.iter().sum::<f32>() - 1.0).abs() < 1.0e-5,
+            "{weights:?}"
+        );
+        Ok(())
+    }
+
+    fn inside() -> impl Strategy<Value = Vec2> {
+        prop_oneof![
+            proptest::sample::select(square()),
+            (0.0f32..=2.0).prop_flat_map(|x| (0.0f32..=2.0).prop_map(move |y| Vec2::new(x, y))),
+        ]
+    }
+
+    fn outside() -> impl Strategy<Value = Vec2> {
+        (-3.0f32..5.0)
+            .prop_flat_map(|x| (-3.0f32..5.0).prop_map(move |y| Vec2::new(x, y)))
+            .prop_filter("outside the square", |point| {
+                point.x < -0.01 || point.x > 2.01 || point.y < -0.01 || point.y > 2.01
+            })
+    }
+
+    proptest! {
+        #[test]
+        fn a_point_inside_locates_to_weights_that_rebuild_it(point in inside()) {
+            let triangulation = Triangulation2D::build(square());
+            let located = triangulation.locate(point).expect("inside");
+            assert_weights(&located)?;
+            prop_assert!(rebuilt(&triangulation, &located).distance(point) < 1.0e-4);
+            let barycentric = triangulation.barycentric_in(located.triangle, point);
+            prop_assert!(
+                barycentric.abs_diff_eq(Vec3::new(located.lambda_a, located.lambda_b, located.lambda_c), 1.0e-6)
             );
-            // Cross-check via barycentric_in
-            let b = t.barycentric_in(loc.triangle, probe);
-            assert!((loc.lambda_a - b.x).abs() < 1e-6);
-            assert!((loc.lambda_b - b.y).abs() < 1e-6);
-            assert!((loc.lambda_c - b.z).abs() < 1e-6);
-        } else {
-            panic!("point should be inside the triangulation");
+            let nearest = triangulation.locate_or_nearest(point);
+            prop_assert!(rebuilt(&triangulation, &nearest).distance(point) < 1.0e-4);
+        }
+
+        #[test]
+        fn a_point_outside_is_not_located_and_its_nearest_is_on_the_hull(point in outside()) {
+            let triangulation = Triangulation2D::build(square());
+            prop_assert!(triangulation.locate(point).is_none());
+            let nearest = triangulation.locate_or_nearest(point);
+            assert_weights(&nearest)?;
+            let on_hull = point.clamp(Vec2::ZERO, Vec2::splat(2.0));
+            prop_assert!(rebuilt(&triangulation, &nearest).distance(on_hull) < 1.0e-4);
         }
     }
 }

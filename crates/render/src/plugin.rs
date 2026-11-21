@@ -1,45 +1,52 @@
 use crate::{
     assets::{mesh::Mesh, skeleton::Skeleton, texture::Texture},
+    batching::{
+        clear_draw_stats, BatchedInstanceBuffers, InstanceInputUniformBuffer, RenderDrawStats,
+    },
     capabilities::RenderCapabilities,
     components::{
-        camera::{extract_cameras, sync_camera_aspect, Camera},
+        camera::{extract_cameras, rebind_sky_radiance, sync_camera_aspect, Camera},
         camera_environment::CameraEnvironment,
-        light::{extract_lights, update_changed_lights, Light, RenderLights},
+        light::{
+            cull_lights, extract_lights, write_visible_lights, Light, RenderLights, VisibleLights,
+        },
         material::MaterialComponent,
-        mesh::extract_meshes,
+        mesh::{extract_meshes, RenderMeshInstances},
         render_entity::{extract, SyncWithRenderWorld},
         shadows::{
             assign_shadow_layers, resize_shadow_maps, update_shadow_view_proj, RenderLighting,
             RenderPointShadowMaps, RenderShadowViewProjs, RenderSpotDirectionalShadowMaps,
         },
         skeleton::{extract_skeletons, SkinUniforms},
-        world_environment::WorldEnvironment,
+        visibility::{NoFrustumCulling, NotShadowCaster, RenderLayers},
     },
     device::RenderDevice,
     draw_target::DrawTarget,
     gpu::Gpu,
     layouts::{CameraLayout, LightingLayout, SkeletonLayout},
-    material_plugin::clear_cameras,
+    material_plugin::{assign_fallback_material, clear_cameras},
     queue::RenderQueue,
     render_asset::{
+        register_render_asset_budget,
         render_mesh::RenderMesh,
-        render_texture::{DummyRenderTexture, RenderTexture},
+        render_texture::{DummyRenderTexture, FallbackTextures, RenderTexture},
         render_window::RenderWindow,
         RenderAssetPlugin,
     },
     resources::RenderContext,
-    sets::RenderSet,
+    sets::{BackgroundSet, RenderSet},
+    sky_light::SkyRadianceMap,
     systems::{
         render::{finish_render, present_window},
         update_window,
     },
+    viewport_clear::ViewportClearPipeline,
 };
 use concerto_app::{
     edit_time::AtEditTime,
     plugins::Plugin,
     schedule_groups::{Extract, LateRender, LateUpdate, Render, RenderMain, Update},
 };
-use concerto_color::Color;
 use concerto_ecs::{IntoSetConfig, IntoSystemConfig, World};
 
 fn offscreen_config(format: wgpu::TextureFormat) -> wgpu::SurfaceConfiguration {
@@ -52,6 +59,7 @@ fn offscreen_config(format: wgpu::TextureFormat) -> wgpu::SurfaceConfiguration {
         alpha_mode: wgpu::CompositeAlphaMode::Opaque,
         view_formats: vec![],
         desired_maximum_frame_latency: 2,
+        color_space: wgpu::SurfaceColorSpace::Auto,
     }
 }
 
@@ -78,7 +86,7 @@ fn render_main(world: &mut World) {
 ///
 /// # Panics
 ///
-/// Panics during [`build`](Plugin::build) if the `App` has no [`Gpu`] resource.
+/// Panics during [`finish`](Plugin::finish) if the `App` has no [`Gpu`] resource.
 pub struct RenderPlugin;
 
 /// Makes meshes and skeletons require `SyncWithRenderWorld`.
@@ -89,11 +97,6 @@ pub fn register_sync_requirements(app: &mut concerto_app::App) {
 
 impl Plugin for RenderPlugin {
     fn build(&self, app: &mut concerto_app::App) {
-        assert!(
-            app.get_resource::<Gpu>().is_some(),
-            "RenderPlugin needs a Gpu resource: build the App through a host such as concerto::run"
-        );
-
         app.render_mut()
             .set_update_schedule(RenderMain)
             .add_system(RenderMain, render_main);
@@ -102,19 +105,28 @@ impl Plugin for RenderPlugin {
             .get_resource::<concerto_window::plugin::Window>()
             .is_some();
 
+        register_render_asset_budget(app);
         app.register_plugin(RenderAssetPlugin::<RenderMesh>::new())
             .register_plugin(RenderAssetPlugin::<RenderTexture>::new());
         app.register_asset::<Mesh>()
-            .register_asset::<Texture>()
+            .register_derived_asset::<Texture>()
             .register_asset::<Skeleton>();
         app.register_type::<Light>()
             .register_type::<Camera>()
             .register_type::<CameraEnvironment>()
             .register_type::<SyncWithRenderWorld>()
+            .register_type::<NoFrustumCulling>()
+            .register_type::<NotShadowCaster>()
             .register_type::<MaterialComponent>()
             .register_type::<concerto_mesh::MeshComponent>()
             .register_type::<concerto_mesh::SkeletonComponent>();
         register_sync_requirements(app);
+        app.track_removals::<concerto_mesh::MeshComponent>()
+            .track_removals::<concerto_mesh::SkeletonComponent>()
+            .track_removals::<NoFrustumCulling>()
+            .track_removals::<NotShadowCaster>()
+            .track_removals::<RenderLayers>()
+            .track_removals::<concerto_mesh::Aabb>();
         app.add_system(Update, concerto_mesh::update_mesh_bounds.at_edit_time());
 
         app.set_extract_fn(extract);
@@ -133,19 +145,30 @@ impl Plugin for RenderPlugin {
             Render,
             (
                 RenderSet::Lights,
+                RenderSet::Queue,
                 RenderSet::Shadows,
+                RenderSet::Background,
                 RenderSet::Draw,
+                RenderSet::Transparent,
                 RenderSet::Overlay,
             )
                 .chain(),
         )
-        .add_render_system(Render, clear_cameras)
-        .add_render_system(Render, assign_shadow_layers.in_set(RenderSet::Lights))
+        .configure_render_sets(Render, (BackgroundSet::Clear, BackgroundSet::Draw).chain())
         .add_render_system(
             Render,
-            update_changed_lights
-                .in_set(RenderSet::Lights)
-                .after(assign_shadow_layers),
+            clear_cameras
+                .in_set(RenderSet::Background)
+                .in_set(BackgroundSet::Clear),
+        )
+        .add_render_system(Render, rebind_sky_radiance.before(RenderSet::Background))
+        .add_render_system(Render, clear_draw_stats.in_set(RenderSet::Queue))
+        .add_render_system(Render, assign_fallback_material.before(clear_draw_stats))
+        .add_render_system(
+            Render,
+            (cull_lights, assign_shadow_layers, write_visible_lights)
+                .chain()
+                .in_set(RenderSet::Lights),
         )
         .add_render_system(
             Render,
@@ -197,6 +220,7 @@ impl Plugin for RenderPlugin {
                     alpha_mode: surface_caps.alpha_modes[0],
                     view_formats: vec![],
                     desired_maximum_frame_latency: 2,
+                    color_space: wgpu::SurfaceColorSpace::Auto,
                 };
                 if width != 0 {
                     surface.configure(&gpu.device, &config);
@@ -218,6 +242,7 @@ impl Plugin for RenderPlugin {
         let skeleton_layout = SkeletonLayout::new(&device);
 
         let capabilities = RenderCapabilities::from_adapter(&adapter);
+        let viewport_clear = ViewportClearPipeline::new(&device, &capabilities, config.format);
 
         let lighting_layout = LightingLayout::new(&device, &capabilities);
 
@@ -226,6 +251,7 @@ impl Plugin for RenderPlugin {
             RenderSpotDirectionalShadowMaps::new(&device, &capabilities);
         let render_point_shadow_maps = RenderPointShadowMaps::new(&device, &capabilities);
         let render_shadow_view_projs = RenderShadowViewProjs::new(&device);
+        let sky_radiance = SkyRadianceMap::black(&device, &capabilities);
         let render_lighting = RenderLighting::new(
             &device,
             &lighting_layout,
@@ -235,9 +261,13 @@ impl Plugin for RenderPlugin {
             &render_shadow_view_projs,
         );
         let skin_uniforms = SkinUniforms::new(&device, &skeleton_layout, &queue);
+        let batched_instance_buffers = BatchedInstanceBuffers {
+            current_input_buffer: InstanceInputUniformBuffer::new(),
+        };
 
         app.render_mut()
             .insert_resource(DummyRenderTexture::new(&device))
+            .insert_resource(FallbackTextures::new(&device, &queue))
             .insert_resource(RenderContext {
                 target,
                 surface_config: config,
@@ -248,16 +278,21 @@ impl Plugin for RenderPlugin {
             })
             .insert_resource(RenderQueue { queue })
             .insert_resource(capabilities)
+            .insert_resource(sky_radiance)
+            .insert_resource(viewport_clear)
             .insert_resource(RenderWindow::new())
             .insert_resource(camera_layouts)
             .insert_resource(skeleton_layout)
             .insert_resource(lighting_layout)
             .insert_resource(render_lights)
+            .insert_resource(VisibleLights::default())
             .insert_resource(render_spot_directional_shadow_maps)
             .insert_resource(render_point_shadow_maps)
             .insert_resource(render_shadow_view_projs)
             .insert_resource(render_lighting)
             .insert_resource(skin_uniforms)
-            .insert_resource(WorldEnvironment::new(Color::rgba(0.1, 0.1, 0.1, 0.1)));
+            .insert_resource(batched_instance_buffers)
+            .insert_resource(RenderDrawStats::default())
+            .insert_resource(RenderMeshInstances::default());
     }
 }

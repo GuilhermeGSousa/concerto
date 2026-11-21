@@ -11,45 +11,64 @@ use concerto_ecs::{
 };
 use concerto_foundation::assets::{
     asset_server::AssetServer,
+    asset_store::AssetStore,
     registry::{AssetEntry, AssetRegistry},
 };
 use concerto_mcp::{
     AppMcpExt, McpRead, McpServe, McpTool, Needs, Reply, ToolCalls, ToolError, answer_unanswered,
     host::HostPicture, receive_read_only_calls,
 };
-use concerto_reflect::{PropertyPath, Reflect, ReflectRef, to_json, with_property};
+use concerto_reflect::{Reflect, TypeRegistry, to_json};
 use concerto_render::{
     gpu::Gpu, readback::read_texture, render_asset::render_texture::RenderTexture,
+};
+use concerto_scene::{
+    link::{LinkedNode, SceneLink, SceneLinkState},
+    scene::Scene,
 };
 use image::{ImageFormat, RgbaImage, imageops::FilterType};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
-use super::{BusyInputs, act::describe_pose, is_busy};
+use super::{
+    BusyInputs,
+    act::{describe_pose, find_asset},
+    is_busy,
+    layout::{LayoutInputs, layout_line, viewport_line},
+    value::value_names,
+};
 use crate::{
     asset_editor::{ActiveEditor, EditorDocument, Unsaved},
-    hosted::{EditTarget, EditWorld, HostedApp, PlayState, input::ViewportShown},
-    inspector::{InspectionSource, InspectorRegistry, Property},
+    hosted::{EditTarget, EditWorld, HostedApp, PlayState},
+    import_fold::{ImportFolds, is_import_face},
+    inspector::{
+        InspectedValues, InspectionSource, InspectorRegistry, LIST_LIMIT, ShownPath, cut_note,
+        listed_paths, shown_paths,
+    },
+    links::{change_lines, link_row, state_text},
+    placement::PlaceableKinds,
     project::ProjectState,
     tools::{
         camera::FlyCamera, entity_ops::scene_member_by, scene::SceneRoot, selection::Selection,
     },
 };
 
-/// What the editor has open: the project, its documents, the active one, the selection, the viewport's size, and whether it is busy.
+/// What the editor has open: the project, its documents, the active one and its values, the selection, the panels' sizes, the viewport's size, and whether it is busy.
 #[derive(Deserialize, JsonSchema)]
 pub struct Status {}
 
-/// The open project's assets as `address · kind · id` lines, filtered and paged.
+/// The open project's assets as `address · kind · id` lines, filtered and paged; a line marked `· placeable` is an asset place_asset can put in the scene, known once a scene has opened. An import shows as its scene alone, marked `· import of <source> with <n> parts`; its parts are listed only when kind or query asks for them, or with parts_of, and a part stored in the scene's file shows `address#name` for its address.
 #[derive(Deserialize, JsonSchema)]
 pub struct ListAssets {
-    /// Text to find in an asset's name, address or kind, ignoring case.
+    /// Text to find in an asset's name, address or kind, ignoring case; in an import's part, in its file name or kind.
     pub query: Option<String>,
     /// The exact kind to keep, such as Scene, Mesh or Texture.
     pub kind: Option<String>,
     /// The project-relative folder to keep, such as content/meshes, with its subfolders.
     pub folder: Option<String>,
+    /// An import's scene, by address or id, as a line marked `· import of` shows it, to list that import's parts instead.
+    pub parts_of: Option<String>,
     /// How many assets to show.
     #[serde(default = "fifty")]
     pub limit: usize,
@@ -83,11 +102,13 @@ pub struct FindEntities {
     pub limit: usize,
 }
 
-/// One entity's components as JSON, each with its property paths, whether an inspector adapter edits each, and which name an enum to write whole; lists longer than 16 are cut.
+/// One entity's components, or one value of the front document, as JSON, each with its property paths, whether an inspector adapter edits each, and which name an enum to write whole; lists longer than 16 are cut.
 #[derive(Deserialize, JsonSchema)]
 pub struct Inspect {
-    /// The entity, such as 42v3, as scene_tree shows it.
-    pub entity: String,
+    /// A value of the front document, by a name status lists under values; give it instead of entity and components.
+    pub target: Option<String>,
+    /// The entity, such as 42v3, as scene_tree shows it; needed unless target is given.
+    pub entity: Option<String>,
     /// The components to show, by short name such as Transform or by full type path; all of them when absent.
     pub components: Option<Vec<String>>,
 }
@@ -165,8 +186,9 @@ pub(super) fn build(app: &mut App) {
 
 type StatusInputs = (
     Res<'static, ProjectState>,
+    Option<Res<'static, AssetRegistry>>,
     Res<'static, ActiveEditor>,
-    Res<'static, ViewportShown>,
+    LayoutInputs,
     Query<
         'static,
         'static,
@@ -178,6 +200,7 @@ type StatusInputs = (
         ),
     >,
     BusyInputs,
+    Query<'static, 'static, &'static InspectedValues>,
 );
 
 fn status(
@@ -217,13 +240,13 @@ fn status_of_edit_target(
 }
 
 fn describe(editor: &SystemInputData<StatusInputs>, selection: &str, loading: bool) -> String {
-    let (project, active, viewport, documents, busy) = editor;
+    let (project, registry, active, layout, documents, busy, values) = editor;
     let mut lines = vec![
         match &project.project {
             Some(open) => format!("project: {}", open.root.display()),
             None => "project: none".to_owned(),
         },
-        format!("project status: {}", project.status),
+        format!("project status: {}", project.line(registry.as_deref())),
     ];
     let mut open: Vec<_> = documents.iter().collect();
     open.sort_by_key(|(_, document, _, _)| document.order);
@@ -241,11 +264,10 @@ fn describe(editor: &SystemInputData<StatusInputs>, selection: &str, loading: bo
             .0
             .map_or_else(|| "none".to_owned(), |entity| entity.to_id_string())
     ));
+    lines.push(format!("values: {}", value_names(active, values)));
     lines.push(format!("selection: {selection}"));
-    lines.push(match viewport.0 {
-        Some(view) => format!("viewport: {}x{}", view.size.0, view.size.1),
-        None => "viewport: not shown".to_owned(),
-    });
+    lines.push(layout_line(layout));
+    lines.push(viewport_line(layout));
     lines.push(format!(
         "busy: {}",
         if loading || is_busy(busy) {
@@ -294,10 +316,14 @@ fn list_assets(
     mut calls: ToolCalls<ListAssets>,
     state: Res<ProjectState>,
     registry: Res<AssetRegistry>,
+    placeable: Option<Res<PlaceableKinds>>,
 ) {
     for (arguments, reply) in calls.read() {
         if state.project.is_some() {
-            reply.ok(list(&registry, &arguments));
+            match list(&registry, placeable.as_deref(), &arguments) {
+                Ok(listing) => reply.ok(listing),
+                Err(error) => reply.err(error),
+            }
         }
     }
 }
@@ -310,12 +336,43 @@ fn counted(count: usize) -> String {
     }
 }
 
-fn filtered<'a>(registry: &'a AssetRegistry, arguments: &ListAssets) -> Vec<&'a AssetEntry> {
+fn import_face<'a>(registry: &'a AssetRegistry, asset: &str) -> Result<&'a AssetEntry, ToolError> {
+    let entry = find_asset(registry, asset)?;
+    if is_import_face(entry) {
+        Ok(entry)
+    } else {
+        Err(ToolError::new(
+            "not_an_import",
+            format!(
+                "`{asset}` is not an import's scene; give the address or id of a line list_assets marks `· import of`."
+            ),
+        ))
+    }
+}
+
+fn filtered<'a>(
+    registry: &'a AssetRegistry,
+    folds: &ImportFolds<'a>,
+    arguments: &ListAssets,
+) -> Result<Vec<&'a AssetEntry>, ToolError> {
     let query = arguments.query.as_deref().unwrap_or("").to_lowercase();
     let folder = arguments.folder.as_deref();
     let kind = arguments.kind.as_deref();
-    registry
+    let parts_of = arguments
+        .parts_of
+        .as_deref()
+        .map(|asset| import_face(registry, asset))
+        .transpose()?;
+    let unfolded = kind.is_some() || !query.is_empty();
+    Ok(registry
         .iter()
+        .filter(|asset| {
+            let face = folds.face_of(asset).map(|face| face.id);
+            match parts_of {
+                Some(wanted) => face == Some(wanted.id),
+                None => unfolded || face.is_none(),
+            }
+        })
         .filter(|asset| {
             folder.is_none_or(|folder| {
                 folder.is_empty()
@@ -327,22 +384,39 @@ fn filtered<'a>(registry: &'a AssetRegistry, arguments: &ListAssets) -> Vec<&'a 
             })
         })
         .filter(|asset| kind.is_none_or(|kind| asset.kind == kind))
-        .filter(|asset| {
-            query.is_empty()
-                || asset.name().to_lowercase().contains(&query)
-                || asset.address.to_lowercase().contains(&query)
-                || asset.kind.to_lowercase().contains(&query)
-        })
-        .collect()
+        .filter(|asset| folds.matches(asset, &query))
+        .collect())
 }
 
-fn list(registry: &AssetRegistry, arguments: &ListAssets) -> String {
-    let matches = filtered(registry, arguments);
+fn fold_mark(folds: &ImportFolds, asset: &AssetEntry) -> String {
+    if let Some(face) = folds.face_of(asset) {
+        return format!(" · part of {}", face.address);
+    }
+    match &asset.provenance {
+        Some(provenance) if is_import_face(asset) => {
+            let counted = match folds.parts_of(asset.id).len() {
+                0 => "no parts".to_owned(),
+                1 => "1 part".to_owned(),
+                parts => format!("{parts} parts"),
+            };
+            format!(" · import of {} with {counted}", provenance.source)
+        }
+        _ => String::new(),
+    }
+}
+
+fn list(
+    registry: &AssetRegistry,
+    placeable: Option<&PlaceableKinds>,
+    arguments: &ListAssets,
+) -> Result<String, ToolError> {
+    let folds = ImportFolds::new(registry);
+    let matches = filtered(registry, &folds, arguments)?;
     if matches.is_empty() {
-        return format!(
+        return Ok(format!(
             "No assets match. The project has {}.",
             counted(registry.iter().count())
-        );
+        ));
     }
     let found = if matches.len() == 1 {
         "1 asset matches".to_owned()
@@ -353,7 +427,7 @@ fn list(registry: &AssetRegistry, arguments: &ListAssets) -> String {
     let offset = arguments.offset;
     let shown: Vec<_> = matches.iter().skip(offset).take(limit).collect();
     if shown.is_empty() {
-        return format!("{found}; offset {offset} is past the last.");
+        return Ok(format!("{found}; offset {offset} is past the last."));
     }
     let mut lines = vec![format!(
         "{found}; showing {}–{}:",
@@ -361,11 +435,17 @@ fn list(registry: &AssetRegistry, arguments: &ListAssets) -> String {
         offset + shown.len()
     )];
     for asset in &shown {
+        let mark = if placeable.is_some_and(|kinds| kinds.contains(&asset.kind)) {
+            " · placeable"
+        } else {
+            ""
+        };
         lines.push(format!(
-            "{} · {} · {}",
-            asset.address,
+            "{} · {} · {}{mark}{}",
+            asset.location(),
             asset.kind,
-            asset.id.simple_hex()
+            asset.id.simple_hex(),
+            fold_mark(&folds, asset)
         ));
     }
     let next = offset + shown.len();
@@ -376,7 +456,7 @@ fn list(registry: &AssetRegistry, arguments: &ListAssets) -> String {
             continuation(arguments, next, limit)
         ));
     }
-    lines.join("\n")
+    Ok(lines.join("\n"))
 }
 
 fn continuation(arguments: &ListAssets, offset: usize, limit: usize) -> Value {
@@ -389,6 +469,9 @@ fn continuation(arguments: &ListAssets, offset: usize, limit: usize) -> Value {
     }
     call.insert("limit".into(), limit.into());
     call.insert("offset".into(), offset.into());
+    if let Some(parts_of) = &arguments.parts_of {
+        call.insert("parts_of".into(), parts_of.clone().into());
+    }
     if let Some(query) = &arguments.query {
         call.insert("query".into(), query.clone().into());
     }
@@ -410,19 +493,47 @@ struct SceneView<'a> {
     name: &'a dyn Fn(Entity) -> Option<&'a str>,
     label: &'a dyn Fn(Entity) -> String,
     components: &'a dyn Fn(Entity) -> Vec<(&'static str, &'static str)>,
+    link: &'a dyn Fn(Entity) -> Option<String>,
+    linked: &'a dyn Fn(Entity) -> bool,
+    links: Links,
+}
+
+enum Links {
+    Expanded,
+    Collapsed { open: Option<Entity> },
 }
 
 impl SceneView<'_> {
     fn line(&self, entity: Entity, label: &str) -> String {
-        let names: Vec<_> = (self.components)(entity)
-            .into_iter()
-            .map(|(short, _)| short)
-            .collect();
-        format!("{} {label} [{}]", entity.to_id_string(), names.join(", "))
+        let id = entity.to_id_string();
+        let mut line = match (self.link)(entity) {
+            Some(link) => format!("{id} {label} {link}"),
+            None => {
+                let names: Vec<_> = (self.components)(entity)
+                    .into_iter()
+                    .map(|(short, _)| short)
+                    .collect();
+                format!("{id} {label} [{}]", names.join(", "))
+            }
+        };
+        if (self.linked)(entity) {
+            line.push_str(" (linked)");
+        }
+        line
+    }
+
+    fn children_of(&self, entity: Entity) -> Vec<Entity> {
+        match self.links {
+            Links::Collapsed { open } if open != Some(entity) && (self.link)(entity).is_some() => {
+                Vec::new()
+            }
+            _ => (self.children)(entity),
+        }
     }
 
     fn subtree(&self, entity: Entity) -> usize {
-        1 + (self.children)(entity)
+        1 + self
+            .children_of(entity)
             .into_iter()
             .map(|child| self.subtree(child))
             .sum::<usize>()
@@ -432,7 +543,8 @@ impl SceneView<'_> {
         if level >= depth {
             return 0;
         }
-        1 + (self.children)(entity)
+        1 + self
+            .children_of(entity)
             .into_iter()
             .map(|child| self.within(child, level + 1, depth))
             .sum::<usize>()
@@ -474,20 +586,28 @@ fn children_of(children: &Query<&Children>, entity: Entity) -> Vec<Entity> {
         .unwrap_or_default()
 }
 
-pub(super) type SceneEntities =
-    Query<'static, 'static, (Entity, Option<&'static ChildOf>, Option<&'static SceneRoot>)>;
+pub(crate) type SceneEntities = Query<
+    'static,
+    'static,
+    (
+        Entity,
+        Option<&'static ChildOf>,
+        Option<&'static SceneRoot>,
+        Option<&'static LinkedNode>,
+    ),
+>;
 
 fn outside_open_scene(entity: Entity, entities: &SystemInputData<SceneEntities>) -> bool {
-    entities.iter().any(|(_, _, root)| root.is_some())
+    entities.iter().any(|(_, _, root, _)| root.is_some())
         && scene_member_by(entity, |entity| {
             entities
                 .get_entity(entity)
-                .map(|(_, parent, root)| (root.is_some(), parent.map(ChildOf::parent)))
+                .map(|(_, parent, root, _)| (root.is_some(), parent.map(ChildOf::parent)))
         })
         .is_err()
 }
 
-pub(super) fn resolve(
+pub(crate) fn resolve(
     id: &str,
     entities: &SystemInputData<SceneEntities>,
 ) -> Result<Entity, ToolError> {
@@ -533,6 +653,8 @@ fn scene_tree(
     entities: EditWorld<SceneEntities>,
     components: EditWorld<ComponentMetadata>,
     documents: StaticSystemInput<EditTargetDocument>,
+    links: EditWorld<Query<(&SceneLink, &SceneLinkState)>>,
+    registry: Option<Res<AssetRegistry>>,
 ) {
     let Some((document, play)) = documents.iter().next() else {
         return;
@@ -543,6 +665,16 @@ fn scene_tree(
     let name = |entity| names.get_entity(entity).map(|name| name.as_str());
     let label = |entity| label_of(entity, &roots, &names, address);
     let carried = |entity| components_of(&components, entity);
+    let link = |entity| {
+        links
+            .get_entity(entity)
+            .map(|(link, state)| link_row(link, state, registry.as_deref()))
+    };
+    let linked = |entity| {
+        entities
+            .get_entity(entity)
+            .is_some_and(|(.., node)| node.is_some())
+    };
     for (arguments, reply) in calls.read() {
         let starts = match &arguments.root {
             Some(id) => match resolve(id, &entities) {
@@ -554,12 +686,21 @@ fn scene_tree(
             },
             None => top_of_scene(playing, &roots, &top_level),
         };
+        let links = match playing {
+            true => Links::Expanded,
+            false => Links::Collapsed {
+                open: arguments.root.is_some().then(|| starts[0]),
+            },
+        };
         let view = SceneView {
             starts,
             children: &kids,
             name: &name,
             label: &label,
             components: &carried,
+            link: &link,
+            linked: &linked,
+            links,
         };
         reply.ok(tree(&view, &arguments));
     }
@@ -573,6 +714,9 @@ fn find_entities(
     names: EditWorld<Query<&Name>>,
     components: EditWorld<ComponentMetadata>,
     documents: StaticSystemInput<EditTargetDocument>,
+    links: EditWorld<Query<(&SceneLink, &SceneLinkState)>>,
+    entities: EditWorld<SceneEntities>,
+    registry: Option<Res<AssetRegistry>>,
 ) {
     let Some((document, play)) = documents.iter().next() else {
         return;
@@ -583,6 +727,16 @@ fn find_entities(
     let name = |entity| names.get_entity(entity).map(|name| name.as_str());
     let label = |entity| label_of(entity, &roots, &names, address);
     let carried = |entity| components_of(&components, entity);
+    let link = |entity| {
+        links
+            .get_entity(entity)
+            .map(|(link, state)| link_row(link, state, registry.as_deref()))
+    };
+    let linked = |entity| {
+        entities
+            .get_entity(entity)
+            .is_some_and(|(.., node)| node.is_some())
+    };
     for (arguments, reply) in calls.read() {
         let view = SceneView {
             starts: top_of_scene(playing, &roots, &top_level),
@@ -590,6 +744,9 @@ fn find_entities(
             name: &name,
             label: &label,
             components: &carried,
+            link: &link,
+            linked: &linked,
+            links: Links::Expanded,
         };
         reply.ok(find(&view, &arguments));
     }
@@ -634,7 +791,7 @@ impl TreeLines<'_, '_> {
         let indent = "  ".repeat(level);
         let line = self.view.line(entity, &(self.view.label)(entity));
         self.lines.push(format!("{indent}{line}"));
-        let children = (self.view.children)(entity);
+        let children = self.view.children_of(entity);
         if children.is_empty() {
             return;
         }
@@ -754,29 +911,42 @@ fn search(
 ) {
     path.push((view.label)(entity));
     visit(entity, path);
-    for child in (view.children)(entity) {
+    for child in view.children_of(entity) {
         search(view, child, path, visit);
     }
     path.pop();
 }
-
-const LIST_LIMIT: usize = 16;
 
 fn inspect(
     mut calls: ToolCalls<Inspect>,
     source: EditWorld<InspectionSource>,
     entities: EditWorld<SceneEntities>,
     names: EditWorld<Query<&Name>>,
+    links: EditWorld<Query<(&SceneLink, &SceneLinkState)>>,
+    scenes: EditWorld<Option<Res<AssetStore<Scene>>>>,
     registry: Res<InspectorRegistry>,
 ) {
     for (arguments, reply) in calls.read() {
-        let answer = resolve(&arguments.entity, &entities)
-            .and_then(|entity| inspection(&source, &registry, &names, entity, &arguments));
+        let (None, Some(entity)) = (&arguments.target, &arguments.entity) else {
+            continue;
+        };
+        let answer = resolve(entity, &entities).and_then(|entity| {
+            let link = links.get_entity(entity).map(|(link, state)| LinkLines {
+                state: state_text(state),
+                changes: change_lines(link, state, &source.types(), scenes.as_deref()),
+            });
+            inspection(&source, &registry, &names, entity, &arguments, link)
+        });
         match answer {
             Ok(text) => reply.ok(text),
             Err(error) => reply.err(error),
         }
     }
+}
+
+struct LinkLines {
+    state: String,
+    changes: Vec<String>,
 }
 
 pub(super) fn names_component(short: &str, full: &str, name: &str) -> bool {
@@ -789,6 +959,7 @@ fn inspection(
     names: &Query<&Name>,
     entity: Entity,
     arguments: &Inspect,
+    link: Option<LinkLines>,
 ) -> Result<String, ToolError> {
     let mut carried: Vec<_> = source
         .visible_components(entity)
@@ -840,6 +1011,10 @@ fn inspection(
         answer.insert("name".into(), name.as_str().into());
     }
     answer.insert("components".into(), components.into());
+    if let Some(link) = link {
+        answer.insert("state".into(), link.state.into());
+        answer.insert("changes".into(), link.changes.into());
+    }
     Ok(Value::Object(answer).to_string())
 }
 
@@ -855,69 +1030,45 @@ pub(super) fn component_json(
     component.insert("name".into(), short.into());
     component.insert("type".into(), full.into());
     match source.read(entity, id) {
-        Some(value) => {
-            component.insert("value".into(), bounded(to_json(value, source.types())));
-            let rows = registry.collect(value, source.types());
-            let paths: Vec<Value> = listed_paths(value, &rows)
-                .iter()
-                .map(|listed| {
-                    let mut path = Map::new();
-                    path.insert("path".into(), listed.path.segments().join(".").into());
-                    path.insert(
-                        "adapter".into(),
-                        (!listed.names_enum && listed.row.is_some_and(Property::has_editor)).into(),
-                    );
-                    if listed.names_enum {
-                        path.insert("enum".into(), true.into());
-                    }
-                    Value::Object(path)
-                })
-                .collect();
-            component.insert("paths".into(), paths.into());
-        }
-        None => {
-            component.insert("value".into(), Value::Null);
-            component.insert("unavailable".into(), true.into());
-        }
+        Some(value) => insert_value(&mut component, value, &source.types(), registry),
+        None => insert_unavailable(&mut component),
     }
     Value::Object(component)
 }
 
-pub(super) struct ListedPath<'a> {
-    pub(super) path: PropertyPath,
-    pub(super) row: Option<&'a Property>,
-    pub(super) names_enum: bool,
-}
-
-pub(super) fn listed_paths<'a>(value: &dyn Reflect, rows: &'a [Property]) -> Vec<ListedPath<'a>> {
-    let mut listed: Vec<ListedPath> = Vec::new();
-    for row in rows {
-        let segments = row.path.segments();
-        for depth in 0..segments.len() {
-            let above = PropertyPath::new(segments[..depth].iter().copied());
-            if names_enum(value, &above) && listed.iter().all(|listed| listed.path != above) {
-                listed.push(ListedPath {
-                    path: above,
-                    row: None,
-                    names_enum: true,
-                });
+/// Adds `value` and `paths` to an answer's JSON.
+pub(super) fn insert_value(
+    answer: &mut Map<String, Value>,
+    value: &dyn Reflect,
+    types: &TypeRegistry,
+    registry: &InspectorRegistry,
+) {
+    answer.insert("value".into(), bounded(to_json(value, types)));
+    let rows = registry.collect(value, types);
+    let listed = listed_paths(value, &rows);
+    let paths: Vec<Value> = shown_paths(&listed)
+        .iter()
+        .map(|shown| {
+            let listed = match shown {
+                ShownPath::Listed(listed) => listed,
+                ShownPath::Cut { list, total } => return cut_note(list, *total).into(),
+            };
+            let mut path = Map::new();
+            path.insert("path".into(), listed.path.to_string().into());
+            path.insert("adapter".into(), listed.adapter().is_some().into());
+            if listed.names_enum {
+                path.insert("enum".into(), true.into());
             }
-        }
-        listed.push(ListedPath {
-            path: row.path.clone(),
-            row: Some(row),
-            names_enum: names_enum(value, &row.path),
-        });
-    }
-    listed
+            Value::Object(path)
+        })
+        .collect();
+    answer.insert("paths".into(), paths.into());
 }
 
-fn names_enum(value: &dyn Reflect, path: &PropertyPath) -> bool {
-    let mut found = false;
-    let _ = with_property(value, path, &mut |field| {
-        found = matches!(field.reflect_ref(), ReflectRef::Enum(_));
-    });
-    found
+/// Marks an answer's JSON as having no value to show.
+pub(super) fn insert_unavailable(answer: &mut Map<String, Value>) {
+    answer.insert("value".into(), Value::Null);
+    answer.insert("unavailable".into(), true.into());
 }
 
 fn bounded(value: Value) -> Value {
@@ -1015,4 +1166,52 @@ fn fitted(picture: RgbaImage, max_edge: u32) -> RgbaImage {
         u32::try_from(edge).unwrap_or(max_edge).max(1)
     };
     image::imageops::resize(&picture, scaled(width), scaled(height), FilterType::Nearest)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(Reflect, Default)]
+    struct Stride {
+        length: f32,
+    }
+
+    #[derive(Reflect, Default)]
+    struct Track {
+        strides: Vec<Stride>,
+        grid: Vec<Vec<f32>>,
+        gain: f32,
+    }
+
+    fn shown(track: &Track) -> Vec<String> {
+        let mut types = TypeRegistry::default();
+        types.register::<Track>();
+        let rows = InspectorRegistry::default().collect(track, &types);
+        shown_paths(&listed_paths(track, &rows))
+            .iter()
+            .map(|shown| match shown {
+                ShownPath::Listed(listed) => listed.path.to_string(),
+                ShownPath::Cut { list, total } => cut_note(list, *total),
+            })
+            .collect()
+    }
+
+    fn strides(count: usize) -> Vec<Stride> {
+        (0..count).map(|_| Stride::default()).collect()
+    }
+
+    #[test]
+    fn a_struct_elements_fields_are_paths_and_a_long_list_shows_its_first_sixteen() {
+        let track = Track {
+            strides: strides(20),
+            ..Track::default()
+        };
+
+        let mut expected = vec!["strides".to_owned()];
+        expected.extend((0..16).map(|index| format!("strides.{index}.length")));
+        expected.push("… 4 more of strides, 20 in all".to_owned());
+        expected.extend(["grid".to_owned(), "gain".to_owned()]);
+        assert_eq!(shown(&track), expected);
+    }
 }

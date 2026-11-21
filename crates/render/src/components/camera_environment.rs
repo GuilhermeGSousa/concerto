@@ -8,20 +8,35 @@ use glam::Vec4;
 
 use super::camera::CameraUniform;
 
-/// Ambient light the standard material uses when a camera sets none; matches
-/// `AMBIENT_INTENSITY` in `shader.wgsl`.
+/// Ambient light the standard material uses when a camera sets none.
 pub const DEFAULT_AMBIENT_INTENSITY: f32 = 0.03;
 
 /// Fog and ambient light for everything a camera draws with the standard
 /// material. Goes on the same entity as the [`Camera`](super::camera::Camera);
-/// a camera without one gets no fog and the default ambient light.
-#[derive(Component, Clone, Copy, Debug, Default, PartialEq, Reflect)]
+/// a camera without one gets no fog and the default ambient light. A camera
+/// with a [`CameraSkyLight`](crate::sky_light::CameraSkyLight) is lit by its
+/// sky instead of `ambient`, and its fog takes the sky's color instead of
+/// [`Fog::color`].
+#[derive(Component, Clone, Copy, Debug, PartialEq, Reflect)]
 #[reflect(Component, Default, SceneComponent)]
 pub struct CameraEnvironment {
     pub fog: Option<Fog>,
-    /// Ambient light, as a colour multiplied by each surface's albedo;
-    /// `None` uses [`DEFAULT_AMBIENT_INTENSITY`].
-    pub ambient: Option<Color>,
+    /// Ambient light, as a colour multiplied by each surface's albedo; replaced by the sky's under a sky.
+    pub ambient: Color,
+}
+
+impl Default for CameraEnvironment {
+    fn default() -> Self {
+        Self {
+            fog: None,
+            ambient: Color::rgba(
+                DEFAULT_AMBIENT_INTENSITY,
+                DEFAULT_AMBIENT_INTENSITY,
+                DEFAULT_AMBIENT_INTENSITY,
+                1.0,
+            ),
+        }
+    }
 }
 
 impl CameraEnvironment {
@@ -31,27 +46,17 @@ impl CameraEnvironment {
     }
 
     pub fn with_ambient(mut self, ambient: Color) -> Self {
-        self.ambient = Some(ambient);
+        self.ambient = ambient;
         self
     }
 
-    /// The ambient light the standard material is drawn with:
-    /// [`CameraEnvironment::ambient`], or [`DEFAULT_AMBIENT_INTENSITY`] when
-    /// unset.
+    /// The ambient light the standard material is drawn with, unless the camera has a sky, which lights it instead.
     pub fn ambient_light(&self) -> LinearRgba {
-        match self.ambient {
-            Some(color) => color.to_linear(),
-            None => LinearRgba::new(
-                DEFAULT_AMBIENT_INTENSITY,
-                DEFAULT_AMBIENT_INTENSITY,
-                DEFAULT_AMBIENT_INTENSITY,
-                1.0,
-            ),
-        }
+        self.ambient.to_linear()
     }
 
-    /// Writes the fog and ambient fields of `uniform`. A zero alpha tells the
-    /// shader to skip fog or use its default ambient.
+    /// Writes the fog and ambient fields of `uniform`. A zero fog alpha tells
+    /// the shader to skip fog.
     pub(crate) fn fill(&self, uniform: &mut CameraUniform) {
         match self.fog {
             Some(fog) => {
@@ -64,19 +69,15 @@ impl CameraEnvironment {
                 uniform.fog_params = Vec4::ZERO;
             }
         }
-        uniform.ambient = match self.ambient {
-            Some(color) => {
-                let c = color.to_linear();
-                Vec4::new(c.r, c.g, c.b, 1.0)
-            }
-            None => Vec4::ZERO,
-        };
+        let c = self.ambient_light();
+        uniform.ambient = Vec4::new(c.r, c.g, c.b, 1.0);
     }
 }
 
 /// Exponential-squared distance fog toward `color`, starting at `start`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Reflect)]
 pub struct Fog {
+    /// The color fog fades toward; ignored under a sky, where fog takes the sky's color.
     pub color: Color,
     pub density: f32,
     pub start: f32,
@@ -92,40 +93,119 @@ impl Fog {
 
 #[cfg(test)]
 mod tests {
-    use std::any::TypeId;
-
-    use concerto_ecs::{reflect::AppTypeRegistry, world::World};
-    use concerto_reflect::{apply_value, to_value};
+    use concerto_foundation::transform::GlobalTransform;
+    use glam::{Mat4, Vec3};
 
     use super::*;
+    use crate::components::camera::Camera;
+    use crate::sky_light::{CameraSkyLight, SphericalHarmonics};
 
-    #[test]
-    fn no_environment_means_no_fog_and_default_ambient() {
+    struct Filled {
+        case: &'static str,
+        environment: CameraEnvironment,
+        sky_light: Option<CameraSkyLight>,
+        fog_color: Vec4,
+        fog_params: Vec4,
+        ambient: Vec4,
+        sky_irradiance: [Vec4; 9],
+        night_color: Vec4,
+        night_ambient: Vec4,
+        sky_lit: u32,
+    }
+
+    fn filled(
+        environment: Option<&CameraEnvironment>,
+        sky_light: Option<&CameraSkyLight>,
+    ) -> CameraUniform {
         let mut uniform = CameraUniform::new();
-        CameraEnvironment::default().fill(&mut uniform);
-        assert_eq!(uniform.fog_color.w, 0.0);
-        assert_eq!(uniform.ambient.w, 0.0);
-        assert_eq!(
-            CameraEnvironment::default().ambient_light().r,
-            DEFAULT_AMBIENT_INTENSITY
+        uniform.update_view_proj(
+            &Camera::default(),
+            environment,
+            sky_light,
+            &GlobalTransform::new(Mat4::IDENTITY),
         );
+        uniform
     }
 
     #[test]
-    fn fog_and_ambient_reach_the_uniform() {
-        let environment = CameraEnvironment::default()
-            .with_fog(Fog {
-                color: Color::BLACK,
-                density: 0.1,
-                start: 4.0,
-            })
-            .with_ambient(Color::WHITE);
-        let mut uniform = CameraUniform::new();
-        environment.fill(&mut uniform);
-        assert_eq!(uniform.fog_color.w, 1.0);
-        assert_eq!(uniform.fog_params.x, 0.1);
-        assert_eq!(uniform.fog_params.y, 4.0);
-        assert_eq!(uniform.ambient, Vec4::ONE);
+    fn an_environment_fills_the_uniform_with_its_fog_and_ambient_and_none_restores_the_default() {
+        let default_ambient = Vec4::new(
+            DEFAULT_AMBIENT_INTENSITY,
+            DEFAULT_AMBIENT_INTENSITY,
+            DEFAULT_AMBIENT_INTENSITY,
+            1.0,
+        );
+        let sky_light = CameraSkyLight {
+            irradiance: SphericalHarmonics {
+                coefficients: std::array::from_fn(|index| Vec3::splat(index as f32)),
+            },
+            night_color: LinearRgba::new(0.1, 0.2, 0.3, 1.0),
+            night_ambient: LinearRgba::new(0.4, 0.5, 0.6, 1.0),
+        };
+        let cases = [
+            Filled {
+                case: "the default environment",
+                environment: CameraEnvironment::default(),
+                sky_light: None,
+                fog_color: Vec4::ZERO,
+                fog_params: Vec4::ZERO,
+                ambient: default_ambient,
+                sky_irradiance: [Vec4::ZERO; 9],
+                night_color: Vec4::ZERO,
+                night_ambient: Vec4::ZERO,
+                sky_lit: 0,
+            },
+            Filled {
+                case: "fog and a white ambient",
+                environment: CameraEnvironment::default()
+                    .with_fog(Fog {
+                        color: Color::BLACK,
+                        density: 0.1,
+                        start: 4.0,
+                    })
+                    .with_ambient(Color::WHITE),
+                sky_light: None,
+                fog_color: Vec4::new(0.0, 0.0, 0.0, 1.0),
+                fog_params: Vec4::new(0.1, 4.0, 0.0, 0.0),
+                ambient: Vec4::ONE,
+                sky_irradiance: [Vec4::ZERO; 9],
+                night_color: Vec4::ZERO,
+                night_ambient: Vec4::ZERO,
+                sky_lit: 0,
+            },
+            Filled {
+                case: "a sky light",
+                environment: CameraEnvironment::default(),
+                sky_light: Some(sky_light),
+                fog_color: Vec4::ZERO,
+                fog_params: Vec4::ZERO,
+                ambient: default_ambient,
+                sky_irradiance: std::array::from_fn(|index| Vec3::splat(index as f32).extend(0.0)),
+                night_color: Vec4::new(0.1, 0.2, 0.3, 1.0),
+                night_ambient: Vec4::new(0.4, 0.5, 0.6, 1.0),
+                sky_lit: 1,
+            },
+        ];
+        for case in &cases {
+            let uniform = filled(Some(&case.environment), case.sky_light.as_ref());
+            assert_eq!(uniform.fog_color, case.fog_color, "{}", case.case);
+            assert_eq!(uniform.fog_params, case.fog_params, "{}", case.case);
+            assert_eq!(uniform.ambient, case.ambient, "{}", case.case);
+            assert_eq!(uniform.sky_irradiance, case.sky_irradiance, "{}", case.case);
+            assert_eq!(uniform.night_color, case.night_color, "{}", case.case);
+            assert_eq!(uniform.night_ambient, case.night_ambient, "{}", case.case);
+            assert_eq!(uniform.sky_lit, case.sky_lit, "{}", case.case);
+        }
+        let mut uniform = filled(Some(&cases[1].environment), Some(&sky_light));
+        uniform.update_view_proj(
+            &Camera::default(),
+            None,
+            None,
+            &GlobalTransform::new(Mat4::IDENTITY),
+        );
+        assert_eq!(uniform.ambient, default_ambient, "no environment");
+        assert_eq!(uniform.sky_lit, 0, "no sky light");
+        assert_eq!(uniform.sky_irradiance, [Vec4::ZERO; 9], "no sky light");
     }
 
     #[test]
@@ -139,48 +219,5 @@ mod tests {
         assert_eq!(fog.amount(2.0), 0.0);
         assert!(fog.amount(4.0) > 0.5);
         assert!(fog.amount(20.0) > 0.999);
-    }
-
-    #[test]
-    fn editing_a_camera_environment_changes_the_filled_uniform() {
-        let mut world = World::new();
-        world.register_component::<CameraEnvironment>();
-        world.register_type::<CameraEnvironment>();
-        let camera = world.spawn(CameraEnvironment::default());
-
-        let mut before = CameraUniform::new();
-        world
-            .get_component_for_entity::<CameraEnvironment>(camera)
-            .unwrap()
-            .fill(&mut before);
-        assert_eq!(before.fog_color.w, 0.0);
-        assert_eq!(before.ambient.w, 0.0);
-
-        let replacement = CameraEnvironment::default()
-            .with_fog(Fog {
-                color: Color::BLUE,
-                density: 0.2,
-                start: 4.0,
-            })
-            .with_ambient(Color::WHITE);
-        let stored = to_value(&replacement).unwrap();
-        let reflect = *world
-            .get_resource::<AppTypeRegistry>()
-            .unwrap()
-            .get_type_data::<ReflectComponent>(TypeId::of::<CameraEnvironment>())
-            .expect("a camera environment is an editable component");
-        assert!((reflect.edit)(&mut world, camera, &mut |value| {
-            apply_value(value, &stored);
-        }));
-
-        let mut after = CameraUniform::new();
-        world
-            .get_component_for_entity::<CameraEnvironment>(camera)
-            .unwrap()
-            .fill(&mut after);
-        assert_eq!(after.fog_color.w, 1.0);
-        assert_eq!(after.fog_params.x, 0.2);
-        assert_eq!(after.fog_params.y, 4.0);
-        assert_eq!(after.ambient, Vec4::ONE);
     }
 }

@@ -6,16 +6,16 @@ description.workspace = true
 repository.workspace = true
 license.workspace = true
 
-[lib]
-crate-type = ["cdylib", "rlib"]
-
 [dependencies]
 concerto-foundation.workspace = true
 bytemuck = { version = "1.22.0", features = ["derive"] }
-glam = { version = "0.30.1", features = ["serde"] }
+glam = { workspace = true, features = ["serde"] }
 concerto-ecs.workspace = true
 concerto-reflect.workspace = true
+concerto-name.workspace = true
 uuid = { version = "1.18.1", features = ["v4", "js", "serde"] }
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[dev-dependencies]
 bincode = "1.3"
-anyhow = "1.0.97"

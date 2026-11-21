@@ -6,18 +6,23 @@ use concerto_ecs::{
     entity::Entity,
     query::Query,
     reflect::{ReflectComponent, ReflectSceneComponent},
-    resource::{Res, Resource},
-    Changed,
+    resource::{Res, ResMut, Resource},
+    system::input::SystemLocal,
+    world::{FromWorld, World},
 };
 use concerto_reflect::{Reflect, ReflectDefault};
-use derive_more::Deref;
 
 use concerto_foundation::transform::GlobalTransform;
-use encase::{ShaderSize, ShaderType, UniformBuffer};
+use encase::{ShaderType, UniformBuffer};
 use glam::Vec3;
 use wgpu::{util::DeviceExt, Buffer};
 
-use crate::{components::render_entity::RenderEntity, queue::RenderQueue};
+use crate::{
+    components::{camera::RenderCamera, render_entity::RenderEntity},
+    frustum::Frustum,
+    queue::RenderQueue,
+    sky_light::LightTint,
+};
 
 const MAX_LIGHTS: usize = 128;
 
@@ -125,6 +130,17 @@ fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
     t * t * (3.0 - 2.0 * t)
 }
 
+pub(crate) const POINT_SHADOW_NEAR: f32 = 0.1;
+const POINT_SHADOW_DEFAULT_FAR: f32 = 20.0;
+
+fn point_shadow_far(range: f32) -> f32 {
+    if range > POINT_SHADOW_NEAR {
+        range
+    } else {
+        POINT_SHADOW_DEFAULT_FAR
+    }
+}
+
 #[derive(Reflect, Default)]
 pub enum LightType {
     #[default]
@@ -151,35 +167,10 @@ pub(crate) struct LightsUniform {
     pub(crate) light_count: i32,
 }
 
-#[derive(Component, Clone, Copy, Deref)]
-pub struct RenderLightSlot(u32);
-
-impl RenderLightSlot {
-    pub(crate) fn update_slot(&mut self, new_slot: u32) {
-        self.0 = new_slot;
-    }
-}
-
-// Re-uploads `entity`'s `RenderLight` immediately. Needed anywhere a
-// `RenderLight` field is mutated through `RestrictedWorld` (component
-// lifecycle callbacks) rather than a `Query<&mut RenderLight>` — the former
-// bypasses `Mut`'s change-tick marking, so `update_changed_lights`'s
-// `Changed<RenderLight>` filter would never pick the write up otherwise.
-fn push_render_light_to_gpu(world: &concerto_ecs::world::RestrictedWorld<'_>, entity: Entity) {
-    if let (Some(render_light), Some(render_light_slot), Some(lights), Some(queue)) = (
-        world.get_component_for_entity::<RenderLight>(entity),
-        world.get_component_for_entity::<RenderLightSlot>(entity),
-        world.get_resource::<RenderLights>(),
-        world.get_resource::<RenderQueue>(),
-    ) {
-        lights.write_buffer(queue, render_light, *render_light_slot);
-    }
-}
-
 #[derive(Component)]
 pub(crate) struct RenderShadowsEnabled(pub(crate) bool);
 
-#[derive(ShaderType, Clone, Copy, PartialEq)]
+#[derive(Component, ShaderType, Clone, Copy, PartialEq)]
 pub struct RenderLight {
     pub(crate) translation: Vec3,
     pub(crate) intensity: f32,
@@ -191,12 +182,25 @@ pub struct RenderLight {
     pub(crate) cos_cone_angle: f32,
     pub(crate) shadow_layer: i32,
     pub(crate) range: f32,
+    pub(crate) shadow_far: f32,
 }
 
 impl RenderLight {
-    fn synced_with(mut self, light: &Light, transform: &GlobalTransform) -> Self {
+    fn synced_with(
+        mut self,
+        light: &Light,
+        tint: Option<&LightTint>,
+        transform: &GlobalTransform,
+    ) -> Self {
         self.direction = -(transform.rotation() * Vec3::Z);
-        self.color = light.color.to_linear();
+        let color = light.color.to_linear();
+        let tint = tint.map_or(LinearRgba::WHITE, |tint| tint.0);
+        self.color = LinearRgba::new(
+            color.r * tint.r,
+            color.g * tint.g,
+            color.b * tint.b,
+            color.a,
+        );
         self.translation = transform.translation();
         self.intensity = light.intensity;
         self.light_type = light.light_type.index();
@@ -205,6 +209,10 @@ impl RenderLight {
             _ => 0.0,
         };
         self.range = light.range;
+        self.shadow_far = match light.light_type {
+            LightType::Point => point_shadow_far(light.range),
+            _ => 0.0,
+        };
         self
     }
 
@@ -218,162 +226,153 @@ impl RenderLight {
             cos_cone_angle: 0.0,
             shadow_layer: -1,
             range: 0.0,
+            shadow_far: 0.0,
         }
-    }
-}
-
-impl Component for RenderLight {
-    fn on_add() -> Option<concerto_ecs::component::ComponentLifecycleCallback> {
-        Some(|mut world, context| {
-            let slot = if let Some(lights) = world.get_resource_mut::<RenderLights>() {
-                match lights.push_light(context.entity) {
-                    Some(slot) => slot,
-                    None => {
-                        log::warn!(
-                            "light limit of {MAX_LIGHTS} reached; the light is not rendered"
-                        );
-                        return;
-                    }
-                }
-            } else {
-                return;
-            };
-
-            world.insert(slot, context.entity);
-
-            if let (Some(lights), Some(queue)) = (
-                world.get_resource::<RenderLights>(),
-                world.get_resource::<RenderQueue>(),
-            ) {
-                lights.write_count(queue);
-            }
-        })
-    }
-
-    fn on_remove() -> Option<concerto_ecs::component::ComponentLifecycleCallback> {
-        Some(|mut world, context| {
-            let Some(&slot) = world.get_component_for_entity::<RenderLightSlot>(context.entity)
-            else {
-                return;
-            };
-
-            let moved_entity = if let Some(lights) = world.get_resource_mut::<RenderLights>() {
-                lights.swap_remove_light(&slot)
-            } else {
-                return;
-            };
-
-            world.remove_component::<RenderLightSlot>(context.entity);
-
-            if let Some(moved_entity) = moved_entity {
-                if let Some(moved_slot) =
-                    world.get_component_for_entity_mut::<RenderLightSlot>(moved_entity)
-                {
-                    moved_slot.update_slot(*slot);
-                }
-
-                push_render_light_to_gpu(&world, moved_entity);
-            }
-
-            if let (Some(lights), Some(queue)) = (
-                world.get_resource::<RenderLights>(),
-                world.get_resource::<RenderQueue>(),
-            ) {
-                lights.write_count(queue);
-            }
-        })
     }
 }
 
 #[derive(Resource)]
 pub(crate) struct RenderLights {
     pub(crate) buffer: Buffer,
-    pub(crate) slots: Vec<Entity>,
+    pub(crate) written: Vec<RenderLight>,
 }
 
 impl RenderLights {
     pub(crate) fn new(device: &wgpu::Device) -> Self {
-        let lights = LightsUniform {
-            lights: [RenderLight::zeroed(); MAX_LIGHTS],
-            light_count: 0,
-        };
-
-        let mut buffer = UniformBuffer::new(Vec::new());
-        buffer.write(&lights).unwrap();
-
         let lights_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("lights_buffer"),
-            contents: &buffer.into_inner(),
+            contents: &lights_uniform_bytes(&[]),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
         Self {
             buffer: lights_buffer,
-            slots: Vec::new(),
+            written: Vec::new(),
         }
     }
 
-    pub(crate) fn write_buffer(
-        &self,
-        queue: &wgpu::Queue,
-        light: &RenderLight,
-        offset: RenderLightSlot,
-    ) {
-        let slot_offset = light.size().get() * *offset as u64;
-
-        let mut buffer = UniformBuffer::new(Vec::new());
-        buffer.write(light).unwrap();
-        queue.write_buffer(&self.buffer, slot_offset, &buffer.into_inner());
-    }
-
-    pub(crate) fn write_count(&self, queue: &wgpu::Queue) {
-        let count_offset = RenderLight::SHADER_SIZE.get() * MAX_LIGHTS as u64;
-        let count = self.slots.len() as i32;
-
-        let mut buffer = UniformBuffer::new(Vec::new());
-        buffer.write(&count).unwrap();
-        queue.write_buffer(&self.buffer, count_offset, &buffer.into_inner());
-    }
-
-    pub(crate) fn push_light(&mut self, light: Entity) -> Option<RenderLightSlot> {
-        let slot = next_light_slot(self.slots.len())?;
-        self.slots.push(light);
-        Some(slot)
-    }
-
-    pub(crate) fn swap_remove_light(&mut self, slot: &RenderLightSlot) -> Option<Entity> {
-        let index = **slot as usize;
-        self.slots.swap_remove(index);
-        self.slots.get(index).copied()
+    fn write(&mut self, queue: &wgpu::Queue, lights: Vec<RenderLight>) {
+        queue.write_buffer(&self.buffer, 0, &lights_uniform_bytes(&lights));
+        self.written = lights;
     }
 }
 
-fn next_light_slot(len: usize) -> Option<RenderLightSlot> {
-    (len < MAX_LIGHTS).then_some(RenderLightSlot(len as u32))
+fn lights_uniform_bytes(listed: &[RenderLight]) -> Vec<u8> {
+    let mut lights = [RenderLight::zeroed(); MAX_LIGHTS];
+    lights[..listed.len()].copy_from_slice(listed);
+    let uniform = LightsUniform {
+        lights,
+        light_count: listed.len() as i32,
+    };
+
+    let mut buffer = UniformBuffer::new(Vec::new());
+    buffer.write(&uniform).unwrap();
+    buffer.into_inner()
 }
 
-pub(crate) fn update_changed_lights(
-    lights: Query<(&RenderLight, &RenderLightSlot), Changed<RenderLight>>,
-    lights_buffer: Res<RenderLights>,
-    queue: Res<RenderQueue>,
+#[derive(Resource, Default)]
+pub(crate) struct VisibleLights {
+    pub(crate) entities: Vec<Entity>,
+}
+
+impl VisibleLights {
+    pub(crate) fn contains(&self, entity: Entity) -> bool {
+        self.entities
+            .binary_search_by_key(&entity_order(&entity), entity_order)
+            .is_ok()
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct EntityOrder {
+    index: u32,
+    generation: u32,
+}
+
+pub(crate) fn entity_order(entity: &Entity) -> EntityOrder {
+    EntityOrder {
+        index: entity.index(),
+        generation: entity.generation().get(),
+    }
+}
+
+fn sees(frustum: &Frustum, light: &RenderLight) -> bool {
+    light.light_type == LightType::Directional.index()
+        || light.range <= 0.0
+        || frustum.intersects_sphere(light.translation, light.range)
+}
+
+pub(crate) fn cull_lights(
+    lights: Query<(Entity, &RenderLight)>,
+    cameras: Query<&RenderCamera>,
+    mut visible: ResMut<VisibleLights>,
 ) {
-    for (light, slot) in lights.iter() {
-        lights_buffer.write_buffer(&queue, light, *slot);
+    let views: Vec<Frustum> = cameras
+        .iter()
+        .map(|camera| Frustum::from_clip_from_world(camera.camera_uniform.view_proj()))
+        .collect();
+
+    let mut entities: Vec<Entity> = lights
+        .iter()
+        .filter(|(_, light)| views.iter().any(|view| sees(view, light)))
+        .map(|(entity, _)| entity)
+        .collect();
+    entities.sort_by_key(entity_order);
+    if visible.entities != entities {
+        visible.entities = entities;
+    }
+}
+
+pub(crate) struct LightOverflow {
+    warned: bool,
+}
+
+impl FromWorld for LightOverflow {
+    fn from_world(_: &World) -> Self {
+        Self { warned: false }
+    }
+}
+
+pub(crate) fn write_visible_lights(
+    lights: Query<&RenderLight>,
+    visible: Res<VisibleLights>,
+    mut render_lights: ResMut<RenderLights>,
+    queue: Res<RenderQueue>,
+    mut overflow: SystemLocal<LightOverflow>,
+) {
+    let mut listed: Vec<RenderLight> = visible
+        .entities
+        .iter()
+        .filter_map(|&entity| lights.get_entity(entity).copied())
+        .collect();
+
+    let overflowing = listed.len() > MAX_LIGHTS;
+    if overflowing && !overflow.warned {
+        log::warn!(
+            "{} lights are visible and the limit is {MAX_LIGHTS}; the later ones are not rendered",
+            listed.len()
+        );
+    }
+    overflow.warned = overflowing;
+    listed.truncate(MAX_LIGHTS);
+
+    if render_lights.written != listed {
+        render_lights.write(&queue, listed);
     }
 }
 
 pub(crate) fn extract_lights(
-    lights: Extracted<Query<(&Light, &GlobalTransform, &RenderEntity)>>,
+    lights: Extracted<Query<(&Light, Option<&LightTint>, &GlobalTransform, &RenderEntity)>>,
     render_lights: Query<(&mut RenderLight, &mut RenderShadowsEnabled)>,
     mut cmd: CommandQueue,
 ) {
-    for (light, transform, render_entity) in lights.iter() {
+    for (light, tint, transform, render_entity) in lights.iter() {
         let render_entity = **render_entity;
 
         if let Some((mut render_light, mut shadows_enabled)) =
             render_lights.get_entity(render_entity)
         {
-            let synced = render_light.synced_with(light, transform);
+            let synced = render_light.synced_with(light, tint, transform);
             render_light.set_if_neq(synced);
             if shadows_enabled.0 != light.shadowmaps_enabled {
                 shadows_enabled.0 = light.shadowmaps_enabled;
@@ -381,7 +380,7 @@ pub(crate) fn extract_lights(
             continue;
         }
 
-        let render_light = RenderLight::zeroed().synced_with(light, transform);
+        let render_light = RenderLight::zeroed().synced_with(light, tint, transform);
 
         cmd.insert(
             (render_light, RenderShadowsEnabled(light.shadowmaps_enabled)),
@@ -393,15 +392,8 @@ pub(crate) fn extract_lights(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use concerto_app::extractor::extract;
-    use concerto_app::schedule_groups::Extract;
-    use concerto_ecs::{
-        system::{
-            executor::single_thread::SingleThreadedExecutor,
-            schedule::{ScheduleLabel, Schedules},
-        },
-        Query, ResMut, World,
-    };
+    use crate::layout_test::{float_words, uniform_words, words};
+    use encase::ShaderSize;
     use glam::{Mat4, Quat};
 
     fn at(translation: Vec3, rotation: Quat) -> GlobalTransform {
@@ -409,112 +401,107 @@ mod tests {
     }
 
     #[test]
-    fn syncing_an_unchanged_light_yields_an_equal_render_light() {
-        let light = Light::spot_light(0.5);
-        let transform = at(Vec3::new(1.0, 2.0, 3.0), Quat::from_rotation_x(0.5));
-        let render_light = RenderLight::zeroed().synced_with(&light, &transform);
-        assert!(render_light == render_light.synced_with(&light, &transform));
-        let moved = at(Vec3::new(1.0, 2.0, 4.0), Quat::from_rotation_x(0.5));
-        assert!(render_light != render_light.synced_with(&light, &moved));
-    }
-
-    #[derive(ScheduleLabel, Clone, PartialEq, Eq, Hash, Debug)]
-    struct CountChanged;
-
-    #[derive(Resource, Default)]
-    struct ChangedLights(usize);
-
-    fn count_changed(
-        lights: Query<Entity, Changed<RenderLight>>,
-        mut counted: ResMut<ChangedLights>,
-    ) {
-        counted.0 = lights.iter().count();
-    }
-
-    #[test]
-    fn extracting_a_still_light_does_not_mark_its_render_light_changed() {
-        let mut main = World::new();
-        let mut render = World::new();
-        render.insert_resource(ChangedLights::default());
-        let render_entity = render.spawn((RenderLight::zeroed(), RenderShadowsEnabled(false)));
-        let light = main.spawn((
-            Light::point_light(),
-            at(Vec3::ZERO, Quat::IDENTITY),
-            RenderEntity::new(render_entity),
-        ));
-
-        let mut schedules = Schedules::default();
-        schedules.add_system(Extract, extract_lights);
-        schedules.add_system(CountChanged, count_changed);
-        let compiled = schedules.compile::<SingleThreadedExecutor>(&mut render);
-        render.insert_resource(compiled);
-
-        let frame = |main: &mut World, render: &mut World| {
-            render.tick();
-            extract(main, render);
-            render.run_schedule(CountChanged);
-            render.get_resource::<ChangedLights>().unwrap().0
+    fn render_light_keeps_its_wgsl_layout() {
+        let light = RenderLight {
+            translation: Vec3::new(1.0, 2.0, 3.0),
+            intensity: 4.0,
+            color: LinearRgba::new(5.0, 6.0, 7.0, 8.0),
+            direction: Vec3::new(9.0, 10.0, 11.0),
+            light_type: 12,
+            cos_cone_angle: 13.0,
+            shadow_layer: -2,
+            range: 14.0,
+            shadow_far: 15.0,
         };
 
-        assert_eq!(frame(&mut main, &mut render), 1);
-        assert_eq!(frame(&mut main, &mut render), 0);
+        let mut expected = float_words(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0]);
+        expected.push(12);
+        expected.push(13.0f32.to_bits());
+        expected.push((-2i32) as u32);
+        expected.push(14.0f32.to_bits());
+        expected.push(15.0f32.to_bits());
 
-        *main
-            .get_component_for_entity_mut::<GlobalTransform>(light)
-            .unwrap() = at(Vec3::X, Quat::IDENTITY);
-        assert_eq!(frame(&mut main, &mut render), 1);
-        assert_eq!(frame(&mut main, &mut render), 0);
+        assert_eq!(uniform_words(&light)[..16], expected);
+        assert_eq!(RenderLight::SHADER_SIZE.get(), 64);
+        assert_eq!(light.size().get(), 64);
     }
 
     #[test]
-    fn no_slot_is_handed_out_past_max_lights() {
-        assert_eq!(next_light_slot(0).map(|slot| *slot), Some(0));
-        assert_eq!(
-            next_light_slot(MAX_LIGHTS - 1).map(|slot| *slot),
-            Some(MAX_LIGHTS as u32 - 1)
-        );
-        assert!(next_light_slot(MAX_LIGHTS).is_none());
+    fn lights_uniform_puts_the_count_after_every_light() {
+        let listed = [RenderLight::zeroed(); 3];
+
+        let words = words(&lights_uniform_bytes(&listed));
+
+        assert_eq!(words.len(), 2052);
+        assert_eq!(words[2048], 3);
+        assert_eq!(words[13], (-1i32) as u32);
+        assert_eq!(words[16 * 127 + 13], (-1i32) as u32);
+    }
+
+    struct Reach {
+        case: &'static str,
+        light: fn() -> Light,
+        position: Vec3,
+        rotation: Quat,
+        point: Vec3,
+        between: [f32; 2],
+    }
+
+    fn reach(case: &'static str, light: fn() -> Light, point: Vec3, between: [f32; 2]) -> Reach {
+        Reach {
+            case,
+            light,
+            position: Vec3::ZERO,
+            rotation: Quat::IDENTITY,
+            point,
+            between,
+        }
     }
 
     #[test]
-    fn point_light_falls_off_with_the_square_of_distance() {
-        let light = Light::point_light();
-        let transform = at(Vec3::ZERO, Quat::IDENTITY);
-        let near = light.attenuation_at(&transform, Vec3::new(1.0, 0.0, 0.0));
-        let far = light.attenuation_at(&transform, Vec3::new(0.0, 2.0, 0.0));
-        assert!((near - 1.0).abs() < 1e-6);
-        assert!((far - 0.25).abs() < 1e-6);
-    }
-
-    #[test]
-    fn range_reaches_zero_at_the_limit() {
-        let light = Light::point_light().with_range(7.0);
-        let transform = at(Vec3::ZERO, Quat::IDENTITY);
-        assert_eq!(light.attenuation_at(&transform, Vec3::X * 7.0), 0.0);
-        assert!(light.attenuation_at(&transform, Vec3::X * 6.9) > 0.0);
-        assert!(light.attenuation_at(&transform, Vec3::X) > 0.99);
-    }
-
-    #[test]
-    fn spot_light_only_reaches_inside_its_cone() {
-        let light = Light::spot_light(0.4);
-        // Spot lights shine down their local -Z.
-        let transform = at(Vec3::ZERO, Quat::IDENTITY);
-        assert!((light.attenuation_at(&transform, Vec3::NEG_Z) - 1.0).abs() < 1e-6);
-        assert_eq!(light.attenuation_at(&transform, Vec3::Z), 0.0);
-        assert_eq!(light.attenuation_at(&transform, Vec3::X), 0.0);
-
-        let turned = at(
-            Vec3::ZERO,
-            Quat::from_rotation_y(std::f32::consts::FRAC_PI_2),
-        );
-        assert!((light.attenuation_at(&turned, Vec3::NEG_X) - 1.0).abs() < 1e-6);
-    }
-
-    #[test]
-    fn directional_light_is_unattenuated() {
-        let light = Light::directional_light();
-        let transform = at(Vec3::new(3.0, 50.0, -2.0), Quat::IDENTITY);
-        assert_eq!(light.attenuation_at(&transform, Vec3::ZERO), 1.0);
+    fn attenuation_falls_off_with_distance_to_the_range_and_stays_inside_a_spot_cone() {
+        let ranged = || Light::point_light().with_range(7.0);
+        let spot = || Light::spot_light(0.4);
+        let cases = [
+            reach(
+                "a point light at 1",
+                Light::point_light,
+                Vec3::X,
+                [1.0, 1.0],
+            ),
+            reach(
+                "a point light at 2",
+                Light::point_light,
+                Vec3::new(0.0, 2.0, 0.0),
+                [0.25, 0.25],
+            ),
+            reach("at the range", ranged, Vec3::X * 7.0, [0.0, 0.0]),
+            reach("well inside the range", ranged, Vec3::X, [0.99, 1.0]),
+            reach("down a spot's -Z", spot, Vec3::NEG_Z, [1.0, 1.0]),
+            reach("beside a spot", spot, Vec3::X, [0.0, 0.0]),
+            Reach {
+                rotation: Quat::from_rotation_y(std::f32::consts::FRAC_PI_2),
+                ..reach("down a turned spot", spot, Vec3::NEG_X, [1.0, 1.0])
+            },
+            Reach {
+                position: Vec3::new(3.0, 50.0, -2.0),
+                ..reach(
+                    "a directional light anywhere",
+                    Light::directional_light,
+                    Vec3::ZERO,
+                    [1.0, 1.0],
+                )
+            },
+        ];
+        for case in &cases {
+            let transform = at(case.position, case.rotation);
+            let attenuation = (case.light)().attenuation_at(&transform, case.point);
+            assert!(
+                attenuation >= case.between[0] - 1e-6 && attenuation <= case.between[1] + 1e-6,
+                "{}: {attenuation} outside {:?}",
+                case.case,
+                case.between
+            );
+        }
     }
 }

@@ -8,7 +8,10 @@ use concerto_foundation::{
     transform::Transform,
 };
 use concerto_mesh::{MeshComponent, Vertex};
-use concerto_render::{components::render_entity::SyncWithRenderWorld, MaterialComponent};
+use concerto_render::{
+    components::{render_entity::SyncWithRenderWorld, NoFrustumCulling, NotShadowCaster},
+    MaterialComponent,
+};
 
 use crate::material::{WorldGridMaterial, WorldGridUniform};
 
@@ -48,6 +51,8 @@ impl Component for WorldGrid {
 
     fn register_required(required: &mut concerto_ecs::component::RequiredComponents) {
         required.register::<SyncWithRenderWorld>(SyncWithRenderWorld::default);
+        required.register::<NoFrustumCulling>(NoFrustumCulling::default);
+        required.register::<NotShadowCaster>(NotShadowCaster::default);
     }
 }
 

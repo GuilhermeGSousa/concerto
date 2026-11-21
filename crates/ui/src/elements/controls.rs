@@ -11,8 +11,10 @@ use crate::{
     color_picker::{UIColorChanged, UIColorPicker},
     interaction::{Interactable, UIClick, UIDrag, UIPointerDown},
     material::UIMaterial,
-    node::{AlignItems, FlexDirection, UINode, UIRect},
+    node::{AlignContent, AlignItems, FlexDirection, UINode, UIRect},
+    scroll::UISplitAxis,
     slider::{UISlider, UISliderChanged, drag_slider, press_slider},
+    splitter::{SPLITTER_HIT_SIZE, UISplitter, UISplitterDragged, drag_splitter},
     text::UIText,
     theme::UITheme,
     transform::UIValue,
@@ -40,6 +42,12 @@ pub struct ColorPicker {
     theme: UITheme,
     node: UINode,
     picker: UIColorPicker,
+}
+
+/// A draggable gap between two siblings, with a line while hovered or dragged; its owner decides what a drag means.
+pub struct Splitter {
+    node: UINode,
+    splitter: UISplitter,
 }
 
 impl UITheme {
@@ -83,6 +91,30 @@ impl UITheme {
             picker: UIColorPicker::new(color),
         }
     }
+
+    /// A splitter dragged along `axis`: `Horizontal` stands between columns, `Vertical` between rows.
+    pub fn splitter(&self, axis: UISplitAxis) -> Splitter {
+        let node = match axis {
+            UISplitAxis::Horizontal => UINode::default()
+                .with_width(UIValue::Px(SPLITTER_HIT_SIZE))
+                .with_flex_direction(FlexDirection::Row),
+            UISplitAxis::Vertical => UINode::default()
+                .with_height(UIValue::Px(SPLITTER_HIT_SIZE))
+                .with_flex_direction(FlexDirection::Column),
+        };
+        Splitter {
+            node: node
+                .with_flex_shrink(0.0)
+                .with_align_self(AlignItems::Stretch)
+                .with_align_items(AlignItems::Stretch)
+                .with_justify_content(AlignContent::Center),
+            splitter: UISplitter {
+                axis,
+                color: Color::TRANSPARENT,
+                active_color: self.accent,
+            },
+        }
+    }
 }
 
 impl Checkbox {
@@ -111,6 +143,16 @@ impl ColorPicker {
         self,
         listener: impl IntoListener<UIColorChanged, M>,
     ) -> Listening<Self, UIColorChanged> {
+        Listening::new(self, listener)
+    }
+}
+
+impl Splitter {
+    /// Runs `listener` with each movement of a drag along the axis; attach it after the other modifiers.
+    pub fn on_drag<M>(
+        self,
+        listener: impl IntoListener<UISplitterDragged, M>,
+    ) -> Listening<Self, UISplitterDragged> {
         Listening::new(self, listener)
     }
 }
@@ -167,6 +209,19 @@ impl IntoBundle for ColorPicker {
     }
 }
 
+impl IntoBundle for Splitter {
+    type Bundle = (UINode, UISplitter, Interactable, Listener<UIDrag>);
+
+    fn into_bundle(self) -> Self::Bundle {
+        (
+            self.node,
+            self.splitter,
+            Interactable,
+            drag_splitter.into_listener(),
+        )
+    }
+}
+
 impl Themed for Checkbox {
     fn theme(&self) -> &UITheme {
         &self.theme
@@ -216,6 +271,12 @@ impl Themed for ColorPicker {
 }
 
 impl Layout for ColorPicker {
+    fn node_mut(&mut self) -> &mut UINode {
+        &mut self.node
+    }
+}
+
+impl Layout for Splitter {
     fn node_mut(&mut self) -> &mut UINode {
         &mut self.node
     }

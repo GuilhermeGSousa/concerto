@@ -1,3 +1,10 @@
+<p>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/logo/concerto-logo-dark.svg">
+    <img alt="Concerto" src="docs/logo/concerto-logo-light.svg" height="64">
+  </picture>
+</p>
+
 # Concerto
 
 A Rust game engine for character-driven, cinematic games. It has its own
@@ -39,10 +46,14 @@ and animation, an engine-native UI, and an editor built on that same UI.
 
 - Rust, stable, from <https://rustup.rs>, and a C++ compiler: Jolt, the
   native physics library, is built from source.
+- [Git LFS](https://git-lfs.com), before you clone. The examples' `.gasset`
+  files are stored in it, and a game built from LFS pointers fails with
+  `missing the GRDY magic prefix`. In a clone made without it, run `git lfs pull`.
 - This repository with its Jolt submodule. Without the submodule every native
   build fails:
 
   ```sh
+  git lfs install
   git clone https://github.com/GuilhermeGSousa/concerto.git
   cd concerto
   git submodule update --init
@@ -64,29 +75,36 @@ and animation, an engine-native UI, and an editor built on that same UI.
 ### Run an example
 
 ```sh
-cargo run -p tech-demo
+cargo run -p ui-showcase
 ```
 
-| Example | What it shows |
-|---|---|
-| `tech-demo` | A forest with a playable character, a follow camera and animation; the one example with an editor |
-| `animation-test` | A skinned character driven by an animation graph |
-| `physics-test` | Falling spheres, collisions and ray casts, with meshes built in code |
-| `render-test` | Materials, lights and shadows in Sponza |
-| `ui-showcase` | Every UI element on one screen |
+`ui-showcase` shows every UI element on one screen. The first build compiles
+Jolt and takes a while.
 
-The first build compiles Jolt and takes a while. In the browser:
+### The games
+
+Two games built on Concerto live in their own repositories, checked out beside
+this one, each depending on it by path (`../concerto`) and run from its own
+directory:
+
+| Game | What it shows |
+|---|---|
+| `tech-demo` | A motion matched character driven from the keyboard, with a follow camera and debug gizmos, on the world grid; `-- --sanatorium` picks the sanatorium, the dressed level its editor opens, and `-- --retarget` plays the grid with the UAL1 character driven by LAFAN1 motion matching through a retarget node; it has an editor |
+| `one-more-night` | The start of One More Night, a couch co-op mystery: two players walk one night of an open test case in split screen, as the Guest and the Staff, find facts, fill deductions together and loop the night; it has an editor |
 
 ```sh
-cd examples/tech-demo
+cd ../tech-demo
+cargo run
 trunk serve
 ```
 
-The editor, over a copy of the tech demo, so nothing you save lands in the
-repository:
+`trunk serve` runs it in the browser. The editor, over a copy of the tech
+demo's content, so nothing you save lands in its repository:
 
 ```sh
-cp -r examples/tech-demo /tmp/td
+mkdir /tmp/td
+cp -r ../tech-demo/content ../tech-demo/content.toml /tmp/td
+cd ../tech-demo
 cargo run -p tech-demo-editor -- --project /tmp/td
 ```
 
@@ -122,7 +140,7 @@ it is added to the engine's workspace.
 
 ```
 crates/      the engine, one crate per directory, each named concerto-<dir>
-examples/    standalone games
+examples/    ui-showcase
 src/         the `concerto` crate: re-exports, DefaultPlugins and concerto::run
 docs/        user documentation and the book
 ```

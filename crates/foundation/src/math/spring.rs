@@ -2,27 +2,18 @@
 
 use glam::{Quat, Vec2, Vec3, Vec4};
 
-/// A value a [`Spring`] can animate: `f32`, the glam vectors, or [`Quat`].
-pub trait SpringValue: Copy {
+use super::spring_damper::{from_scaled_angle_axis, quat_abs, to_scaled_angle_axis};
+
+/// A vector a [`Spring`] measures displacement and velocity in: `f32` or a glam vector.
+pub trait SpringVector: Copy + Default {
     fn add(self, rhs: Self) -> Self;
     fn sub(self, rhs: Self) -> Self;
     fn scale(self, factor: f32) -> Self;
-
-    /// The representation of `self` nearest `reference` — quaternions pick
-    /// between `q` and `-q` (the same rotation, double cover).
-    fn align_to(self, _reference: Self) -> Self {
-        self
-    }
-
-    /// Projects back onto the valid manifold — quaternions renormalize.
-    fn constrain(self) -> Self {
-        self
-    }
 }
 
-macro_rules! impl_spring_value {
+macro_rules! impl_spring_vector {
     ($($t:ty),*) => {$(
-        impl SpringValue for $t {
+        impl SpringVector for $t {
             fn add(self, rhs: Self) -> Self {
                 self + rhs
             }
@@ -38,31 +29,40 @@ macro_rules! impl_spring_value {
     )*};
 }
 
-impl_spring_value!(f32, Vec2, Vec3, Vec4);
+impl_spring_vector!(f32, Vec2, Vec3, Vec4);
+
+/// A value a [`Spring`] can animate: a [`SpringVector`], or a [`Quat`] whose velocity is a scaled angle-axis.
+pub trait SpringValue: Copy {
+    type Velocity: SpringVector;
+
+    /// How far `self` sits from `target`.
+    fn displacement(self, target: Self) -> Self::Velocity;
+
+    /// The value `displacement` away from `self`.
+    fn displaced(self, displacement: Self::Velocity) -> Self;
+}
+
+impl<T: SpringVector> SpringValue for T {
+    type Velocity = T;
+
+    fn displacement(self, target: Self) -> T {
+        self.sub(target)
+    }
+
+    fn displaced(self, displacement: T) -> Self {
+        self.add(displacement)
+    }
+}
 
 impl SpringValue for Quat {
-    fn add(self, rhs: Self) -> Self {
-        self + rhs
+    type Velocity = Vec3;
+
+    fn displacement(self, target: Self) -> Vec3 {
+        to_scaled_angle_axis(quat_abs(self * target.inverse()))
     }
 
-    fn sub(self, rhs: Self) -> Self {
-        self - rhs
-    }
-
-    fn scale(self, factor: f32) -> Self {
-        self * factor
-    }
-
-    fn align_to(self, reference: Self) -> Self {
-        if self.dot(reference) < 0.0 {
-            -self
-        } else {
-            self
-        }
-    }
-
-    fn constrain(self) -> Self {
-        self.normalize()
+    fn displaced(self, displacement: Vec3) -> Self {
+        from_scaled_angle_axis(displacement) * self
     }
 }
 
@@ -79,10 +79,10 @@ impl SpringValue for Quat {
 /// let mut position = Spring::critically_damped(Vec3::ZERO, 8.0);
 /// let smoothed = position.update(Vec3::new(0.0, 0.0, 5.0), 1.0 / 60.0);
 /// ```
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Spring<T: SpringValue> {
     pub value: T,
-    pub velocity: T,
+    pub velocity: T::Velocity,
     /// Natural (undamped) angular frequency in rad/s; higher is snappier.
     pub angular_frequency: f32,
     /// 1 = critically damped (fastest approach without overshoot), < 1
@@ -94,7 +94,7 @@ impl<T: SpringValue> Spring<T> {
     pub fn new(value: T, angular_frequency: f32, damping_ratio: f32) -> Self {
         Self {
             value,
-            velocity: value.sub(value),
+            velocity: T::Velocity::default(),
             angular_frequency,
             damping_ratio,
         }
@@ -107,31 +107,58 @@ impl<T: SpringValue> Spring<T> {
     /// Critically damped, tuned so the remaining distance to the target
     /// halves every `halflife` seconds (when starting at rest).
     pub fn critically_damped_with_halflife(value: T, halflife: f32) -> Self {
+        let mut spring = Self::critically_damped(value, 0.0);
+        spring.set_halflife(halflife);
+        spring
+    }
+
+    /// Critically damped at the angular frequency that halves the remaining distance every `halflife` seconds from rest; keeps the value and velocity.
+    pub fn set_halflife(&mut self, halflife: f32) {
         // Root of (1 + x)e^{-x} = 1/2: the ω·t at which a critically damped
         // spring from rest has covered half its displacement.
         const OMEGA_TIMES_HALFLIFE: f32 = 1.678_347;
-        Self::critically_damped(value, OMEGA_TIMES_HALFLIFE / halflife.max(1.0e-5))
+        self.angular_frequency = OMEGA_TIMES_HALFLIFE / halflife.max(1.0e-5);
+        self.damping_ratio = 1.0;
     }
 
     pub fn update(&mut self, target: T, dt: f32) -> T {
         let c = Coefficients::compute(self.angular_frequency, self.damping_ratio, dt);
-        let target = target.align_to(self.value);
-        let displacement = self.value.sub(target);
+        let displacement = self.value.displacement(target);
 
-        let value = target
-            .add(displacement.scale(c.pos_pos))
-            .add(self.velocity.scale(c.pos_vel));
+        self.value = target.displaced(
+            displacement
+                .scale(c.pos_pos)
+                .add(self.velocity.scale(c.pos_vel)),
+        );
         self.velocity = displacement
             .scale(c.vel_pos)
             .add(self.velocity.scale(c.vel_vel));
-        self.value = value.constrain();
         self.value
     }
 
     /// Teleports to `value`, zeroing the velocity.
     pub fn reset_to(&mut self, value: T) {
-        self.velocity = value.sub(value);
+        self.velocity = T::Velocity::default();
         self.value = value;
+    }
+}
+
+impl<T: SpringVector> Spring<T> {
+    /// The integral of `value` over the next `dt` seconds of tracking `target`, in closed form; the spring does not move.
+    pub fn integral(&self, target: T, dt: f32) -> T {
+        let w = self.angular_frequency;
+        if w < f32::EPSILON {
+            return self.value.scale(dt);
+        }
+        let mut next = *self;
+        next.update(target, dt);
+        let damping = 2.0 * self.damping_ratio.max(0.0) * w;
+        target.scale(dt).sub(
+            next.velocity
+                .sub(self.velocity)
+                .add(next.value.sub(self.value).scale(damping))
+                .scale(1.0 / (w * w)),
+        )
     }
 }
 
@@ -202,33 +229,34 @@ mod tests {
 
     const DT: f32 = 1.0 / 60.0;
 
-    #[test]
-    fn converges_to_target() {
-        let mut spring = Spring::critically_damped(0.0f32, 10.0);
-        for _ in 0..120 {
-            spring.update(10.0, DT);
+    proptest::proptest! {
+        #[test]
+        fn one_step_lands_where_many_smaller_steps_do(
+            frequency in 0.5f32..12.0,
+            damping_ratio in 0.1f32..3.0,
+            dt in 0.01f32..0.3,
+            steps in 2usize..20,
+            target in -5.0f32..5.0,
+            angle in -2.5f32..2.5,
+        ) {
+            let mut coarse = Spring::new(0.0f32, frequency, damping_ratio);
+            let mut fine = coarse;
+            coarse.update(target, dt);
+            for _ in 0..steps {
+                fine.update(target, dt / steps as f32);
+            }
+            proptest::prop_assert!((coarse.value - fine.value).abs() < 1.0e-3, "{} vs {}", coarse.value, fine.value);
+            proptest::prop_assert!((coarse.velocity - fine.velocity).abs() < 1.0e-2, "{} vs {}", coarse.velocity, fine.velocity);
+
+            let goal = Quat::from_rotation_y(angle);
+            let mut coarse = Spring::new(Quat::IDENTITY, frequency, damping_ratio);
+            let mut fine = coarse;
+            coarse.update(goal, dt);
+            for _ in 0..steps {
+                fine.update(goal, dt / steps as f32);
+            }
+            proptest::prop_assert!(coarse.value.abs_diff_eq(fine.value, 1.0e-3), "{:?} vs {:?}", coarse.value, fine.value);
         }
-        assert!((spring.value - 10.0).abs() < 0.01, "was {}", spring.value);
-        assert!(spring.velocity.abs() < 0.1, "was {}", spring.velocity);
-    }
-
-    #[test]
-    fn framerate_independent() {
-        let mut coarse = Spring::new(0.0f32, 6.0, 0.5);
-        let mut fine = coarse;
-
-        coarse.update(1.0, 0.1);
-        for _ in 0..10 {
-            fine.update(1.0, 0.01);
-        }
-
-        assert!(
-            (coarse.value - fine.value).abs() < 1.0e-4,
-            "one 100 ms step ({}) should equal ten 10 ms steps ({})",
-            coarse.value,
-            fine.value
-        );
-        assert!((coarse.velocity - fine.velocity).abs() < 1.0e-3);
     }
 
     #[test]
@@ -268,13 +296,24 @@ mod tests {
     }
 
     #[test]
-    fn vec3_converges() {
-        let target = Vec3::new(1.0, 2.0, 3.0);
-        let mut spring = Spring::critically_damped(Vec3::ZERO, 10.0);
-        for _ in 0..120 {
-            spring.update(target, DT);
-        }
-        assert!(spring.value.distance(target) < 0.01, "was {}", spring.value);
+    fn set_halflife_keeps_the_motion_and_halves_from_rest() {
+        let mut spring = Spring::new(0.0f32, 4.0, 0.3);
+        spring.update(1.0, 0.1);
+        let moving = spring;
+
+        spring.set_halflife(0.5);
+
+        assert_eq!(spring.value, moving.value);
+        assert_eq!(spring.velocity, moving.velocity);
+        assert_eq!(spring.damping_ratio, 1.0);
+
+        spring.reset_to(0.0);
+        spring.update(1.0, 0.5);
+        assert!(
+            (spring.value - 0.5).abs() < 1.0e-3,
+            "after one new halflife the spring should sit halfway, was {}",
+            spring.value
+        );
     }
 
     #[test]
@@ -298,13 +337,63 @@ mod tests {
     }
 
     #[test]
-    fn zero_dt_and_zero_frequency_are_noops() {
-        let mut spring = Spring::critically_damped(2.0f32, 10.0);
-        spring.update(5.0, 0.0);
-        assert_eq!(spring.value, 2.0);
+    fn a_quat_spring_settles_onto_a_goal_milliradians_away() {
+        let start = Quat::from_rotation_x(0.3) * Quat::from_rotation_y(0.05);
+        let goal = Quat::from_rotation_z(0.002) * start;
+        let mut spring = Spring::critically_damped_with_halflife(start, 0.1);
 
-        let mut inert = Spring::critically_damped(2.0f32, 0.0);
-        inert.update(5.0, DT);
-        assert_eq!(inert.value, 2.0);
+        for _ in 0..300 {
+            spring.update(goal, 1.0 / 60.0);
+        }
+
+        let left = (spring.value.inverse() * goal).xyz().length() * 2.0;
+        assert!(left < 1.0e-5, "stopped {left} rad short of the goal");
+    }
+
+    #[test]
+    fn quat_velocity_is_a_scaled_angle_axis() {
+        let mut spring = Spring::critically_damped(Quat::IDENTITY, 10.0);
+
+        spring.update(Quat::from_rotation_y(1.0), 0.1);
+
+        assert!(
+            spring
+                .value
+                .abs_diff_eq(Quat::from_rotation_y(0.264_241), 1.0e-5),
+            "was {:?}",
+            spring.value
+        );
+        assert!(
+            spring
+                .velocity
+                .abs_diff_eq(Vec3::new(0.0, 3.678_794, 0.0), 1.0e-5),
+            "was {:?}",
+            spring.velocity
+        );
+    }
+
+    #[test]
+    fn integral_is_the_area_under_the_value_in_every_damping_regime() {
+        const STEPS: usize = 700;
+        let dt = 0.7 / STEPS as f32;
+
+        for damping_ratio in [0.4, 1.0, 2.5] {
+            let mut spring = Spring::new(1.0f32, 6.0, damping_ratio);
+            spring.velocity = -2.0;
+            let integral = spring.integral(3.0, 0.7);
+
+            let mut area = 0.0;
+            let mut previous = spring.value;
+            for _ in 0..STEPS {
+                let next = spring.update(3.0, dt);
+                area += (previous + next) * 0.5 * dt;
+                previous = next;
+            }
+
+            assert!(
+                (integral - area).abs() < 1.0e-3,
+                "damping {damping_ratio}: {integral} vs {area}"
+            );
+        }
     }
 }

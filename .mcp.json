@@ -2,7 +2,7 @@
   "mcpServers": {
     "concerto": {
       "command": "cargo",
-      "args": ["run", "-q", "-p", "tech-demo-editor", "--", "--mcp"]
+      "args": ["run", "-q", "--manifest-path", "../tech-demo/Cargo.toml", "-p", "tech-demo-editor", "--", "--mcp"]
     }
   }
 }

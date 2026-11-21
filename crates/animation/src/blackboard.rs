@@ -1,53 +1,50 @@
 use std::collections::HashMap;
 
+use concerto_name::Name;
+use concerto_reflect::Reflect;
 use glam::Vec2;
 
-pub enum AnimationBlackboardValue {
-    Bool(bool),
-    Int(u32),
-    Float(f32),
-    Vec2(Vec2),
-}
+use crate::param::Param;
 
 #[derive(Default)]
 pub struct AnimationBlackboard {
-    values: HashMap<String, AnimationBlackboardValue>,
+    values: HashMap<Name, Box<dyn Reflect>>,
 }
 
 impl AnimationBlackboard {
-    pub fn set(&mut self, key: impl Into<String>, value: AnimationBlackboardValue) {
-        self.values.insert(key.into(), value);
+    /// Stores `value` under `key`, replacing whatever was there, of any type.
+    pub fn set<T: Reflect>(&mut self, key: Name, value: T) {
+        self.values.insert(key, Box::new(value));
     }
 
-    pub fn get(&self, key: &str) -> Option<&AnimationBlackboardValue> {
-        self.values.get(key)
+    /// Stores a value built elsewhere under `key`, as [`set`](Self::set) does.
+    pub fn set_boxed(&mut self, key: Name, value: Box<dyn Reflect>) {
+        self.values.insert(key, value);
     }
 
-    pub fn get_bool(&self, key: &str) -> Option<bool> {
-        match self.values.get(key)? {
-            AnimationBlackboardValue::Bool(v) => Some(*v),
-            _ => None,
-        }
+    /// The value under `key` as `T`, or `None` if it is missing or of another type.
+    pub fn get<T: Reflect>(&self, key: Name) -> Option<&T> {
+        self.values.get(&key)?.downcast_ref::<T>()
     }
 
-    pub fn get_int(&self, key: &str) -> Option<u32> {
-        match self.values.get(key)? {
-            AnimationBlackboardValue::Int(v) => Some(*v),
-            _ => None,
-        }
+    /// The value `param` names, or `None` if it is missing or of another type.
+    pub fn read<T: Reflect>(&self, param: &Param<T>) -> Option<&T> {
+        self.get::<T>(param.0)
     }
 
-    pub fn get_float(&self, key: &str) -> Option<f32> {
-        match self.values.get(key)? {
-            AnimationBlackboardValue::Float(v) => Some(*v),
-            _ => None,
-        }
+    pub fn get_bool(&self, key: Name) -> Option<bool> {
+        self.get::<bool>(key).copied()
     }
 
-    pub fn get_vec2(&self, key: &str) -> Option<Vec2> {
-        match self.values.get(key)? {
-            AnimationBlackboardValue::Vec2(v) => Some(*v),
-            _ => None,
-        }
+    pub fn get_int(&self, key: Name) -> Option<u32> {
+        self.get::<u32>(key).copied()
+    }
+
+    pub fn get_float(&self, key: Name) -> Option<f32> {
+        self.get::<f32>(key).copied()
+    }
+
+    pub fn get_vec2(&self, key: Name) -> Option<Vec2> {
+        self.get::<Vec2>(key).copied()
     }
 }

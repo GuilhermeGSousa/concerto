@@ -3,8 +3,15 @@ use super::*;
 
 use super::add_component::{AddComponentMenu, spawn_add_component};
 use super::component_menu::{ComponentMenu, ensure_component_menu, menu_button};
+use super::list::remove_button;
 use super::registry::InspectionSource;
-use concerto_ecs::{query::filter::With, reflect::AppTypeRegistry};
+use concerto_ecs::{
+    component::Tick,
+    query::filter::{With, Without},
+    reflect::AppTypeRegistry,
+};
+use concerto_reflect::{PathSegment, TypeRegistry};
+use std::{collections::HashMap, sync::Arc};
 
 /// A component card in the inspector's UI hierarchy.
 #[derive(Component, Clone, Copy)]
@@ -17,8 +24,37 @@ pub struct InspectedComponent {
     read: bool,
 }
 
+/// Marks a component card whose values cannot be edited here: the widgets in its body are disabled, and its menu still works.
 #[derive(Component)]
-pub(super) struct BuildPropertyWidget;
+pub struct ReadOnlyCard;
+
+/// An empty column above the inspected entity's component cards, spawned again with them, for other plugins to fill.
+#[derive(Component)]
+pub struct InspectorHeader {
+    /// The inspected entity, in the edit `App`'s world.
+    pub scene_entity: Entity,
+}
+
+#[derive(Component)]
+pub(super) struct LabelColumn {
+    pub(super) body: Entity,
+}
+
+#[derive(Component)]
+pub(super) struct RowLabel;
+
+#[derive(Component)]
+pub(super) struct BuildPropertyWidget {
+    pub(super) world: TargetWorld,
+    remove: Option<(Entity, usize)>,
+}
+
+pub(super) struct CardRows<'a> {
+    pub(super) body: Entity,
+    pub(super) name: &'a str,
+    pub(super) target: Arc<dyn PropertyTarget>,
+    pub(super) read: bool,
+}
 
 pub(super) fn forget_scene(
     _: On<Remove<EditTarget>>,
@@ -42,7 +78,11 @@ pub(super) fn sync_inspected_components(
     stacks: Query<(Entity, &ComponentStack, Option<&Children>)>,
     cards: Query<&InspectedComponent>,
     bodies: Query<&Children>,
-    rows: Query<(&PropertyRow, &PropertyRowValue)>,
+    rows: Query<(
+        Option<&PropertyRow>,
+        Option<&PlainRow>,
+        Option<&PropertyRowValue>,
+    )>,
     menus: Query<(Entity, &AddComponentMenu)>,
     component_menus: Query<&ComponentMenu>,
     mut cmd: CommandQueue,
@@ -76,19 +116,24 @@ pub(super) fn sync_inspected_components(
     };
 
     if rebuild {
+        cmd.entity(stack_entity).add_child((
+            theme.column().fixed().gap(theme.spacing_xs + 2.0).hidden(),
+            InspectorHeader {
+                scene_entity: target,
+            },
+        ));
         let mut components = source.visible_components(target);
         components.sort_by(|(a_id, a), (b_id, b)| a.cmp(b).then(a_id.cmp(b_id)));
         for (type_id, name) in components {
-            let removable = source.is_registered(type_id);
-            let (entity, card) = spawn_card(
-                &mut cmd,
-                stack_entity,
-                target,
+            let menu = source.is_registered(type_id).then_some((target, type_id));
+            let (entity, body) = spawn_card(&mut cmd, stack_entity, name, menu, &theme);
+            let card = InspectedComponent {
+                scene_entity: target,
                 type_id,
                 name,
-                removable,
-                &theme,
-            );
+                body,
+                read: false,
+            };
             refresh_card(
                 &source, &registry, &mut cmd, entity, card, &theme, &bodies, &rows,
             );
@@ -116,28 +161,75 @@ fn refresh_card(
     mut card: InspectedComponent,
     theme: &UITheme,
     bodies: &Query<&Children>,
-    rows: &Query<(&PropertyRow, &PropertyRowValue)>,
+    rows: &Query<(
+        Option<&PropertyRow>,
+        Option<&PlainRow>,
+        Option<&PropertyRowValue>,
+    )>,
 ) {
     if card.read && !source.is_component_changed(card.scene_entity, card.type_id) {
         return;
     }
     let properties = source
-        .collect_component(
-            registry,
-            registry.changed_tick(),
-            card.scene_entity,
-            card.type_id,
-        )
+        .collect_component(registry, card.scene_entity, card.type_id)
         .unwrap_or_default();
+    show_properties(
+        CardRows {
+            body: card.body,
+            name: card.name,
+            target: Arc::new(ComponentTarget {
+                entity: card.scene_entity,
+                component: card.type_id,
+            }),
+            read: card.read,
+        },
+        properties,
+        &source.types(),
+        registry,
+        cmd,
+        theme,
+        bodies,
+        rows,
+    );
+    card.read = true;
+    cmd.insert(card, entity);
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn show_properties(
+    card: CardRows<'_>,
+    properties: Vec<Property>,
+    types: &TypeRegistry,
+    registry: &Res<InspectorRegistry>,
+    cmd: &mut CommandQueue,
+    theme: &UITheme,
+    bodies: &Query<&Children>,
+    rows: &Query<(
+        Option<&PropertyRow>,
+        Option<&PlainRow>,
+        Option<&PropertyRowValue>,
+    )>,
+) {
+    let registry_tick = registry.changed_tick();
     let kept = card
         .read
-        .then(|| kept_rows(source, registry, card.body, &properties, bodies, rows))
+        .then(|| {
+            kept_rows(
+                registry,
+                types,
+                registry_tick,
+                card.body,
+                &properties,
+                bodies,
+                rows,
+            )
+        })
         .flatten();
     match kept {
         Some(kept) => {
             for (row, property) in kept.into_iter().zip(properties) {
-                if let Some(row) = row {
-                    cmd.insert(property.value, row);
+                if let (Some(row), PropertyKind::Value(value)) = (row, property.kind) {
+                    cmd.insert(value, row);
                 }
             }
         }
@@ -148,23 +240,40 @@ fn refresh_card(
             let mut body = body_node(theme);
             body.visible = !properties.is_empty();
             cmd.insert(body, card.body);
+            let mut lists = HashMap::new();
             for property in properties {
-                let node = source.row_node(registry, &property, theme);
-                spawn_row(cmd, &card, property, node, theme);
+                let node = registry.row_node(types, &property, theme);
+                let remove = list_element(&property.path)
+                    .and_then(|(list, index)| Some((*lists.get(&list)?, index)));
+                let path = property.list_length().map(|_| property.path.clone());
+                let row = spawn_row(cmd, &card, property, registry_tick, node, remove, theme);
+                if let Some(path) = path {
+                    lists.insert(path, row);
+                }
             }
         }
     }
-    card.read = true;
-    cmd.insert(card, entity);
+}
+
+fn list_element(path: &PropertyPath) -> Option<(PropertyPath, usize)> {
+    let (&PathSegment::Index(index), list) = path.segments().split_last()? else {
+        return None;
+    };
+    Some((PropertyPath::new(list.iter().copied()), index))
 }
 
 fn kept_rows(
-    source: &InspectionSource,
     registry: &InspectorRegistry,
+    types: &TypeRegistry,
+    registry_tick: Tick,
     body: Entity,
     properties: &[Property],
     bodies: &Query<&Children>,
-    rows: &Query<(&PropertyRow, &PropertyRowValue)>,
+    rows: &Query<(
+        Option<&PropertyRow>,
+        Option<&PlainRow>,
+        Option<&PropertyRowValue>,
+    )>,
 ) -> Option<Vec<Option<Entity>>> {
     let existing: Vec<Entity> = bodies
         .get_entity(body)
@@ -177,33 +286,39 @@ fn kept_rows(
         .into_iter()
         .zip(properties)
         .map(|(entity, property)| {
-            let (row, value) = rows.get_entity(entity)?;
-            let same_row = row.path == property.path
-                && row.type_id == property.type_id
-                && row.editor_type == property.editor_type
-                && row.registry_tick == property.registry_tick;
-            if !same_row {
-                None
-            } else if *value == property.value {
-                Some(None)
-            } else {
-                source
-                    .follows_snapshot(registry, property)
-                    .then_some(Some(entity))
+            let (row, plain, shown) = rows.get_entity(entity)?;
+            let (path, type_id) = shown_property(row, plain)?;
+            let same_row = *path == property.path
+                && type_id == property.type_id
+                && row.is_none_or(|row| row.registry_tick == registry_tick);
+            match (row, shown, property.value()) {
+                _ if !same_row => None,
+                (_, None, None) => Some(None),
+                (_, Some(shown), Some(value)) if shown == value => Some(None),
+                (Some(row), Some(_), Some(_)) => registry
+                    .follows_snapshot(types, row)
+                    .then_some(Some(entity)),
+                _ => None,
             }
         })
         .collect()
 }
 
-fn spawn_card(
+fn shown_property<'a>(
+    row: Option<&'a PropertyRow>,
+    plain: Option<&'a PlainRow>,
+) -> Option<(&'a PropertyPath, TypeId)> {
+    row.map(|row| (&row.address.path, row.address.type_id))
+        .or(plain.map(|plain| (&plain.path, plain.type_id)))
+}
+
+pub(super) fn spawn_card(
     cmd: &mut CommandQueue,
     stack: Entity,
-    target: Entity,
-    type_id: TypeId,
-    name: &'static str,
-    removable: bool,
+    name: &str,
+    menu: Option<(Entity, TypeId)>,
     theme: &UITheme,
-) -> (Entity, InspectedComponent) {
+) -> (Entity, Entity) {
     let mut stack_queue = cmd.entity(stack);
     let mut card_queue = stack_queue.spawn_child(
         theme
@@ -218,7 +333,7 @@ fn spawn_card(
         theme.row().fixed().gap(theme.spacing_xs + 2.0),
         |mut header| {
             header.add_child(theme.label(name).single_line().grow());
-            if removable {
+            if let Some((target, type_id)) = menu {
                 header.add_child(menu_button(theme, target, type_id));
             }
             header.add_child((
@@ -234,45 +349,93 @@ fn spawn_card(
     );
 
     let body = card_queue.spawn_child(body_node(theme)).entity();
-
-    let card = InspectedComponent {
-        scene_entity: target,
-        type_id,
-        name,
-        body,
-        read: false,
-    };
-    card_queue.insert(card);
-    (entity, card)
+    card_queue.insert(LabelColumn { body });
+    (entity, body)
 }
 
 fn spawn_row(
     cmd: &mut CommandQueue,
-    card: &InspectedComponent,
+    card: &CardRows<'_>,
     property: Property,
-    row_node: UINode,
+    registry_tick: Tick,
+    mut row_node: UINode,
+    remove: Option<(Entity, usize)>,
     theme: &UITheme,
 ) -> Entity {
-    let target = property.row(card.scene_entity, card.type_id);
+    if remove.is_some() {
+        row_node.min_height = UIValue::Px(theme.control_height);
+        if row_node.flex_wrap == concerto_ui::node::FlexWrap::NoWrap {
+            row_node.padding.right = theme.control_height + theme.spacing_xs;
+        }
+    }
     let label = if property.path.depth() == 0 {
         card.name.to_string()
     } else {
         label_for(&property.path)
     };
     let mut body_queue = cmd.entity(card.body);
-    let mut row_queue =
-        body_queue.spawn_child((row_node, target, property.value, BuildPropertyWidget));
+    let mut row_queue = body_queue.spawn_child((
+        row_node,
+        BuildPropertyWidget {
+            world: card.target.world(),
+            remove,
+        },
+    ));
     let row = row_queue.entity();
-    row_queue.add_child(
+    match property.row(card.target.clone(), registry_tick) {
+        Some(editor_row) => row_queue.insert(editor_row),
+        None => row_queue.insert(PlainRow {
+            path: property.path.clone(),
+            type_id: property.type_id,
+        }),
+    };
+    row_queue.add_child((
         theme
             .label(label)
             .small()
             .muted()
             .single_line()
-            .width(UIValue::Px(PROPERTY_LABEL_WIDTH))
+            .width(UIValue::Px(LABEL_MIN))
             .fixed(),
-    );
+        RowLabel,
+    ));
+    match property.kind {
+        PropertyKind::Value(value) => {
+            row_queue.insert(value);
+        }
+        PropertyKind::Heading => {}
+        PropertyKind::Unsupported => {
+            row_queue.add_child(theme.label("Unsupported type"));
+        }
+    }
     row
+}
+
+fn label_column(card_width: f32) -> f32 {
+    (card_width * LABEL_SHARE).clamp(LABEL_MIN, LABEL_MAX)
+}
+
+pub(super) fn size_label_columns(
+    cards: Query<(&LabelColumn, &UILayout)>,
+    children: Query<&Children>,
+    labels: Query<&RowLabel>,
+    nodes: Query<&mut UINode>,
+) {
+    for (card, layout) in cards.iter() {
+        let width = UIValue::Px(label_column(layout.rect.size.x));
+        let rows = children.get_entity(card.body);
+        for &row in rows.into_iter().flat_map(|rows| rows.iter()) {
+            let cells = children.get_entity(row);
+            for &cell in cells.into_iter().flat_map(|cells| cells.iter()) {
+                if labels.get_entity(cell).is_some()
+                    && let Some(mut node) = nodes.get_entity(cell)
+                    && node.width != width
+                {
+                    node.width = width;
+                }
+            }
+        }
+    }
 }
 
 /// The layout node every property row starts from.
@@ -280,7 +443,7 @@ pub fn standard_row_node(theme: &UITheme) -> UINode {
     theme.row().fixed().gap(theme.spacing_xs).into_bundle()
 }
 
-fn body_node(theme: &UITheme) -> UINode {
+pub(super) fn body_node(theme: &UITheme) -> UINode {
     UINode::default()
         .with_visible(false)
         .with_flex_shrink(0.0)
@@ -293,25 +456,75 @@ fn body_node(theme: &UITheme) -> UINode {
 }
 
 pub(super) fn build_property_widgets(
-    rows: Query<(Entity, &PropertyRow, &PropertyRowValue), With<BuildPropertyWidget>>,
+    rows: Query<(
+        Entity,
+        Option<&PropertyRow>,
+        Option<&PropertyRowValue>,
+        &BuildPropertyWidget,
+    )>,
     registry: Res<InspectorRegistry>,
     types: EditWorld<Option<Res<AppTypeRegistry>>>,
     theme: Res<UITheme>,
     mut cmd: CommandQueue,
 ) {
-    let types = types.as_deref().map(|types| &types.0);
-    for (entity, row, value) in rows.iter() {
-        if let Some(editor) = registry
-            .editor(row.type_id, types)
-            .filter(|editor| Some(editor.editor_type) == row.editor_type)
-        {
-            if let Err(error) = editor.adapter.build(&mut cmd, entity, value, &theme) {
-                log::warn!("Unable to build property widget: {error}");
-            }
-        } else {
-            cmd.entity(entity)
-                .add_child(theme.label("Unsupported type"));
+    let types = types.as_deref().map(|types| types.read());
+    let types = types.as_deref();
+    for (entity, row, value, build) in rows.iter() {
+        if build.world == TargetWorld::EditTarget {
+            build_row_widgets(
+                entity, row, value, build, &registry, types, &theme, &mut cmd,
+            );
         }
-        cmd.remove::<BuildPropertyWidget>(entity);
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn build_row_widgets(
+    entity: Entity,
+    row: Option<&PropertyRow>,
+    value: Option<&PropertyRowValue>,
+    build: &BuildPropertyWidget,
+    registry: &InspectorRegistry,
+    types: Option<&TypeRegistry>,
+    theme: &UITheme,
+    cmd: &mut CommandQueue,
+) {
+    let editor = row.and_then(|row| {
+        registry
+            .editor(row.address.type_id, types)
+            .filter(|editor| editor.editor_type == row.editor_type)
+    });
+    if let (Some(editor), Some(value)) = (editor, value)
+        && let Err(error) = editor.adapter.build(cmd, entity, value, theme)
+    {
+        log::warn!("Unable to build property widget: {error}");
+    }
+    if let Some((list, index)) = build.remove {
+        cmd.entity(entity)
+            .add_child(remove_button(theme, list, index));
+    }
+    cmd.remove::<BuildPropertyWidget>(entity);
+}
+
+pub(super) fn disable_read_only_cards(
+    cards: Query<&InspectedComponent, With<ReadOnlyCard>>,
+    children: Query<&Children>,
+    enabled: Query<Entity, (With<Interactable>, Without<UIDisabled>)>,
+    mut cmd: CommandQueue,
+) {
+    for card in cards.iter() {
+        let mut pending = vec![card.body];
+        while let Some(node) = pending.pop() {
+            if enabled.contains_entity(node) {
+                cmd.insert(UIDisabled, node);
+            }
+            pending.extend(
+                children
+                    .get_entity(node)
+                    .into_iter()
+                    .flat_map(|children| children.iter())
+                    .copied(),
+            );
+        }
     }
 }

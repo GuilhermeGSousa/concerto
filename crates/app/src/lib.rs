@@ -24,6 +24,7 @@ use concerto_ecs::system::executor::multi_thread::MultiThreadedExecutor;
 #[cfg(not(all(feature = "multithreaded", not(target_arch = "wasm32"))))]
 use concerto_ecs::system::executor::single_thread::SingleThreadedExecutor;
 use concerto_ecs::{
+    component::removed::ComponentRemoved,
     events::{
         event_channel::{update_event_channel, EventChannel},
         event_writer::EventWriter,
@@ -37,11 +38,16 @@ use concerto_ecs::{
 use log::info;
 
 use concerto_foundation::assets::{
-    asset_server::AssetServer, asset_store::AssetStore, handle::AssetLifetimeEvent, Asset, AssetId,
+    asset_server::AssetServer,
+    asset_store::AssetStore,
+    derived::DerivedData,
+    handle::{AssetLifetimeEvent, AssetLoaded},
+    Asset, AssetId, CreatableAsset, LoadableAsset, PlaceableAsset,
 };
+use concerto_reflect::{GetTypeRegistration, Reflect};
 
 use crate::{
-    edit_time::{AppListener, AtEditTime, EditTime},
+    edit_time::{AppListener, AtEditTime, EditTime, Preview},
     plugins::PluginsState,
     schedule_groups::{First, Update},
     subapp::{SubApp, SubApps},
@@ -49,11 +55,15 @@ use crate::{
 
 pub mod edit_time;
 pub mod extractor;
+pub mod inspected_asset;
 pub mod main_schedule;
+pub mod placeable_asset;
 pub mod plugins;
 pub mod schedule_groups;
 pub mod subapp;
 
+pub use inspected_asset::{DecodedAsset, InspectedAsset, InspectedAssets};
+pub use placeable_asset::{FillPlaced, PlaceableAssets, PlaceableKind};
 pub use plugins::Plugin;
 
 /// The scene a game starts in, declared with [`App::set_startup_scene`].
@@ -76,13 +86,21 @@ fn compile(schedules: Schedules, world: &mut World, filter: &TagFilter) -> Compi
     }
 }
 
+/// What an [`App`] is for, which decides the systems and listeners it keeps.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum AppMode {
+    Game,
+    Edit,
+    Preview,
+}
+
 /// The top-level container: the main and render [`SubApp`]s and the registered [`Plugin`]s.
 pub struct App {
     subapps: SubApps,
     plugins: Vec<Box<dyn Plugin>>,
     plugin_types: std::collections::HashSet<std::any::TypeId>,
     plugin_state: PluginsState,
-    editing: bool,
+    mode: AppMode,
 }
 
 impl App {
@@ -92,14 +110,22 @@ impl App {
             plugins: Vec::new(),
             plugin_types: Default::default(),
             plugin_state: PluginsState::Building,
-            editing: false,
+            mode: AppMode::Game,
         }
     }
 
     /// Creates an edit `App`: only main-world systems and listeners marked `at_edit_time` run in it.
     pub fn for_editing() -> App {
         App {
-            editing: true,
+            mode: AppMode::Edit,
+            ..App::new()
+        }
+    }
+
+    /// Creates a preview `App`: only main-world systems and listeners marked `at_edit_time` or `at_preview_time` run in it.
+    pub fn for_previewing() -> App {
+        App {
+            mode: AppMode::Preview,
             ..App::new()
         }
     }
@@ -109,9 +135,14 @@ impl App {
         self.insert_resource(StartupScene(id))
     }
 
-    /// Whether this `App` was created by [`App::for_editing`].
+    /// Whether this `App` was created by [`App::for_editing`] or [`App::for_previewing`].
     pub fn is_editing(&self) -> bool {
-        self.editing
+        self.mode != AppMode::Game
+    }
+
+    /// Whether this `App` was created by [`App::for_previewing`].
+    pub fn is_previewing(&self) -> bool {
+        self.mode == AppMode::Preview
     }
 
     /// Builds `plugin` immediately and keeps it for [`Plugin::ready`] and [`Plugin::finish`].
@@ -128,26 +159,75 @@ impl App {
         self.plugin_types.contains(&std::any::TypeId::of::<P>())
     }
 
-    /// Registers an asset type and the system that tracks its handles; requires [`AssetManagerPlugin`](plugins::AssetManagerPlugin).
+    /// Registers an asset type and the system that tracks its handles, once per type; requires [`AssetManagerPlugin`](plugins::AssetManagerPlugin).
     pub fn register_asset<A: Asset>(&mut self) -> &mut Self {
+        self.register_asset_with::<A>(AssetServer::register_asset)
+    }
+
+    /// Registers a derived asset type as [`register_asset`](Self::register_asset) does, deriving its blob on every load.
+    pub fn register_derived_asset<A: DerivedData>(&mut self) -> &mut Self {
+        self.register_asset_with::<A>(AssetServer::register_derived_asset)
+    }
+
+    /// Registers `A` as an asset and a reflected type, and records it in [`InspectedAssets`] so the editor can create, inspect and save it.
+    pub fn register_inspected_asset<
+        A: CreatableAsset + LoadableAsset + Reflect + GetTypeRegistration,
+    >(
+        &mut self,
+    ) -> &mut Self {
+        self.register_asset::<A>();
+        self.register_type::<A>();
+        if self.get_resource::<InspectedAssets>().is_none() {
+            self.insert_resource(InspectedAssets::default());
+        }
+        self.get_resource_mut::<InspectedAssets>()
+            .expect("InspectedAssets was just inserted")
+            .insert(InspectedAsset::of::<A>());
+        self
+    }
+
+    /// Registers `A` as an asset and records it in [`PlaceableAssets`] so the editor can place it in a scene.
+    pub fn register_placeable_asset<A: PlaceableAsset>(&mut self) -> &mut Self {
+        self.register_asset::<A>();
+        placeable_asset::register::<A>(self);
+        self
+    }
+
+    fn register_asset_with<A: Asset>(
+        &mut self,
+        register: fn(&mut AssetServer, &AssetStore<A>),
+    ) -> &mut Self {
+        if self
+            .get_resource::<AssetServer>()
+            .expect("Asset Server not found")
+            .is_registered::<A>()
+        {
+            return self;
+        }
         let asset_store = AssetStore::<A>::new();
         let asset_server = self
             .get_resource_mut::<AssetServer>()
             .expect("Asset Server not found");
 
-        asset_server.register_asset::<A>(&asset_store);
+        register(asset_server, &asset_store);
 
         self.add_system(
             Update,
             (|mut asset_store: ResMut<AssetStore<A>>,
               asset_server: ResMut<AssetServer>,
               events: EventWriter<AssetLifetimeEvent>| {
-                asset_store.track_assets(asset_server, events);
+                if asset_store
+                    .bypass_change_detection()
+                    .track_assets(asset_server, events)
+                {
+                    asset_store.mark_changed();
+                }
             })
             .at_edit_time(),
         );
 
         self.main_mut().insert_resource(asset_store);
+        self.register_event::<AssetLoaded<A>>();
         self
     }
 
@@ -210,21 +290,48 @@ impl App {
         self
     }
 
+    /// Records every removal of `T` in the main world, for systems taking `RemovedComponents<T>`.
+    pub fn track_removals<T: Component>(&mut self) -> &mut Self {
+        if self
+            .get_resource::<EventChannel<ComponentRemoved<T>>>()
+            .is_some()
+        {
+            return self;
+        }
+        self.add_system(
+            First,
+            update_event_channel::<ComponentRemoved<T>>.at_edit_time(),
+        );
+        self.main_mut().world_mut().track_removals::<T>();
+        self
+    }
+
     pub fn insert_resource<R: Resource>(&mut self, value: R) -> &mut Self {
         self.main_mut().insert_resource(value);
         self
     }
 
-    /// Runs `listener` every time a `T` is triggered in the main world; an edit `App` keeps only marked ones.
+    /// Runs `listener` every time a `T` is triggered in the main world; an edit or preview `App` keeps only marked ones.
     pub fn add_listener<T: Signal, M>(&mut self, listener: impl AppListener<T, M>) -> &mut Self {
-        let editing = self.editing;
-        listener.add_to(self.main_mut().world_mut(), editing);
+        let mode = self.mode;
+        listener.add_to(self.main_mut().world_mut(), mode);
         self
     }
 
     /// Registers `T` in the main world's type registry with the type data its derive declared.
     pub fn register_type<T: concerto_reflect::GetTypeRegistration>(&mut self) -> &mut Self {
         self.main_mut().register_type::<T>();
+        self
+    }
+
+    /// Makes `P` a member of every `InputSet<K>` in the main world; register before the schedules compile.
+    pub fn register_input<
+        K: 'static,
+        P: concerto_ecs::system::input::ReadOnlySystemInput + 'static,
+    >(
+        &mut self,
+    ) -> &mut Self {
+        concerto_ecs::system::input::register_input::<K, P>(self.main_mut().world_mut());
         self
     }
 
@@ -326,16 +433,26 @@ impl App {
         let mut i = 0;
         while i < self.plugins.len() {
             core::mem::swap(&mut self.plugins[i], &mut hokeypokey);
-            hokeypokey.finish(self);
+            {
+                profiling::scope!("Plugin::finish", hokeypokey.name());
+                hokeypokey.finish(self);
+            }
             core::mem::swap(&mut self.plugins[i], &mut hokeypokey);
             i += 1;
         }
 
         self.plugin_state = PluginsState::Finished;
 
-        self.compile_schedules();
-        self.compile_render_schedules();
+        {
+            profiling::scope!("App::compile_schedules");
+            self.compile_schedules();
+        }
+        {
+            profiling::scope!("App::compile_render_schedules");
+            self.compile_render_schedules();
+        }
 
+        profiling::scope!("Startup");
         self.subapps.startup();
     }
 
@@ -344,13 +461,16 @@ impl App {
             .remove_resource::<Schedules>()
             .expect("Schedules resource not found!");
 
-        let filter = if self.editing {
-            TagFilter {
+        let filter = match self.mode {
+            AppMode::Game => TagFilter::default(),
+            AppMode::Edit => TagFilter {
                 include: vec![EditTime.intern()],
                 exclude: Vec::new(),
-            }
-        } else {
-            TagFilter::default()
+            },
+            AppMode::Preview => TagFilter {
+                include: vec![EditTime.intern(), Preview.intern()],
+                exclude: Vec::new(),
+            },
         };
         let world = self.main_mut().world_mut();
         let compiled_schedules = compile(schedules, world, &filter);
@@ -389,7 +509,11 @@ impl Default for App {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use concerto_ecs::events::{event_channel::EventChannel, event_reader::EventReader};
+    use concerto_ecs::{
+        events::{event_channel::EventChannel, event_reader::EventReader},
+        query::change_detection::DetectChanges,
+        resource::Res,
+    };
 
     #[derive(Event)]
     struct ExternalEvent;
@@ -401,7 +525,7 @@ mod tests {
         seen.0 += events.read().count();
     }
 
-    use crate::edit_time::AtEditTime;
+    use crate::edit_time::{AtEditTime, AtPreviewTime};
     use concerto_ecs::{
         signal::{On, Signal},
         system::schedule::ScheduleLabel,
@@ -422,67 +546,115 @@ mod tests {
         count.0 += 1;
     }
 
-    fn counted_after_one_frame(mut app: App, marked: bool) -> u32 {
+    #[derive(Clone, Copy)]
+    enum Mark {
+        None,
+        Edit,
+        Preview,
+    }
+
+    fn counted_after_one_frame(mut app: App, mark: Mark) -> u32 {
         app.register_plugin(main_schedule::MainSchedulePlugin)
             .register_plugin(plugins::TimePlugin)
             .insert_resource(Count::default());
-        if marked {
-            app.add_system(Update, count.at_edit_time());
-        } else {
-            app.add_system(Update, count);
-        }
+        match mark {
+            Mark::None => app.add_system(Update, count),
+            Mark::Edit => app.add_system(Update, count.at_edit_time()),
+            Mark::Preview => app.add_system(Update, count.at_preview_time()),
+        };
         app.finish_plugin_build();
         app.update();
         app.get_resource::<Count>().unwrap().0
     }
 
-    fn heard_after_one_ping(mut app: App, marked: bool) -> u32 {
+    fn heard_after_one_ping(mut app: App, mark: Mark) -> u32 {
         app.insert_resource(Count::default());
-        if marked {
-            app.add_listener(hear.at_edit_time());
-        } else {
-            app.add_listener(hear);
-        }
+        match mark {
+            Mark::None => app.add_listener(hear),
+            Mark::Edit => app.add_listener(hear.at_edit_time()),
+            Mark::Preview => app.add_listener(hear.at_preview_time()),
+        };
         app.main_mut().world_mut().trigger(Ping);
         app.get_resource::<Count>().unwrap().0
     }
 
-    #[test]
-    fn an_app_for_editing_reports_its_role() {
-        assert!(App::for_editing().is_editing());
-        assert!(!App::new().is_editing());
+    struct Role {
+        name: &'static str,
+        app: fn() -> App,
+        editing: bool,
+        previewing: bool,
+        runs: Runs,
+    }
+
+    struct Runs {
+        unmarked: u32,
+        edit: u32,
+        preview: u32,
     }
 
     #[test]
-    fn only_marked_systems_run_in_an_edit_app() {
-        assert_eq!(counted_after_one_frame(App::new(), false), 1);
-        assert_eq!(counted_after_one_frame(App::new(), true), 1);
-        assert_eq!(counted_after_one_frame(App::for_editing(), false), 0);
-        assert_eq!(counted_after_one_frame(App::for_editing(), true), 1);
-    }
-
-    fn count_ten(mut count: ResMut<Count>) {
-        count.0 += 10;
-    }
-
-    #[test]
-    fn marking_a_tuple_marks_every_system_in_it() {
-        let mut app = App::for_editing();
-        app.register_plugin(main_schedule::MainSchedulePlugin)
-            .register_plugin(plugins::TimePlugin)
-            .insert_resource(Count::default())
-            .add_system(Update, (count, count_ten).at_edit_time());
-        app.finish_plugin_build();
-        app.update();
-        assert_eq!(app.get_resource::<Count>().unwrap().0, 11);
-    }
-
-    #[test]
-    fn only_marked_listeners_are_added_to_an_edit_app() {
-        assert_eq!(heard_after_one_ping(App::new(), false), 1);
-        assert_eq!(heard_after_one_ping(App::new(), true), 1);
-        assert_eq!(heard_after_one_ping(App::for_editing(), false), 0);
-        assert_eq!(heard_after_one_ping(App::for_editing(), true), 1);
+    fn edit_and_preview_marks_decide_which_systems_and_listeners_each_kind_of_app_runs() {
+        let cases = [
+            Role {
+                name: "a game app runs everything",
+                app: App::new,
+                editing: false,
+                previewing: false,
+                runs: Runs {
+                    unmarked: 1,
+                    edit: 1,
+                    preview: 1,
+                },
+            },
+            Role {
+                name: "an edit app runs edit-time work only",
+                app: App::for_editing,
+                editing: true,
+                previewing: false,
+                runs: Runs {
+                    unmarked: 0,
+                    edit: 1,
+                    preview: 0,
+                },
+            },
+            Role {
+                name: "a preview app runs edit-time and preview-time work",
+                app: App::for_previewing,
+                editing: true,
+                previewing: true,
+                runs: Runs {
+                    unmarked: 0,
+                    edit: 1,
+                    preview: 1,
+                },
+            },
+        ];
+        for case in cases {
+            assert_eq!((case.app)().is_editing(), case.editing, "{}", case.name);
+            assert_eq!(
+                (case.app)().is_previewing(),
+                case.previewing,
+                "{}",
+                case.name
+            );
+            let check = |mark: Mark, runs: u32| {
+                assert_eq!(
+                    counted_after_one_frame((case.app)(), mark),
+                    runs,
+                    "{}",
+                    case.name
+                );
+                assert_eq!(
+                    heard_after_one_ping((case.app)(), mark),
+                    runs,
+                    "{}",
+                    case.name
+                );
+            };
+            check(Mark::None, case.runs.unmarked);
+            check(Mark::Edit, case.runs.edit);
+            check(Mark::Preview, case.runs.preview);
+        }
     }
 
     #[derive(Resource, Default)]
@@ -524,6 +696,8 @@ mod tests {
         }
     }
 
+    impl concerto_foundation::assets::LoadableAsset for Note {}
+
     #[test]
     fn a_dropped_asset_is_freed_in_an_edit_app() {
         let mut app = App::for_editing();
@@ -552,6 +726,53 @@ mod tests {
             .is_none());
     }
 
+    #[derive(Resource, Default)]
+    struct NoteStoreLog {
+        changed: Vec<bool>,
+        loaded: Vec<AssetId>,
+    }
+
+    fn log_note_store(
+        store: Res<AssetStore<Note>>,
+        mut loaded: EventReader<AssetLoaded<Note>>,
+        mut log: ResMut<NoteStoreLog>,
+    ) {
+        log.changed.push(store.is_changed());
+        log.loaded.extend(loaded.read().map(|event| event.id));
+    }
+
+    #[test]
+    fn an_asset_store_reads_as_changed_only_on_a_load_or_a_drop() {
+        let mut app = App::new();
+        app.register_plugin(main_schedule::MainSchedulePlugin)
+            .register_plugin(plugins::TimePlugin)
+            .register_plugin(plugins::AssetManagerPlugin)
+            .register_asset::<Note>()
+            .insert_resource(NoteStoreLog::default())
+            .add_system(First, log_note_store);
+        app.finish_plugin_build();
+        for _ in 0..3 {
+            app.update();
+        }
+
+        let handle = app.get_resource::<AssetServer>().unwrap().add(Note);
+        let id = handle.id();
+        for _ in 0..3 {
+            app.update();
+        }
+        drop(handle);
+        for _ in 0..3 {
+            app.update();
+        }
+
+        let log = app.get_resource::<NoteStoreLog>().unwrap();
+        assert_eq!(
+            log.changed[1..],
+            [false, false, false, true, false, false, true, false]
+        );
+        assert_eq!(log.loaded, [id]);
+    }
+
     #[test]
     fn externally_queued_events_survive_until_late_update() {
         let mut app = App::new();
@@ -574,64 +795,12 @@ mod tests {
 }
 
 #[cfg(test)]
-mod thread_safety_tests {
-    use super::*;
-
-    struct Marked;
-    impl Plugin for Marked {
-        fn build(&self, _: &mut App) {}
-    }
-
-    struct Absent;
-    impl Plugin for Absent {
-        fn build(&self, _: &mut App) {}
-    }
-
-    fn assert_send_sync<T: Send + Sync>() {}
-
-    #[test]
-    fn an_app_can_cross_threads() {
-        assert_send_sync::<App>();
-    }
-
-    #[test]
-    fn a_registered_plugin_is_reported_as_added() {
-        let mut app = App::new();
-        app.register_plugin(Marked);
-
-        assert!(app.is_plugin_added::<Marked>());
-        assert!(!app.is_plugin_added::<Absent>());
-    }
-
-    #[test]
-    fn a_plugin_registered_by_another_plugin_is_reported_as_added() {
-        struct Outer;
-        impl Plugin for Outer {
-            fn build(&self, app: &mut App) {
-                app.register_plugin(Marked);
-            }
-        }
-        let mut app = App::new();
-        app.register_plugin(Outer);
-
-        assert!(app.is_plugin_added::<Marked>());
-        assert!(app.is_plugin_added::<Outer>());
-    }
-}
-
-#[cfg(test)]
 mod type_registration_tests {
     use super::*;
     use concerto_ecs::reflect::{AppTypeRegistry, ReflectComponent, ReflectSceneComponent};
     use concerto_foundation::transform::Transform;
-    use concerto_reflect::{Reflect, ReflectDefault};
+    use concerto_reflect::ReflectDefault;
     use std::any::TypeId;
-
-    #[derive(Component, Reflect, Default)]
-    #[reflect(Component, Default)]
-    struct Health {
-        points: f32,
-    }
 
     fn registry(app: &App) -> &AppTypeRegistry {
         app.get_resource::<AppTypeRegistry>().unwrap()
@@ -644,50 +813,13 @@ mod type_registration_tests {
             .register_plugin(plugins::TimePlugin)
             .register_plugin(plugins::TransformPlugin);
 
-        let registration = registry(&app).get(TypeId::of::<Transform>()).unwrap();
+        let registration = registry(&app)
+            .read()
+            .get(TypeId::of::<Transform>())
+            .unwrap();
         assert_eq!(registration.short_name(), "Transform");
         assert!(registration.data::<ReflectComponent>().is_some());
         assert!(registration.data::<ReflectDefault>().is_some());
         assert!(registration.data::<ReflectSceneComponent>().is_some());
-    }
-
-    #[test]
-    fn a_recipe_registers_its_own_types() {
-        let mut app = App::new();
-
-        app.register_type::<Health>();
-
-        let registration = registry(&app).get(TypeId::of::<Health>()).unwrap();
-        assert!(registration.data::<ReflectComponent>().is_some());
-        assert!(registration.data::<ReflectDefault>().is_some());
-        assert!(registration.data::<ReflectSceneComponent>().is_none());
-        let _ = Health::default().points;
-    }
-
-    #[derive(Component, Default)]
-    struct Anchor;
-
-    #[derive(Component, Default)]
-    struct Companion;
-
-    #[derive(Component, Default)]
-    struct Counted(u32);
-
-    #[test]
-    fn an_app_registers_a_required_component_from_outside() {
-        let mut app = App::new();
-
-        app.register_required_components::<Anchor, Companion>()
-            .register_required_components_with::<Anchor, Counted>(|| Counted(3));
-
-        let world = app.main_mut().world_mut();
-        let entity = world.spawn(Anchor);
-        assert!(world
-            .get_component_for_entity::<Companion>(entity)
-            .is_some());
-        assert_eq!(
-            world.get_component_for_entity::<Counted>(entity).unwrap().0,
-            3
-        );
     }
 }

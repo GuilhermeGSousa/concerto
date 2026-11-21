@@ -1,0 +1,247 @@
+use concerto_animation::clip::{AnimationChanelOutput, AnimationChannel, AnimationClip};
+use concerto_foundation::assets::handle::AssetHandle;
+use concerto_mesh::{JointPose, Skeleton};
+use concerto_reflect::Reflect;
+use glam::{Mat4, Quat, Vec3};
+use uuid::Uuid;
+
+use crate::{
+    bake::bake,
+    channel::{
+        ChannelSource, FeatureChannel, FeatureChannelData, FrameContext, ReflectFeatureChannel,
+    },
+    database::MotionDatabase,
+    definition::{JointAxis, MirrorAxis, MotionEntry, SimulationBoneSettings, TrajectorySettings},
+};
+
+pub(crate) const TURN_RATE: f32 = 1.5;
+
+#[derive(Reflect, Default, Clone, Debug, PartialEq)]
+#[reflect(FeatureChannel)]
+pub(crate) struct YawRate {
+    pub(crate) weight: f32,
+}
+
+impl FeatureChannel for YawRate {
+    fn dims(&self) -> usize {
+        1
+    }
+
+    fn extract(&self, frame: &FrameContext, out: &mut [f32]) {
+        out[0] = frame.body.angular_velocity.y;
+    }
+
+    fn weight(&self) -> f32 {
+        self.weight
+    }
+}
+
+#[derive(Reflect, Default, Clone, Debug, PartialEq)]
+#[reflect(FeatureChannel)]
+pub(crate) struct Speed {
+    pub(crate) weight: f32,
+}
+
+impl FeatureChannel for Speed {
+    fn dims(&self) -> usize {
+        1
+    }
+
+    fn extract(&self, frame: &FrameContext, out: &mut [f32]) {
+        out[0] = frame.body.velocity.length();
+    }
+
+    fn weight(&self) -> f32 {
+        self.weight
+    }
+}
+
+pub(crate) fn skeleton() -> Skeleton {
+    Skeleton::new(
+        vec![Mat4::IDENTITY; 3],
+        vec![None, Some(0), Some(1)],
+        vec!["Root".into(), "Hips".into(), "Spine2".into()],
+        vec![
+            JointPose::IDENTITY,
+            JointPose {
+                translation: Vec3::new(0.0, 1.0, 0.0),
+                rotation: Quat::from_rotation_y(std::f32::consts::PI),
+                ..JointPose::IDENTITY
+            },
+            JointPose {
+                translation: Vec3::new(0.0, 0.3, 0.0),
+                ..JointPose::IDENTITY
+            },
+        ],
+        vec![Uuid::from_u128(1), Uuid::from_u128(2), Uuid::from_u128(3)],
+    )
+    .unwrap()
+}
+
+pub(crate) fn walk_forward() -> AnimationClip {
+    let mut clip = AnimationClip::default();
+    clip.add_channel(
+        Uuid::from_u128(1),
+        AnimationChannel::new(
+            vec![0.0, 2.0],
+            AnimationChanelOutput::Translation(vec![Vec3::ZERO, Vec3::new(0.0, 0.0, -2.0)]),
+        ),
+    );
+    clip
+}
+
+pub(crate) fn turn_left() -> AnimationClip {
+    let mut clip = AnimationClip::default();
+    let keys = 5;
+    let times = (0..keys).map(|key| key as f32 * 0.5).collect();
+    let rotations = (0..keys)
+        .map(|key| Quat::from_rotation_y(std::f32::consts::PI + TURN_RATE * key as f32 * 0.5))
+        .collect();
+    clip.add_channel(
+        Uuid::from_u128(2),
+        AnimationChannel::new(times, AnimationChanelOutput::Rotation(rotations)),
+    );
+    clip
+}
+
+#[derive(Reflect, Default, Clone, Debug, PartialEq)]
+#[reflect(FeatureChannel)]
+pub(crate) struct Pace {
+    pub(crate) weight: f32,
+}
+
+impl FeatureChannel for Pace {
+    fn dims(&self) -> usize {
+        1
+    }
+
+    fn extract(&self, frame: &FrameContext, out: &mut [f32]) {
+        out[0] = frame
+            .trajectory
+            .first()
+            .map_or(0.0, |sample| sample.velocity.length());
+    }
+
+    fn weight(&self) -> f32 {
+        self.weight
+    }
+
+    fn source(&self) -> ChannelSource {
+        ChannelSource::Trajectory
+    }
+}
+
+fn two_clip_definition(
+    channels: Vec<FeatureChannelData>,
+    trajectory: TrajectorySettings,
+    speed: f32,
+    skeleton: AssetHandle<Skeleton>,
+    clips: [AssetHandle<AnimationClip>; 2],
+) -> MotionDatabase {
+    let [walk, turn] = clips;
+    MotionDatabase {
+        skeleton,
+        entries: vec![
+            MotionEntry {
+                clip: walk,
+                range: None,
+                mirrored: false,
+            },
+            MotionEntry {
+                clip: turn,
+                range: None,
+                mirrored: false,
+            },
+        ],
+        rate: 30.0,
+        speed,
+        simulation: SimulationBoneSettings {
+            facing_axis: JointAxis::Z,
+            position_window: 5,
+            facing_window: 5,
+            ..Default::default()
+        },
+        trajectory,
+        channels,
+        mirror_axis: MirrorAxis::X,
+        baked: None,
+    }
+}
+
+pub(crate) fn baked(
+    definition: MotionDatabase,
+    skeleton: &Skeleton,
+    clips: &[&AnimationClip],
+) -> MotionDatabase {
+    let baked = bake(&definition, skeleton, clips).unwrap();
+    definition.with_baked(baked)
+}
+
+pub(crate) fn unbaked(database: MotionDatabase) -> MotionDatabase {
+    MotionDatabase {
+        baked: None,
+        ..database
+    }
+}
+
+pub(crate) fn two_clip_database() -> MotionDatabase {
+    let definition = two_clip_definition(
+        vec![
+            FeatureChannelData::live(YawRate { weight: 1.0 }),
+            FeatureChannelData::live(Speed { weight: 1.0 }),
+        ],
+        TrajectorySettings {
+            sample_dt: 0.25,
+            sample_count: 3,
+        },
+        1.0,
+        Default::default(),
+        Default::default(),
+    );
+    baked(definition, &skeleton(), &[&walk_forward(), &turn_left()])
+}
+
+pub(crate) fn pace_database(
+    speed: f32,
+    skeleton_handle: AssetHandle<Skeleton>,
+    clip_handles: [AssetHandle<AnimationClip>; 2],
+) -> MotionDatabase {
+    pace_database_of(
+        speed,
+        skeleton_handle,
+        clip_handles,
+        &skeleton(),
+        &[&walk_forward(), &turn_left()],
+    )
+}
+
+pub(crate) fn pace_database_of(
+    speed: f32,
+    skeleton_handle: AssetHandle<Skeleton>,
+    clip_handles: [AssetHandle<AnimationClip>; 2],
+    skeleton: &Skeleton,
+    clips: &[&AnimationClip; 2],
+) -> MotionDatabase {
+    baked(
+        pace_definition(speed, skeleton_handle, clip_handles),
+        skeleton,
+        clips,
+    )
+}
+
+pub(crate) fn pace_definition(
+    speed: f32,
+    skeleton_handle: AssetHandle<Skeleton>,
+    clip_handles: [AssetHandle<AnimationClip>; 2],
+) -> MotionDatabase {
+    two_clip_definition(
+        vec![FeatureChannelData::live(Pace { weight: 1.0 })],
+        TrajectorySettings {
+            sample_dt: 0.1,
+            sample_count: 2,
+        },
+        speed,
+        skeleton_handle,
+        clip_handles,
+    )
+}

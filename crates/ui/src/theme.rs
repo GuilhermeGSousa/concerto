@@ -19,6 +19,8 @@ pub struct UITheme {
     pub accent_hovered: Color,
     /// The palette's second accent, for marks that must read as a different kind of thing.
     pub accent_secondary: Color,
+    /// The mark of what is playing or running now, apart from the accent of what is selected.
+    pub active: Color,
     pub focus: Color,
     pub error: Color,
     pub warning: Color,
@@ -157,6 +159,7 @@ impl UITheme {
             accent: Color::srgba(0.569, 0.518, 0.851, 1.0),
             accent_secondary: Color::srgba(0.588, 0.565, 0.788, 1.0),
             accent_hovered: Color::srgba(0.710, 0.671, 0.988, 1.0),
+            active: Color::srgba(0.435, 0.796, 0.682, 1.0),
             focus: Color::srgba(0.710, 0.671, 0.988, 1.0),
             error: Color::srgba(0.851, 0.404, 0.451, 1.0),
             warning: Color::srgba(0.878, 0.694, 0.400, 1.0),

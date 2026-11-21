@@ -95,6 +95,24 @@ pub trait AsBindGroup {
     ) -> Result<wgpu::BindGroup, AssetPreparationError>;
 }
 
+/// How a material's alpha combines with what is behind it.
+#[derive(Clone, Copy, Debug, PartialEq, Default, serde::Serialize, serde::Deserialize)]
+pub enum AlphaMode {
+    /// Alpha is ignored; the surface hides what is behind it.
+    #[default]
+    Opaque,
+    /// Fragments whose alpha is below `cutoff` are discarded; the rest are opaque.
+    Mask { cutoff: f32 },
+    /// The surface is blended over what is behind it by its alpha.
+    Blend,
+}
+
+impl From<&AlphaMode> for AlphaMode {
+    fn from(mode: &AlphaMode) -> Self {
+        *mode
+    }
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 // StandardMaterial — the engine's built-in PBR material
 // ────────────────────────────────────────────────────────────────────────────
@@ -138,6 +156,7 @@ pub struct StandardMaterial {
     occlusion_texture: Option<AssetHandle<Texture>>,
 
     #[uniform(10)]
+    #[alpha_mode]
     uniform: MaterialUniform,
 }
 
@@ -281,25 +300,28 @@ impl StandardMaterial {
         self.uniform.occlusion_strength
     }
 
-    /// Enable alpha-cutout (mask) mode with the given threshold.
-    /// Fragments whose base-color alpha is below `cutoff` are discarded.
-    pub fn set_alpha_cutoff(&mut self, cutoff: f32) {
-        self.uniform.alpha_cutoff = cutoff;
-        self.uniform.flags |= MaterialFlags::ALPHA_CUTOUT;
+    /// Sets how the base color's alpha is treated. Defaults to [`AlphaMode::Opaque`].
+    pub fn set_alpha_mode(&mut self, mode: AlphaMode) {
+        self.uniform
+            .flags
+            .remove(MaterialFlags::ALPHA_CUTOUT | MaterialFlags::ALPHA_BLEND);
+        match mode {
+            AlphaMode::Opaque => {}
+            AlphaMode::Mask { cutoff } => {
+                self.uniform.alpha_cutoff = cutoff;
+                self.uniform.flags |= MaterialFlags::ALPHA_CUTOUT;
+            }
+            AlphaMode::Blend => self.uniform.flags |= MaterialFlags::ALPHA_BLEND,
+        }
     }
 
-    pub fn with_alpha_cutoff(mut self, cutoff: f32) -> Self {
-        self.set_alpha_cutoff(cutoff);
+    pub fn with_alpha_mode(mut self, mode: AlphaMode) -> Self {
+        self.set_alpha_mode(mode);
         self
     }
 
-    /// Returns the alpha cutoff threshold if alpha-cutout mode is active.
-    pub fn alpha_cutoff(&self) -> Option<f32> {
-        if self.uniform.flags.contains(MaterialFlags::ALPHA_CUTOUT) {
-            Some(self.uniform.alpha_cutoff)
-        } else {
-            None
-        }
+    pub fn alpha_mode(&self) -> AlphaMode {
+        AlphaMode::from(&self.uniform)
     }
 
     /// Scale UV coordinates for all texture samples.  Defaults to `[1.0, 1.0]`
@@ -384,6 +406,7 @@ bitflags! {
         const HAS_EMISSIVE_TEXTURE = 1 << 3;
         const HAS_OCCLUSION_TEXTURE = 1 << 4;
         const ALPHA_CUTOUT = 1 << 5;
+        const ALPHA_BLEND = 1 << 6;
     }
 }
 
@@ -417,6 +440,20 @@ pub(crate) struct MaterialUniform {
 }
 
 const _: () = assert!(std::mem::size_of::<MaterialUniform>() == 64);
+
+impl From<&MaterialUniform> for AlphaMode {
+    fn from(uniform: &MaterialUniform) -> Self {
+        if uniform.flags.contains(MaterialFlags::ALPHA_BLEND) {
+            AlphaMode::Blend
+        } else if uniform.flags.contains(MaterialFlags::ALPHA_CUTOUT) {
+            AlphaMode::Mask {
+                cutoff: uniform.alpha_cutoff,
+            }
+        } else {
+            AlphaMode::Opaque
+        }
+    }
+}
 
 impl Default for MaterialUniform {
     fn default() -> Self {
@@ -555,8 +592,8 @@ pub trait Material: AsBindGroup + LoadableAsset + Send + Sync + 'static {
     {
         Some(wgpu::DepthStencilState {
             format: wgpu::TextureFormat::Depth32Float,
-            depth_write_enabled: true,
-            depth_compare: wgpu::CompareFunction::Less,
+            depth_write_enabled: Some(true),
+            depth_compare: Some(wgpu::CompareFunction::Less),
             stencil: wgpu::StencilState::default(),
             bias: wgpu::DepthBiasState::default(),
         })
@@ -589,11 +626,62 @@ pub trait Material: AsBindGroup + LoadableAsset + Send + Sync + 'static {
         Some(wgpu::BlendState::REPLACE)
     }
 
+    /// How this asset's alpha is treated. `Blend` draws it in the transparent pass. Defaults to `Opaque`.
+    fn alpha_mode(&self) -> AlphaMode {
+        AlphaMode::Opaque
+    }
+
     /// Adds shader defs on top of the platform defs. Defaults to none.
     fn shader_defs(defs: &mut ShaderDefs)
     where
         Self: Sized,
     {
         let _ = defs;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use concerto_ecs::world::World;
+    use concerto_foundation::assets::{
+        asset_server::handle_asset_load_events, asset_store::AssetStore,
+    };
+
+    #[test]
+    fn a_material_added_with_added_textures_keeps_them_and_requests_no_load() {
+        let mut server = AssetServer::new();
+        let textures = AssetStore::<Texture>::new();
+        let materials = AssetStore::<StandardMaterial>::new();
+        server.register_asset(&textures);
+        server.register_asset(&materials);
+        let mut world = World::new();
+        world.insert_resource(textures);
+        world.insert_resource(materials);
+        world.insert_resource(server.clone());
+
+        let base_color = server.add(Texture::render_target(1, 1));
+        let normal = server.add(Texture::render_target(1, 1));
+        let (base_color_id, normal_id) = (base_color.id(), normal.id());
+        let material = server.add(StandardMaterial::new(Some(base_color), Some(normal)));
+        server.cancel_pending();
+        handle_asset_load_events(&mut world);
+
+        assert!(!server.is_loading());
+        let materials = world
+            .get_resource::<AssetStore<StandardMaterial>>()
+            .unwrap();
+        let material = materials.get(&material).expect("material loaded");
+        assert_eq!(
+            material.base_color_texture().map(|handle| handle.id()),
+            Some(base_color_id)
+        );
+        assert_eq!(
+            material.normal_texture().map(|handle| handle.id()),
+            Some(normal_id)
+        );
+        let textures = world.get_resource::<AssetStore<Texture>>().unwrap();
+        assert!(textures.get(&AssetHandle::weak(base_color_id)).is_some());
+        assert!(textures.get(&AssetHandle::weak(normal_id)).is_some());
     }
 }

@@ -1,0 +1,15 @@
+mod blended_materials;
+mod camera_environment_edit;
+mod camera_render_target;
+mod camera_viewport;
+mod compressed_textures;
+mod exclusive_camera;
+mod hosted_target;
+mod material_serialization;
+mod point_shadows;
+mod readback;
+mod required_sync;
+mod scene_component_impls;
+mod texture_derive;
+mod texture_pipeline_e2e;
+mod webgl2_shaders;

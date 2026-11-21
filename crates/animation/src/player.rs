@@ -1,61 +1,71 @@
 use std::ops::Deref;
 
 use concerto_ecs::{
+    Entity,
     component::{Component, scene::SceneEntityRef},
+    entity::hierarchy::ChildOf,
     query::Query,
+    system::input::Inputs,
 };
 use concerto_foundation::{
     assets::{asset_store::AssetStore, handle::AssetHandle},
-    transform::Transform,
+    transform::{GlobalTransform, Transform},
 };
-use glam::Vec2;
-use uuid::Uuid;
+use concerto_mesh::skeleton::Skeleton;
+use concerto_name::Name;
+use concerto_reflect::Reflect;
+use glam::{Affine3A, Vec2, Vec3};
 
 use crate::{
-    blackboard::{AnimationBlackboard, AnimationBlackboardValue},
-    clip::AnimationClip,
-    evaluation::AnimationGraphContext,
-    graph::{AnimationGraph, AnimationGraphInstance, AnimationNodeIndex},
-    node::{
-        AnimationClipNodeInstance, AnimationNodeInstance, AnimationNodeKind,
-        state_machine::AnimationStateMachineInstance,
-    },
-    pose::PosePool,
+    blackboard::AnimationBlackboard,
+    evaluation::{AnimationGraphContext, RootBone},
+    graph::{AnimationGraph, AnimationGraphState, AnimationNodeIndex, NodeVisit},
+    node::{AnimationNode, ErasedAnimationNode, NodeState},
+    pose::{FiredEvent, FramePool},
     root::AnimationRootBone,
 };
 
-pub struct ActiveNodeInstance {
+pub struct ActiveNodeState {
     pub weight: f32,
-    pub(crate) node_instance: Box<dyn AnimationNodeInstance>,
+    pub(crate) node_state: NodeState,
 }
 
-impl ActiveNodeInstance {
+impl ActiveNodeState {
     pub(crate) fn update(
         &mut self,
-        node: &AnimationNodeKind,
+        node: &dyn ErasedAnimationNode,
         delta_time: f32,
         context: &AnimationGraphContext<'_>,
     ) {
-        self.node_instance.update(node, delta_time, context);
+        node.update(&mut self.node_state, delta_time, context);
     }
 }
 
 #[derive(Component)]
 pub struct AnimationPlayer {
-    graph_instance: AnimationGraphInstance,
+    graph_state: AnimationGraphState,
     blackboard: AnimationBlackboard,
-    pose_pool: PosePool,
+    frame_pool: FramePool,
     paused: bool,
+    event_threshold: f32,
+    pub(crate) fired: Vec<FiredEvent>,
 }
 
 impl AnimationPlayer {
     pub fn new(bone_count: usize) -> Self {
         Self {
-            graph_instance: AnimationGraphInstance::default(),
+            graph_state: AnimationGraphState::default(),
             blackboard: AnimationBlackboard::default(),
-            pose_pool: PosePool::new(bone_count),
+            frame_pool: FramePool::new(bone_count),
             paused: false,
+            event_threshold: 0.0,
+            fired: Vec::new(),
         }
+    }
+
+    /// Drops clip events whose source weighs no more than `threshold` in the final frame; 0 by default.
+    pub fn set_event_threshold(&mut self, threshold: f32) {
+        self.event_threshold = threshold;
     }
 
     /// Freezes the player: its graph stops advancing and its bones are no
@@ -68,129 +78,196 @@ impl AnimationPlayer {
         self.paused
     }
 
-    pub fn play(&mut self, node_index: &AnimationNodeIndex) {
-        if let Some(anim_clip_instance) = self
-            .graph_instance
-            .get_instance_mut::<AnimationClipNodeInstance>(node_index)
-        {
-            anim_clip_instance.play();
-        }
+    /// Restarts the node at `node_index` through its `AnimationNode::reset`; does nothing until the graph is loaded.
+    pub fn play(&mut self, node_index: &AnimationNodeIndex, graphs: &AssetStore<AnimationGraph>) {
+        self.graph_state.reset_node(node_index, graphs);
     }
 
+    /// Sets the weight a `BlendNode` gives this node's pose among its inputs.
     pub fn set_node_weight(&mut self, node_index: &AnimationNodeIndex, weight: f32) {
-        self.graph_instance.set_node_weight(node_index, weight);
+        self.graph_state.set_node_weight(node_index, weight);
     }
 
-    pub fn set_param(&mut self, key: impl Into<String>, value: AnimationBlackboardValue) {
+    pub fn set_param<T: Reflect>(&mut self, key: Name, value: T) {
         self.blackboard.set(key, value);
     }
 
-    pub fn set_bool_param(&mut self, key: impl Into<String>, value: bool) {
-        self.set_param(key, AnimationBlackboardValue::Bool(value));
+    /// Sets a parameter to a value whose type is known only at run time, as an editor's preview does.
+    pub fn set_boxed_param(&mut self, key: Name, value: Box<dyn Reflect>) {
+        self.blackboard.set_boxed(key, value);
     }
 
-    pub fn set_int_param(&mut self, key: impl Into<String>, value: u32) {
-        self.set_param(key, AnimationBlackboardValue::Int(value));
+    pub fn set_bool_param(&mut self, key: Name, value: bool) {
+        self.set_param(key, value);
     }
 
-    pub fn set_float_param(&mut self, key: impl Into<String>, value: f32) {
-        self.set_param(key, AnimationBlackboardValue::Float(value));
+    pub fn set_int_param(&mut self, key: Name, value: u32) {
+        self.set_param(key, value);
     }
 
-    pub fn set_vec2_param(&mut self, key: impl Into<String>, value: Vec2) {
-        self.set_param(key, AnimationBlackboardValue::Vec2(value));
+    pub fn set_float_param(&mut self, key: Name, value: f32) {
+        self.set_param(key, value);
     }
 
-    pub fn get_param(&self, key: &str) -> Option<&AnimationBlackboardValue> {
-        self.blackboard.get(key)
+    pub fn set_vec2_param(&mut self, key: Name, value: Vec2) {
+        self.set_param(key, value);
     }
 
-    pub fn get_bool_param(&self, key: &str) -> Option<bool> {
+    pub fn get_param<T: Reflect>(&self, key: Name) -> Option<&T> {
+        self.blackboard.get::<T>(key)
+    }
+
+    pub fn get_bool_param(&self, key: Name) -> Option<bool> {
         self.blackboard.get_bool(key)
     }
 
-    pub fn get_int_param(&self, key: &str) -> Option<u32> {
+    pub fn get_int_param(&self, key: Name) -> Option<u32> {
         self.blackboard.get_int(key)
     }
 
-    pub fn get_float_param(&self, key: &str) -> Option<f32> {
+    pub fn get_float_param(&self, key: Name) -> Option<f32> {
         self.blackboard.get_float(key)
     }
 
-    pub fn get_vec2_param(&self, key: &str) -> Option<Vec2> {
+    pub fn get_vec2_param(&self, key: Name) -> Option<Vec2> {
         self.blackboard.get_vec2(key)
     }
 
-    pub fn current_fsm_state(&self, node_index: &AnimationNodeIndex) -> Option<&str> {
-        self.graph_instance
-            .get_instance::<AnimationStateMachineInstance>(node_index)
-            .map(AnimationStateMachineInstance::current_state_name)
+    /// Calls `f` with each live node of type `N` in the player's graph, inner graphs included, its state and the blackboard.
+    pub fn for_each_state<N: AnimationNode>(
+        &self,
+        graphs: &AssetStore<AnimationGraph>,
+        f: impl FnMut(&N, &N::State, &AnimationBlackboard),
+    ) {
+        self.graph_state.for_each_state(graphs, &self.blackboard, f);
+    }
+
+    /// Calls `f` with each playing node of the player's graph, inner graphs included: its path from the root graph, its weight and what it reports.
+    pub fn for_each_node(
+        &self,
+        graphs: &AssetStore<AnimationGraph>,
+        f: impl FnMut(&NodeVisit<'_>),
+    ) {
+        self.graph_state.for_each_node(graphs, f);
+    }
+
+    /// Calls `f` with each live node of type `N` in the player's graph, inner graphs included, its mutable state and the blackboard.
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
+    pub fn for_each_state_mut<N: AnimationNode>(
+        &mut self,
+        graphs: &AssetStore<AnimationGraph>,
+        f: impl FnMut(&N, &mut N::State, &AnimationBlackboard),
+    ) {
+        self.graph_state
+            .for_each_state_mut(graphs, &self.blackboard, f);
     }
 
     pub(crate) fn initialize_graph(
         &mut self,
         animation_graph: AssetHandle<AnimationGraph>,
-        clips: &AssetStore<AnimationClip>,
         graphs: &AssetStore<AnimationGraph>,
+        inputs: &Inputs<'_, '_>,
     ) {
         let context = AnimationGraphContext {
-            animation_clips: clips,
-            animation_graphs: graphs,
             blackboard: &self.blackboard,
+            root: None,
+            skeleton: None,
+            model_to_world: None,
+            inputs,
         };
-        self.graph_instance.initialize(animation_graph, &context);
+        self.graph_state
+            .initialize(animation_graph, graphs, &context);
     }
 
     pub(crate) fn update(
         &mut self,
         delta_time: f32,
-        clips: &AssetStore<AnimationClip>,
         graphs: &AssetStore<AnimationGraph>,
+        skeleton: Option<&Skeleton>,
+        inputs: &Inputs<'_, '_>,
     ) {
         let context = AnimationGraphContext {
-            animation_clips: clips,
-            animation_graphs: graphs,
             blackboard: &self.blackboard,
+            root: None,
+            skeleton,
+            model_to_world: None,
+            inputs,
         };
-        self.graph_instance.update(delta_time, &context);
+        self.graph_state.update(delta_time, graphs, &context);
     }
 
     pub(crate) fn evaluate(
         &mut self,
-        clips: &AssetStore<AnimationClip>,
         graphs: &AssetStore<AnimationGraph>,
-        bone_ids: &[Uuid],
+        inputs: &Inputs<'_, '_>,
+        skeleton: &Skeleton,
         bones: &[SceneEntityRef],
         transforms: &Query<&mut Transform>,
         root_bones: &Query<&mut AnimationRootBone>,
-    ) {
+        parents: &Query<&ChildOf>,
+        globals: &Query<&GlobalTransform>,
+    ) -> bool {
+        self.fired.clear();
+        let bone_ids = &skeleton.bone_ids;
+        let rest_pose = &skeleton.rest_pose;
+        let root = bones
+            .iter()
+            .enumerate()
+            .find_map(|(index, bone)| {
+                let entity = bone.entity()?;
+                root_bones
+                    .contains_entity(entity)
+                    .then_some((index, entity))
+            })
+            .and_then(|(index, entity)| {
+                Some(RootBone {
+                    index,
+                    rest: rest_pose.get(index)?.clone(),
+                    up: up_of(entity, parents, globals),
+                })
+            });
         let context = AnimationGraphContext {
-            animation_clips: clips,
-            animation_graphs: graphs,
             blackboard: &self.blackboard,
+            root,
+            skeleton: Some(skeleton),
+            model_to_world: Some(model_to_world_of(bones, parents, globals)),
+            inputs,
         };
 
-        let mut output_pose = self.pose_pool.acquire();
-        if !self
-            .graph_instance
-            .evaluate(&context, bone_ids, &mut self.pose_pool, &mut output_pose)
-        {
+        self.frame_pool.set_rest(rest_pose);
+        let mut output_frame = self.frame_pool.acquire();
+        if !self.graph_state.evaluate(
+            graphs,
+            &context,
+            bone_ids,
+            &mut self.frame_pool,
+            &mut output_frame,
+        ) {
             // No graph evaluated — keep the bones' current (default) pose.
-            self.pose_pool.release(output_pose);
-            return;
+            self.frame_pool.release(output_frame);
+            return false;
         }
 
+        let threshold = self.event_threshold;
+        self.fired.extend(
+            output_frame
+                .events
+                .drain(..)
+                .filter(|event| event.weight > threshold),
+        );
+
+        let root_motion = output_frame.root_motion();
         for (bone_index, bone) in bones.iter().enumerate() {
             let Some(bone_entity) = bone.entity() else {
                 continue;
             };
-            let Some(joint_pose) = output_pose.get_joint_pose(bone_index) else {
+            let Some(joint_pose) = output_frame.joint(bone_index) else {
                 continue;
             };
 
             if let Some(mut root_bone) = root_bones.get_entity(bone_entity) {
-                root_bone.displacement = joint_pose.translation;
-                continue;
+                root_bone.root_motion = root_motion;
             }
 
             if let Some(mut transform) = transforms.get_entity(bone_entity) {
@@ -200,8 +277,33 @@ impl AnimationPlayer {
             }
         }
 
-        self.pose_pool.release(output_pose);
+        self.frame_pool.release(output_frame);
+        true
     }
+}
+
+fn model_to_world_of(
+    bones: &[SceneEntityRef],
+    parents: &Query<&ChildOf>,
+    globals: &Query<&GlobalTransform>,
+) -> Affine3A {
+    bones
+        .first()
+        .and_then(|bone| bone.entity())
+        .and_then(|bone| parents.get_entity(bone))
+        .and_then(|parent| globals.get_entity(parent.parent()))
+        .map_or(Affine3A::IDENTITY, |global| {
+            Affine3A::from_mat4(global.matrix())
+        })
+}
+
+fn up_of(root: Entity, parents: &Query<&ChildOf>, globals: &Query<&GlobalTransform>) -> Vec3 {
+    parents
+        .get_entity(root)
+        .and_then(|parent| globals.get_entity(parent.parent()))
+        .map(|parent| parent.rotation().inverse() * Vec3::Y)
+        .filter(|up| up.is_finite())
+        .unwrap_or(Vec3::Y)
 }
 
 #[derive(Component)]
@@ -220,5 +322,96 @@ impl Deref for AnimationHandleComponent {
 
     fn deref(&self) -> &Self::Target {
         &self.handle
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use concerto_foundation::assets::{asset_server::AssetServer, asset_store::AssetStore};
+
+    use concerto_reflect::{Reflect, TypeRegistry};
+    use uuid::Uuid;
+
+    use super::AnimationPlayer;
+    use crate::{
+        evaluation::AnimationGraphContext,
+        graph::AnimationGraph,
+        node::{AnimationNode, InputSlots, ReflectAnimationNode, register_node_inputs},
+        plugin::register_animation_types,
+        pose::{AnimationFrame, EvaluatedFrame, FramePool},
+        testing::Walks,
+    };
+
+    #[derive(Default, Reflect)]
+    #[reflect(AnimationNode)]
+    struct Replayable {}
+
+    impl AnimationNode for Replayable {
+        type State = u32;
+        type CreateInput = ();
+        type UpdateInput = ();
+        type EvaluateInput = ();
+
+        fn input_slots(&self) -> InputSlots {
+            InputSlots::None
+        }
+
+        fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) -> u32 {
+            0
+        }
+
+        fn update(&self, _: &mut u32, _: f32, _: &(), _: &AnimationGraphContext<'_>) {}
+
+        fn evaluate(
+            &self,
+            _: &mut u32,
+            _: &(),
+            _: &AnimationGraphContext<'_>,
+            _: &[Uuid],
+            _: &[EvaluatedFrame],
+            _: &mut FramePool,
+            _: &mut AnimationFrame,
+        ) {
+        }
+
+        fn reset(&self, resets: &mut u32) {
+            *resets += 1;
+        }
+    }
+
+    fn replayable_resets(player: &mut AnimationPlayer, walks: &Walks) -> Vec<u32> {
+        let mut resets = Vec::new();
+        player.for_each_state_mut::<Replayable>(walks.graphs(), |_, state, _| {
+            resets.push(*state);
+        });
+        resets
+    }
+
+    #[test]
+    fn play_restarts_any_node_type_through_its_reset() {
+        let mut graph = AnimationGraph::new();
+        let result = graph.result_node().index();
+        let index = graph.add_node(Replayable {}, result).index();
+        let mut server = AssetServer::new();
+        let mut graphs = AssetStore::<AnimationGraph>::new();
+        server.register_asset(&graphs);
+        let handle = server.add(AnimationGraph::default());
+        let mut registry = TypeRegistry::default();
+        register_animation_types(&mut registry);
+        registry.register::<Replayable>();
+        graph.make_live(&registry, None).unwrap();
+        graphs.insert(handle.id(), graph);
+        let walks = Walks::with(
+            AssetStore::new(),
+            graphs,
+            register_node_inputs::<Replayable>,
+        );
+        let mut player = AnimationPlayer::new(1);
+        walks.initialize(&mut player, handle);
+        assert_eq!(replayable_resets(&mut player, &walks), [0]);
+
+        player.play(&index, walks.graphs());
+
+        assert_eq!(replayable_resets(&mut player, &walks), [1]);
     }
 }

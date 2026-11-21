@@ -11,19 +11,35 @@ is not the path.
 ## Run
 
 ```sh
-cd examples/tech-demo
+cd ../tech-demo
 trunk serve
 ```
 
-It serves at `http://127.0.0.1:8080`. `tech-demo` and `animation-test` have a
-`Trunk.toml` and an `index.html`; an example without them does not run on the
+It serves at `http://127.0.0.1:8080`. The games in the sibling repositories,
+`../tech-demo` and `../one-more-night`, have a `Trunk.toml` and an
+`index.html`; a game without them, such as `ui-showcase`, does not run on the
 web yet.
+
+`trunk serve` is uncooked: the motion database is derived in the browser, on
+the main thread, so the page stalls at startup. The cooked build carries the
+derived blob and doesn't:
+
+```sh
+cargo concerto build ../tech-demo --cook --target wasm32-unknown-unknown --dist <dir>
+```
+
+It runs `trunk build` into `<dir>` and stages the cooked files over it; serve
+`<dir>` with any static file server. See Cooking in
+[asset-importing.md](../../../docs/asset-importing.md).
 
 The CI check is only that it builds:
 
 ```sh
 cargo build --target wasm32-unknown-unknown
 ```
+
+That compiles the libraries and links no program, so a link failure shows up
+only in `trunk`.
 
 A build that passes proves nothing about the browser. A wasm change is verified
 by loading the page and reading the console.
@@ -37,7 +53,7 @@ by loading the page and reading the console.
 | Physics | Rapier. Jolt is not compiled |
 | Threads | None. The multithreaded executor is native only |
 | Fonts | No system fonts; the UI embeds DejaVu Sans Mono for every family |
-| Assets | Fetched over HTTP from the page's origin; `index.html` copies `content/` with a `copy-dir` link |
+| Assets | Fetched over HTTP from the page's origin; `index.html` copies what the game loads into `dist/content/` with `copy-dir` and `copy-file` links, and a cooked build overlays the cooked files there |
 | File system | None. Anything that opens a path must fetch bytes instead |
 
 ## Common mistakes
@@ -45,7 +61,7 @@ by loading the page and reading the console.
 | Symptom | Cause |
 |---|---|
 | "no adapter" at start | Something requested a backend or feature WebGL2 lacks |
-| Asset requests return 404 | `content/` is not copied into `dist/`; check the `copy-dir` link |
+| Asset requests return 404 | The file is not copied into `dist/`; add a `copy-dir` or `copy-file` link with its `data-target-path` |
 | "no default font found" | A font path that relies on system fonts |
 | `cargo run` on the wasm target fails looking for `index.html` | The `wasm-server-runner` entry in `.cargo/config.toml` is legacy; use `trunk` |
 

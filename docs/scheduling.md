@@ -113,10 +113,16 @@ registration order:
 app.add_system(LateUpdate, app_widget.after(UiSet::Input).before(UiSet::Layout));
 ```
 
-The render crate exports `RenderSet { Lights, Shadows, Draw, Overlay, Present }` the
-same way: `Lights`, `Shadows`, `Draw` and `Overlay` are chained in that order in
-`Render`, `Overlay` draws over the finished scene before any pass that samples a
-camera's target, and `Present` runs in `LateRender`, after all of them. The window
+The render crate exports `RenderSet { Lights, Queue, Shadows, Background, Draw, Transparent, Overlay, Present }`
+the same way: `Lights`, `Queue`, `Shadows`, `Background`, `Draw`, `Transparent` and `Overlay` are
+chained in that order in `Render`, `Queue` culls and bins mesh instances into each
+view's draws, `Background` clears each camera's target and draws what lies behind
+the scene, such as the sky, `Transparent` draws blended surfaces over the scene back to front,
+`Overlay` draws over the finished scene before any pass that samples a
+camera's target, and `Present` runs in `LateRender`, after all of them.
+Inside `Background`, `BackgroundSet { Clear, Draw }` are chained: the camera
+clears are in `Clear`, and a pass that draws behind the scene puts its system in
+both `RenderSet::Background` and `BackgroundSet::Draw`, as the sky does. The window
 crate exports `FoldInput`, the set in `First` that folds
 window events into `Input`; a system that decides `InputGate` for the frame runs
 before it.
@@ -187,6 +193,19 @@ app.add_listener(on_select.at_edit_time());
 - `register_event` and `register_asset` mark the systems they add.
 - An edit `App` has no `PhysicsPipeline`, so a marked system must not require it;
   `PhysicsState` is present and empty.
+
+An `App` created with `App::for_previewing()` is a preview `App`, which an asset
+editor uses to show an asset with no scene file behind it. `AtPreviewTime` gives
+`.at_preview_time()`, which adds the `Preview` tag to systems and marks listeners the
+same way.
+
+- A preview `App` compiles its main world with `include: [EditTime, Preview]`, and
+  `App::add_listener` keeps listeners marked with either. A game `App` runs
+  `.at_preview_time()` systems and listeners too; an edit `App` does not.
+- `is_editing()` is true in a preview `App` too, so it has no `PhysicsPipeline`;
+  `is_previewing()` tells it from an edit `App`.
+- `AnimationPlugin`'s systems are marked `.at_preview_time()`: animation plays in
+  games and previews, never while a scene is edited.
 
 ## Change detection
 

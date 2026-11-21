@@ -1,7 +1,11 @@
+use std::path::PathBuf;
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
-    let command = match concerto_project::parse(std::env::args().skip(1)) {
+    let default_engine = std::env::var_os("CONCERTO_ENGINE")
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from);
+    let command = match concerto_project::parse(std::env::args().skip(1), default_engine) {
         Ok(command) => command,
         Err(error) => {
             eprintln!("error: {error:#}");

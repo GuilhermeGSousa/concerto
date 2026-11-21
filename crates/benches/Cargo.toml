@@ -1,0 +1,48 @@
+[package]
+name = "concerto-benches"
+version.workspace = true
+edition = "2021"
+description.workspace = true
+repository.workspace = true
+license.workspace = true
+publish = false
+
+[features]
+run = [
+    "dep:criterion",
+    "dep:concerto",
+    "dep:concerto-app",
+    "dep:concerto-color",
+    "dep:concerto-ecs",
+    "dep:concerto-foundation",
+    "dep:concerto-render",
+    "dep:concerto-ui",
+    "dep:concerto-window",
+    "dep:serde",
+    "dep:bincode",
+]
+
+[dependencies]
+criterion = { version = "0.5", optional = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+concerto = { path = "../..", optional = true }
+concerto-app = { workspace = true, optional = true }
+concerto-color = { workspace = true, optional = true }
+concerto-ecs = { workspace = true, optional = true }
+concerto-foundation = { workspace = true, optional = true }
+concerto-render = { workspace = true, optional = true }
+concerto-ui = { workspace = true, optional = true }
+concerto-window = { workspace = true, optional = true }
+serde = { version = "1", features = ["derive"], optional = true }
+bincode = { version = "1.3", optional = true }
+
+[[bench]]
+name = "asset_loading"
+harness = false
+required-features = ["run"]
+
+[[bench]]
+name = "ui"
+harness = false
+required-features = ["run"]

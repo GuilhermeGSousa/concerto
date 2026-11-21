@@ -11,15 +11,18 @@ pub mod body;
 pub mod collider;
 pub mod ground;
 pub mod interpolation;
-pub mod movement;
 pub mod physics_pipeline;
 pub mod physics_state;
 pub mod plugin;
+pub mod query;
 pub mod ray;
 pub mod rigid_body;
+pub mod sensor;
 pub mod shape;
 
 mod simulation;
+
+pub use simulation::step_simulation;
 
 /// The physics engine compiled into this build. Exactly one exists per
 /// build; this alias is the only place the choice is made: Rapier on wasm

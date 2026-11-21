@@ -6,31 +6,36 @@
 //!
 
 use std::borrow::Cow;
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::path::Path;
 
-use anyhow::{Context, bail};
-use concerto_animation::clip::{AnimationChanelOutput, AnimationChannel, AnimationClip};
-use concerto_asset_import::{ImportContext, ImportError, Importer, hash_file_contents};
+use base64::Engine;
+use concerto_animation::clip::{
+    AdditiveSetting, AnimationChanelOutput, AnimationChannel, AnimationClip,
+};
+use concerto_asset_import::{ImportContext, ImportError, Importer, NoSettings, clip_names};
 use concerto_color::Color;
+use concerto_director::{Lens, VirtualCamera};
 use concerto_ecs::component::scene::SceneEntityRef;
 use concerto_foundation::assets::{AssetId, handle::AssetHandle};
 use concerto_foundation::transform::Transform;
 use concerto_mesh::mesh::{Mesh, MeshComponent};
-use concerto_mesh::skeleton::{Skeleton, SkeletonComponent};
+use concerto_mesh::skeleton::{JointPose, Skeleton, SkeletonComponent};
 use concerto_mesh::vertex::Vertex;
-use concerto_reflect::Reflect;
-use concerto_render::assets::material::StandardMaterial;
-use concerto_render::assets::texture::{Texture, TextureFormat, TextureKind};
-use concerto_render::components::camera::Camera;
+use concerto_name::Name;
+use concerto_reflect::{Reflect, ReflectDefault};
+use concerto_render::assets::material::{AlphaMode, StandardMaterial};
+use concerto_render::assets::texture::{Texture, TextureRole};
 use concerto_render::components::light::{Light, LightType};
 use concerto_render::components::material::MaterialComponent;
+use concerto_render::importers::image_importer::{ImportedTexture, imported_texture};
+use concerto_scene::node_id::{NodeId, derive_ids};
 use concerto_scene::scene::{Scene, SceneNode};
-use glam::{Mat4, Vec3};
+use glam::{Mat4, Quat, Vec3};
 use gltf::{Node, Primitive, buffer::Data};
-use image::ImageBuffer;
 use log::warn;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 // glTF (KHR_lights_punctual) stores light intensity in photometric units: lux
@@ -42,6 +47,21 @@ use uuid::Uuid;
 const LUMINOUS_EFFICACY: f32 = 683.0;
 
 pub struct GltfImporter;
+
+/// Importer settings read from the `[settings]` table of a glTF source's sidecar.
+#[derive(Reflect, Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[reflect(Default)]
+pub struct GltfSettings {
+    /// Per emitted clip name, the clip times in seconds of each named event.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    #[reflect(skip)]
+    pub events: BTreeMap<String, BTreeMap<String, Vec<f32>>>,
+    /// Per emitted clip name, the base the clip is additive against.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    #[reflect(skip)]
+    pub additive: BTreeMap<String, AdditiveSetting>,
+}
 
 /// One emitted primitive of a glTF mesh: the sub-asset indices of its imported
 /// `mesh/*` geometry and the `material/*` it draws with.
@@ -60,12 +80,11 @@ struct TextureKey {
 }
 
 /// One glTF skin resolved to what a `SkeletonComponent` needs: which emitted
-/// `skeleton/N` sub-asset holds its inverse bind matrices, the joint nodes as
-/// `SceneEntityRef`s, and the stable per-bone ids the animation clips key by.
+/// `skeleton/N` sub-asset holds its inverse bind matrices, and the joint nodes as
+/// `SceneEntityRef`s.
 struct SkinInfo {
     skeleton_index: usize,
     bones: Vec<SceneEntityRef>,
-    bone_ids: Vec<Uuid>,
 }
 
 /// The name path from a scene root down to a node, used to derive that node's
@@ -75,22 +94,38 @@ struct NodePathInfo {
 }
 
 impl Importer for GltfImporter {
+    type Settings = GltfSettings;
+    type AssetSettings = NoSettings;
+
+    fn name(&self) -> &'static str {
+        "gltf"
+    }
+
     fn supported_extensions(&self) -> &'static [&'static str] {
         &["gltf", "glb"]
     }
 
-    fn import(&self, source_path: &Path, ctx: &mut ImportContext) -> Result<(), ImportError> {
-        let (document, buffers, images) =
-            gltf::import(source_path).map_err(|e| ImportError::MalformedSource {
-                source_path: source_path.to_path_buf(),
-                message: e.to_string(),
-            })?;
+    fn import(
+        &self,
+        source_path: &Path,
+        settings: &GltfSettings,
+        _asset_settings: Option<&NoSettings>,
+        ctx: &mut ImportContext,
+    ) -> Result<(), ImportError> {
+        let malformed = |message: String| ImportError::MalformedSource {
+            source_path: source_path.to_path_buf(),
+            message,
+        };
+        let gltf::Gltf { document, blob } =
+            gltf::Gltf::open(source_path).map_err(|e| malformed(e.to_string()))?;
+        let source_dir = source_path.parent().unwrap_or_else(|| Path::new(""));
+        let buffers = gltf::import_buffers(&document, Some(source_dir), blob)
+            .map_err(|e| malformed(e.to_string()))?;
 
         // Track every external `.bin`/image `uri` the document pulls in, so
         // editing one and re-running `import` regenerates instead of shipping
         // stale imported output. Embedded `data:` URIs need no tracking — a
         // change there changes the `.gltf`'s own hash.
-        let source_dir = source_path.parent().unwrap_or_else(|| Path::new(""));
         for buffer in document.buffers() {
             if let gltf::buffer::Source::Uri(uri) = buffer.source() {
                 track_external(ctx, source_dir, uri);
@@ -102,30 +137,23 @@ impl Importer for GltfImporter {
             }
         }
 
-        // Decode every embedded/external image up front; textures are emitted
-        // later, once the materials loop has recorded which (image, color
-        // space) pairs are actually referenced.
-        let mut decoded_images: Vec<image::DynamicImage> = Vec::new();
-        for (image_index, data) in images.into_iter().enumerate() {
-            let dyn_img =
-                dynamic_image_from_gltf(data).map_err(|e| ImportError::MalformedSource {
-                    source_path: source_path.to_path_buf(),
-                    message: format!("failed to load GLTF image at index {image_index}: {e}"),
-                })?;
-            decoded_images.push(dyn_img);
-        }
-
         // Color textures (base color, emissive) are sRGB-encoded while data
         // textures (normal, metallic-roughness, occlusion) are linear. An
         // image can be referenced in both roles, so texture sub-assets are
         // keyed per (image, color space) pair.
-        let mut needed_textures: BTreeSet<TextureKey> = BTreeSet::new();
+        let mut needed_textures: BTreeMap<TextureKey, TextureRole> = BTreeMap::new();
         let mut materials: Vec<StandardMaterial> = Vec::new();
         {
             let mut texture_ref =
-                |texture: gltf::Texture<'_>, srgb: bool| -> AssetHandle<Texture> {
+                |texture: gltf::Texture<'_>, role: TextureRole| -> AssetHandle<Texture> {
                     let image_index = texture.source().index();
-                    needed_textures.insert(TextureKey { image_index, srgb });
+                    let srgb = role == TextureRole::Color;
+                    let kept = needed_textures
+                        .entry(TextureKey { image_index, srgb })
+                        .or_insert(role);
+                    if role == TextureRole::Data {
+                        *kept = role;
+                    }
                     AssetHandle::weak(ctx.sub_asset_id(&texture_name(image_index, srgb)))
                 };
 
@@ -133,10 +161,10 @@ impl Importer for GltfImporter {
                 let pbr = gltf_material.pbr_metallic_roughness();
                 let mut material = StandardMaterial::new(
                     pbr.base_color_texture()
-                        .map(|info| texture_ref(info.texture(), true)),
+                        .map(|info| texture_ref(info.texture(), TextureRole::Color)),
                     gltf_material
                         .normal_texture()
-                        .map(|info| texture_ref(info.texture(), false)),
+                        .map(|info| texture_ref(info.texture(), TextureRole::Normal)),
                 );
 
                 material.set_base_color_factor(Color::from(pbr.base_color_factor()));
@@ -145,39 +173,45 @@ impl Importer for GltfImporter {
                 material.set_emissive_factor(Vec3::from_array(gltf_material.emissive_factor()));
 
                 if let Some(info) = pbr.metallic_roughness_texture() {
-                    material.set_metallic_roughness_texture(texture_ref(info.texture(), false));
+                    material.set_metallic_roughness_texture(texture_ref(
+                        info.texture(),
+                        TextureRole::Data,
+                    ));
                 }
                 if let Some(info) = gltf_material.emissive_texture() {
-                    material.set_emissive_texture(texture_ref(info.texture(), true));
+                    material.set_emissive_texture(texture_ref(info.texture(), TextureRole::Color));
                 }
                 if let Some(info) = gltf_material.occlusion_texture() {
                     material.set_occlusion_strength(info.strength());
-                    material.set_occlusion_texture(texture_ref(info.texture(), false));
+                    material.set_occlusion_texture(texture_ref(info.texture(), TextureRole::Data));
                 }
 
-                if gltf_material.alpha_mode() == gltf::material::AlphaMode::Mask {
-                    // GLTF spec default for alphaCutoff is 0.5 when alpha_mode is MASK.
-                    material.set_alpha_cutoff(gltf_material.alpha_cutoff().unwrap_or(0.5));
-                }
+                material.set_alpha_mode(match gltf_material.alpha_mode() {
+                    gltf::material::AlphaMode::Opaque => AlphaMode::Opaque,
+                    gltf::material::AlphaMode::Mask => AlphaMode::Mask {
+                        cutoff: gltf_material.alpha_cutoff().unwrap_or(0.5),
+                    },
+                    gltf::material::AlphaMode::Blend => AlphaMode::Blend,
+                });
 
                 materials.push(material);
             }
         }
 
-        for key in &needed_textures {
-            let rgba = decoded_images[key.image_index].to_rgba8();
-            let texture = Texture {
-                width: rgba.width(),
-                height: rgba.height(),
-                format: if key.srgb {
-                    TextureFormat::Rgba8UnormSrgb
-                } else {
-                    TextureFormat::Rgba8Unorm
-                },
-                kind: TextureKind::Sampled,
-                data: rgba.into_raw(),
+        let images: Vec<gltf::Image<'_>> = document.images().collect();
+        for (key, role) in &needed_textures {
+            let unkept = |message: String| {
+                malformed(format!(
+                    "failed to keep GLTF image {}: {message}",
+                    key.image_index
+                ))
             };
-            ctx.emit(&texture_name(key.image_index, key.srgb), &texture)?;
+            let bytes =
+                image_bytes(&images[key.image_index], &buffers, source_dir).map_err(unkept)?;
+            let name = texture_name(key.image_index, key.srgb);
+            let ImportedTexture { texture, source } =
+                imported_texture(ctx, &name, *role, bytes, None).map_err(unkept)?;
+            ctx.emit_with(&name, &texture, &source)?;
         }
 
         for (index, material) in materials.iter().enumerate() {
@@ -230,11 +264,19 @@ impl Importer for GltfImporter {
             }
         }
 
+        let mut node_parents: HashMap<usize, usize> = HashMap::new();
+        for node in document.nodes() {
+            for child in node.children() {
+                node_parents.insert(child.index(), node.index());
+            }
+        }
+
         // Skins -> `skeleton/N` sub-assets. A skin with no inverse bind
         // matrices is unusable, so it is skipped and its node gets no
         // `SkeletonComponent`. `SkinInfo` is looked up by `skeleton_index`, not
         // vector position, so a skipped skin cannot misalign the rest.
         let mut skins: Vec<SkinInfo> = Vec::new();
+        let mut roots: BTreeSet<Uuid> = BTreeSet::new();
         for (skin_index, skin) in document.skins().enumerate() {
             let Some(inverse_bind_matrices) = skin
                 .reader(|buffer| Some(&buffers[buffer.index()]))
@@ -246,9 +288,6 @@ impl Importer for GltfImporter {
             else {
                 continue;
             };
-
-            let skeleton = Skeleton::from(inverse_bind_matrices);
-            ctx.emit(&format!("skeleton/{skin_index}"), &skeleton)?;
 
             let bones: Vec<SceneEntityRef> = skin
                 .joints()
@@ -275,20 +314,109 @@ impl Importer for GltfImporter {
                 continue;
             }
 
+            let mut joint_positions: HashMap<usize, usize> = HashMap::new();
+            for (position, joint) in skin.joints().enumerate() {
+                joint_positions.entry(joint.index()).or_insert(position);
+            }
+            let mut parents: Vec<Option<u16>> = Vec::with_capacity(bones.len());
+            let mut names: Vec<Name> = Vec::with_capacity(bones.len());
+            let mut rest_pose: Vec<JointPose> = Vec::with_capacity(bones.len());
+            for (position, joint) in skin.joints().enumerate() {
+                let parent_position = node_parents
+                    .get(&joint.index())
+                    .and_then(|parent| joint_positions.get(parent).map(|at| (*parent, *at)));
+                if let Some((parent_node, parent_position)) = parent_position
+                    && parent_position >= position
+                {
+                    return Err(ImportError::MalformedSource {
+                        source_path: source_path.to_path_buf(),
+                        message: format!(
+                            "skin {skin_index}: joint {} is listed before its parent joint {parent_node}; joints must be ordered parents first",
+                            joint.index()
+                        ),
+                    });
+                }
+                let parent = parent_position
+                    .map(|(_, at)| {
+                        u16::try_from(at).map_err(|_| ImportError::MalformedSource {
+                            source_path: source_path.to_path_buf(),
+                            message: format!(
+                                "skin {skin_index}: joint {} has a parent at position {at}, past the {} bones a skeleton can address",
+                                joint.index(),
+                                u16::MAX as usize + 1
+                            ),
+                        })
+                    })
+                    .transpose()?;
+                parents.push(parent);
+                names.push(
+                    joint
+                        .name()
+                        .map(Name::new)
+                        .unwrap_or_else(|| Name::new(&format!("joint_{}", joint.index()))),
+                );
+                let (translation, rotation, scale) = joint.transform().decomposed();
+                rest_pose.push(JointPose {
+                    translation: Vec3::from_array(translation),
+                    rotation: Quat::from_array(rotation),
+                    scale: Vec3::from_array(scale),
+                });
+            }
+
+            let skeleton =
+                Skeleton::new(inverse_bind_matrices, parents, names, rest_pose, bone_ids).map_err(
+                    |err| ImportError::MalformedSource {
+                        source_path: source_path.to_path_buf(),
+                        message: format!("skin {skin_index}: {err}"),
+                    },
+                )?;
+            ctx.emit(&format!("skeleton/{skin_index}"), &skeleton)?;
+            roots.extend(
+                skeleton
+                    .parents
+                    .iter()
+                    .zip(skeleton.bone_ids.iter())
+                    .filter(|(parent, _)| parent.is_none())
+                    .map(|(_, id)| *id),
+            );
+
             skins.push(SkinInfo {
                 skeleton_index: skin_index,
                 bones,
-                bone_ids,
             });
         }
 
-        // Animations -> `animation/N` sub-assets. Channel targets are keyed by
+        // Animations -> `animation/{name}` sub-assets. Channel targets are keyed by
         // the same path hash as the skeleton bones, so clips and skeletons
         // agree on identity. Clip ids are not recorded in `referenced_assets`:
         // nothing in the imported scene points at a clip yet (a later task wires
         // that), and the import's reference-integrity pass only checks that
         // recorded references resolve, not that every sub-asset is referenced.
-        for (animation_index, animation) in document.animations().enumerate() {
+        let requested_clip_names: Vec<Option<&str>> =
+            document.animations().map(|a| a.name()).collect();
+        let animation_names = clip_names(&requested_clip_names);
+        if let Some(name) = settings
+            .events
+            .keys()
+            .find(|name| !animation_names.contains(name))
+        {
+            return Err(malformed(format!(
+                "events are set for clip `{name}`, which this file does not emit; its clips are {animation_names:?}"
+            )));
+        }
+        if let Some(name) = settings
+            .additive
+            .keys()
+            .find(|name| !animation_names.contains(name))
+        {
+            return Err(malformed(format!(
+                "additive is set for clip `{name}`, which this file does not emit; its clips are {animation_names:?}"
+            )));
+        }
+        let roots: Vec<Uuid> = roots.into_iter().collect();
+        for (animation_index, (animation, animation_name)) in
+            document.animations().zip(&animation_names).enumerate()
+        {
             let mut animation_clip = AnimationClip::default();
 
             for channel in animation.channels() {
@@ -341,7 +469,27 @@ impl Importer for GltfImporter {
                 }
             }
 
-            ctx.emit(&format!("animation/{animation_index}"), &animation_clip)?;
+            if let Some(events) = settings.events.get(animation_name) {
+                animation_clip
+                    .add_animation_events(events)
+                    .map_err(|message| malformed(format!("clip `{animation_name}`: {message}")))?;
+            }
+
+            if let Some(additive) = settings.additive.get(animation_name) {
+                let additive = additive
+                    .additive(animation_clip.duration(), roots.clone())
+                    .map_err(|message| malformed(format!("clip `{animation_name}`: {message}")))?;
+                animation_clip.set_additive(additive);
+            }
+
+            let index_name = animation_index.to_string();
+            if !animation_names.contains(&index_name) {
+                ctx.renamed_from(
+                    &format!("animation/{animation_name}"),
+                    &format!("animation/{index_name}"),
+                );
+            }
+            ctx.emit(&format!("animation/{animation_name}"), &animation_clip)?;
         }
 
         // Node walk. `document.nodes()` yields nodes in index order, so the
@@ -354,9 +502,11 @@ impl Importer for GltfImporter {
         let mut referenced_assets: Vec<AssetId> = Vec::new();
         for gltf_node in document.nodes() {
             let mut scene_node = SceneNode {
+                id: NodeId::default(),
                 name: gltf_node.name().map(str::to_string).unwrap_or_default(),
                 children: gltf_node.children().map(|c| c.index()).collect(),
                 components: Vec::new(),
+                link: None,
             };
             push_node_component(
                 &mut scene_node,
@@ -373,10 +523,10 @@ impl Importer for GltfImporter {
             // so they skin from the same bone entities without a second player.
             if let Some(skin) = gltf_node.skin() {
                 let skin_index = skin.index();
-                if let Some((bones, bone_ids)) = skins
+                if let Some(bones) = skins
                     .iter()
                     .find(|info| info.skeleton_index == skin_index)
-                    .map(|info| (info.bones.clone(), info.bone_ids.clone()))
+                    .map(|info| info.bones.clone())
                 {
                     let skeleton_id = ctx.sub_asset_id(&format!("skeleton/{skin_index}"));
                     let root = skin
@@ -393,7 +543,6 @@ impl Importer for GltfImporter {
                         &SkeletonComponent {
                             skeleton: AssetHandle::weak(skeleton_id),
                             bones,
-                            bone_ids,
                             root,
                         },
                     )?;
@@ -401,31 +550,25 @@ impl Importer for GltfImporter {
                 }
             }
 
-            // A node's glTF `camera` becomes a `Camera` component. Only the
-            // perspective projection maps onto the engine's camera; an
-            // orthographic one is warned about and falls back to
-            // `Camera::default()`, faithful to the old runtime loader.
             if let Some(camera) = gltf_node.camera() {
-                match camera.projection() {
-                    gltf::camera::Projection::Perspective(perspective) => {
-                        push_node_component(
-                            &mut scene_node,
-                            &Camera {
-                                fovy: perspective.yfov(),
-                                znear: perspective.znear(),
-                                zfar: perspective.zfar().unwrap_or(100.0),
-                                ..Camera::default()
-                            },
-                        )?;
-                    }
+                let lens = match camera.projection() {
+                    gltf::camera::Projection::Perspective(perspective) => Lens {
+                        fovy: perspective.yfov(),
+                        znear: perspective.znear(),
+                        zfar: perspective.zfar().unwrap_or(Lens::default().zfar),
+                    },
                     gltf::camera::Projection::Orthographic(_) => {
                         warn!(
-                            "Orthographic camera '{}' is not supported, using default perspective",
+                            "Orthographic camera '{}' is not supported, using the default lens",
                             camera.name().unwrap_or("<unnamed>")
                         );
-                        push_node_component(&mut scene_node, &Camera::default())?;
+                        Lens::default()
                     }
-                }
+                };
+                push_node_component(
+                    &mut scene_node,
+                    &VirtualCamera::new(0).disabled().with_lens(lens),
+                )?;
             }
 
             // A `KHR_lights_punctual` light becomes a `Light` (+ render-world
@@ -493,7 +636,6 @@ impl Importer for GltfImporter {
                                 (
                                     ctx.sub_asset_id(&format!("skeleton/{skin_index}")),
                                     info.bones.clone(),
-                                    info.bone_ids.clone(),
                                 )
                             })
                     });
@@ -505,22 +647,23 @@ impl Importer for GltfImporter {
                             ctx.sub_asset_id(&format!("material/{}", p.material_sub_asset));
 
                         let mut child = SceneNode {
+                            id: NodeId::default(),
                             name: format!("{node_name}.primitive{k}"),
                             children: Vec::new(),
                             components: Vec::new(),
+                            link: None,
                         };
                         push_node_component(&mut child, &Transform::IDENTITY)?;
                         push_mesh_components(&mut child, mesh_id, material_id)?;
                         referenced_assets.push(mesh_id);
                         referenced_assets.push(material_id);
 
-                        if let Some((skeleton_id, bones, bone_ids)) = &skin_binding {
+                        if let Some((skeleton_id, bones)) = &skin_binding {
                             push_node_component(
                                 &mut child,
                                 &SkeletonComponent {
                                     skeleton: AssetHandle::weak(*skeleton_id),
                                     bones: bones.clone(),
-                                    bone_ids: bone_ids.clone(),
                                     root: None,
                                 },
                             )?;
@@ -534,6 +677,7 @@ impl Importer for GltfImporter {
             }
         }
 
+        derive_ids(&mut nodes);
         ctx.emit(
             "scene",
             &Scene {
@@ -576,18 +720,11 @@ fn push_mesh_components(
     )
 }
 
-/// Resolves one glTF external resource `uri` against the source file's
-/// directory and records it as an import dependency. `data:` URIs are embedded,
-/// not external, so they are skipped; an unreadable path is silently ignored
-/// (a genuinely missing external file surfaces from `gltf::import` itself).
 fn track_external(ctx: &mut ImportContext, source_dir: &Path, uri: &str) {
     if uri.starts_with("data:") {
         return;
     }
-    let path = source_dir.join(percent_decode(uri));
-    if let Ok(hash) = hash_file_contents(&path) {
-        ctx.track_dependency(path, hash);
-    }
+    ctx.track_dependency(source_dir.join(percent_decode(uri)));
 }
 
 /// Minimal `%XX` percent-decoder for glTF `uri` fields, which are otherwise
@@ -621,32 +758,34 @@ fn texture_name(image_index: usize, srgb: bool) -> String {
     }
 }
 
-fn dynamic_image_from_gltf(data: gltf::image::Data) -> anyhow::Result<image::DynamicImage> {
-    let (width, height, format) = (data.width, data.height, data.format);
-    let buffer_error = || {
-        format!(
-            "image buffer does not match dimensions {}x{} for format {:?}",
-            width, height, format
-        )
-    };
-
-    let image = match format {
-        gltf::image::Format::R8 => image::DynamicImage::ImageLuma8(
-            ImageBuffer::from_vec(width, height, data.pixels).with_context(buffer_error)?,
-        ),
-        gltf::image::Format::R8G8 => image::DynamicImage::ImageLumaA8(
-            ImageBuffer::from_vec(width, height, data.pixels).with_context(buffer_error)?,
-        ),
-        gltf::image::Format::R8G8B8 => image::DynamicImage::ImageRgb8(
-            ImageBuffer::from_vec(width, height, data.pixels).with_context(buffer_error)?,
-        ),
-        gltf::image::Format::R8G8B8A8 => image::DynamicImage::ImageRgba8(
-            ImageBuffer::from_vec(width, height, data.pixels).with_context(buffer_error)?,
-        ),
-        format => bail!("unsupported GLTF image format {:?}", format),
-    };
-
-    Ok(image)
+fn image_bytes(
+    image: &gltf::Image<'_>,
+    buffers: &[Data],
+    source_dir: &Path,
+) -> Result<Vec<u8>, String> {
+    match image.source() {
+        gltf::image::Source::View { view, .. } => {
+            let buffer = view.buffer().index();
+            buffers[buffer]
+                .get(view.offset()..view.offset() + view.length())
+                .map(<[u8]>::to_vec)
+                .ok_or_else(|| format!("its buffer view runs past the end of buffer {buffer}"))
+        }
+        gltf::image::Source::Uri { uri, .. } => match uri.strip_prefix("data:") {
+            Some(data) => {
+                let Some((_, encoded)) = data.split_once(";base64,") else {
+                    return Err("its data URI is not base64".to_string());
+                };
+                base64::engine::general_purpose::STANDARD
+                    .decode(encoded)
+                    .map_err(|e| format!("its data URI does not decode: {e}"))
+            }
+            None => {
+                let path = source_dir.join(percent_decode(uri));
+                std::fs::read(&path).map_err(|e| format!("reading '{}': {e}", path.display()))
+            }
+        },
+    }
 }
 
 fn load_primitive(

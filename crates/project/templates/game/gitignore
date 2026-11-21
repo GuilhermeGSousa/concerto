@@ -1,3 +1,4 @@
 /target
 /dist
 content/.registry.toml
+derived-cache/

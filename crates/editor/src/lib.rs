@@ -5,19 +5,30 @@ pub mod asset_picker;
 pub mod content;
 pub mod diagnostics;
 pub mod dock;
+pub mod drag_drop;
+pub mod entity_picker;
 pub mod fonts;
+pub mod gizmo_choices;
+pub mod graph_canvas;
 pub mod guard;
 pub mod hierarchy;
 pub mod hosted;
 pub mod import;
+pub mod import_fold;
+pub mod inspected_asset;
 pub mod inspector;
-pub mod marks;
+pub mod joint_picker;
+pub mod links;
 pub mod mcp;
+pub mod name_menu;
+pub mod placement;
+pub mod preview;
 pub mod project;
 mod run;
 pub mod scene;
 pub mod shell;
 pub mod tabs;
+pub mod timeline;
 pub mod tools;
 mod tree_items;
 pub mod viewport;
@@ -25,12 +36,14 @@ pub mod window_chrome;
 mod workspace;
 
 use concerto_mesh::MeshComponent;
-pub use run::run;
+pub use run::{run, run_with};
 
 use concerto_app::{App, Plugin};
+use concerto_ecs::IntoSystemConfig;
 use std::path::PathBuf;
 
 use crate::asset_picker::AssetPickerPlugin;
+use crate::entity_picker::EntityPickerPlugin;
 
 pub struct EditorPlugin {
     pub project: Option<PathBuf>,
@@ -55,6 +68,7 @@ impl Plugin for EditorPlugin {
         app.register_plugin(import::ImportPlugin);
         app.register_plugin(diagnostics::DiagnosticsPlugin);
         app.register_plugin(inspector::InspectorPlugin);
+        app.register_plugin(inspector::ReflectRowsPlugin);
         app.insert_resource(asset_editor::AssetEditorRegistry::default());
         app.insert_resource(asset_editor::AssetEditorCommands::default());
         app.insert_resource(asset_editor::ActiveEditor::default());
@@ -68,25 +82,37 @@ impl Plugin for EditorPlugin {
             concerto_app::schedule_groups::LateUpdate,
             asset_editor::request_save,
         );
+        app.add_system(
+            concerto_app::schedule_groups::Update,
+            asset_editor::report_saves_as_written,
+        );
         app.register_plugin(hosted::HostedPlugin);
+        app.register_plugin(preview::PreviewHostPlugin);
         app.register_plugin(scene::ScenePlugin {
             recipe: self.recipe,
             clipboard: Some(concerto_window::clipboard::WindowClipboard::use_os_clipboard),
         });
+        app.register_plugin(inspected_asset::InspectedAssetPlugin);
+        app.register_plugin(placement::AssetPlacementPlugin);
+        app.register_plugin(links::LinksPlugin);
+        app.register_plugin(timeline::TimelinePlugin);
+        app.register_plugin(graph_canvas::GraphCanvasPlugin);
+        app.register_plugin(drag_drop::DragDropPlugin);
         app.add_system(
             concerto_app::schedule_groups::Update,
             workspace::create_editor_hosts,
         );
         app.add_system(
             concerto_app::schedule_groups::Update,
-            workspace::sync_workspace,
+            workspace::sync_workspace.before(dock::apply_layout),
         );
         app.add_system(
             concerto_app::schedule_groups::Update,
             workspace::reset_workspace_input,
         );
-        app.add_listener(workspace::reset_input_for_edit_target);
+        app.add_listener(workspace::reset_input_for_viewport_target);
         app.register_plugin(viewport::ViewportPlugin);
+        app.register_plugin(gizmo_choices::ComponentGizmosPlugin);
         app.register_plugin(shell::ShellPlugin);
         app.register_plugin(tabs::TabsPlugin);
         app.register_plugin(window_chrome::WindowChromePlugin {
@@ -94,6 +120,7 @@ impl Plugin for EditorPlugin {
         });
         app.register_type::<MeshComponent>();
         app.register_plugin(AssetPickerPlugin);
+        app.register_plugin(EntityPickerPlugin);
 
         if let Some(path) = &self.project {
             app.get_resource_mut::<project::EditorCommands>()

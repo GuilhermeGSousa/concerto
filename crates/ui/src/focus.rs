@@ -114,7 +114,6 @@ mod tests {
     use super::*;
     use crate::node::{UIBox, UICulled, blank_culled_layouts};
     use concerto_ecs::{IntoSystem, System, World, events::event_channel::EventChannel};
-    use concerto_window::input::actions::ActionLabel;
     use glam::Vec2;
 
     fn focus_world() -> World {
@@ -158,9 +157,7 @@ mod tests {
         world
             .get_resource_mut::<EventChannel<ActionFired>>()
             .unwrap()
-            .push_event(ActionFired {
-                action: UIFocusNext.intern(),
-            });
+            .push_event(ActionFired::new(UIFocusNext));
 
         let mut system = update_focus.into_system();
         system.initialize(&mut world);

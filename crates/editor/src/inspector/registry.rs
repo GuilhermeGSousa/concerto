@@ -2,6 +2,7 @@ use std::{
     any::{Any, TypeId},
     collections::HashMap,
     marker::PhantomData,
+    ops::Deref,
     sync::Arc,
 };
 
@@ -24,15 +25,17 @@ use concerto_ecs::{
 };
 use concerto_foundation::assets::handle::ReflectAssetHandle;
 use concerto_reflect::{
-    PropertyPath, PropertyVisitor, Reflect, ReflectDefault, ReflectEnumInfo, ReflectOption,
-    TypeRegistry,
+    PathSegment, PropertyPath, PropertyVisitor, Reflect, ReflectDefault, ReflectEnumInfo,
+    ReflectList, ReflectOption, ReflectRef, TypeRegistry,
 };
 use concerto_ui::{node::UINode, theme::UITheme};
 
+use super::list::ListEditor;
 use super::rows::{
-    EditContext, EditError, Property, PropertyCommit, PropertyCommits, PropertyEditor, PropertyRow,
-    PropertyRowValue,
+    EditContext, EditError, Property, PropertyCommit, PropertyCommits, PropertyEditor,
+    PropertyKind, PropertyRow, PropertyRowValue,
 };
+use super::target::TargetWorld;
 use super::variants::{OptionToggle, VariantPicker};
 use crate::asset_picker::AssetPicker;
 use crate::hosted::{EditWorld, EditWorldSignals};
@@ -143,6 +146,10 @@ impl Default for InspectorRegistry {
         super::numeric::register_defaults(&mut registry);
         super::boolean::register_defaults(&mut registry);
         super::color::register_defaults(&mut registry);
+        super::name_text::register_defaults(&mut registry);
+        super::text_field::register_defaults(&mut registry);
+        crate::entity_picker::register_defaults(&mut registry);
+        crate::joint_picker::register_defaults(&mut registry);
         registry
     }
 }
@@ -162,7 +169,7 @@ impl InspectorRegistry {
         );
     }
 
-    /// The editor registered for `id`, or else the one its type data in `types` calls for: the asset picker, an option toggle or a variant picker.
+    /// The editor registered for `id`, or else the one its type data in `types` calls for: the asset picker, an option toggle, a list editor or a variant picker.
     pub(crate) fn editor(
         &self,
         id: TypeId,
@@ -182,6 +189,8 @@ impl InspectorRegistry {
         let (editor_type, adapter): (TypeId, Arc<dyn ErasedEditor>) =
             if types.get_type_data::<ReflectOption>(id).is_some() {
                 (TypeId::of::<OptionToggle>(), Arc::new(OptionToggle))
+            } else if types.get_type_data::<ReflectList>(id).is_some() {
+                (TypeId::of::<ListEditor>(), Arc::new(ListEditor))
             } else {
                 let info = types.get_type_data::<ReflectEnumInfo>(id)?;
                 (
@@ -196,6 +205,27 @@ impl InspectorRegistry {
         })
     }
 
+    pub(crate) fn follows_snapshot(&self, types: &TypeRegistry, row: &PropertyRow) -> bool {
+        self.editor(row.address.type_id, Some(types))
+            .is_some_and(|editor| {
+                editor.editor_type == row.editor_type && editor.adapter.follows_snapshot()
+            })
+    }
+
+    /// The layout node for `property`'s row, the standard one when no editor claims it.
+    pub(crate) fn row_node(
+        &self,
+        types: &TypeRegistry,
+        property: &Property,
+        theme: &UITheme,
+    ) -> UINode {
+        property
+            .value()
+            .zip(self.editor(property.type_id, Some(types)))
+            .and_then(|(value, editor)| editor.adapter.row_node(value, theme).ok())
+            .unwrap_or_else(|| super::sync::standard_row_node(theme))
+    }
+
     /// Collect fresh owned snapshots, preferring an editor for each node over its children unless that editor walks them.
     pub fn collect(&self, root: &dyn Reflect, types: &TypeRegistry) -> Vec<Property> {
         let mut collector = Collect {
@@ -207,54 +237,31 @@ impl InspectorRegistry {
         collector.node(root);
         collector.properties
     }
-
-    #[cfg(test)]
-    pub(crate) fn collect_component(
-        &self,
-        registry_tick: Tick,
-        scene: &World,
-        entity: Entity,
-        component: TypeId,
-    ) -> Option<Vec<Property>> {
-        let types = scene.get_resource::<AppTypeRegistry>()?;
-        let entry = types.get_type_data::<ReflectComponent>(component)?;
-        let value = (entry.read)(&ComponentMetadata::new(scene), entity)?;
-        Some(self.collect_at(registry_tick, value, types))
-    }
-
-    fn collect_at(
-        &self,
-        registry_tick: Tick,
-        root: &dyn Reflect,
-        types: &TypeRegistry,
-    ) -> Vec<Property> {
-        let mut properties = self.collect(root, types);
-        for property in &mut properties {
-            property.registry_tick = registry_tick;
-        }
-        properties
-    }
 }
 
 struct Collect<'a> {
     registry: &'a InspectorRegistry,
     types: &'a TypeRegistry,
-    path: Vec<&'static str>,
+    path: Vec<PathSegment>,
     properties: Vec<Property>,
 }
 
 impl Collect<'_> {
+    fn property(&self, type_id: TypeId, kind: PropertyKind) -> Property {
+        Property {
+            path: PropertyPath::new(self.path.iter().copied()),
+            type_id,
+            kind,
+        }
+    }
+
     fn node(&mut self, value: &dyn Reflect) {
         let type_id = (value as &dyn Any).type_id();
         if let Some(editor) = self.registry.editor(type_id, Some(self.types)) {
             match editor.adapter.snapshot(value) {
-                Ok(snapshot) => self.properties.push(Property {
-                    path: PropertyPath::new(self.path.iter().copied()),
-                    type_id,
-                    value: snapshot,
-                    editor_type: Some(editor.editor_type),
-                    registry_tick: Tick::default(),
-                }),
+                Ok(snapshot) => self
+                    .properties
+                    .push(self.property(type_id, PropertyKind::Value(snapshot))),
                 Err(error) => log::warn!("Unable to snapshot {:?}: {error}", self.path),
             }
             if editor.walks_children {
@@ -264,22 +271,34 @@ impl Collect<'_> {
         }
         let count = self.properties.len();
         value.visit(self);
-        if count == self.properties.len() {
-            self.properties.push(Property {
-                path: PropertyPath::new(self.path.iter().copied()),
-                type_id,
-                value: PropertyRowValue::default(),
-                editor_type: None,
-                registry_tick: Tick::default(),
-            });
+        let empty =
+            matches!(value.reflect_ref(), ReflectRef::Struct(fields) if fields.field_len() == 0);
+        if count == self.properties.len() && !empty {
+            self.properties
+                .push(self.property(type_id, PropertyKind::Unsupported));
         }
     }
 }
 
 impl PropertyVisitor for Collect<'_> {
     fn field(&mut self, name: &'static str, value: &dyn Reflect) {
-        self.path.push(name);
+        self.path.push(PathSegment::Field(name));
         self.node(value);
+        self.path.pop();
+    }
+
+    fn element(&mut self, index: usize, value: &dyn Reflect) {
+        self.path.push(PathSegment::Index(index));
+        let first = self.properties.len();
+        self.node(value);
+        let has_own_row = self
+            .properties
+            .get(first)
+            .is_some_and(|property| property.path.depth() == self.path.len());
+        if !has_own_row {
+            let heading = self.property((value as &dyn Any).type_id(), PropertyKind::Heading);
+            self.properties.insert(first, heading);
+        }
         self.path.pop();
     }
 }
@@ -302,52 +321,33 @@ impl InspectionSource<'_> {
     pub fn is_registered(&self, id: TypeId) -> bool {
         self.table.get_type_data::<ReflectComponent>(id).is_some()
     }
-    pub fn follows_snapshot(&self, registry: &InspectorRegistry, property: &Property) -> bool {
-        registry
-            .editor(property.type_id, Some(&self.table))
-            .is_some_and(|editor| {
-                Some(editor.editor_type) == property.editor_type
-                    && editor.adapter.follows_snapshot()
-            })
-    }
-    /// The layout node for `property`'s row, the standard one when no editor claims it.
-    pub fn row_node(
-        &self,
-        registry: &InspectorRegistry,
-        property: &Property,
-        theme: &UITheme,
-    ) -> UINode {
-        registry
-            .editor(property.type_id, Some(&self.table))
-            .filter(|editor| Some(editor.editor_type) == property.editor_type)
-            .and_then(|editor| editor.adapter.row_node(&property.value, theme).ok())
-            .unwrap_or_else(|| super::sync::standard_row_node(theme))
-    }
     /// Addable components `entity` does not carry yet, with how many are addable in total.
     pub fn addable_components(&self, entity: Entity) -> (Vec<(TypeId, &'static str)>, usize) {
         let present = self.components.component_ids(entity);
+        let table = self.table.read();
         let addable = || {
-            self.table
+            table
                 .iter()
                 .filter(|registration| {
                     registration.data::<ReflectComponent>().is_some()
                         && registration.data::<ReflectDefault>().is_some()
                 })
-                .map(|registration| (registration.type_id(), registration.short_name()))
+                .map(|registration| ((*registration).type_id(), registration.short_name()))
         };
         let missing = addable().filter(|(id, _)| !present.contains(id)).collect();
         (missing, addable().count())
     }
     pub fn visible_components(&self, entity: Entity) -> Vec<(TypeId, &'static str)> {
+        let table = self.table.read();
         self.components
             .component_ids(entity)
             .iter()
-            .filter_map(|&id| Some((id, self.table.get(id)?.short_name())))
+            .filter_map(|&id| Some((id, table.get(id)?.short_name())))
             .collect()
     }
     /// The edit `App`'s type registry.
-    pub fn types(&self) -> &TypeRegistry {
-        &self.table
+    pub fn types(&self) -> impl Deref<Target = TypeRegistry> + '_ {
+        self.table.read()
     }
     /// The component `id` on `entity`, or `None` when it is absent or has no reflection data.
     pub fn read(&self, entity: Entity, id: TypeId) -> Option<&dyn Reflect> {
@@ -356,11 +356,10 @@ impl InspectionSource<'_> {
     pub fn collect_component(
         &self,
         registry: &InspectorRegistry,
-        registry_tick: Tick,
         entity: Entity,
         id: TypeId,
     ) -> Option<Vec<Property>> {
-        Some(registry.collect_at(registry_tick, self.read(entity, id)?, &self.table))
+        Some(registry.collect(self.read(entity, id)?, &self.table.read()))
     }
 }
 
@@ -412,10 +411,8 @@ pub(crate) fn current_editor(
     row: &PropertyRow,
 ) -> Result<RegisteredEditor, EditError> {
     registry
-        .editor(row.type_id, types)
-        .filter(|editor| {
-            row.editor_type == Some(editor.editor_type) && row.registry_tick == changed
-        })
+        .editor(row.address.type_id, types)
+        .filter(|editor| row.editor_type == editor.editor_type && row.registry_tick == changed)
         .ok_or(EditError::StaleEditor)
 }
 
@@ -440,713 +437,15 @@ pub(super) fn send_property_commits(
     types: EditWorld<Option<Res<AppTypeRegistry>>>,
     mut scene: EditWorldSignals,
 ) {
-    if commits.0.is_empty() {
+    if !commits.holds_for(TargetWorld::EditTarget) {
         return;
     }
-    let types = types.as_deref().map(|types| &types.0);
-    for commit in std::mem::take(&mut commits.0) {
+    let types = types.as_deref().map(|types| types.read());
+    let types = types.as_deref();
+    for commit in commits.take_for(TargetWorld::EditTarget) {
         match checked(&registry, types, registry.changed_tick(), commit) {
             Ok(commit) => scene.trigger(commit),
             Err(error) => log::warn!("Property commit dropped: {error}"),
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::super::{
-        PropertyRow,
-        numeric::{NumericEdit, NumericFields},
-    };
-    use super::*;
-    use crate::{hosted::testing::SceneFixture, tools::scene::SceneEdited};
-    use concerto_ecs::{
-        IntoSystem, System, command::EntityCommandQueue, events::event_channel::EventChannel,
-    };
-    use concerto_foundation::{
-        assets::{asset_server::AssetServer, registry::AssetRegistry},
-        transform::Transform,
-    };
-    use glam::Vec3;
-
-    struct Sending {
-        f: SceneFixture,
-        document: Entity,
-        entity: Entity,
-    }
-
-    fn sending() -> Sending {
-        let mut f = SceneFixture::new();
-        f.world.insert_resource(InspectorRegistry::default());
-        let document = f.open();
-        let entity = f.scene_entity(document, "first");
-        f.world.tick();
-        Sending {
-            f,
-            document,
-            entity,
-        }
-    }
-
-    impl Sending {
-        fn send(&mut self) {
-            let mut system = send_property_commits.into_system();
-            system.initialize(&mut self.f.world);
-            system.run_and_apply((), &mut self.f.world);
-        }
-        fn edits(&self) -> usize {
-            self.f
-                .scene_world(self.document)
-                .get_resource::<EventChannel<SceneEdited>>()
-                .unwrap()
-                .len()
-        }
-        fn row(&self) -> PropertyRow {
-            let registry = self.f.world.get_resource::<InspectorRegistry>().unwrap();
-            let changed = self
-                .f
-                .world
-                .resource_changed_tick::<InspectorRegistry>()
-                .unwrap();
-            registry
-                .collect_component(
-                    changed,
-                    self.f.scene_world(self.document),
-                    self.entity,
-                    TypeId::of::<Transform>(),
-                )
-                .unwrap()[0]
-                .row(self.entity, TypeId::of::<Transform>())
-        }
-        fn translation(&self) -> Vec3 {
-            self.f
-                .scene_world(self.document)
-                .get_component_for_entity::<Transform>(self.entity)
-                .unwrap()
-                .translation
-        }
-        fn commits(&mut self) -> &mut PropertyCommits {
-            self.f.world.get_resource_mut::<PropertyCommits>().unwrap()
-        }
-    }
-
-    fn scene() -> (World, Entity) {
-        let mut world = World::default();
-        world.register_component::<Transform>();
-        world.register_type::<Transform>();
-        world.insert_resource(AssetServer::new());
-        world.insert_resource(AssetRegistry::default());
-        let entity = world.spawn(Transform::IDENTITY);
-        world.tick();
-        (world, entity)
-    }
-
-    fn row_in(registry: &InspectorRegistry, scene: &World, entity: Entity) -> PropertyRow {
-        registry
-            .collect_component(Tick::default(), scene, entity, TypeId::of::<Transform>())
-            .unwrap()[0]
-            .row(entity, TypeId::of::<Transform>())
-    }
-
-    fn refused(
-        registry: &InspectorRegistry,
-        changed: Tick,
-        commit: PropertyCommit,
-    ) -> Option<EditError> {
-        checked(registry, None, changed, commit).err()
-    }
-
-    #[test]
-    fn an_erased_value_edit_applies_through_its_adapter() {
-        let registry = InspectorRegistry::default();
-        let adapter = &registry.editor(TypeId::of::<Vec3>(), None).unwrap().adapter;
-        let target = Vec3::new(1.0, -2.0, 3.5);
-        let edit = adapter
-            .edit_to(&target)
-            .unwrap()
-            .expect("vectors offer a value edit");
-        let mut value = Vec3::ZERO;
-        adapter
-            .apply(
-                &mut value,
-                edit.as_ref(),
-                &EditContext {
-                    assets: &AssetServer::new(),
-                    registry: &AssetRegistry::default(),
-                },
-            )
-            .unwrap();
-        assert_eq!(value, target);
-        assert_eq!(
-            adapter.edit_to(&1.0_f32).err(),
-            Some(EditError::TypeMismatch)
-        );
-    }
-
-    #[test]
-    fn an_adapter_without_a_value_edit_offers_none() {
-        #[derive(Default)]
-        struct Label;
-        impl PropertyEditor<f32> for Label {
-            type Snapshot = f32;
-            type Edit = f32;
-            fn snapshot(&self, value: &f32) -> f32 {
-                *value
-            }
-            fn build(&self, _: &mut EntityCommandQueue, _: &f32, _: &UITheme) {}
-            fn apply(&self, value: &mut f32, edit: &f32, _: &EditContext) -> Result<(), EditError> {
-                *value = *edit;
-                Ok(())
-            }
-        }
-        let mut registry = InspectorRegistry::default();
-        registry.register_property_editor::<f32, Label>();
-        let adapter = &registry.editor(TypeId::of::<f32>(), None).unwrap().adapter;
-        assert!(adapter.edit_to(&2.0_f32).unwrap().is_none());
-    }
-
-    #[test]
-    fn an_erased_value_edit_is_sent_to_the_scene() {
-        let mut s = sending();
-        let row = s.row();
-        let edit =
-            s.f.world
-                .get_resource::<InspectorRegistry>()
-                .unwrap()
-                .editor(TypeId::of::<Vec3>(), None)
-                .unwrap()
-                .adapter
-                .edit_to(&Vec3::new(4.0, 5.0, 6.0))
-                .unwrap()
-                .unwrap();
-        s.commits().0.push(PropertyCommit { row, edit });
-        s.send();
-        assert_eq!(s.translation(), Vec3::new(4.0, 5.0, 6.0));
-        assert_eq!(s.edits(), 1);
-    }
-
-    #[test]
-    fn queued_slot_edits_compose_against_the_live_vector() {
-        let mut s = sending();
-        let row = s.row();
-        let queue = s.commits();
-        queue
-            .push::<Vec3, NumericFields>(
-                &row,
-                NumericEdit::Slot {
-                    slot: 0,
-                    number: 4.0,
-                    space: None,
-                },
-            )
-            .unwrap();
-        queue
-            .push::<Vec3, NumericFields>(
-                &row,
-                NumericEdit::Slot {
-                    slot: 1,
-                    number: 5.0,
-                    space: None,
-                },
-            )
-            .unwrap();
-        let entity = s.entity;
-        s.f.scene_world_mut(s.document)
-            .get_component_for_entity_mut::<Transform>(entity)
-            .unwrap()
-            .translation
-            .z = 6.0;
-        s.send();
-        assert_eq!(s.translation(), Vec3::new(4.0, 5.0, 6.0));
-        assert!(s.commits().0.is_empty());
-    }
-
-    #[test]
-    fn an_applied_commit_writes_scene_edited_and_a_stale_one_is_never_sent() {
-        let mut s = sending();
-        let row = s.row();
-        let mut stale = row.clone();
-        stale.editor_type = Some(TypeId::of::<u8>());
-
-        s.commits().0.push(PropertyCommit {
-            row: stale,
-            edit: Arc::new(NumericEdit::Slot {
-                slot: 0,
-                number: 1.0,
-                space: None,
-            }),
-        });
-        s.send();
-        assert_eq!(s.edits(), 0);
-        assert_eq!(s.translation(), Vec3::ZERO);
-        assert!(!s.f.unsaved(s.document));
-
-        s.commits()
-            .push::<Vec3, NumericFields>(
-                &row,
-                NumericEdit::Slot {
-                    slot: 0,
-                    number: 4.0,
-                    space: None,
-                },
-            )
-            .unwrap();
-        s.send();
-        assert_eq!(s.edits(), 1);
-        assert_eq!(s.translation().x, 4.0);
-        assert!(s.f.unsaved(s.document));
-    }
-
-    #[test]
-    fn a_commit_whose_row_was_collected_before_the_registry_changed_is_never_sent() {
-        let mut s = sending();
-        let row = s.row();
-        s.f.world.tick();
-        let ticks = s.f.world.out_of_system_ticks();
-        // SAFETY: the exclusive borrow of the world covers any access.
-        unsafe { ResMut::<InspectorRegistry>::new(s.f.world.as_unsafe_world_cell_mut(), ticks) }
-            .unwrap()
-            .register_property_editor::<Vec3, NumericFields>();
-        s.commits()
-            .push::<Vec3, NumericFields>(
-                &row,
-                NumericEdit::Slot {
-                    slot: 0,
-                    number: 4.0,
-                    space: None,
-                },
-            )
-            .unwrap();
-
-        s.send();
-
-        assert_eq!(s.edits(), 0);
-        assert_eq!(s.translation(), Vec3::ZERO);
-        assert!(s.commits().0.is_empty());
-    }
-
-    #[test]
-    fn an_empty_queue_is_not_marked_changed() {
-        let mut s = sending();
-        let changed = s.f.world.resource_changed_tick::<PropertyCommits>();
-        s.f.world.tick();
-
-        s.send();
-
-        assert_eq!(
-            s.f.world.resource_changed_tick::<PropertyCommits>(),
-            changed
-        );
-    }
-
-    #[test]
-    fn mismatched_payloads_are_errors_and_never_reach_the_adapter() {
-        let (mut scene, entity) = scene();
-        let registry = InspectorRegistry::default();
-        let row = row_in(&registry, &scene, entity);
-        assert!(matches!(
-            PropertyCommit::new::<f32, NumericFields>(
-                &row,
-                NumericEdit::Slot {
-                    slot: 0,
-                    number: 9.0,
-                    space: None
-                }
-            ),
-            Err(EditError::TypeMismatch)
-        ));
-        let malformed = PropertyCommit {
-            row,
-            edit: Arc::new("wrong payload"),
-        };
-        let commit = checked(&registry, None, Tick::default(), malformed)
-            .expect("the row still names the registered editor");
-        assert_eq!(commit.apply(&mut scene), Err(EditError::TypeMismatch));
-        assert_eq!(
-            scene
-                .get_component_for_entity::<Transform>(entity)
-                .unwrap()
-                .translation,
-            Vec3::ZERO
-        );
-    }
-
-    #[test]
-    fn replacing_the_registry_also_invalidates_old_edits() {
-        let (scene, entity) = scene();
-        let mut editors = World::default();
-        editors.insert_resource(InspectorRegistry::default());
-        editors.tick();
-        let changed = |editors: &World| {
-            editors
-                .resource_changed_tick::<InspectorRegistry>()
-                .unwrap()
-        };
-        let old = editors
-            .get_resource::<InspectorRegistry>()
-            .unwrap()
-            .collect_component(changed(&editors), &scene, entity, TypeId::of::<Transform>())
-            .unwrap()[0]
-            .row(entity, TypeId::of::<Transform>());
-        let edit = || {
-            PropertyCommit::new::<Vec3, NumericFields>(
-                &old,
-                NumericEdit::Slot {
-                    slot: 0,
-                    number: 9.0,
-                    space: None,
-                },
-            )
-            .unwrap()
-        };
-        let registry = editors.get_resource::<InspectorRegistry>().unwrap();
-        assert_eq!(refused(registry, changed(&editors), edit()), None);
-
-        editors.tick();
-        editors.insert_resource(InspectorRegistry::default());
-
-        let registry = editors.get_resource::<InspectorRegistry>().unwrap();
-        assert_eq!(
-            refused(registry, changed(&editors), edit()),
-            Some(EditError::StaleEditor)
-        );
-    }
-
-    #[test]
-    fn unregistered_components_return_an_error() {
-        let (mut scene, entity) = scene();
-        let registry = InspectorRegistry::default();
-        let edit = PropertyCommit::new::<Vec3, NumericFields>(
-            &row_in(&registry, &scene, entity),
-            NumericEdit::Slot {
-                slot: 0,
-                number: 9.0,
-                space: None,
-            },
-        )
-        .unwrap();
-        scene.insert_resource(AppTypeRegistry::default());
-        let commit = checked(&registry, None, Tick::default(), edit).unwrap();
-        assert_eq!(
-            commit.apply(&mut scene),
-            Err(EditError::UnregisteredComponent)
-        );
-    }
-
-    fn numeric(
-        registry: &InspectorRegistry,
-        row: PropertyRow,
-        number: f64,
-    ) -> crate::tools::edits::CommitProperty {
-        let commit = PropertyCommit {
-            row,
-            edit: Arc::new(NumericEdit::Slot {
-                slot: 0,
-                number,
-                space: None,
-            }),
-        };
-        checked(registry, None, Tick::default(), commit).unwrap()
-    }
-
-    #[test]
-    fn a_commit_changes_only_the_entity_its_row_captured() {
-        let (mut scene, a) = scene();
-        let b = scene.spawn(Transform::IDENTITY);
-        scene.tick();
-        let registry = InspectorRegistry::default();
-        let row = row_in(&registry, &scene, a);
-        assert!(
-            !scene.was_component_changed(a, TypeId::of::<Transform>()),
-            "collecting a row does not mark the component changed"
-        );
-
-        numeric(&registry, row, 4.0).apply(&mut scene).unwrap();
-
-        let x = |scene: &World, entity| {
-            scene
-                .get_component_for_entity::<Transform>(entity)
-                .unwrap()
-                .translation
-                .x
-        };
-        assert_eq!((x(&scene, a), x(&scene, b)), (4.0, 0.0));
-        assert!(scene.was_component_changed(a, TypeId::of::<Transform>()));
-        assert!(!scene.was_component_changed(b, TypeId::of::<Transform>()));
-    }
-
-    #[test]
-    fn a_commit_is_validated_before_it_changes_anything() {
-        let (mut scene, entity) = scene();
-        let registry = InspectorRegistry::default();
-        let row = row_in(&registry, &scene, entity);
-
-        assert_eq!(
-            numeric(&registry, row, f64::NAN).apply(&mut scene),
-            Err(EditError::Rejected)
-        );
-
-        assert_eq!(
-            scene
-                .get_component_for_entity::<Transform>(entity)
-                .unwrap()
-                .translation,
-            Vec3::ZERO
-        );
-    }
-
-    #[test]
-    fn a_scene_without_its_asset_resources_refuses_every_edit_and_keeps_them() {
-        let (mut scene, entity) = scene();
-        let registry = InspectorRegistry::default();
-        let row = row_in(&registry, &scene, entity);
-        scene.remove_resource::<AssetRegistry>();
-
-        assert_eq!(
-            numeric(&registry, row, 4.0).apply(&mut scene),
-            Err(EditError::MissingAssets)
-        );
-
-        assert_eq!(
-            scene
-                .get_component_for_entity::<Transform>(entity)
-                .unwrap()
-                .translation,
-            Vec3::ZERO
-        );
-        assert!(scene.get_resource::<AssetServer>().is_some());
-    }
-
-    #[test]
-    fn missing_targets_and_incompatible_paths_return_errors() {
-        let (mut scene, a) = scene();
-        let b = scene.spawn(Transform::IDENTITY);
-        let registry = InspectorRegistry::default();
-        let row = row_in(&registry, &scene, a);
-
-        let mut wrong_type = row.clone();
-        wrong_type.path = PropertyPath::new(["rotation"]);
-        assert_eq!(
-            numeric(&registry, wrong_type, 1.0).apply(&mut scene),
-            Err(EditError::TypeMismatch)
-        );
-        let mut missing = row.clone();
-        missing.path = PropertyPath::new(["absent"]);
-        assert_eq!(
-            numeric(&registry, missing, 1.0).apply(&mut scene),
-            Err(EditError::NotFound)
-        );
-        scene.remove_component::<Transform>(a);
-        assert_eq!(
-            numeric(&registry, row, 1.0).apply(&mut scene),
-            Err(EditError::MissingTarget)
-        );
-        let despawned = row_in(&registry, &scene, b);
-        scene.despawn(b);
-        assert_eq!(
-            numeric(&registry, despawned, 1.0).apply(&mut scene),
-            Err(EditError::MissingTarget)
-        );
-    }
-
-    #[derive(concerto_reflect::Reflect, Default)]
-    enum Shape {
-        #[default]
-        Dot,
-        Circle(f32),
-        Square {
-            side: f32,
-            round: bool,
-        },
-    }
-
-    #[derive(concerto_reflect::Reflect, Default)]
-    enum Maybe {
-        #[default]
-        None,
-        Some(f32),
-    }
-
-    #[derive(concerto_reflect::Reflect, Default)]
-    struct Fog {
-        density: f32,
-    }
-
-    #[derive(concerto_reflect::Reflect, Default)]
-    struct Holder {
-        shape: Shape,
-        fog: Option<Fog>,
-    }
-
-    fn types() -> TypeRegistry {
-        let mut types = TypeRegistry::default();
-        types.register::<Holder>();
-        types.register::<Maybe>();
-        types
-    }
-
-    fn chosen<T: 'static>(registry: &InspectorRegistry) -> Option<(TypeId, bool)> {
-        registry
-            .editor(TypeId::of::<T>(), Some(&types()))
-            .map(|editor| (editor.editor_type, editor.walks_children))
-    }
-
-    fn collected(
-        registry: &InspectorRegistry,
-        holder: &Holder,
-    ) -> Vec<(Vec<&'static str>, TypeId)> {
-        registry
-            .collect(holder, &types())
-            .into_iter()
-            .map(|property| {
-                (
-                    property.path.segments().to_vec(),
-                    property.editor_type.expect("every row has an editor"),
-                )
-            })
-            .collect()
-    }
-
-    fn picker() -> TypeId {
-        TypeId::of::<VariantPicker>()
-    }
-
-    fn toggle() -> TypeId {
-        TypeId::of::<OptionToggle>()
-    }
-
-    fn of<T: 'static>() -> TypeId {
-        InspectorRegistry::default()
-            .editor(TypeId::of::<T>(), None)
-            .unwrap()
-            .editor_type
-    }
-
-    #[test]
-    fn enums_and_options_choose_a_walking_editor_from_their_type_alone() {
-        let registry = InspectorRegistry::default();
-        assert_eq!(chosen::<Option<Fog>>(&registry), Some((toggle(), true)));
-        assert_eq!(chosen::<Shape>(&registry), Some((picker(), true)));
-        assert_eq!(chosen::<Maybe>(&registry), Some((picker(), true)));
-        assert_eq!(chosen::<f32>(&registry), Some((of::<f32>(), false)));
-    }
-
-    #[test]
-    fn a_unit_variant_and_none_yield_only_their_own_rows() {
-        let rows = collected(&InspectorRegistry::default(), &Holder::default());
-        assert_eq!(rows, [(vec!["shape"], picker()), (vec!["fog"], toggle())]);
-    }
-
-    #[test]
-    fn the_active_variants_fields_follow_its_picker_row() {
-        let registry = InspectorRegistry::default();
-        let square = Holder {
-            shape: Shape::Square {
-                side: 2.0,
-                round: true,
-            },
-            ..Default::default()
-        };
-        assert_eq!(
-            collected(&registry, &square),
-            [
-                (vec!["shape"], picker()),
-                (vec!["shape", "side"], of::<f32>()),
-                (vec!["shape", "round"], of::<bool>()),
-                (vec!["fog"], toggle()),
-            ]
-        );
-        let circle = Holder {
-            shape: Shape::Circle(1.0),
-            ..Default::default()
-        };
-        assert_eq!(
-            collected(&registry, &circle)[..2],
-            [(vec!["shape"], picker()), (vec!["shape", "0"], of::<f32>())]
-        );
-    }
-
-    #[test]
-    fn some_is_followed_by_the_values_rows() {
-        let holder = Holder {
-            fog: Some(Fog { density: 0.5 }),
-            ..Default::default()
-        };
-        assert_eq!(
-            collected(&InspectorRegistry::default(), &holder),
-            [
-                (vec!["shape"], picker()),
-                (vec!["fog"], toggle()),
-                (vec!["fog", "0", "density"], of::<f32>()),
-            ]
-        );
-    }
-
-    #[test]
-    fn color_is_edited_by_the_numeric_editor_from_the_default_registry() {
-        let editor = InspectorRegistry::default()
-            .editor(TypeId::of::<concerto_color::Color>(), None)
-            .expect("a color has an editor without a type registry");
-        assert_eq!(editor.editor_type, TypeId::of::<NumericFields>());
-        assert!(!editor.walks_children);
-    }
-
-    #[derive(Default)]
-    struct Whole;
-
-    impl<T: Reflect> PropertyEditor<T> for Whole {
-        type Snapshot = ();
-        type Edit = ();
-        fn snapshot(&self, _: &T) {}
-        fn build(&self, _: &mut concerto_ecs::command::EntityCommandQueue, _: &(), _: &UITheme) {}
-        fn apply(&self, _: &mut T, _: &(), _: &EditContext) -> Result<(), EditError> {
-            Ok(())
-        }
-    }
-
-    #[test]
-    fn an_editor_registered_for_the_exact_type_wins_and_hides_the_fields() {
-        let mut registry = InspectorRegistry::default();
-        registry.register_property_editor::<Shape, Whole>();
-        registry.register_property_editor::<Option<Fog>, Whole>();
-        let holder = Holder {
-            shape: Shape::Circle(1.0),
-            fog: Some(Fog::default()),
-        };
-        let whole = TypeId::of::<Whole>();
-        assert_eq!(
-            collected(&registry, &holder),
-            [(vec!["shape"], whole), (vec!["fog"], whole)]
-        );
-    }
-
-    #[test]
-    fn commits_are_visible_to_transform_propagation_in_the_same_tick() {
-        use concerto_foundation::transform::{GlobalTransform, systems::update_simple_entities};
-        let (mut scene, entity) = scene();
-        let registry = InspectorRegistry::default();
-        let edit = PropertyCommit::new::<Vec3, NumericFields>(
-            &row_in(&registry, &scene, entity),
-            NumericEdit::Slot {
-                slot: 0,
-                number: 3.0,
-                space: None,
-            },
-        )
-        .unwrap();
-        checked(&registry, None, Tick::default(), edit)
-            .unwrap()
-            .apply(&mut scene)
-            .unwrap();
-        let mut propagation = update_simple_entities.into_system();
-        propagation.initialize(&mut scene);
-        propagation.run_and_apply((), &mut scene);
-        assert_eq!(
-            scene
-                .get_component_for_entity::<GlobalTransform>(entity)
-                .unwrap()
-                .translation(),
-            Vec3::new(3.0, 0.0, 0.0)
-        );
     }
 }

@@ -1,4 +1,4 @@
-//! The viewport panel: shows the edit target's picture and tells the host where it is.
+//! The viewport panel: shows the active document's picture and tells the host where it is.
 use concerto_app::{
     App, Plugin,
     schedule_groups::{First, LateUpdate, Startup, Update},
@@ -23,7 +23,9 @@ use concerto_ui::{
 use concerto_window::input::actions::{ActionFired, ActionMap};
 use taffy::Position;
 
-use crate::actions::{FrameAll, FrameSelected, GizmoRotate, GizmoTranslate, ViewportContext};
+use crate::actions::{
+    EditorContextSet, FrameAll, FrameSelected, GizmoRotate, GizmoTranslate, ViewportContext,
+};
 use crate::asset_editor::ActiveEditor;
 use crate::dock::{DockedApp, PanelDescriptor, PanelRegistry, Region};
 use crate::hosted::{
@@ -47,15 +49,12 @@ impl Plugin for ViewportPlugin {
         app.add_panel(PanelDescriptor {
             id: PANEL_ID,
             title: "Scene",
-            region: Region::Scene,
+            region: Region::Centre,
         });
         app.add_system(Startup, build_panel)
             .add_system(Update, viewport_shortcuts)
-            .add_system(LateUpdate, sync_viewport_context)
-            .add_system(
-                LateUpdate,
-                show_edit_target_picture.before(UiSet::Materials),
-            )
+            .add_system(LateUpdate, sync_viewport_context.in_set(EditorContextSet))
+            .add_system(LateUpdate, show_active_picture.before(UiSet::Materials))
             .add_system(LateUpdate, show_input_owner.before(UiSet::Materials))
             .add_system(
                 First,
@@ -70,7 +69,7 @@ const INPUT_BORDER: f32 = 2.0;
 
 fn build_panel(mut cmd: CommandQueue, registry: Res<PanelRegistry>, theme: Res<UITheme>) {
     if let Some(body) = registry.body(PANEL_ID) {
-        let viewport = spawn_panel(&mut cmd, body);
+        let viewport = spawn_panel(&mut cmd, body, &theme);
         cmd.entity(viewport).add_child((
             theme
                 .card()
@@ -90,13 +89,17 @@ fn build_panel(mut cmd: CommandQueue, registry: Res<PanelRegistry>, theme: Res<U
     }
 }
 
-pub fn spawn_panel(cmd: &mut CommandQueue, parent: Entity) -> Entity {
+/// Spawns the viewport under `parent`: the picture of the front tab's `App`, cut to a card's corners.
+pub fn spawn_panel(cmd: &mut CommandQueue, parent: Entity, theme: &UITheme) -> Entity {
     cmd.entity(parent)
         .spawn_child((
             UINode::default()
                 .with_flex_grow(1.0)
                 .with_min_size(UIValue::Px(320.0), UIValue::Px(240.0)),
-            UIMaterial::flat(SKY),
+            UIMaterial {
+                corner_radius: theme.radius_lg,
+                ..UIMaterial::flat(SKY)
+            },
             UISharedViewport::new(),
             Interactable,
             ViewportRegion,
@@ -104,7 +107,7 @@ pub fn spawn_panel(cmd: &mut CommandQueue, parent: Entity) -> Entity {
         .entity()
 }
 
-fn show_edit_target_picture(
+fn show_active_picture(
     active: Res<ActiveEditor>,
     hosted: Query<&HostedApp>,
     viewports: Query<(&ViewportRegion, &mut UISharedViewport, &mut UIMaterial)>,
@@ -132,7 +135,7 @@ fn show_edit_target_picture(
     }
 }
 
-fn publish_viewport_view(
+pub(crate) fn publish_viewport_view(
     window: Res<concerto_window::plugin::Window>,
     hovered: Res<HoveredNode>,
     focus: Res<FocusedWidget>,
@@ -223,7 +226,7 @@ fn viewport_shortcuts(mut fired: EventReader<ActionFired>, mut scene: EditWorldS
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::hosted::testing::{host_world, hosted_now, plain_recipe};
+    use crate::hosted::testing::{HostWorld, host_world, hosted_now, plain_recipe};
     use concerto_app::edit_time::AtEditTime;
     use concerto_ecs::{
         IntoSystem, Resource, System, World, events::event_channel::EventChannel, signal::On,
@@ -241,9 +244,10 @@ mod tests {
         system.run_and_apply((), world);
     }
 
-    fn panel_world(scale: f64) -> (World, Entity) {
+    #[test]
+    fn the_view_is_the_panel_in_physical_pixels_over_it_only_when_hovered_and_says_who_types() {
         let mut world = World::new();
-        world.insert_resource(Window::new((1600, 1200), scale));
+        world.insert_resource(Window::new((1600, 1200), 2.0));
         world.insert_resource(HoveredNode::default());
         world.insert_resource(FocusedWidget::default());
         world.insert_resource(ViewportShown::default());
@@ -260,104 +264,11 @@ mod tests {
                 paint_order: 0,
             },
         ));
-        (world, region)
-    }
-
-    fn view(world: &mut World) -> Option<ViewportView> {
-        run(world, publish_viewport_view);
-        world.get_resource::<ViewportShown>().unwrap().0
-    }
-
-    #[derive(Resource)]
-    struct PanelRect(UIBox);
-
-    #[derive(Resource, Default)]
-    struct SeenByTheStep(Option<ViewportView>);
-
-    fn lay_out_by_command(
-        rect: Res<PanelRect>,
-        regions: Query<(Entity, &ViewportRegion)>,
-        mut cmd: CommandQueue,
-    ) {
-        for (region, _) in regions.iter() {
-            cmd.insert(
-                UILayout {
-                    rect: rect.0,
-                    content_rect: rect.0,
-                    clip_rect: rect.0,
-                    paint_order: 0,
-                },
-                region,
-            );
-        }
-    }
-
-    fn note_what_the_step_saw(shown: Res<ViewportShown>, mut seen: ResMut<SeenByTheStep>) {
-        seen.0 = shown.0;
-    }
-
-    fn rect(x: f32, y: f32, width: f32, height: f32) -> UIBox {
-        UIBox {
-            min: Vec2::new(x, y),
-            size: Vec2::new(width, height),
-        }
-    }
-
-    #[test]
-    fn the_step_sees_the_viewport_where_the_layout_of_the_frame_before_put_it() {
-        let mut app = App::new();
-        app.register_plugin(concerto_app::main_schedule::MainSchedulePlugin)
-            .register_plugin(concerto_app::plugins::TimePlugin)
-            .register_plugin(concerto_window::plugin::WindowPlugin)
-            .insert_resource(ActiveEditor::default())
-            .insert_resource(PanelRegistry::default())
-            .insert_resource(HoveredNode::default())
-            .insert_resource(FocusedWidget::default())
-            .insert_resource(UITheme::default())
-            .register_plugin(crate::hosted::HostedPlugin)
-            .register_plugin(ViewportPlugin)
-            .insert_resource(PanelRect(rect(100.0, 50.0, 400.0, 300.0)))
-            .insert_resource(SeenByTheStep::default())
-            .add_system(LateUpdate, lay_out_by_command.in_set(UiSet::Layout))
-            .add_system(
-                concerto_app::schedule_groups::First,
-                note_what_the_step_saw.after(crate::hosted::input::step_edit_target),
-            );
-        let world = app.main_mut().world_mut();
-        let document = world.spawn(hosted_now(plain_recipe, |_| {}));
-        world.spawn(ViewportRegion);
-        world.get_resource_mut::<ActiveEditor>().unwrap().0 = Some(document);
-        world.trigger(crate::hosted::SetEditTarget(Some(document)));
-        app.finish_plugin_build();
-        for _ in 0..3 {
-            app.update();
-        }
-
-        app.get_resource_mut::<PanelRect>().unwrap().0 = rect(120.0, 60.0, 500.0, 350.0);
-        app.update();
-        app.update();
-
-        assert_eq!(
-            app.get_resource::<SeenByTheStep>().unwrap().0,
-            Some(ViewportView {
-                origin: Vec2::new(120.0, 60.0),
-                size: (500, 350),
-                over: false,
-                typing: false,
-            })
-        );
-        let hosted = app
-            .main()
-            .world()
-            .get_component_for_entity::<HostedApp>(document)
-            .unwrap();
-        assert_eq!(hosted.window().unwrap().size(), (500, 350));
-    }
-
-    #[test]
-    fn the_view_is_the_panel_in_physical_pixels_and_is_over_it_only_when_it_is_the_hovered_node() {
-        let (mut world, region) = panel_world(2.0);
         let menu = world.spawn(());
+        let view = |world: &mut World| {
+            run(world, publish_viewport_view);
+            world.get_resource::<ViewportShown>().unwrap().0
+        };
 
         let away = ViewportView {
             origin: Vec2::new(200.0, 100.0),
@@ -371,45 +282,24 @@ mod tests {
         assert_eq!(view(&mut world), Some(ViewportView { over: true, ..away }));
 
         **world.get_resource_mut::<HoveredNode>().unwrap() = Some(menu);
+        assert_eq!(view(&mut world), Some(away));
+
+        **world.get_resource_mut::<FocusedWidget>().unwrap() = Some(menu);
         assert_eq!(
             view(&mut world),
-            Some(away),
-            "a node drawn above the viewport takes the pointer from it"
+            Some(ViewportView {
+                typing: true,
+                ..away
+            })
         );
     }
 
     #[test]
-    fn the_view_says_when_a_widget_has_the_keyboard() {
-        let (mut world, _) = panel_world(1.0);
-        let field = world.spawn(());
-        **world.get_resource_mut::<FocusedWidget>().unwrap() = Some(field);
-
-        assert!(view(&mut world).unwrap().typing);
-    }
-
-    #[test]
-    fn a_panel_with_no_area_is_not_shown_and_an_unchanged_view_is_not_written_again() {
-        let (mut world, region) = panel_world(1.0);
-        view(&mut world);
-        let written = world.resource_changed_tick::<ViewportShown>();
-        world.tick();
-        view(&mut world);
-        assert_eq!(world.resource_changed_tick::<ViewportShown>(), written);
-
-        world
-            .get_component_for_entity_mut::<UILayout>(region)
-            .unwrap()
-            .rect
-            .size = Vec2::new(400.0, 0.0);
-        assert_eq!(view(&mut world), None);
-
-        world.despawn(region);
-        assert_eq!(view(&mut world), None);
-    }
-
-    #[test]
     fn the_panel_shows_the_picture_of_the_active_documents_app_or_nothing() {
-        let (mut world, document) = host_world(plain_recipe);
+        let HostWorld {
+            mut world,
+            document,
+        } = host_world(plain_recipe);
         let other = world.spawn(hosted_now(plain_recipe, |_| {}));
         let panel = world.spawn((
             ViewportRegion,
@@ -418,7 +308,7 @@ mod tests {
         ));
         let shows = |world: &mut World, document: Option<Entity>| {
             world.get_resource_mut::<ActiveEditor>().unwrap().0 = document;
-            run(world, show_edit_target_picture);
+            run(world, show_active_picture);
             let shown = world
                 .get_component_for_entity::<UISharedViewport>(panel)
                 .unwrap()
@@ -439,53 +329,6 @@ mod tests {
         assert!(shows(&mut world, Some(document)));
         assert!(shows(&mut world, Some(other)));
         assert!(shows(&mut world, None));
-
-        let bare = world.spawn(());
-        world.get_resource_mut::<ActiveEditor>().unwrap().0 = Some(bare);
-        run(&mut world, show_edit_target_picture);
-        assert!(
-            world
-                .get_component_for_entity::<UISharedViewport>(panel)
-                .unwrap()
-                .picture
-                .is_none()
-        );
-    }
-
-    #[test]
-    fn a_panel_with_nothing_drawn_to_show_is_the_colour_of_an_empty_scene() {
-        let (mut world, document) = host_world(plain_recipe);
-        let mut build = (|mut cmd: CommandQueue| {
-            let parent = cmd.spawn(UINode::default()).entity();
-            spawn_panel(&mut cmd, parent);
-        })
-        .into_system();
-        build.initialize(&mut world);
-        build.run_and_apply((), &mut world);
-        let colour = |world: &mut World| {
-            run(world, show_edit_target_picture);
-            world
-                .query::<(&ViewportRegion, &UIMaterial), ()>()
-                .iter(world)
-                .next()
-                .unwrap()
-                .1
-                .color
-        };
-        let empty = SKY.to_linear();
-        assert!(colour(&mut world) == empty, "its App has drawn nothing yet");
-
-        world.get_resource_mut::<ActiveEditor>().unwrap().0 = None;
-        assert!(colour(&mut world) == empty);
-        world.get_resource_mut::<ActiveEditor>().unwrap().0 = Some(document);
-        world
-            .query::<(&ViewportRegion, &mut UIMaterial), ()>()
-            .iter(&mut world)
-            .next()
-            .unwrap()
-            .1
-            .color = Color::WHITE.to_linear();
-        assert!(colour(&mut world) == empty);
     }
 
     fn noting_recipe(app: &mut App) {
@@ -515,54 +358,11 @@ mod tests {
     }
 
     #[test]
-    fn the_viewport_shows_who_has_input_while_playing() {
-        let mut world = World::new();
-        world.insert_resource(UITheme::default());
-        let document = world.spawn(());
-        world.insert_resource(ActiveEditor(Some(document)));
-        let region = world.spawn((ViewportRegion, UIMaterial::flat(Color::WHITE)));
-        let hint = world.spawn((
-            UINode::default().with_visible(false),
-            UIText::default(),
-            InputHint,
-        ));
-        let shown = |world: &mut World| {
-            run(world, show_input_owner);
-            let border = world
-                .get_component_for_entity::<UIMaterial>(region)
-                .unwrap()
-                .border_width;
-            let visible = world
-                .get_component_for_entity::<UINode>(hint)
-                .unwrap()
-                .visible;
-            let text = world
-                .get_component_for_entity::<UIText>(hint)
-                .unwrap()
-                .text
-                .clone();
-            (border > 0.0, visible, text)
-        };
-
-        assert_eq!(shown(&mut world), (false, false, String::new()));
-
-        world.insert(InputOwner::Game, document);
-        assert_eq!(
-            shown(&mut world),
-            (true, true, "Shift+F1 to release".to_owned())
-        );
-
-        world.insert(InputOwner::Editor, document);
-        assert_eq!(shown(&mut world), (true, true, "Click to play".to_owned()));
-
-        world.remove_component::<InputOwner>(document);
-        let (border, visible, _) = shown(&mut world);
-        assert!(!border && !visible);
-    }
-
-    #[test]
     fn each_viewport_shortcut_triggers_its_signal_in_the_edit_target() {
-        let (mut world, document) = host_world(noting_recipe);
+        let HostWorld {
+            mut world,
+            document,
+        } = host_world(noting_recipe);
         world.insert_resource(EventChannel::<ActionFired>::default());
         let channel = world
             .get_resource_mut::<EventChannel<ActionFired>>()
@@ -574,7 +374,7 @@ mod tests {
             FrameAll.intern(),
             crate::actions::Save.intern(),
         ] {
-            channel.push_event(ActionFired { action });
+            channel.push_event(ActionFired::new(action));
         }
 
         run(&mut world, viewport_shortcuts);

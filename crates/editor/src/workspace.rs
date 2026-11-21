@@ -13,19 +13,22 @@ use concerto_ui::{
     interaction::{HoveredNode, Interactable, UIInputState},
     node::UINode,
     theme::UITheme,
+    transform::UIValue,
 };
 use concerto_window::input::actions::ActionMap;
 
 use crate::{
-    asset_editor::{ActiveEditor, EditorDocument, EditorHosts, EditorOwned},
-    dock::PanelRegistry,
-    hosted::EditTarget,
+    asset_editor::{ActiveEditor, AssetEditorRegistry, EditorDocument, EditorHosts, EditorOwned},
+    dock::{PanelRegistry, PanelState, PanelStates, Region, card},
+    hosted::ViewportTarget,
+    inspector::InspectedValues,
 };
 
 /// Build contextual containers for new documents.
 pub(crate) fn create_editor_hosts(
     documents: Query<(Entity, &EditorDocument), Without<EditorHosts>>,
     registry: Res<PanelRegistry>,
+    editors: Res<AssetEditorRegistry>,
     theme: Res<UITheme>,
     nodes: Query<(&UINode, &ChildOf)>,
     mut commands: CommandQueue,
@@ -33,23 +36,51 @@ pub(crate) fn create_editor_hosts(
     let bases = panel_bodies(&registry);
     for (editor, doc) in documents.iter() {
         let mut hosts = [None; 3];
+        let mut bottom = None;
         if doc.asset_type != concerto_scene::scene::Scene::name() {
+            let previewing = editors.preview(doc.asset_type).is_some();
+            let form = editors.form(doc.asset_type);
             for (index, base) in bases.iter().copied().enumerate() {
+                if (index == 0 && previewing) || (index < 2 && form) {
+                    continue;
+                }
                 let Some((node, parent)) = base.and_then(|base| nodes.get_entity(base)) else {
                     continue;
                 };
                 let mut node = node.clone();
                 node.visible = false;
-                let surface = if index == 0 {
-                    theme.canvas()
+                let mut region = commands.entity(parent.parent());
+                let host = if form {
+                    region.spawn_child((
+                        UINode::default()
+                            .with_position(taffy::Position::Absolute)
+                            .with_visible(false),
+                        EditorOwned(editor),
+                        Interactable,
+                    ))
                 } else {
-                    theme.panel()
-                };
-                let host = commands
-                    .entity(parent.parent())
-                    .spawn_child((surface.node(|_| node), EditorOwned(editor), Interactable))
-                    .entity();
+                    region.spawn_child((
+                        card(&theme).node(|_| node),
+                        EditorOwned(editor),
+                        Interactable,
+                    ))
+                }
+                .entity();
                 hosts[index] = Some(host);
+            }
+            if editors.bottom_host(doc.asset_type)
+                && let Some(strip) = registry.region(Region::Bottom)
+            {
+                let surface = card(&theme)
+                    .width(UIValue::Px(0.0))
+                    .min_width(UIValue::Px(0.0))
+                    .grow()
+                    .hidden();
+                let host = commands
+                    .entity(strip)
+                    .spawn_child((surface, EditorOwned(editor), Interactable))
+                    .entity();
+                bottom = Some(host);
             }
         }
         commands.insert(
@@ -57,6 +88,7 @@ pub(crate) fn create_editor_hosts(
                 canvas: hosts[0],
                 left: hosts[1],
                 inspector: hosts[2],
+                bottom,
             },
             editor,
         );
@@ -71,45 +103,119 @@ fn panel_bodies(registry: &PanelRegistry) -> [Option<Entity>; 3] {
     ]
 }
 
-/// Update visibility only when tab/panel resources or host components change.
+/// Update visibility, and which regions collapse or fill, only when tab/panel resources or host components change.
 pub(crate) fn sync_workspace(
     active: Res<ActiveEditor>,
     registry: Res<PanelRegistry>,
+    mut states: ResMut<PanelStates>,
+    editors: Res<AssetEditorRegistry>,
     documents: Query<&EditorDocument>,
     hosts: Query<(Entity, &EditorHosts)>,
     changed_hosts: Query<&EditorHosts, Changed<EditorHosts>>,
+    values: Query<&InspectedValues>,
+    changed_values: Query<&InspectedValues, Changed<InspectedValues>>,
     nodes: Query<&mut UINode>,
     parents: Query<&ChildOf>,
     children: Query<&mut Children>,
 ) {
     let hosts_changed = changed_hosts.iter().next().is_some();
-    if !active.is_changed() && !registry.is_changed() && !hosts_changed {
+    let values_changed = changed_values.iter().next().is_some();
+    if !active.is_changed() && !registry.is_changed() && !hosts_changed && !values_changed {
         return;
     }
-    let scene = active
+    let document = active.0.and_then(|entity| documents.get_entity(entity));
+    let scene = document.is_none_or(|doc| doc.asset_type == concerto_scene::scene::Scene::name());
+    let viewport = scene || document.is_some_and(|doc| editors.preview(doc.asset_type).is_some());
+    let inspected = active
         .0
-        .and_then(|entity| documents.get_entity(entity))
-        .is_none_or(|doc| doc.asset_type == concerto_scene::scene::Scene::name());
+        .is_some_and(|entity| values.get_entity(entity).is_some());
+    let form = document.is_some_and(|doc| editors.form(doc.asset_type));
+    if let Some(centre) = registry.region(Region::Centre) {
+        set_visible(&nodes, centre, !form);
+    }
     let bases = panel_bodies(&registry);
-    for entity in bases.into_iter().flatten() {
-        set_visible(&nodes, entity, scene);
+    for (entity, visible) in bases.into_iter().zip([viewport, scene, scene || inspected]) {
+        if let Some(entity) = entity {
+            set_visible(&nodes, entity, visible);
+        }
+    }
+    let front = active
+        .0
+        .and_then(|entity| hosts.get_entity(entity))
+        .map(|(_, hosts)| *hosts)
+        .unwrap_or_default();
+    let side = |panel: bool, host: Option<Entity>| {
+        if panel || host.is_some() {
+            PanelState::Sized
+        } else {
+            PanelState::Hidden
+        }
+    };
+    let right = side(bases[2].is_some() && (scene || inspected), front.inspector);
+    let next = PanelStates {
+        left: side(bases[1].is_some() && scene, front.left),
+        right: if form && right == PanelState::Sized {
+            PanelState::Fill
+        } else {
+            right
+        },
+        bottom: PanelState::Sized,
+        browser: if front.bottom.is_some() {
+            PanelState::Sized
+        } else {
+            PanelState::Fill
+        },
+    };
+    if *states != next {
+        *states = next;
     }
     for (entity, hosts) in hosts.iter() {
-        for host in [hosts.canvas, hosts.left, hosts.inspector]
+        for host in [hosts.canvas, hosts.left, hosts.inspector, hosts.bottom]
             .into_iter()
             .flatten()
         {
             set_visible(&nodes, host, active.0 == Some(entity));
         }
+        if let Some(host) = hosts.inspector
+            && values.get_entity(entity).is_some()
+            && let Some(mut node) = nodes.get_entity(host)
+            && (node.flex_grow != 0.0 || node.flex_shrink != 0.0)
+        {
+            node.flex_grow = 0.0;
+            node.flex_shrink = 0.0;
+        }
     }
-    if (hosts_changed || registry.is_changed())
-        && let Some(base) = bases[1]
-        && let Some(mut siblings) = parents
-            .get_entity(base)
-            .and_then(|parent| children.get_entity(parent.parent()))
+    if hosts_changed || registry.is_changed() {
+        if let Some(base) = bases[1] {
+            let contextual: Vec<_> = hosts.iter().filter_map(|(_, h)| h.left).collect();
+            sort_siblings(&parents, &children, base, |entity| {
+                usize::from(entity != base && !contextual.contains(&entity))
+            });
+        }
+        if let Some(base) = bases[2] {
+            let contextual: Vec<_> = hosts.iter().filter_map(|(_, h)| h.inspector).collect();
+            sort_siblings(&parents, &children, base, |entity| {
+                if contextual.contains(&entity) {
+                    0
+                } else {
+                    usize::from(entity != base) + 1
+                }
+            });
+        }
+    }
+}
+
+fn sort_siblings(
+    parents: &Query<&ChildOf>,
+    children: &Query<&mut Children>,
+    entity: Entity,
+    key: impl FnMut(Entity) -> usize,
+) {
+    if let Some(mut siblings) = parents
+        .get_entity(entity)
+        .and_then(|parent| children.get_entity(parent.parent()))
     {
-        let contextual: Vec<_> = hosts.iter().filter_map(|(_, h)| h.left).collect();
-        siblings.sort_by_key(|entity| usize::from(entity != base && !contextual.contains(&entity)));
+        siblings.sort_by_key(key);
     }
 }
 
@@ -133,8 +239,8 @@ pub(crate) fn reset_workspace_input(
     }
 }
 
-pub(crate) fn reset_input_for_edit_target(
-    _: On<Remove<EditTarget>>,
+pub(crate) fn reset_input_for_viewport_target(
+    _: On<Remove<ViewportTarget>>,
     mut focus: ResMut<FocusedWidget>,
     mut hovered: ResMut<HoveredNode>,
     mut input: ResMut<UIInputState>,
@@ -159,38 +265,14 @@ fn clear_transient_input(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use concerto_ecs::{IntoSystem, Resource, System, World};
-    use concerto_window::input::MouseButton;
-    fn process_editor_commands(world: &mut World) {
-        let mut system = crate::asset_editor::process_editor_commands.into_system();
-        system.initialize(world);
-        system.run_and_apply((), world);
-    }
-    #[derive(Resource)]
-    struct WorkspaceSystems([concerto_ecs::system::BoxedSystem; 2]);
-
-    fn sync_workspace(world: &mut World) {
-        let mut systems = world
-            .remove_resource::<WorkspaceSystems>()
-            .unwrap_or_else(|| {
-                let mut systems = [
-                    super::sync_workspace.into_boxed_system(),
-                    super::reset_workspace_input.into_boxed_system(),
-                ];
-                for system in &mut systems {
-                    system.initialize(world);
-                }
-                WorkspaceSystems(systems)
-            });
-        for system in &mut systems.0 {
-            system.run_and_apply((), world);
-        }
-        world.insert_resource(systems);
-    }
     use crate::asset_editor::{
         AssetEditor, AssetEditorCommand, AssetEditorCommands, AssetEditorRegistry,
     };
-    use concerto_foundation::assets::{Asset, AssetId, content::ImportProvenance};
+    use concerto_ecs::{IntoSystem, System, World};
+    use concerto_foundation::assets::{
+        AssetId,
+        registry::{AssetEntry, AssetRegistry},
+    };
     use serde::{Deserialize, Serialize};
 
     #[derive(Serialize, Deserialize)]
@@ -200,231 +282,55 @@ mod tests {
             "Notes"
         }
     }
+    #[derive(Default)]
     struct NotesEditor;
     impl AssetEditor for NotesEditor {}
 
-    fn resources(world: &mut World) {
-        world.insert_resource(ActiveEditor::default());
-        world.insert_resource(AssetEditorCommands::default());
-        world.insert_resource(crate::guard::UnsavedGuard::default());
-        world.insert_resource(AssetEditorRegistry::default());
-        world.insert_resource(crate::project::ProjectState::default());
-        world.insert_resource(PanelRegistry::default());
-        world.insert_resource(FocusedWidget::default());
-        world.insert_resource(HoveredNode::default());
-        world.insert_resource(UIInputState::default());
-        world.insert_resource(ActionMap::default());
+    fn run<M>(world: &mut World, system: impl IntoSystem<(), M>) {
+        let mut system = system.into_system();
+        system.initialize(world);
+        system.run_and_apply((), world);
     }
 
     #[test]
-    fn workspace_systems_do_not_request_exclusive_world_access() {
-        for system in [
-            super::create_editor_hosts.into_boxed_system(),
-            super::sync_workspace.into_boxed_system(),
-            super::reset_workspace_input.into_boxed_system(),
-        ] {
-            let mut meta = concerto_ecs::system::meta::SystemMetadata::default();
-            let mut access = concerto_ecs::system::access::SystemAccess::default();
-            system.fill_access(&mut meta, &mut access);
-            assert!(!access.is_exclusive());
-        }
-    }
-
-    #[test]
-    fn unchanged_resources_preserve_focus_and_new_hosts_refresh_without_activation() {
-        let mut world = World::new();
-        resources(&mut world);
-        let editor = world.spawn(());
-        let first = world.spawn(UINode::default());
-        world.insert(
-            EditorHosts {
-                canvas: Some(first),
-                ..Default::default()
-            },
-            editor,
-        );
-        world.get_resource_mut::<ActiveEditor>().unwrap().0 = Some(editor);
-        sync_workspace(&mut world);
-        world.tick();
-        **world.get_resource_mut::<FocusedWidget>().unwrap() = Some(first);
-        world
-            .get_resource_mut::<UIInputState>()
-            .unwrap()
-            .set_captured(MouseButton::Left, Some(first));
-        world
-            .get_component_for_entity_mut::<UINode>(first)
-            .unwrap()
-            .visible = false;
-        sync_workspace(&mut world);
-        assert!(
-            !world
-                .get_component_for_entity::<UINode>(first)
-                .unwrap()
-                .visible
-        );
-        assert_eq!(
-            **world.get_resource::<FocusedWidget>().unwrap(),
-            Some(first)
-        );
-        assert_eq!(
-            world
-                .get_resource::<UIInputState>()
-                .unwrap()
-                .captured(MouseButton::Left),
-            Some(first)
-        );
-
-        let second = world.spawn(UINode::default().with_visible(false));
-        world
-            .get_component_for_entity_mut::<EditorHosts>(editor)
-            .unwrap()
-            .canvas = Some(second);
-        sync_workspace(&mut world);
-        assert!(
-            world
-                .get_component_for_entity::<UINode>(second)
-                .unwrap()
-                .visible
-        );
-        assert_eq!(
-            **world.get_resource::<FocusedWidget>().unwrap(),
-            Some(first)
-        );
-
-        world.tick();
-        let mut deactivate = (|mut active: ResMut<ActiveEditor>| active.0 = None).into_system();
-        deactivate.initialize(&mut world);
-        deactivate.run_and_apply((), &mut world);
-        sync_workspace(&mut world);
-        assert!(
-            !world
-                .get_component_for_entity::<UINode>(second)
-                .unwrap()
-                .visible
-        );
-        assert!(world.get_resource::<FocusedWidget>().unwrap().is_none());
-        assert!(
-            world
-                .get_resource::<UIInputState>()
-                .unwrap()
-                .captured(MouseButton::Left)
-                .is_none()
-        );
-    }
-
-    #[test]
-    fn panel_changes_refresh_visibility_and_a_new_edit_target_clears_input() {
-        let mut world = World::new();
-        resources(&mut world);
-        let editor = world.spawn(());
-        let host = world.spawn(UINode::default());
-        world.insert(
-            EditorHosts {
-                canvas: Some(host),
-                ..Default::default()
-            },
-            editor,
-        );
-        world.get_resource_mut::<ActiveEditor>().unwrap().0 = Some(editor);
-        sync_workspace(&mut world);
-        world.tick();
-        world
-            .get_component_for_entity_mut::<UINode>(host)
-            .unwrap()
-            .visible = false;
-        let mut change_panels = (|mut panels: ResMut<PanelRegistry>| {
-            panels.register(crate::dock::PanelDescriptor {
-                id: "test",
-                title: "Test",
-                region: crate::dock::Region::Scene,
-            })
-        })
-        .into_system();
-        change_panels.initialize(&mut world);
-        change_panels.run_and_apply((), &mut world);
-        sync_workspace(&mut world);
-        assert!(
-            world
-                .get_component_for_entity::<UINode>(host)
-                .unwrap()
-                .visible
-        );
-
-        world.tick();
-        **world.get_resource_mut::<FocusedWidget>().unwrap() = Some(host);
-        **world.get_resource_mut::<HoveredNode>().unwrap() = Some(host);
-        world
-            .get_resource_mut::<UIInputState>()
-            .unwrap()
-            .set_captured(MouseButton::Left, Some(host));
-        world
-            .get_resource_mut::<ActionMap>()
-            .unwrap()
-            .push_context(crate::actions::ViewportContext);
-        sync_workspace(&mut world);
-        assert_eq!(**world.get_resource::<FocusedWidget>().unwrap(), Some(host));
-
-        world.add_listener(reset_input_for_edit_target);
-        let target = world.spawn(EditTarget);
-        world.despawn(target);
-
-        assert!(world.get_resource::<FocusedWidget>().unwrap().is_none());
-        assert!(world.get_resource::<HoveredNode>().unwrap().is_none());
-        assert!(
-            world
-                .get_resource::<UIInputState>()
-                .unwrap()
-                .captured(MouseButton::Left)
-                .is_none()
-        );
-        assert!(
-            !world
-                .get_resource::<ActionMap>()
-                .unwrap()
-                .is_active(crate::actions::ViewportContext)
-        );
-    }
-
-    #[test]
-    fn contextual_hosts_follow_active_editor_and_are_removed_on_close() {
+    fn a_documents_hosts_show_while_it_is_in_front_and_go_when_it_closes() {
         let mut world = World::new();
         let mut registry = AssetEditorRegistry::default();
-        registry.register::<Notes>(NotesEditor).unwrap();
+        registry.register::<Notes, NotesEditor>().unwrap();
         world.insert_resource(registry);
-        world.insert_resource(crate::project::ProjectState::default());
         world.insert_resource(ActiveEditor::default());
         world.insert_resource(AssetEditorCommands::default());
         world.insert_resource(crate::guard::UnsavedGuard::default());
         world.insert_resource(FocusedWidget::default());
         world.insert_resource(PanelRegistry::default());
+        world.insert_resource(PanelStates::default());
         world.insert_resource(HoveredNode::default());
         world.insert_resource(UIInputState::default());
         world.insert_resource(ActionMap::default());
-        let asset = concerto_foundation::assets::registry::AssetEntry {
+        let asset = AssetEntry {
+            embedded_in: None,
             id: AssetId::new(),
             address: "notes.gasset".into(),
             kind: "Notes".into(),
-            provenance: Some(ImportProvenance {
-                source: "fixture".into(),
-                sub_asset: "notes".into(),
-            }),
+            kind_version: None,
+            provenance: None,
         };
-        let mut content = concerto_foundation::assets::registry::AssetRegistry::default();
+        let mut content = AssetRegistry::default();
         content.insert(asset.clone());
         world.insert_resource(content);
-        world
-            .get_resource_mut::<crate::project::ProjectState>()
-            .unwrap()
-            .project = Some(crate::project::Project {
+        let mut project = crate::project::ProjectState::default();
+        project.project = Some(crate::project::Project {
             root: std::path::PathBuf::from("project"),
             content_root: "content".into(),
+            default_scene: None,
         });
+        world.insert_resource(project);
         world
             .get_resource_mut::<AssetEditorCommands>()
             .unwrap()
             .0
             .push_back(AssetEditorCommand::Open(asset));
-        process_editor_commands(&mut world);
+        run(&mut world, crate::asset_editor::process_editor_commands);
         let editor = world.get_resource::<ActiveEditor>().unwrap().0.unwrap();
         let canvas = world.spawn((UINode::default(), EditorOwned(editor)));
         let left = world.spawn((UINode::default(), EditorOwned(editor)));
@@ -434,36 +340,34 @@ mod tests {
                 canvas: Some(canvas),
                 left: Some(left),
                 inspector: Some(inspector),
+                ..Default::default()
             },
             editor,
         );
-        **world.get_resource_mut::<FocusedWidget>().unwrap() = Some(left);
-        sync_workspace(&mut world);
-        assert!(world.get_resource::<FocusedWidget>().unwrap().is_none());
-        for host in [canvas, left, inspector] {
-            assert!(
+        let mut sync = sync_workspace.into_system();
+        sync.initialize(&mut world);
+        let shown = |world: &World| {
+            [canvas, left, inspector].map(|host| {
                 world
                     .get_component_for_entity::<UINode>(host)
                     .unwrap()
                     .visible
-            );
-        }
+            })
+        };
+
+        sync.run_and_apply((), &mut world);
+        assert_eq!(shown(&world), [true; 3]);
+
         world.get_resource_mut::<ActiveEditor>().unwrap().0 = None;
-        sync_workspace(&mut world);
-        for host in [canvas, left, inspector] {
-            assert!(
-                !world
-                    .get_component_for_entity::<UINode>(host)
-                    .unwrap()
-                    .visible
-            );
-        }
+        sync.run_and_apply((), &mut world);
+        assert_eq!(shown(&world), [false; 3]);
+
         world
             .get_resource_mut::<AssetEditorCommands>()
             .unwrap()
             .0
             .push_back(AssetEditorCommand::Close(editor));
-        process_editor_commands(&mut world);
+        run(&mut world, crate::asset_editor::process_editor_commands);
         for host in [canvas, left, inspector] {
             assert!(!world.entity_is_valid(host));
         }

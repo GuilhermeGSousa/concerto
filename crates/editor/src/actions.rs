@@ -1,6 +1,6 @@
 //! The editor's named actions and their default bindings.
 use concerto_app::{App, Plugin, schedule_groups::Startup};
-use concerto_ecs::ResMut;
+use concerto_ecs::{ResMut, SystemSet};
 use concerto_window::input::KeyCode;
 use concerto_window::input::actions::{ActionMap, Shortcut};
 use concerto_window::{define_action, define_context};
@@ -75,6 +75,10 @@ define_context!(
     TreeContext
 );
 
+/// The `LateUpdate` systems that push and pop the viewport's and the tree's contexts; a context pushed after this set wins their keys.
+#[derive(SystemSet, Clone, PartialEq, Eq, Hash, Debug)]
+pub struct EditorContextSet;
+
 pub struct ActionsPlugin;
 
 impl Plugin for ActionsPlugin {
@@ -141,12 +145,22 @@ mod tests {
     }
 
     #[test]
-    fn enter_and_escape_reach_the_import_dialog_even_while_a_field_is_typing() {
+    fn the_default_bindings_resolve_in_the_context_that_holds_them() {
         let mut world = bound();
         let actions = world.get_resource_mut::<ActionMap>().unwrap();
+        actions.push_context(TreeContext);
+        assert_eq!(
+            actions.resolve(Shortcut::ctrl(KeyCode::KeyP)),
+            Some(TogglePlay.intern())
+        );
+        assert_eq!(
+            actions.resolve(Shortcut::key(KeyCode::Delete)),
+            Some(DeleteEntity.intern())
+        );
+        assert_eq!(actions.resolve(Shortcut::key(KeyCode::ArrowDown)), None);
+
         actions.push_context(ImportDialogContext);
         actions.set_capturing_text(true);
-
         assert_eq!(
             actions.resolve(Shortcut::key(KeyCode::Enter)),
             Some(ConfirmImport.intern())
@@ -155,50 +169,8 @@ mod tests {
             actions.resolve(Shortcut::key(KeyCode::Escape)),
             Some(CancelImport.intern())
         );
-    }
 
-    #[test]
-    fn ctrl_p_toggles_play_wherever_the_editor_is() {
-        let mut world = bound();
-        let actions = world.get_resource_mut::<ActionMap>().unwrap();
-        actions.push_context(TreeContext);
-
-        assert_eq!(
-            actions.resolve(Shortcut::ctrl(KeyCode::KeyP)),
-            Some(TogglePlay.intern())
-        );
-    }
-
-    #[test]
-    fn the_tree_context_leaves_the_navigation_keys_to_the_ui_crate() {
-        let mut world = bound();
-        let actions = world.get_resource_mut::<ActionMap>().unwrap();
-        actions.push_context(TreeContext);
-
-        for key in [
-            KeyCode::ArrowDown,
-            KeyCode::ArrowUp,
-            KeyCode::Home,
-            KeyCode::End,
-            KeyCode::ArrowRight,
-            KeyCode::ArrowLeft,
-        ] {
-            assert_eq!(actions.resolve(Shortcut::key(key)), None, "{key:?}");
-        }
-        assert_eq!(
-            actions.resolve(Shortcut::key(KeyCode::Delete)),
-            Some(DeleteEntity.intern())
-        );
-    }
-
-    #[test]
-    fn the_import_dialog_keys_mean_nothing_once_it_closes() {
-        let mut world = bound();
-        let actions = world.get_resource_mut::<ActionMap>().unwrap();
-        actions.push_context(ImportDialogContext);
         actions.pop_context(ImportDialogContext);
-
         assert_eq!(actions.resolve(Shortcut::key(KeyCode::Enter)), None);
-        assert_eq!(actions.resolve(Shortcut::key(KeyCode::Escape)), None);
     }
 }

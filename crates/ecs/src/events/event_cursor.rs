@@ -24,6 +24,15 @@ impl<T: Event + 'static> Default for EventCursor<T> {
     }
 }
 
+impl<T: Event + 'static> Clone for EventCursor<T> {
+    fn clone(&self) -> Self {
+        Self {
+            last_event_count: self.last_event_count,
+            _marker: PhantomData,
+        }
+    }
+}
+
 impl<T: Event + 'static> FromWorld for EventCursor<T> {
     fn from_world(_world: &World) -> Self {
         Self::default()

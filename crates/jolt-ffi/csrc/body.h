@@ -1,5 +1,6 @@
 #pragma once
 
+#include <stdbool.h>
 #include <stdint.h>
 
 #include "shape.h"
@@ -62,6 +63,10 @@ extern "C"
     void jolt_body_creation_settings_set_allowed_dofs(JoltBodyCreationSettings *settings,
                                                       JoltAllowedDofs allowed_dofs);
 
+    /* Makes the body a kinematic, always active sensor on the SENSOR layer. */
+    void jolt_body_creation_settings_set_is_sensor(JoltBodyCreationSettings *settings,
+                                                   bool is_sensor);
+
     /* Sets the shape the body is built from (see shape.h). The settings take
      * their own reference, so `shape` may be destroyed straight afterwards or
      * reused for any number of other bodies. */
@@ -85,14 +90,25 @@ extern "C"
                                                      const float scale[3]);
 
     /* Creates a body from `settings` and adds it to the simulation, active
-     * unless static. The settings remain owned by the caller and can be
-     * reused. */
+     * unless static; a sensor is always kinematic and active. The settings
+     * remain owned by the caller and can be reused. */
     JoltBodyId jolt_body_create(JoltWorld *world, const JoltBodyCreationSettings *settings);
 
     /* Removes a body from the simulation and destroys it, waking any bodies that
-     * were touching it (they would otherwise sleep in mid-air). The id is invalid
-     * afterwards. */
+     * were touching it (they would otherwise sleep in mid-air) and forgetting its
+     * sensor pairs. The id is invalid afterwards. */
     void jolt_body_destroy(JoltWorld *world, JoltBodyId body);
+
+    typedef struct JoltSensorContact
+    {
+        JoltBodyId sensor;
+        JoltBodyId other;
+        uint8_t entered;
+    } JoltSensorContact;
+
+    uint32_t jolt_world_drain_sensor_contacts(JoltWorld *world,
+                                              JoltSensorContact *out,
+                                              uint32_t capacity);
 
     typedef uint32_t JoltGroundState;
     enum

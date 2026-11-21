@@ -21,7 +21,7 @@ type SimpleEntities<'world, 'state> = Query<
 
 pub fn update_simple_entities(roots: SimpleEntities<'_, '_>) {
     for (local_transform, mut global_transform) in roots.iter() {
-        global_transform.set_matrix(local_transform.compute_matrix());
+        global_transform.set_if_neq(GlobalTransform::new(local_transform.compute_matrix()));
     }
 }
 
@@ -34,7 +34,7 @@ pub fn propagate_global_transforms(
 
     for (root_children, mut root_global_transform, root_local_transform) in roots.iter() {
         let root_matrix = root_local_transform.compute_matrix();
-        root_global_transform.set_matrix(root_matrix);
+        root_global_transform.set_if_neq(GlobalTransform::new(root_matrix));
         stack.extend(
             root_children
                 .iter()
@@ -52,7 +52,7 @@ pub fn propagate_global_transforms(
                 transform_query.get_entity(entity)
             {
                 let matrix = parent_matrix * local_transform.compute_matrix();
-                global_transform.set_matrix(matrix);
+                global_transform.set_if_neq(GlobalTransform::new(matrix));
                 if let Some(children) = children {
                     stack.extend(children.iter().rev().copied().map(|child| (child, matrix)));
                 }
@@ -65,9 +65,11 @@ pub fn propagate_global_transforms(
 mod tests {
     use concerto_ecs::{
         entity::hierarchy::{ChildOf, Children},
-        IntoSystem, System, World,
+        query::filter::Changed,
+        Entity, IntoSystem, System, World,
     };
     use glam::Vec3;
+    use std::collections::HashSet;
 
     use super::propagate_global_transforms;
     use crate::transform::{GlobalTransform, Transform};
@@ -98,5 +100,38 @@ mod tests {
                 .translation(),
             Vec3::new(10_001.0, 0.0, 0.0)
         );
+    }
+
+    #[test]
+    fn repropagating_marks_only_the_global_transforms_that_moved() {
+        let mut world = World::new();
+        world.register_component::<Transform>();
+        world.register_component::<ChildOf>();
+        world.register_component::<Children>();
+
+        let root = world.spawn(Transform::from_translation(Vec3::X));
+        let child = world.spawn(Transform::from_translation(Vec3::Y));
+        world.entity_mut(root).add_child(child);
+
+        let mut system = propagate_global_transforms.into_system();
+        system.initialize(&mut world);
+        system.run_and_apply((), &mut world);
+        world.tick();
+        system.run_and_apply((), &mut world);
+
+        let changed = |world: &mut World| -> HashSet<Entity> {
+            let mut query = world.query::<Entity, Changed<GlobalTransform>>();
+            query.iter(world).collect()
+        };
+        assert_eq!(changed(&mut world), HashSet::new());
+
+        world.tick();
+        world
+            .get_component_for_entity_mut::<Transform>(root)
+            .unwrap()
+            .translation = Vec3::Z;
+        system.run_and_apply((), &mut world);
+
+        assert_eq!(changed(&mut world), HashSet::from([root, child]));
     }
 }

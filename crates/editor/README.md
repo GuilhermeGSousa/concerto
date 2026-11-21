@@ -10,7 +10,8 @@ scene is edited with the game's own systems and components. A game without an
 `editor/` crate has no editor. `cargo concerto editor <dir>` generates one.
 
 ```sh
-cargo run -p tech-demo-editor -- --project <scratch copy of examples/tech-demo>
+cd ../tech-demo
+cargo run -p tech-demo-editor -- --project <scratch copy of the tech demo>
 ```
 
 Add `--decorated` to use the window manager's title bar.
@@ -23,6 +24,82 @@ overrides it. `--decorated` and `--help`/`-h` work as above, and a bad argument
 prints the usage and exits with status 2. `run` sets up logging with
 `env_logger`, ignoring a logger that is already installed.
 
+### Extension crates
+
+An editor crate extends the editor with a public `fn(&mut App)`, conventionally
+`install`, which registers its asset editors and anything else it needs. A game
+never depends on such a crate: it lists it under
+`[package.metadata.concerto.editor]` in its `Cargo.toml`, and `cargo concerto
+editor <dir> --update` regenerates `editor/` to call
+`concerto_editor::run_with(recipe, project_root, plugins)`, as the project
+tool's [README](../project/README.md#editor-plugins) describes. `run_with` is
+`run` with `plugins` added to the editor's `App` in order, after `EditorPlugin`
+and everything else the editor registers. Under `--mcp` they come after
+`McpPlugin` and before the editor's own tools. `run` is `run_with` with an
+empty list.
+
+An extension brings its MCP tools with it: its plugin depends on
+`concerto-mcp` and calls `add_tool` like the editor does, with no check for
+`--mcp`.
+
+```rust
+pub fn install(app: &mut App) {
+    app.add_tool::<GraphNodes, _>(
+        McpTool::read_only("graph_nodes").needs(Needs::Project),
+        graph_nodes,
+    );
+}
+```
+
+`add_tool` does nothing in an `App` without `McpPlugin`, so the tool and its
+system exist only when the editor serves an agent. `describe_need` still
+panics without `McpPlugin`; it is the editor's to call. A tool's name is its
+own: an extension tool named as an editor tool, or as another extension's, is
+refused when the `App` is built under `--mcp`, with the panic
+``MCP tool `<name>` is added twice``, so the editor never starts with it.
+
+`install` runs on the editor's `App`, and the scenes are edited and played in
+`App`s of their own, built from the game's recipe and the scene tools. To add
+to those, an extension calls
+`app.add_scene_tools_plugin(plugin)` (`concerto_editor::scene::SceneToolsAppExt`)
+with a `fn(&mut App)`. Every edit and play `App` opened afterwards runs each
+such plugin, in the order they were added, after the scene tools, so it can
+call `register_component_gizmo`. A preview does not run them. It panics in an
+`App` without `ScenePlugin`, which `EditorPlugin` registers.
+
+A game draws a component of its own the same way. The game crate implements
+`ComponentGizmo` against `concerto-debug-gizmos`, since it never depends on the
+editor. A small crate of the game's, which may depend on the editor, registers
+it:
+
+```rust
+use concerto_editor::{scene::SceneToolsAppExt, tools::component_gizmos::ComponentGizmosAppExt};
+
+pub fn install(app: &mut App) {
+    app.add_scene_tools_plugin(|app| {
+        app.register_component_gizmo::<my_game::DoorGizmo>();
+    });
+}
+```
+
+The game lists that crate with a `path` under
+`[package.metadata.concerto.editor]`, as the project tool's
+[README](../project/README.md#editor-plugins) describes, so `editor --update`
+keeps it; a plugin written into `editor/src/main.rs` by hand is lost on the
+next update.
+
+An extension crate's tests can use the `testing` feature, which exposes
+`hosted::testing` and its `SceneFixture` and `forwarding`, the system that
+re-writes a hosted event for a fixture's delivery, `inspector::value_systems`, the
+systems that show a document's values and send their edits, and
+`inspector::commit_number`, which queues a number as a float row's whole value;
+take it as a dev-dependency:
+
+```toml
+[dev-dependencies]
+concerto-editor = { workspace = true, features = ["testing"] }
+```
+
 ## Agents (MCP)
 
 `--mcp` runs the editor for an agent: the whole editor, panels included, with
@@ -30,25 +107,36 @@ no window, served over [MCP](https://modelcontextprotocol.io) on stdin and
 stdout. Logs stay on stderr.
 
 ```sh
-cargo run -p tech-demo-editor -- --mcp --project <scratch copy of examples/tech-demo>
+cd ../tech-demo
+cargo run -p tech-demo-editor -- --mcp --project <scratch copy of the tech demo>
 ```
 
-`.mcp.json` at the repository root registers it as the `concerto` server, so an
+`.mcp.json` at the repository root registers it as the `concerto` server, built
+from the tech demo checked out beside this repository in `../tech-demo`, so an
 agent working in the repository can start its own editor. That entry opens the
 game's own project; an agent that will change anything opens a scratch copy
 with `open_project` first. The entry runs `cargo run`, which compiles the editor
 before it starts and can outlast an MCP client's connect timeout, so build it
-first with `cargo build -p tech-demo-editor`.
+first with
+`cargo build --manifest-path ../tech-demo/Cargo.toml -p tech-demo-editor`.
 
 The editor draws into a 1600×900 picture unless `--mcp-size <width>x<height>`
 names another size. `--decorated` is ignored there, and `--mcp-size` without
 `--mcp` is a bad argument. Without a GPU adapter it exits with status 1 and a
 message naming lavapipe.
 
+The tools below are the editor's. An extension crate adds its own with
+`add_tool` from its plugin, as [Extension crates](#extension-crates) shows, and
+they are listed and called like these.
+
 Frames run on demand, only while a call needs one or the editor is busy: a
-project or scene opening, the edited scene's assets still loading, a game
-starting or playing, a save under way, or text in the panels changed in the
-last frame and may not be drawn yet. An idle editor runs none, so once
+project or scene opening, the assets of the edited scene or the preview in
+front still loading, a game starting or playing, a save under way, a document
+holding `BackgroundWork`, or text in the panels changed in the last frame and
+may not be drawn yet. A timeline's
+readout and the badges and subtitles of a graph canvas do not count, so a clip
+or a graph that is playing does not keep the editor busy and advances only
+while frames run. An idle editor runs none, so once
 `status` reports `busy: no` the viewport shows the scene with everything it
 loads and the panels show what they hold. The tools that look answer between frames, without running one; the
 tools that act run in frames, one at a time, and a second one waits until the
@@ -61,11 +149,26 @@ edits keeps them by saving first, with `save`.
 ### Tools
 
 `status` reports the project and its status line, the open documents, the
-active one, the selection in the edited scene, the viewport's size, and whether
-the editor is busy. `list_assets` lists the project's assets as
+active one, the selection in the edited scene, the panels' sizes, the
+viewport's size, whether the editor is busy, and under `values:` the names of
+the front document's inspected values, or `none`. The `layout:` line reads
+`left 260 · right 320 · bottom 220 · browser fill`: the size each panel shows,
+in logical pixels, or `hidden` or `fill` for one the front tab collapses or
+lets take the space that is left. The `viewport:` line is the picture's size
+in physical pixels; under `--mcp` the scale is 1, so the two agree. `list_assets` lists the project's assets as
 `address · kind · id` lines, filtered by `query`, `kind` and `folder`, 50 at a
 time unless `limit` says otherwise, from `offset`; a longer list ends with the
-call that shows the rest. `scene_tree` shows the edited scene, or while a game
+call that shows the rest. A line marked `· placeable` is an asset
+`place_asset` takes; the marks appear once a scene has opened, since the
+placeable kinds are the recipe's. An import is folded as the Asset Browser
+folds it: its scene's line ends `· import of <source> with <n> parts`, and the
+parts are left out. A part is listed, its line ending `· part of <the scene's
+address>`, when `kind` or `query` asks for it, `query` matching a part by its
+own file name and kind alone, or when `parts_of` names the import's scene by
+address or id, which lists that import's parts and nothing else. A part stored
+inside the import's scene file shows `<file>#<name>` where a loose asset shows
+its address, such as `content/props/crate/scene.gasset#mesh/0`; `open_asset`
+and `place_asset` take that text as they take an address. `scene_tree` shows the edited scene, or while a game
 plays its top-level entities as the hierarchy does, one `id name [components]`
 line per entity, indented, from `root` if given, `depth` levels deep (3) and at
 most `limit` entities (200); a cut subtree or a cut list ends with the call that
@@ -79,24 +182,68 @@ its `paths`: every property path, dot-separated, with `adapter` saying whether
 an inspector widget edits it. A path that names an enum or an `Option`, such
 as `light_type` above `light_type.cone_angle`, has `"enum": true` and no
 adapter, even where the inspector shows a variant picker for it, because
-`set_property` writes it whole (below). A component without reflection data has
-`"value": null, "unavailable": true` and no paths. A list longer than 16
-elements shows its first 16 and ends with a `"… N more, M in all"` string, so a
-cut list is not a value to write back. Ids are scene entities written as
+`set_property` writes it whole (below). A list has `adapter` false for the same
+reason, and each element follows it, by index from 0: `values.2`, or for an
+element with fields only those fields, `strides.0.length`. A component without
+reflection data has `"value": null, "unavailable": true` and no paths. A list
+longer than 16 elements shows its first 16 in `value` and ends with a
+`"… N more, M in all"` string, so a cut list is not a value to write back.
+`paths` shows the same 16 elements and then, among its entries, a
+`"… N more of values, M in all"` string naming the list; a cut element is still
+addressed by its index. Ids are scene entities written as
 `42v3`. `screenshot` answers a PNG: with `target` `viewport`, the picture the
 viewport draws, the edited scene or the game while it plays, followed by the
 camera's pose while editing; with `editor`, the whole editor, panels included,
 at its window size. A picture longer than `max_edge` pixels (1024) on either
 side is scaled down to it, keeping its shape; a smaller one keeps its size. It
 is the last frame drawn: the viewport's picture changes only when the edit
-`App` steps. `scene_tree`, `find_entities`, `inspect` and `screenshot`'s
-viewport need an open scene. These six look.
+`App` steps. `scene_tree`, `find_entities`, `inspect` of an entity and
+`screenshot`'s viewport need an open scene. These six look.
 
-`open_project` opens `path` and answers once the catalogue is read.
+`open_project` opens `path` and answers once the catalogue is read; the
+project's default or first scene then opens, as it does when the editor opens
+a project.
 `open_asset` opens `asset`, an address or an id from `list_assets`, in its
-editor: a scene answers once it has loaded, and at once if it is already shown;
-another kind answers once its document exists, and a kind with no editor
-answers `open_failed`. `close_document` closes the document `status` lists as
+editor: it answers once the asset has loaded, and at once if it is already
+shown. A scene that fails to load answers `open_failed`; another kind answers
+once its editor calls `finish_asset_request`, or `open_failed` with the
+document's status if the load failed. A kind with no editor answers
+`open_failed`. `create_asset` creates an empty asset of `kind`, one of the kinds
+the Asset Browser's New lists, ignoring case, named `name` in `folder`, or in
+the content root without one, by triggering the `CreateAsset` signal that New's
+name field triggers. It answers `Created <address> · <kind> · <id>. Open it
+with open_asset.` and does not open the asset. A kind that cannot be created
+answers `unknown_kind`, listing the ones that can; a name New would refuse, a
+name taken in that folder, or a folder outside the content root answers
+`create_failed` with the reason. It needs an open project. `import_source`
+imports the file at `source` through the queue the Import… dialog fills: it
+copies the source to `destination` in the project, or to `assets/<file name>`
+without one, or leaves it where it is when it already lies inside the project,
+and answers once that import has finished, with `Imported <destination>: N
+assets, M sibling files.` and one `address · kind · id` line per asset written.
+A path with no file answers `unknown_source`; a destination outside the
+project, without a file name, with another extension than the source's, or a
+source no importer handles answers `import_refused` with the dialog's reason,
+and so does a destination whose sidecar `[settings]` do not parse, with the
+parse error; an import that fails answers `import_failed` with the status line's reason.
+`settings` and `asset_settings` change the importer's settings and the
+settings of the asset an image makes, as objects of the fields to change, such
+as `{"scale": 0.5}` for a BVH or `{"compression": "Bc7", "max_size": "S512"}`
+for an image: enum values are variant names, and a field left out keeps the
+value the project holds, the sidecar's for `settings` and the texture's for
+`asset_settings`. Given `settings` are written whole to the sidecar's
+`[settings]`; left out, the sidecar is not touched. Fields the dialog does not
+show, such as clip events, are kept and cannot be given. An unknown field, a
+bad value, or `asset_settings` for a source whose importer has none answers
+`invalid_arguments`, naming the field and showing the current values. A value
+the import itself refuses, such as a BVH `scale` of 0 or `Bc5` on a colour
+texture, answers `import_failed` with the reason. The answer ends with the
+settings the import used, as TOML: a `[settings]` table and, for an image, an
+`[asset_settings]` table.
+Each queued import ends with an `ImportFinished` event carrying the settings it
+used, which is what the tool
+waits for. It needs an open project. `close_document`
+closes the document `status` lists as
 `document`. When one of these three would raise the unsaved-changes prompt,
 the call cancels the prompt and answers `unsaved_changes`, naming the
 documents, once the prompt has closed, unless it says `unsaved`: `"discard"`
@@ -116,12 +263,64 @@ stepped and the camera shows it; the edit `App` steps only while the viewport
 shows the scene. While a game plays both answer `refused`, since the game has
 no editor camera. All three need an open scene.
 
+`gizmos` lists the component gizmo kinds of the edited scene's `App`, or of the
+game while it plays, one `Bounds · selected` or `Navmesh · always` line per
+kind: drawn for the selection and its descendants, or for every entity. With
+`kind`, ignoring case, and `always` it sets that kind for every edit and play
+`App`, as the viewport's Gizmos menu does, and answers the list as it reads
+with the change. A kind the scene does not have answers `unknown_gizmo`, listing
+the kinds it has, and `kind` without `always`, or `always` without `kind`,
+answers `invalid_arguments`. It needs an open scene.
+
+`set_panel_size` sets the size of `panel`, one of `left`, `right`, `bottom`
+and `browser`, to `size` logical pixels: a width, or for `bottom` the strip's
+height. It triggers `ResizePanel`, the signal a splitter's drag triggers, and
+answers `status`'s `layout:` and `viewport:` lines once the panels are laid
+out and the viewport has its new size, or the `layout:` line alone on a tab
+that shows no viewport. A size outside what the window allows is clamped, and
+the answer shows the size that was set. A panel that is `hidden` or `fill` on
+the front tab answers `refused`, naming the kind of tab that sizes it.
+
 The edit tools change the edited scene, or the running game while it plays, by
 triggering the signal the panels trigger, and answer once the edit `App`
 reports the outcome; an edit the tools refuse answers `refused` with their
 status text, the same text the scene's status line shows. `create_entity` adds
 an entity named Entity as the last child of `parent`, or of the scene's top
 level without one, and answers `Created <id> Entity in <parent>.`.
+`place_asset` adds an entity that uses `asset`, an address or an id from
+`list_assets`, named as the Asset Browser shows the asset, its file's name or
+for an import's scene the source's, as a child of `parent` or of the
+scene root, at `position`, `[x, y, z]` in world space, or at the parent's
+origin without one, and selects it. It answers `placed <name> as entity <id>`
+once the asset has loaded and the entity exists. An address that names nothing
+answers `unknown_asset`; an id the project does not have, a kind that cannot
+be placed, which names the kinds that can, a load that fails, a game that
+is playing, and a scene that is the open one or links it, directly or through
+its links' scenes, which answers `a scene cannot link itself`, answer `refused`
+(see [Placing assets](#placing-assets)).
+A scene's links show in `scene_tree` collapsed, as `id name [link → <scene address>] (1 change)` or `(<n> changes)`,
+followed by ` — waiting` while its scene loads or ` — refused: <reason>` when
+it was refused, and
+the nodes a link spawned show, once its row is the `root` or while a game plays,
+as `id name [components] (linked)`, and are addressed by that id like any
+other entity. A link stores its changes by node id, not by name, so a change
+names its node by the scene's name for it in `inspect`, or by the node's id
+when the scene no longer has that node. Those nodes are read-only: `set_property` on a
+component the scene gave them, `rename_entity` and `duplicate_entity` answer
+`refused` and name the scene to edit. The other edits are allowed and recorded
+as a change on the outermost link of the open scene: `add_component` and then
+`set_property` on the added component, `remove_component`, recorded as a
+removal or, for a component the link added, by dropping that addition, a
+`delete_entity` of a linked node, and `create_entity` or `place_asset` under
+one, whose entity keeps its place there through `LinkParent`. `inspect` of a
+link answers its `state`, `spawned`, `waiting` or `refused: <reason>`, and
+lists its changes, each with whether it applied, or `not applied: link
+<state>` while the link is not spawned. `remove_link_change` removes the change
+at `index` of the link `entity`, which spawns the link again; a link inside
+another link is read-only like its nodes, so it answers `refused`.
+A save or an import that rewrites a scene's file reloads it in every open edit,
+parked and preview `App`, so its links spawn again; a playing game is never
+reloaded.
 `delete_entity` deletes `entity` and its descendants and answers what is
 selected afterwards. `duplicate_entity` copies `entity` beside it and answers
 the copy's id. `rename_entity` renames `entity` to `name`, trimmed; an empty
@@ -142,27 +341,119 @@ On either route a value that does not decode to the property's type answers
 live id such as `42v3`, and an asset handle is an asset id that loads through
 the edit `App`'s `AssetServer`, as a spawned scene's handles do. A handle field
 is edited by the asset picker, so an id that is not one of the project's assets
-of the field's kind answers `refused`.
+of the field's kind answers `refused`. A `SceneEntityRef` field is edited by the
+entity picker, which refuses a node index other than the unset value; one inside
+an `Option` or a list is written whole with the rest of it, unchecked (#377).
 A path `inspect` marks `enum` takes the whole enum, its variant's name for a
 variant without fields (`"Point"`) or an object with the variant's name as its
 one key (`{"Spot": {"cone_angle": 40}}`), so it can switch variants; a field
 left out of the new variant takes its default, and an unknown variant answers
 `invalid_value`, naming the variants. A path that names a struct above a property is
 not one `set_property` takes, so an adapter's validation holds for the fields
-it edits.
+it edits, and that includes a list element with fields.
+A list's own path takes the whole array, and an element's path takes that
+element. Under a list, a property whose type has no JSON form and no registered
+`Default` answers `not_editable`, naming the type; a nested list and an `Option`
+are such types, and their own elements and fields can still be written.
+`list_push` appends a default element to the list at `path`, and `list_remove`
+removes the element at `index`, as the inspector's add and remove buttons do.
+Each answers the list's new length: `Added an element to Samples.values; its
+length is 4.` A path that is not a list, or a `Vec` with an editor registered
+for its exact type, answers `not_a_list`, and an index past the end answers
+`index_out_of_range`, naming the length.
 A component that `inspect` lists as one value, a marker or an opaque type, has
 the path `""`. The scene root is the editor's wrapper and none of these change
-it. All seven need an open scene.
+it. All nine need an open scene, unless a call names a `target`.
+
+`inspect`, `set_property`, `list_push` and `list_remove` also reach a document's
+values, the ones its asset editor publishes through `InspectedValues` (see
+[Document values](#document-values)). `target` names a value of the front
+document, one of the names `status` lists under `values:`, and takes the place
+of `entity` and `component`, or for `inspect` of `entity` and `components`. A
+name matches exactly, unlike a component's. These calls need no open scene and
+answer straight away, with no scene as the edit target. `target` with any of
+those arguments, neither `target` nor `entity`, and `entity` without a
+`component` the tool requires each answer `invalid_arguments`, a name the front
+document does not have answers `unknown_target`, listing the names it has, and a
+name two of its values share answers `ambiguous_target`.
+
+`inspect` with `target` answers in a component's form with no entity: `name`,
+`type`, `value` and `paths`. A value that is gone, such as one its document has
+not loaded, answers `{name, value: null, unavailable: true}`. This is the one
+read that uses commands, because its answer needs the whole world and a
+read-only tool's system must only read: its system is added with `add_system`
+to `McpServe` and `McpRead`, after `receive_read_only_calls`, not with
+`add_tool`.
+`set_property` takes a value as it takes a component: a path with an adapter
+goes through it, any other path is written from the JSON, and the answer is
+`inspect`'s form. A JSON write refuses a value whose root type is not registered
+in the registry its target names. `list_push` and `list_remove` answer the new
+length. An edit reports `Hosted<PropertyCommitted>`, as one from the inspector
+does, and what it means to the document is up to its asset editor.
+
+The graph tools come with
+[`concerto-animation-editor`](../animation-editor/README.md#the-graph-tab) and
+act on what the front animation graph tab has in view, a pose graph or a state
+machine; on any other tab each answers `refused`, saying to open a graph. A
+node is named by the id `graph_inspect` shows, a link by the node it makes an
+input, a state by its name, and a transition by `from`, `to` and its `index`
+among those between that pair, 0 without one. `graph_inspect` reads what is in
+view: the breadcrumb, then for a pose graph one line per node,
+`id · type · parent#slot · subtitle`, with `result` or `loose` in place of
+`parent#slot` for the result node and for a node that is nobody's input, and
+for a state machine one line per state, `name · initial · graph address`, then
+one per transition, `from → to #index · trigger · blend`; when the graph names
+parameters, a `parameters:` line follows and one line per parameter,
+`name · type · value`, and once the preview has reported what it plays, a
+`live:` line and under it the weight of each playing node, the time of a clip
+node, and the current state and transition of a state machine. `graph_add_node` adds
+a node of `type`, a short name such as `LayerNode` or a full path, as an input
+of `parent` at `slot`, or loose without a parent, and answers its id.
+`graph_add_state` adds a state `name` to the state machine in view, playing
+`graph`, an existing graph by address or id, or without one a new graph asset
+of that name created beside the graph that holds the machine. `graph_connect`
+makes `child` an input of `parent`, at `slot` or at its first empty slot,
+replacing what a taken named slot holds; in a state machine it takes `from` and
+`to`, which may be equal, and adds an `Instant` transition with no blend time.
+`graph_remove` removes `node`, leaving its inputs loose, or `link`, or `state`
+with its transitions, or a transition. `graph_select` selects `node`, `state`
+or a transition, which becomes the front document's value `Node`, `State` or
+`Transition` for `inspect`, `set_property`, `list_push` and `list_remove`.
+`graph_open` drills into `node`, a state machine into its states and a node
+that plays a graph into that graph, or into the graph of `state`, and
+`graph_up` goes back up one level; both answer `Showing <breadcrumb>.`.
+`graph_set_param` sets the parameter `name` on the preview's players to
+`value`, JSON of the parameter's type, runs frames until the preview next
+reports what it plays, and answers `Set moving to true.` with that `live:`
+block under it; while the preview is paused, or no player plays the graph, it
+answers at once and says so. A
+name the graph does not read answers `refused` listing the parameters with
+their types, and a name the graph reads as several types needs `type`. The
+tab's preview is the value `Preview`, whose `scene`, `skeleton`, `playing`,
+`speed` and `from`, the node to preview from, `set_property` writes, and its
+parameters are the value `Parameters`, one field per parameter; neither is
+saved. An
+edit the tab refuses, such as a connection that would close a cycle or opening
+a node whose graph is not set, answers `refused` with the reason and what to
+do.
 
 `save` writes `document`, or the active document without one, to its file as
-Ctrl+S does, and answers `Saved <address>.` once it is written. A document with
+Ctrl+S does, and answers `Saved <address>.` once it is written, naming every
+file the save wrote, `Saved <address>, <address>.`, when a tab such as an
+animation graph's writes several. A document with
 no unsaved changes answers `Nothing to save in document <id> <address>.`, which
 is not an error. A save that fails answers `save_failed` with the editor's
 message, as does a save while the game plays (`Stop to save`), and a scene still
-loading answers `busy`. `play` starts the active scene's game in the viewport,
+loading answers `busy`. An import's scene is read-only: `save` on it answers
+`save_failed` with `This scene belongs to <source> and is read-only. To build
+on it, place it in a scene of your own.`, and so does a save asked for by
+`unsaved: "save"`. `create_asset` makes that scene and `place_asset` puts the
+import's scene in it. `play` starts the active scene's game in the viewport,
 as the play button does, and answers once the game has built, plays, has
 spawned every scene it loaded, and has no asset loads in flight: `Playing
-<address> in document <id>; it loaded in <seconds> s.` Like the play button it first saves the scene's unsaved changes,
+<address> in document <id>; it loaded in <seconds> s.` The time runs from
+`PlayStarted`, which comes after the play `App` has warmed up hidden, so it
+covers only what the game still loads once it is shown. Like the play button it first saves the scene's unsaved changes,
 and the answer then says so. If the game is still loading when the call's 30
 second wait runs out, `play` answers anyway, not as an error, saying `it is
 still loading`; `scene_tree` and `screenshot` then show the game as it arrives.
@@ -177,28 +468,50 @@ and `stop` a game starting or playing.
 window passes on a person's input, one window event per frame in order, and
 answers once the game has had the last: `Sent <n> window events to the game in
 document <id>.`, naming the keys still held in the game and those held in the
-editor, which a later call should release. An event is
+editor, which a later call should release, then the pads connected, those
+`send_input` connected marked `from send_input`, and the pad buttons held. An
+event is
 `{ "key", "pressed", "text"? }`, a key named as the window crate's `KeyCode`
-names it (`KeyW`, `Space`, `ArrowUp`, `ShiftLeft`, `F1`), ignoring case, with
-the text a press types; `{ "button", "pressed", "at"? }`, one of `left`,
+names it (`KeyW`, `Space`, `ArrowUp`, `ShiftLeft`, `F1`; the logo keys, Super
+or Windows or Command, are `MetaLeft` and `MetaRight`), ignoring case, with the
+text a press types; `{ "button", "pressed", "at"? }`, one of `left`,
 `right`, `middle`, `back` and `forward`, moving the pointer to `at` first;
 `{ "move": [x, y] }`, which moves the pointer there and, as a mouse does, adds
 the mouse motion that takes it there, a second window event; or
-`{ "wheel": [x, y] }`, in lines. Points are pixels of the viewport's picture
-from its top-left corner at its full size, the `viewport` size `status`
-reports; on a screenshot scaled down by `max_edge`, multiply a point by the
-full size over the PNG's size. A point off the picture, or a key name
-`KeyCode` lacks, answers `invalid_arguments`, the latter with close names, and
-sends nothing. The events then take the path real input takes: Ctrl+P stops
-the game, and Shift+F1 or a press off the viewport's picture gives input to the
+`{ "wheel": [x, y] }`, in lines; or a gamepad event: `{ "pad": 0, "connect":
+true, "name"? }` plugs pad 0 in, named `Pad 0` when `name` is left out, and
+`"connect": false` unplugs it; `{ "pad": 0, "button": "south", "value": 1.0 }`
+sets a button, 0 up to 1 fully down, the triggers in between; and
+`{ "pad": 0, "axis": "left_stick_x", "value": 0.5 }` sets a stick axis, -1 to 1
+with Y up. Buttons and axes are named in snake case, ignoring case: `south`,
+`east`, `north`, `west`, `left_bumper`, `right_bumper`, `left_trigger`,
+`right_trigger`, `select`, `start`, `mode`, `left_thumb`, `right_thumb`,
+`d_pad_up`, `d_pad_down`, `d_pad_left`, `d_pad_right`, and `left_stick_x`,
+`left_stick_y`, `right_stick_x`, `right_stick_y`. A pad's buttons and axes need
+it connected first, by `send_input` or as a real gamepad; the editor's window
+sees the pads `send_input` connects as it sees real ones, and they stay
+connected, across calls, until a later call unplugs them. Points are pixels
+of the viewport's picture from its top-left corner at its full size, the
+`viewport` size `status` reports; on a screenshot scaled down by `max_edge`, multiply a point by the
+full size over the PNG's size. These answer `invalid_arguments` and send
+nothing: a point off the picture; a key name `KeyCode` lacks, or an unknown pad
+button or axis, with close names; a button, axis or `"connect": false` for a
+pad not connected, saying to send `{ "pad": n, "connect": true }` first;
+`"connect": false` for a real gamepad, which is unplugged by hand; `"connect": true` for a
+number a real gamepad has, listing the numbers in use, so pick another (a pad
+`send_input` already connected is left as it is); and a pad event with none, or
+more than one, of `connect`, `button` and `axis`, or a button or axis without
+`value`, showing the three shapes. The events then take the path real input
+takes: Ctrl+P stops the game, and Shift+F1 or a press off the viewport's picture gives input to the
 editor. A key left pressed stays held in the game, across calls, until a later
 call releases it. `send_input` needs a game playing. While the editor has
 input, a list that starts with a press `at` a point on the picture goes
 through: that press gives the game input back, as a person's click on the
 viewport does, without reaching the game as a click, and the rest of the list
-follows. In any other list only key and button releases go through, to the
-editor, so a key pressed before the editor took input is not left held; a list
-that holds anything else answers `input_released` once its releases are sent.
+follows. Pad events go through whoever has input, to the game. In any other
+list only key and button releases and pad events go through, the releases to
+the editor, so a key pressed before the editor took input is not left held; a
+list that holds anything else answers `input_released` once those are sent.
 After an event that gives the editor input, or stops the game, the same holds
 for the rest of the list: its releases are sent, and if anything else was left
 out the call answers `input_released` or `not_playing`, saying how many were
@@ -211,21 +524,26 @@ A failed call is a tool result marked `isError` whose text is
 
 | Code | Meaning |
 | --- | --- |
-| `invalid_arguments` | The arguments do not match the tool's input schema |
+| `invalid_arguments` | The arguments do not match the tool's input schema, or `target`, `entity`, `component` and `components`, or `kind` and `always`, are given in a combination the tool does not take |
 | `no_project`, `no_scene`, `not_playing` | The tool needs an open project, an open scene, or a game playing |
 | `busy` | `open_project` while a project is opening, `save` of a scene still loading, or `screenshot` of a picture not drawn yet |
 | `unknown_entity`, `stale_entity` | The id names no live entity of the open scene, such as the editor's camera, or of the game while it plays; or a slot that now holds a newer one |
 | `unknown_component` | The entity does not carry the component, or for `add_component` no registered component has that name; the message lists those it could be |
 | `ambiguous_component` | The short name names several components; the message lists their full paths |
-| `unknown_path` | The component has no such property path; the message lists those `inspect` shows |
+| `unknown_target` | The front document has no value of that name; the message lists those it has |
+| `ambiguous_target` | The front document has more than one value of that name |
+| `unknown_path` | The component or value has no such property path; the message lists those `inspect` shows |
 | `invalid_value` | The JSON does not decode to the property's type, whether an adapter edits the path or not; the message says why |
-| `not_editable` | The adapter that edits the path offers no value edit |
+| `not_editable` | The adapter that edits the path offers no value edit, or the path is under a list and its type has no JSON form and no registered `Default` |
+| `not_a_list` | `list_push` or `list_remove` on a path that is not a list, or on a `Vec` with an editor registered for its exact type |
+| `index_out_of_range` | `list_remove` with an index past the end; the message names the length |
 | `unknown_asset` | The asset is not in the catalogue |
+| `unknown_gizmo` | The scene has no gizmo kind of that name; the message lists those it has |
 | `open_failed` | The project or asset did not open; the message is the editor's status |
 | `unsaved_changes` | The call would discard unsaved edits; retry with `unsaved` |
 | `save_failed` | `save`, or a save asked for by `unsaved: "save"`, failed; the message is the editor's status |
 | `play_failed` | The game did not start; the message is the editor's status |
-| `input_released` | `send_input` while the editor, not the game, has input, with a list that does not start with a click on the picture and holds more than key and button releases; the releases were sent |
+| `input_released` | `send_input` while the editor, not the game, has input, with a list that does not start with a click on the picture and holds more than key and button releases and pad events; the releases and pad events, which always go through, were sent |
 | `refused` | The call cannot act in the current state, or the editor refused the edit; the message says why |
 | `timeout` | What the call waited for did not happen within 30 seconds |
 | `internal` | No system answered the call: a bug |
@@ -241,13 +559,134 @@ steps, and drops. The crate has three parts:
 
 - `src/hosted/` builds an `App` from a recipe, holds it on its document as a
   `HostedApp`, steps it, feeds it the viewport's input, and carries messages
-  both ways.
+  both ways. A `PendingApp` is building while the editor polls its plugins'
+  `ready` each `First`, then finishing: `finish_plugin_build` and the ready
+  step run on a `hosted-build` thread, and the editor joins it in a later
+  `First` and hands the `App` the current asset registry. Dropping the
+  `PendingApp`, however it is removed, detaches the thread and sets a flag the
+  thread reads after `finish_plugin_build`: it then cancels the `App`'s loads,
+  skips the ready step, and drops the `App`.
+  An edit or play `App` then warms up: the editor steps it hidden once per
+  `First`, whatever tab is in front and with no input, until a step leaves its
+  `AssetServer` not loading, no `SceneLink` that is `Waiting` with its scene
+  loaded or loading (a `Refused` one counts as settled), and `render_assets_settled` true, or until
+  `WARM_UP_LIMIT`, 10 s after the join. A `WarmUpLimit` resource in the
+  editor's world, when present, replaces `WARM_UP_LIMIT` for the edit and play
+  `App`s it starts.
+  Only then does it become the document's `HostedApp`; a panic in a hidden
+  step is the build's failure, in the step `warming up`. A preview `App` skips
+  the warm-up. `finish_blocking` and `PendingApp::finish_now` finish on the
+  calling thread and skip it too.
+  Finishing on the thread and the warm-up happen only when `register_editor`
+  inserts `FinishBuildsOffThread`. Without it, as in tests that build the
+  editor's world themselves, `First` finishes a ready `App` on the editor's
+  thread and makes it the `HostedApp` at once, with no warm-up.
+  Every hosted `App` uploads at most `HOSTED_UPLOAD_BYTES_PER_FRAME`, 32 MiB,
+  of render assets per frame, set after the recipe and again after
+  `finish_plugin_build`, so a game's own `RenderAssetBytesPerFrame` does not
+  apply in the editor.
 - `src/tools/` is everything that runs inside an edit `App`: the editor camera,
-  the grid, picking, the selection box, the gizmo, and the listeners that apply
-  each edit. `EditToolsPlugin` installs it. The half that edits and captures a
+  the grid, picking, the component gizmos (`component_gizmos.rs`), the
+  transform gizmo, and the listeners that apply each edit. `EditToolsPlugin` installs it. The half that edits and captures a
   scene needs no renderer; the viewport half is added when the recipe has one.
-- The panels (hierarchy, inspector, viewport, tabs, content, dock) run in the
-  editor's `App`.
+  In that half, `ViewportEnvironmentPlugin` mirrors the scene's environment
+  onto the editor camera: each frame it copies `Sky` and `CameraEnvironment`
+  from the scene's `MainCamera` (the one with the lowest entity index), and
+  removes each copy when that camera lacks it or the scene has no
+  `MainCamera`. It writes only when the value differs, so the viewport is lit
+  and drawn as the level's camera sees it in Play, and an agent changes it
+  through `add_component`, `set_property` and `remove_component` on that
+  camera.
+- The panels (hierarchy, inspector, viewport, tabs, content, dock) and the
+  viewport's Gizmos menu (`gizmo_choices.rs`) run in the editor's `App`.
+
+The dock (`src/dock.rs`) tiles the window; nothing is drawn over anything
+else. From the top: a bar with the brand, the tabs, the stats and the window
+buttons; a row of the `Left`, `Centre` and `Right` regions; the `Bottom` strip
+across the full width; and the `Status` line. The hierarchy is in `Left`, the
+viewport in `Centre`, the inspector in `Right`, the Asset Browser in `Bottom`
+and Chatter in `Status`. The viewport, and so the game while it plays, is
+exactly the space the panels leave. A panel declares its region in its
+`PanelDescriptor`, and `PanelRegistry::region` gives a region's node.
+
+Each panel in `Left`, `Right` and `Bottom` is a card, `dock::card`: the
+theme's panel with its large corner radius and a faint outline, on the opaque
+canvas backdrop. The viewport's picture has the same corners. The cards stand
+8 px apart and 8 px from the window's left and right edges; the top bar and
+the status line have no fill of their own. A tab's hosts are cards too, and
+two cards in one side region stand 8 px apart. The Play button on the Scene
+tab is a pill filled with the accent that shows `play` and "Play"; while the
+game runs it is outlined in the error colour and shows `stop` and "Stop".
+
+Four splitters resize the panels: between `Left` and `Centre`, between
+`Centre` and `Right`, above the `Bottom` strip, and, on a tab with a bottom
+host, between the Asset Browser and that host. A splitter is the gap between
+two cards: it draws nothing at rest, and a line in the accent colour while it
+is hovered or dragged. The sizes are the
+`EditorLayout` resource, in logical pixels: `left` 260, `right` 320, `bottom`
+220 and `browser` 420 to begin with. They are the same on every tab and last
+for the session; no file holds them. `ResizePanel { panel, size }`, with
+`panel` a `LayoutPanel` (`Left`, `Right`, `Bottom` or `Browser`), is the one
+signal that changes them; a splitter's drag triggers it, and so does the MCP
+tool `set_panel_size`. Its listener
+clamps the size for the window as it is: `Left` no less than 180 and `Right`
+no less than 220, each no more than leaves the `Centre` 320 wide; `Bottom`
+from 120 to what leaves the `Centre` 240 high; `Browser` from 200 to what
+leaves its bottom host 240 wide. In a window too small for the stored sizes
+the dock shows smaller ones, `Right` giving way before `Left`, and the stored
+sizes come back when the window grows; `EditorLayout::shown` gives the sizes
+on screen.
+
+`PanelStates` says what each of the four is on the front tab: `Sized`, which
+shows its stored size and can be resized; `Hidden`, collapsed with its
+splitter; or `Fill`, taking the space that is left, with no splitter. The
+workspace (`src/workspace.rs`) decides it from what the tab shows: a side
+region with no visible panel and no host is `Hidden`, and the Asset Browser is
+`Fill` unless the tab has a bottom host. On a [form](#inspected-assets) tab
+`Left` is `Hidden`, the `Centre` is hidden and `Right` is `Fill`.
+`ResizePanel` for a panel that is not `Sized` changes nothing.
+
+The brand in the top bar is the Concerto mark, `fonts::brand_mark`: the one
+glyph of the bundled `Concerto Mark` face, which
+[`docs/logo/build.py`](../../docs/logo/README.md) generates with the logo's
+SVGs.
+
+Every icon is a glyph of the bundled Phosphor face, drawn through
+`fonts::icon` from a constant in `fonts::glyph`, which carries the glyph's
+upstream name. There are two sizes. A row's icon is a 16 px glyph in a 20 px
+column: a tree row's is `fonts::row_icon`, and a tab builds its own to the same
+measure. An icon button is `fonts::icon_button` with `fonts::button_icon`: a
+16 px glyph in a square of the theme's control height. A tree row's icon is the
+muted text colour at rest and the text colour while its row is hovered or
+selected, and a tab's is the text colour on the active tab and muted on the
+others, whether hovered or not; the glyph, not a colour, tells kinds apart. The hierarchy shows `stack` for the scene root, `link-simple`
+for a link, `camera`, `lightbulb` and `cube` for an entity with a camera, a
+light or a mesh, and `circle` for any other entity, with or without children.
+While a scene is edited, a link's linked nodes show their names muted, and one
+its link changes, or that holds an entity of the scene's own, shows
+`pencil-simple` in the accent colour after its name. Selecting a linked node
+shows the scene it is linked from above its cards, with its own components' fields
+disabled and no gizmo in the viewport; selecting a link lists its changes,
+each with whether it applied and a button that removes it, under a line saying
+`waiting` or `refused: <reason>` while the link is not spawned.
+
+The `AssetIcons` resource maps an asset kind's `Asset::name()` to its glyph,
+and the Asset Browser's rows and the tab strip both read it. `ContentPlugin`,
+`TabsPlugin` and the first `register_asset_icon` each insert it when it is
+missing, so either plugin works without `FontsPlugin`. `FontsPlugin` registers
+`Scene`, `Mesh`, `Texture`, `StandardMaterial` and `Skeleton`; a kind nothing
+registered shows `file`. An extension crate registers its own kinds, and a
+later registration of a kind replaces the earlier one:
+
+```rust,ignore
+use concerto_editor::fonts::{AssetIconsAppExt, glyph};
+
+app.register_asset_icon(AnimationClip::name(), glyph::WAVEFORM);
+```
+
+`concerto-animation-editor` registers `AnimationClip`, `AnimationGraph`,
+`BoneMask` and `RetargetRig`, and `concerto-motion-matching-editor` registers
+`MotionDatabase`.
 
 The recipe is the `recipe: fn(&mut App)` field of `EditorPlugin`.
 `concerto_editor::run` passes the game's recipe, such as `tech_demo::game`, the
@@ -266,10 +705,11 @@ must be marked.
 
 A panic while the edit `App` is built does not take the editor down. That
 covers the recipe and every plugin's `build`, each plugin's `ready` and
-`finish`, the `Startup` schedule, and the ready step that publishes the content
-and opens the scene. The half-built `App` is dropped once every system it was
-running has returned, the panic is logged, and the Scene tab shows "Could not
-open scene: <panic message>", as a failed load does.
+`finish`, the `Startup` schedule, the ready step that publishes the content
+and opens the scene, and every hidden step while it warms up. The half-built
+`App` is dropped once every system it was running has returned, the panic is
+logged, and the Scene tab shows "Could not open scene: <panic message>", as a
+failed load does.
 
 A panel reaches the scene in two ways and no other:
 
@@ -304,12 +744,26 @@ and which is empty while no project is open. The editor scans only then; content
 that git or a file explorer changes while the project is open shows after it is
 reopened. The tree mirrors the
 project's `content/` folder: the folders and
-assets directly inside it are the top-level rows, a folder shows a folder mark
-and holds its subfolders and assets, and an asset shows its kind mark and name.
+assets directly inside it are the top-level rows, a folder shows the `folder`
+glyph, `folder-open` while expanded, and holds its subfolders and assets, and
+an asset shows its kind's glyph from `AssetIcons` and its name.
 A folder appears once it holds an asset at any depth; empty directories are not
-shown. In each folder, subfolders come first, then assets, each alphabetically
+shown. An import that made a scene is folded into one row: the scene, the
+import's face, named after the source file (`crate` for `crate.glb`), with
+every other asset of that source as a row under it, collapsed, whatever kind
+it is and wherever its file is. The face is the scene asset itself, so it is
+selected, opened and dragged into the viewport as one, and a part is still an
+asset row. When the face is the only row of its folder, the folder is left out
+and the face takes its place in the folder above, so `props/crate/scene` shows
+as `crate` under `props`. An import with no scene, a texture or the
+animations of older BVH imports, is not folded. An import's meshes, materials
+and skeletons are stored inside its scene file; each is still a registry entry
+and a row under the face, named as its own file would be. An import's scene is
+never saved over, so an import stays folded. `ImportFolds`, in
+`import_fold`, is the grouping, by `AssetEntry::provenance`; `list_assets`
+reads the same one. In each folder, subfolders come first, then assets, each alphabetically
 ignoring case, and folders start collapsed. When the registry changes, after an
-import or a save, the tree keeps the rows of folders and assets that still exist, so
+import, a New or a save, the tree keeps the rows of folders and assets that still exist, so
 expansion and scroll survive. Clicking a row selects it, folder or asset, but
 only an asset becomes the catalogue's selection; activating a folder, by
 double-clicking it or pressing Enter, expands or collapses it. A click while a
@@ -317,8 +771,40 @@ project is opening is ignored and the highlight returns to the selected asset. T
 field and the kind chips (`Scene`, `Mesh`, `Texture`, `StandardMaterial`)
 hide every asset that does not match and show the
 folders leading to each match, open; clearing them restores the expansion as it
-was. The footer counts the matching assets. The navigation keys are the UI
+was. A face matches the search by its shown name, a part by its own file name
+and kind and not by the folder it is in, so searching for an import finds one
+row; a matching part shows under its face. The footer counts the matching assets. The navigation keys are the UI
 crate's list and tree actions, as in the hierarchy.
+
+**New** beside Import… lists one row, `New <kind>`, per creatable asset kind
+(see [Custom asset editors](#custom-asset-editors) and
+[Inspected assets](#inspected-assets)); Scene is the only one the editor
+ships. The rows follow the registry, so the game's inspected kinds join them
+once a scene's edit `App` has built. It creates in the selected folder, or in the content root when
+nothing or an asset is selected. Right-clicking a folder opens a menu with the
+same rows, which create in that folder; right-clicking the tree's empty space
+opens it for the content root. Right-clicking an asset opens no menu. Picking a
+row clears the search and the kind
+chip, and puts a row with a focused name field in that folder, ahead of its
+assets, expanding the folders above it and scrolling to it. The field starts as a free name: `New
+<kind>`, then `New <kind> 1`, `New <kind> 2`, and so on up to `New <kind> 999`;
+when all of those are taken it shows `New <kind>`, which Enter refuses. Enter, or clicking
+away, writes `<folder>/<name>.gasset` with a fresh `AssetId`, adds it to the
+registry, selects it, scrolls to it, says `Created <address>` in the status line
+and opens it in its editor; Escape cancels and writes
+nothing. A name follows `valid_asset_name`, and one already used in that folder,
+by a file on disk or a registry entry, ignoring case, is taken. Enter on a
+refused name keeps the field, outlines it in the error colour and puts the
+reason in the footer until the next keystroke; clicking away from a refused
+name cancels. Enter and clicking away trigger `CreateAsset { kind, folder, name, open }`,
+the signal an extension or the `create_asset` MCP tool triggers to create an
+asset without the row; its listener does the checks and the write, makes a
+missing folder, and reports each request as an `AssetCreation` event with the
+new id or the reason. New and the menu rows are disabled while no project is open or one is opening. The
+file is always a `.gasset`, even in a project whose `content.toml` sets another
+extension; there the scan looks only for that extension, so the created asset
+is not listed after the project is reopened. If an unsaved Scene tab holds the open, the asset is already written
+and the unsaved-changes prompt decides when it opens.
 
 Activating a supported asset in the Asset Browser, by double-clicking it or pressing
 Enter on its row, opens its editor tab. Each asset type
@@ -337,9 +823,16 @@ refused over unsaved changes, and a scene asked for with no project open each
 fail, and `message` is the status the tab shows. A request that is cancelled or
 superseded writes neither, and neither does selecting the scene already shown.
 
+Opening a project opens a scene in the Scene tab: the one `content.toml`'s
+`default_scene` names, or else the project's first scene, by folder and then
+name. A `default_scene` that is missing or is not a Scene logs a warning and
+the first scene opens instead; a project with no scene opens nothing. A scene
+that fails to open keeps its tab with the failure as its status, and no other
+scene is tried.
+
 With no tabs open, the editor shows an empty viewport. Switching projects
-closes all editors. There is only one Scene tab, from the first scene opened
-until the project changes or the editor quits; it has a Play button where other
+closes all editors. There is only one Scene tab, from the scene that opens with
+the project until the project changes or the editor quits; it has a Play button where other
 tabs have a close button. An asset editor says whether its tabs can be closed
 with `AssetEditor::closable`, which is true unless it says otherwise; the Scene
 editor's is false. `AssetEditorCommand::Close` still closes a Scene document.
@@ -348,11 +841,19 @@ revealed.
 
 ## Importing
 
-**Import…** beside the Asset Browser search opens a file picker for glTF, OBJ, and
-image sources; several files can be picked at once. A dialog then lists each
+**Import…** beside the Asset Browser search opens a file picker for glTF, OBJ, BVH, image,
+Ogg and WAV sources; several files can be picked at once. A dialog then lists each
 file with the project-relative destination it will be copied to, which you can
-edit before confirming. Enter confirms and Escape cancels. Files are imported
-one at a time. Each import's assets are added to the registry in memory as it
+edit before confirming. Enter confirms and Escape cancels. Selecting a file
+shows its settings below the list: **Import settings**, the importer's own,
+read from the destination's sidecar or the defaults, and, for an image,
+**Asset settings**, its texture's Compression, Colour space, Max size and Mips,
+read from the texture already there or the defaults. A source with nothing to
+set shows "No settings". Only settings you edit are written; editing a
+file's destination reads its settings again and drops your edits. A file whose
+sidecar `[settings]` do not parse cannot be imported, and its row says why. Files are imported
+one at a time. Each import's assets replace the registry's entries for that
+source in memory as it
 finishes, without a rescan and without closing open tabs. No registry file is
 written.
 
@@ -362,9 +863,12 @@ inside the project is imported where it is, not copied.
 
 The files a source refers to come along with it: an OBJ's `.mtl` and the
 textures it names, a glTF's `.bin` buffers and external images. Each keeps its
-position relative to the source, and replaces a file already there. If one would
-land outside the project, the import fails and nothing is copied; pick a
-destination deeper inside the project. Chatter names the first failure of a
+position relative to the source, and replaces a file already there. A texture
+the `.mtl` names that cannot be read is skipped with a warning naming it in the
+log, and the import goes on without it; a missing `.mtl`, `.bin` or glTF image
+fails the import. If one that can be read would land outside the project, the
+import fails and nothing is copied; pick a destination deeper inside the
+project. Chatter names the first failure of a
 batch; the log has every one in full.
 
 ## Playing
@@ -422,8 +926,8 @@ mouse button, wheel turn, and mouse motion goes to it wherever the pointer is,
 Esc included, and the editor's panels and shortcuts see none of them. The
 viewport has an accent border and says "Shift+F1 to release". Three things give
 input back to the editor: a click anywhere but the viewport's picture, which
-then lands on whatever is under the pointer, the tab strip and the panels drawn
-over the viewport included; Shift+F1; and the editor window losing focus. The
+then lands on whatever is under the pointer, the tab strip, the panels and the
+splitters beside the viewport included; Shift+F1; and the editor window losing focus. The
 game is told it lost focus, so nothing stays held in it, and any cursor grab it
 asked for is let go. The border turns muted and the viewport says "Click to
 play"; the game keeps running but gets no input, and the editor works as usual.
@@ -435,21 +939,50 @@ game has it; the host reads both from the window's own events while the game
 has input. `hosted::input::ReleaseInput(document)` gives input to the editor
 from code.
 
+Gamepads are the exception: their events reach the playing game whichever side
+has input, and the editor's panels read none. Giving input to the editor tells
+the game it lost focus and then sends it the buttons and sticks held now, so a
+held stick keeps driving it. The editor window losing focus zeroes the game's
+pads whichever side has input. When the game starts playing, or its viewport
+is shown again, it is first told about the pads connected now, with their
+buttons and sticks, and about any that went away while it was hidden.
+
 ## Saving
 
 An edited document is dirty until it is saved, and its tab shows a dot. Ctrl+S
-saves the active document over the scene it was opened from, imported or not.
-A saved scene belongs to the editor from then on: re-importing its source
-leaves it alone and re-imports the source's other outputs. A save updates the
+saves the active document over the scene it was opened from. A save updates the
 scene's entry in the registry in memory and writes no registry file. A failed
 save reports why in Chatter and leaves the document dirty.
 
+An import's scene, one whose registry entry has provenance, is read-only: its
+file is written whole by the import and holds the import's meshes, materials
+and skeletons. It opens and can be changed in memory, but a save of it writes
+nothing and fails with `This scene belongs to <source> and is read-only. To
+build on it, place it in a scene of your own.` That is an ordinary failed save,
+so the unsaved-changes prompt's Save, `unsaved: "save"` over MCP, and Play,
+which saves first, are refused with the same text. To build on an import, make
+a scene with New and place the import's scene in it. Placing makes a link:
+the import's nodes spawn under one link entity and are not saved into your
+scene, so a re-import reaches it whole, nodes the source adds, removes or
+moves included. Your changes to linked nodes are kept on the link.
+
 Each save, whether asked for with `SaveRequested` or made by Play, ends in an
-event in the editor's world: `SceneSaved { document, asset }`, where `asset` is
-the scene the document now shows, or `SaveFailed { document, message }`, where
+event in the editor's world: `SceneSaved { document, asset, written }`, where
+`asset` is the scene the document now shows and `written` every file the save
+wrote, the scene alone here, or `SaveFailed { document, message }`, where
 `message` is the status the tab shows, "Stop to save" included. Ctrl+S asks for
 a save only when the document has unsaved changes; otherwise it writes neither,
 even while it shows "Stop to save".
+
+Every write of a content asset in the editor also ends in
+`AssetsWritten { ids }` in the editor's world, naming the assets written: a
+finished import sends every asset it wrote, unless its project was replaced
+while it ran; a save by any asset editor sends the files it wrote, the
+`written` of its `SceneSaved`, so an asset editor's save reports them by
+writing `SceneSaved`, and a tab that saves several files, or another file than
+the one it shows, lists exactly those; and
+a New in the Asset Browser sends the created asset. Code that keeps data
+derived from other assets reads it to know when to derive again.
 
 Replacing the open scene, closing a dirty tab, switching project, and closing
 the window all ask first when there are unsaved changes: Save, Discard, or
@@ -491,22 +1024,38 @@ document, read with `EventReader<Hosted<E>>`: `SceneEdited`, which says the
 scene changed; `SceneStatus`, which carries why an edit was refused to Chatter;
 `RevealEntity`, which the hierarchy scrolls to; and one outcome per applied
 edit signal: `EntityEdited { edit, result }`, whose result is the entity a
-create or duplicate made; `PropertyCommitted { row, result }`, whose refusal
+create or duplicate made; `PropertyCommitted { address, result }`, whose refusal
 is a `PropertyRefusal`, `Undecodable` for a JSON value that does not decode and
-`Refused` for any other reason; and
-`ComponentEdited { edit, result }`. A refused edit's result is the text its
+`Refused` for any other reason;
+`ComponentEdited { edit, result }`; and `AssetPlaced { request, result }`, which
+carries the `PlaceAsset` it answers, so whoever triggered one knows its outcome
+from another placement of the same asset, and whose
+result is the entity that `PlaceAsset` made. A refused edit's result is the text its
 `SceneStatus` carries, so a refused property or component edit also shows in
 Chatter. `SetValue { entity, component, path, value }` writes a JSON value, in
 the shape `inspect` reports, into the field at `path` of a component, or into
 the whole component when `path` is empty, with no inspector adapter involved,
-and reports `PropertyCommitted` (its row has no editor) and `SceneEdited` as a
+and reports `PropertyCommitted` and `SceneEdited` as a
 property commit does. Fields the JSON leaves out keep their values. Entity
 references are live entity ids such as `42v3`, asset handles are asset ids and
 load through the edit `App`'s `AssetServer` as a spawned scene's do, and colors
 are their linear `[r, g, b, a]`. It refuses the scene root, an unknown path, a
 value that does not decode, and an entity or component that is not there, and
-a refused set leaves the component as it was. An outcome written by a signal reaches the editor a frame later, as
-any forwarded event does. `HostedAppEvents<E>` is the
+a refused set leaves the component as it was.
+`PlaceAsset { asset, parent, at }` adds an entity that uses an asset whose kind
+the recipe registered with `register_placeable_asset`: named as the Asset
+Browser shows the asset, under `parent` or the scene root, at `PlaceAt::Position`, a point in
+world space, at `PlaceAt::Origin`, the parent's origin, or at `PlaceAt::Pointer`, a point of the viewport in logical
+pixels, which lands on the scene mesh under it, else on the y = 0 plane within
+200 m, else 10 m along the ray. The entity is spawned and selected once the
+asset has loaded, so its `AssetPlaced` can come frames later; a load that
+fails or is cancelled ends it with an error and spawns nothing. It is refused
+without an open scene, which is the case while the game plays, and
+`PlaceAt::Pointer` is refused without the viewport's camera. An outcome written by a signal reaches the editor a frame later, as
+any forwarded event does. An edit of a document's value does not pass through a
+hosted `App`: its `Hosted<PropertyCommitted>` is written straight into the
+editor's world, naming the value's document, with no frame's lag.
+`HostedAppEvents<E>` is the
 system input that reads `E` from every hosted `App`, keeping one cursor per
 hosted world, and `forward_hosted_event::<E>()` forwards a type of your own.
 Whether the scene has unsaved edits is state kept in the edit `App`
@@ -521,7 +1070,8 @@ declares `Component` without `Default`, such as `Camera`, is edited and removed
 but never offered.
 
 Left-clicking a mesh in the viewport selects its entity, scrolls the hierarchy
-to it, and draws a box around it; clicking empty space clears the selection. A
+to it, and shows its component gizmos, among them a box around its bounds;
+clicking empty space clears the selection. A
 press that moves more than a few pixels is not a click. Picking tests the
 mesh's triangles, so a mesh seen through a gap in another is the one selected.
 Limits: a skinned mesh is picked and boxed in its bind pose; a click selects
@@ -537,14 +1087,86 @@ dragged; orbit a little first. The gizmo keeps its size on screen, is hidden
 while the camera is being flown, and is not shown for the scene root. A drag
 marks the scene dirty when it ends.
 
+Component gizmos draw a component while its entity is selected; selecting a
+parent does not draw its children's. A gizmo is a type implementing
+`concerto_debug_gizmos::ComponentGizmo`, which names its component, the inputs
+it reads, and its kind's `NAME`, and draws one entity at a time. The scene
+tools (`src/tools/component_gizmos.rs`) register the engine's in every edit and
+play `App`: `Bounds` boxes each `Aabb`, `Skeleton` joins each bone to its
+parent, `Light` shows a light's reach (`range`, or 5 m when it is 0) and
+`Camera` a camera's frustum cut at 5 m. `app.register_component_gizmo::<G>()`
+registers another in a hosted `App`; it lists the kind in that `App`'s
+`ComponentGizmos` resource, and draws it only when the `App` has
+`DebugGizmosPlugin`. Two gizmo types with one `NAME` panic. The
+`SetGizmoAlways { kind, always }` signal draws a kind for every entity, or
+again only for the selection; an unknown kind changes nothing. The editor's own
+camera and grid are `EditorHelper`s and never draw a gizmo.
+
+The Gizmos button on the viewport's top-right corner, shown while a scene is
+edited or played, opens a menu with a checkbox per kind of the `App` in front,
+or "No gizmos"; a checked kind is drawn for every entity. The choice is the
+editor's `GizmoChoices`, one set for every scene, kept for the session:
+`ComponentGizmosPlugin` (`src/gizmo_choices.rs`) sets each kind to it in every
+edit and play `App`, in front, in a background tab, parked while its game plays,
+or still building, by triggering `SetGizmoAlways`. A preview keeps its own. The
+`gizmos` tool reads and sets the same choices. Without the plugin every kind is
+drawn for the selection.
+
 Right-drag looks around;
 WASD and Q/E move while looking, Shift boosts speed, middle-drag pans, and the
 wheel dollies or adjusts flight speed while looking. F frames the selection;
 Shift-F frames the scene.
 
+## Placing assets
+
+`AssetPlacementPlugin` (`placement.rs`) puts an asset in the open scene as an
+entity. What the entity is made of is the asset kind's `PlaceableAsset::place`,
+which the game's recipe registers with `register_placeable_asset`; the engine
+registers `Scene`, whose entity becomes a `SceneLink` to the scene: its nodes
+spawn under the entity as linked nodes and spawn again whenever the scene
+loads again, and saving the scene stores the link and its changes, not the
+nodes. No other kind is registered for now, so a `Mesh` cannot be placed. The editor never names a kind: the plugin
+copies the kinds' names out of the edit `App`'s `PlaceableAssets` into its
+`PlaceableKinds` resource each time a scene opens, so a panel or a tool can ask
+`PlaceableKinds::contains(kind)` or walk `PlaceableKinds::iter()` with no scene
+as the edit target. Before any scene has opened it is empty.
+
+Placing is the `PlaceAsset` signal of the scene tools, described under
+[Saving](#saving) with the other edit signals, and its outcome is
+`Hosted<AssetPlaced>`. The `place_asset` tool triggers it with
+`PlaceAt::Position`, or with `PlaceAt::Origin`, the parent's origin, when the
+call gives no position, and answers when the `AssetPlaced` that carries the
+request it triggered arrives; another placement of the same asset ending in the
+meantime does not answer the call. The plugin adds
+the tool in its `finish`, when the `App` has `McpPlugin`, so the editor without
+`--mcp` has the resource and no tool.
+
+A person places an asset by dragging its tile from the Asset Browser into the
+viewport, with the [drag and drop](#drag-and-drop) widget. The payload is
+`AssetDrag { id }`. The plugin gives a tile a `DragSource<AssetDrag>`, labelled
+with the name the tile shows, when the asset's kind is in `PlaceableKinds`, so a
+mesh's or a texture's tile does not drag and the tiles of a project opened before its scene
+become draggable once the scene opens. It finds the tiles by `ContentAsset
+{ id }`, the component the content browser puts on every item that shows an
+asset. While the front document's game is starting or playing no tile is a
+drag source. Every `ViewportRegion` is a `DropTarget<AssetDrag>`: a drop
+triggers `PlaceAsset` under the scene root with `PlaceAt::Pointer`, the drop
+position less the region's laid-out top-left corner, both in logical pixels.
+The entity lands where `PlaceAt::Pointer` says, is selected, and a refusal
+shows in Chatter as any refused edit does. With no scene as the edit target the
+drop does nothing. The drop and `place_asset` trigger the same signal, so an
+agent places by `position` what a person places by pointer.
+
+The press of a drag starts in the browser and never reaches the edit `App`,
+which sees only the cursor moving over the picture and the release. The gizmo
+starts a drag only on a press and picking selects only on a release that
+follows a press on the picture, so the drop moves and selects nothing but the
+entity it places; a gizmo handle may highlight under the dragged label.
+
 ## Custom property editors
 
-The inspector edits live component values through typed `PropertyEditor<T>`
+The inspector edits live reflected values, a scene's components and the
+[values a document holds](#document-values), through typed `PropertyEditor<T>`
 adapters. `concerto-reflect` provides structural access; adapters own snapshots,
 widgets, and validated edits. A registered editor can handle a whole struct or
 an opaque type, and can replace any built-in editor, including the numeric
@@ -554,6 +1176,11 @@ owned by property-row entities. Component cards carry
 Unchanged components reuse their snapshots;
 component changes, selection changes, and editor registration changes refresh
 them. Widget input and focused edit buffers continue updating every frame.
+
+The inspector's cards sit in a column at most 760 px wide, centred in the
+panel, so a panel wider than that, as on a form tab, leaves margins beside
+them. A card's label column is 38% of the card's width, no less than 96 px and
+no more than 260 px, so a wider panel gives labels more room.
 
 Registration is split between the two `App`s. A component states what it
 supports on its derive, `#[derive(Reflect)] #[reflect(Component, Default)]`,
@@ -584,10 +1211,124 @@ again. An editor whose node depends on the snapshot must return `false` from
 `follows_snapshot`, so a value change rebuilds the row.
 
 A widget queues its edit on `PropertyCommits`. The inspector checks it against
-the widget registry and sends it to the scene, where the tools write the value.
+the widget registry and sends it to the world the value lives in. A component's
+edit goes to the scene, where the tools write the value.
 `PropertyEditor::apply` runs there, and its `EditContext` holds the scene
 world's `AssetServer` and `AssetRegistry`, which `AssetManagerPlugin` provides.
 A scene `App` without either refuses every edit with `EditError::MissingAssets`.
+A document's value is edited in the editor's world, as the next section says.
+
+### Document values
+
+The inspector shows and edits anything that implements `PropertyTarget`: a
+reflected value with a name, a `TargetWorld` saying where it lives, and ways to
+read and edit it. Entity cards use `ComponentTarget`. An asset editor shows a
+value its document holds with `DocumentValue<C>`, which reaches into `C`, a
+component on the document in the editor's world, and lists its targets in the
+`InspectedValues` component on the document:
+
+```rust,ignore
+fn build(&self, editor: &mut EntityCommandQueue) {
+    let document = editor.entity();
+    editor.insert((
+        PaletteDocument { palette: None },
+        InspectedValues(vec![Arc::new(DocumentValue::<PaletteDocument> {
+            name: "Palette".into(),
+            document,
+            read: Box::new(|held| held.palette.as_ref().map(|p| p as &dyn Reflect)),
+            edit: Box::new(|held| held.palette.as_mut().map(|p| p as &mut dyn Reflect)),
+        })]),
+    ));
+}
+```
+
+While that document is the active one, the panel shows one card per target,
+titled by its name, with no name field, add-component row or ⋯ menu, since those
+belong to entity cards. `read` or `edit` returning `None` means the value is
+gone: its card has no rows and an edit is refused with
+`EditError::MissingTarget`. A target that checks an edit before it keeps it
+implements `PropertyTarget::try_edit` as well, which answers the reason for a
+refusal; the reason is the edit's `PropertyRefusal`, the document's status and
+`set_property`'s reply. The workspace shows the inspector with the document's
+`inspector` host above it, and the host neither grows nor shrinks while
+`InspectedValues` is there, so the two do not split the card in half and what
+the host holds is not clipped. `InspectedValues` is replaced, never removed,
+because a removal is not noticed; an empty list shows no cards.
+
+A document that publishes several values can show one at a time by adding a
+`ShownValue` holding one of its targets: the panel then shows only that value's
+card, and inserting another `ShownValue` swaps it. Every value in
+`InspectedValues` stays reachable by name over MCP. `ShownValue` is replaced,
+never removed, for the same reason.
+
+A value's types are the ones registered in the document's preview `App` when it
+has one, because a game's types are registered there, and otherwise in the
+editor's `App`. `HostedApp::type_registry` gives the preview's. Register the
+value's type with `register_type` in the `App`s it is read through: what the
+registry does not hold reads "Unsupported type", and MCP refuses to write JSON
+into a value whose root type is missing. A struct with no fields is not
+unsupported: it has no rows, so its card is its title alone.
+
+A value has no change detection and is not polled. It is read when an edit lands,
+when `ActiveEditor`, `InspectedValues`, `ShownValue` or the editor registrations
+change, when a preview arrives, and on the public signal `RefreshInspector`.
+Anything else that writes the value, such as a load replacing it, triggers
+`RefreshInspector` itself; the cost of forgetting is a panel that stays stale
+until the next edit.
+Targets that are the same `Arc`s keep their cards and their rows, so a focused
+field keeps its text. Different targets rebuild the cards and reset the scroll.
+
+A value's edit runs in the editor's world, and its `EditContext` holds the
+editor's `AssetServer` and `AssetRegistry`; without either every edit is refused
+with `EditError::MissingAssets`. That is a limit on handles: the editor's server
+knows only what its own `App` registered, which is `RenderPlugin`'s `Mesh`,
+`Texture` and `Skeleton` and whatever an extension adds with `register_asset`.
+So a value holding another handle type cannot take a picker edit, even when its
+types come from a preview that knows the asset. An extension that edits
+references to a kind the editor must not load calls
+`AssetServer::name_asset::<A>()` instead: a handle to `A` is then written weak,
+naming the asset and loading nothing, as the graph tab does for
+`AnimationGraph`. A commit queued before the
+editor registrations changed is refused and reported, where a component's is
+only logged. The outcome is one `Hosted<PropertyCommitted>`, naming the value's
+document and not the active one,
+so a tab switch cannot credit an edit to the wrong tab. A refusal also sets that
+document's `EditorDocument::status`, which only a scene's chrome shows by itself,
+so an asset editor puts it in one of its own panels. Nothing else happens by
+itself: an asset editor reads the event to insert `Unsaved` and to tell its
+preview.
+
+`PropertyTarget::saved` says whether an edit to the value changes what a save
+of its document writes; it defaults to `true`. A value that only steers what a
+tab shows, such as a preview setting, returns `false`: its edits still report
+`Hosted<PropertyCommitted>`, but do not mark an inspected asset's tab unsaved.
+
+A panel that writes a value by path, rather than through an inspector row,
+triggers the public signal `WriteValue { target, path, json }`. Its listener
+runs the code behind MCP `set_property` on a value, with `path` as `inspect`
+shows it and `json` as `set_property` takes it, so the panel and MCP write
+through one code path. The outcome is reported as `Hosted<PropertyCommitted>`,
+and a refusal, an unknown path included, sets the document's
+`EditorDocument::status`.
+
+A custom editor on a value row must not use `EditWorld`, which skips its system
+while no scene is the edit target. It reaches its document through
+`Res<ActiveEditor>`, because value rows exist only for the front document, and
+closes its menus on a change of `ActiveEditor`, because `Remove<EditTarget>`
+does not fire between value tabs.
+
+### Rows for any value
+
+A panel that edits a reflected value it holds itself, outside any document,
+puts `ReflectRows { value, types }` on one of its UI entities, with
+`ReflectRowsPlugin` registered after `InspectorPlugin`, as `EditorPlugin` does.
+The entity shows a row per property of `value`, as `InspectorRegistry::collect`
+and the registered property editors give them, with the types of `types`, so a
+type the panel's registry holds needs nothing registered on the editor's `App`.
+An edit in a row is written into `value`, so `Changed<ReflectRows>` tells the
+owner. Inserting another `ReflectRows` shows the new value. A value with no rows
+shows "No settings". The edit does not belong to a document: it reports no
+`Hosted<PropertyCommitted>`, and a refused edit is only logged.
 
 ### Enums and options
 
@@ -601,10 +1342,31 @@ picking the active variant changes nothing and leaves the scene saved. An
 and unchecking it sets `None`. The active variant's fields, or the value's when
 an `Option` is `Some`, follow as rows of their own, so a switch that changes
 them rebuilds the card. A row under a tuple field such as `Some`'s `0` takes
-the label of the nearest named field above it, so `CameraEnvironment.ambient`
-shows an "Ambient" checkbox followed by an "Ambient" value row. An editor
-registered for the exact enum or `Option` type with `register_property_editor`
-still takes precedence, and its fields are not shown.
+the label of the nearest named field above it. `CameraEnvironment.fog` shows a
+"Fog" checkbox followed by rows for its fields, Color, Density and Start. An
+editor registered for the exact enum or `Option` type with
+`register_property_editor` still takes precedence, and its fields are not
+shown.
+
+### Lists
+
+A `Vec<T>` field is edited with nothing registered on the editor's `App`.
+`Vec<T>` registers `ReflectList`, and the field's row shows its length and an
+add button, which appends `T::default()`. Each element follows, labelled by its
+index from 0, in one of three shapes. An element with an editor gets that
+editor's row, with a remove button at the end. An element with fields, such as a
+struct, gets a heading with its index and the remove button, followed by a row
+per field. Anything else gets an "Unsupported type" row with a remove button, so
+whatever add creates can be removed; `Vec<u64>` falls here, since there is no
+`u64` editor. Elements cannot be reordered.
+
+Add and remove are property commits, so they mark the scene unsaved. The editor
+has no undo, so a removal stands until the scene is reloaded. A list in a list,
+or in an `Option`, works the same way. Every element is shown, and a list the
+game rewrites stays visible: a change of length rebuilds the card, and new
+values refresh in their rows. An editor registered for the exact `Vec` type with
+`register_property_editor` still takes precedence, and its elements are not
+shown.
 
 ### Colors
 
@@ -630,6 +1392,25 @@ and commits the value it opened with; a click outside it closes it and keeps
 the color. The popup also closes when the selection changes or the scene
 closes.
 
+### Names
+
+A `concerto_name::Name` field is a text field holding its text, with nothing
+registered on the editor's `App`. Submitting the field commits the typed text
+as a `Name`; Escape or moving focus away puts the shown text back without an
+edit. This is the interned name type, not the entity `Name` component, which
+the field above the cards edits.
+
+### Text and numbers
+
+A `String` field is a text field that behaves like a `Name` field: submitting
+commits the typed text, and Escape or moving focus away puts the shown text
+back without an edit. `f32` and `f64` fields are one number field each, `Vec2`
+two and `Vec3` three, each edited on its own. `usize` and `u32` fields take a
+whole number from 0 up, and `i32` fields a whole number of either sign. A
+fraction, a negative count, or a number the field's type cannot hold is
+refused, and the field shows the value again. Nothing is registered on the
+editor's `App` for any of them.
+
 ### Asset handles
 
 `AssetPicker` edits every `AssetHandle<A>` the scene's `AppTypeRegistry` holds,
@@ -645,16 +1426,69 @@ The row names the asset the handle holds, "None" for an empty handle or
 project's assets of that kind. Picking one writes a handle loaded through the
 scene's `AssetServer`, so the viewport shows the new asset at once. The edit is
 refused if the id is not an asset of that kind, or if the scene `App` never
-registered the asset type with `register_asset`. `AssetPickerPlugin` keeps the
+registered the asset type with `register_asset` nor named it with
+`AssetServer::name_asset`. `AssetPickerPlugin` keeps the
 row's text current; `EditorPlugin` adds it. The picker's `edit_to` takes the
 handle's id, so MCP's `set_property` on a handle field picks that asset through
 the same checks.
 
+### Joint names
+
+`JointNameEditor` edits every `concerto_mesh::JointName` field, on a field and
+in a list, with nothing registered on the editor's `App`:
+`InspectorRegistry::default()` registers it and `InspectorPlugin` adds its
+systems. The row is a button naming the joint, which opens a menu of the bones
+in the front document's `DocumentBones`, so it needs no edit target. Without
+bones the button is disabled and reads the stored name in the muted colour. A
+name the skeleton lacks uses the warning colour, an empty name reads `None`,
+and the menu closes when another tab comes to the front. Picking the name
+already set makes no edit. The picker's `edit_to` takes the value.
+
+`DocumentBones(Option<Vec<Name>>)` is a component any document may carry: the
+bones of the skeleton its value names, or `None` while it names none that can
+be read. An asset type names its skeleton by implementing
+`concerto_mesh::SkeletonSource` and writing `#[reflect(SkeletonSource)]`; the
+editor reads the id through `ReflectSkeletonSource` without naming the type.
+The generic tab of an [inspected asset](#inspected-assets) fills its
+`DocumentBones`. An editor of its own fills it however it reads the skeleton,
+as the motion database editor does.
+
+The menu is `name_menu`'s `NameMenu`, opened under a button with
+`open_name_menu`, or at a point in the window with `open_name_menu_at`, as a
+right-click menu is, and closed with `close_menu`; `close_name_menu` closes it
+when another tab comes to the front. An extension crate opens it for names of its own, as the motion database
+editor's channel-type picker does.
+
+### Entity references
+
+`EntityPicker` edits every `SceneEntityRef` field, which is how a component
+names another entity of its scene, as `CharacterLink` names a capsule and a
+skeleton. The row names the referenced entity: its `Name`, or `Entity 42` as the
+hierarchy writes an entity with no name or an empty one. It reads
+`(not in this scene)` when the value is unset or names an entity the menu below
+doesn't offer, the scene root included. The button beside it selects that
+entity and reveals it in the hierarchy.
+
+The row opens a menu with a filter field, `None`, and the entities the
+hierarchy lists for the edit target, indented by depth, without the scene root:
+a scene saves only its root's children, so a reference to the root couldn't be
+saved. Typing keeps the entities whose label contains the text, and their
+ancestors. `None` writes the unset value. A field whose entity was deleted keeps
+naming it and makes saving fail until it is cleared or picked again. While a
+game plays the menu lists the running game's entities, and an edit is lost on
+Stop like any other. `EntityPickerPlugin`, added by `EditorPlugin`, keeps the
+row's text current and closes the menu when its edit target goes. The picker's
+`edit_to` takes the value, so MCP's `set_property` writes an entity reference
+as a live id such as `42v3`, or the unset value, and refuses any other node
+index. The unset value is the node index `18446744073709551615`, `u64::MAX`, as
+`inspect` shows it; a client that reads JSON numbers as doubles must pass it
+through unchanged.
+
 An edit is the widget's own type, so a value alone cannot pass through it.
 `PropertyEditor::edit_to(&value)` returns the edit that sets the field to
 `value`; it still goes through `apply`, with its `EditContext`, so validation
-holds. The built-in editors for `f32`, `f64`, `Vec3`, `Quat` and `bool` and the
-asset picker implement it; `Quat` goes
+holds. The built-in editors for `f32`, `f64`, `usize`, `u32`, `i32`, `Vec2`, `Vec3`, `Quat`, `bool`, `Name` and `String`, the
+asset picker, the entity picker and the joint picker implement it; `Quat` goes
 through the widget's XYZ degrees, so it comes back normalized and equal up to
 rounding. It defaults to `None`, which says the editor offers no value edit. A
 custom editor opts in by implementing it; MCP's `set_property` writes a field
@@ -684,13 +1518,45 @@ Asset editors are separate from property editors. Register the asset with
 `app.register_asset::<T>()`, then use `AssetEditorAppExt`:
 
 ```rust,ignore
-app.register_asset::<Dialogue>();
-app.register_asset_editor::<Dialogue>(DialogueEditor)?;
+app.register_asset::<Palette>();
+app.register_asset_editor::<Palette, PaletteEditor>()?;
 ```
 
+The editor type implements `Default`, which is how the registry builds it.
 Register after `EditorPlugin` installs its registry. Dispatch uses the asset's
 serialized kind (`Asset::name()`), which is what catalogue entries carry.
 Duplicate editor registrations are rejected.
+
+A type that has no source file can be made creatable instead. Implement
+`CreatableAsset`, which lives in `concerto-foundation` so a game crate can
+implement it, to give the value a new asset starts from, and register with
+`register_creatable_asset_editor`:
+
+```rust,ignore
+impl CreatableAsset for Palette {
+    fn new_asset() -> Self {
+        Palette {
+            colors: Vec::new(),
+        }
+    }
+}
+
+app.register_creatable_asset_editor::<Palette, PaletteEditor>()?;
+```
+
+`AssetEditorRegistry::creatable()` lists the creatable kinds in name order,
+each with a `Creator`. `Creator::create(project_root, address, registry)`
+writes a new `.gasset` at the address with a fresh `AssetId` and no import
+provenance, adds it to the registry, and returns its id. Scenes are creatable,
+and a new scene is empty. Registration is refused when `New <kind> 999`, the
+longest name the Asset Browser prefills, is not a valid asset name. Each
+creatable kind gets a row in the Asset Browser's New
+dropdown and in its right-click menu.
+
+`valid_asset_name` holds the name rules: 1 to 64 ASCII letters, digits, spaces,
+`-` and `_`, with no leading or trailing space. The names Windows reserves,
+`CON`, `PRN`, `AUX`, `NUL`, `COM1` to `COM9` and `LPT1` to `LPT9`, are refused
+in any case.
 
 Implement `AssetEditor::build` using its `EntityCommandQueue` to queue the
 editor's components and children. The
@@ -700,22 +1566,48 @@ components. Content browser and Chatter remain shared. Tag additional owned
 roots with `EditorOwned(document)` so closing the editor cleans them up
 recursively. Headless hosts have no UI containers.
 
-The [complete custom asset editor example](examples/custom_asset.rs) loads a
-non-Clone Dialogue asset, builds its own text widget, replaces its contents,
-rejects invalid input without mutation, and registers through the public API.
-Run its headless smoke test with:
+An editor that returns `true` from `AssetEditor::bottom_host`, which is `false`
+unless it says otherwise, also gets `EditorHosts::bottom`: a panel in the
+`Bottom` strip, to the right of the Asset Browser, shown while its document is
+active. It is as high as the strip, and a splitter between it and the Asset
+Browser sets the browser's width, `EditorLayout::browser`; on a tab with no
+bottom host the Asset Browser takes the whole strip. The `left` host stands in
+`Left` in place of the hierarchy, `inspector` in `Right` above the inspector
+panel, and `canvas` in `Centre`. Chatter stays visible on every tab. A Scene
+document gets no `bottom` host.
 
-```sh
-cargo run -p concerto-editor --example custom_asset
-```
+An editor that returns `true` from `AssetEditor::form`, which is `false` unless
+it says otherwise, shows its `InspectedValues` as the tab's main content. Its
+documents get no `canvas` and no `left` host, only `inspector`, and `bottom` if
+the editor asks for one. On its tabs the `Centre` is hidden, `Left` collapses,
+and `Right` fills the row with no splitter, so `status` reports `left hidden`
+and `right fill` and `set_panel_size` refuses both; `EditorLayout::right` is
+left as it was for the other tabs. A preview wins: an editor with a preview
+keeps the viewport and its hosts whatever `form` says.
 
-The example uses a synchronous ECS loading system for clarity. Asynchronous
-systems capture the `AssetEntry` in `EditorDocument.pending` when they start;
+The [custom asset example](examples/custom_asset.rs) writes no editor of its
+own. Its game marks a non-Clone `Dialogue { text: String, spin_speed: f32 }`
+as an [inspected asset](#inspected-assets), so the generic tab opens, edits,
+saves and discards it: `text` is a text field and `spin_speed` a number field.
+`cargo run -p concerto-editor --example custom_asset` opens the editor over a
+temporary project holding one empty scene; New lists ExampleDialogue once that
+scene's edit `App` has built. Its smoke test, `tests/editor/asset_editor.rs`, drives a
+hand-built editor `App` with `ProjectPlugin`, `ScenePlugin`,
+`InspectedAssetPlugin` and `ContentPlugin` through the same steps without a
+window: open the project, wait for ExampleDialogue to be creatable, create and
+open one, edit both fields in the inspector, check it is unsaved, save, and
+decode the file.
+
+A custom editor may load in a synchronous ECS system, as the generic tab does.
+Asynchronous systems capture the `AssetEntry` in `EditorDocument.pending` when they start;
 before mutating domain state, use `asset_request_is_current` with it to reject
 cancelled or superseded results. Call `finish_asset_request` with a mutable
 document borrow, the captured `AssetEntry`, and success or an error to update
-the tab's current asset and status. A result for a closed tab has no document to
-land on, and switching project closes every tab. An `AssetEditorCommand::Open`
+the tab's current asset and status. A request still pending in its tab needs
+that call: MCP's `open_asset` waits for it, and times out without it. A call
+waiting on a request that was superseded or whose tab closed times out too. A
+result for a closed tab has no document to land on, and switching project
+closes every tab. An `AssetEditorCommand::Open`
 for an asset that is not in the current project's registry is ignored. Failed
 loads must leave the previous presentation intact. Finishing a replacement does not clear
 `Unsaved`: refuse a replacement that finishes loading while the document is
@@ -729,11 +1621,356 @@ again and leave an error in the document's status. Removing the marker at
 capture means an edit made while a slow save is in flight marks the document
 again and is not lost.
 
+A document that holds its own edits restores them on `DiscardEdits`, which the
+prompt sends when the user chooses Discard. The tab can outlive that choice, since
+the open that asked for it can fail.
+
+A worker thread that a custom editor polls for its result needs frames to be
+polled in, and an agent needs to know it is running: insert `BackgroundWork` on
+the document when it starts and remove it when it ends. `status` reads
+`busy: yes` while any document holds it.
+
 Register custom interaction systems in `Update` after `EditorPlugin`. Workspace
 visibility uses resource change detection and host component changes; a tab
 switch, and a scene opening, being replaced, or closing, release transient
 input. Loading and saving belong to the custom editor.
-Only the Scene editor hosts an `App`. Each open scene has one, with its own
-camera, selection, and tools; only the one on the active tab is stepped, and
-only while the viewport is visible. Hosting is not part of the `AssetEditor`
-contract.
+
+A custom editor can bind a key in a context of its own with
+`ActionMap::bind`, and push that context while its keys apply. Delete, for
+one, is bound to `DeleteEntity` in `ViewportContext` and `TreeContext`, and
+`ActionMap::resolve` searches from the last pushed context. The systems that
+push those two run in `LateUpdate` in the public `EditorContextSet`, each
+frame, so a system that pushes a context over them runs in `LateUpdate`
+`.after(EditorContextSet)`; its key then wins while the pointer is over the
+viewport or focus is in the tree. Read the fired action with
+`EventReader<ActionFired>` and `ActionFired::is`, as the editor reads `Save`.
+
+### Inspected assets
+
+A game marks a reflectable content asset type as inspected with
+`app.register_inspected_asset::<T>()` from its own plugin, where `T` is a
+`CreatableAsset`, a `LoadableAsset` (an empty `impl` when it has no load-time
+work) and `Reflect`. That registers the asset and its type in the game, and
+records what the editor needs to create, decode and save it without naming
+`T`. The editor learns those kinds, and the game's type registry, from each
+scene's edit `App` once it has built: on `SceneOpened`, every inspected kind
+that has no editor yet gets the generic `InspectedAssetEditor` and a row in New.
+A kind that already has an editor keeps it, and one whose `New <kind> 999` is
+not a valid asset name is skipped with a warning. `ProjectTypes` holds the type
+registry of the last scene's edit `App`.
+
+Before the first scene's edit `App` has built, and all along in a project with
+no scene, an inspected kind has no editor: double-clicking one in the Asset
+Browser does nothing, and MCP `open_asset` answers `open_failed`, naming it a
+kind with no editor.
+
+The generic tab is a form: `InspectedAssetEditor` returns `true` from
+`AssetEditor::form`, so the inspector fills the row above the Asset Browser in
+place of the viewport, with no preview and no bottom host, and
+it closes like any other tab. A custom editor that calls
+`InspectedAssetEditor::build` from its own `build` is its own `AssetEditor` and
+is a form only if it returns `true` itself. Its document carries `InspectedDocument`, which
+holds the kind's record, the value being edited, and the file's bytes as last
+read or saved, and publishes the value as one
+[document value](#document-values) named after the kind. Opening reads the
+file, decodes it and checks that its header carries the asset's id; a file
+that cannot be read or decoded, or holds another asset's id, fails the open
+with the error as the tab's status. The value's types come from
+`DocumentTypes`, which the tab takes from `ProjectTypes`, so the inspector
+walks the game's lists, options and enums. A document whose values are in a
+registry other than its hosted `App`'s or the editor's carries
+`DocumentTypes`, which `DocumentValue` reads first.
+
+An edit through the inspector marks the tab unsaved. Ctrl+S, or the
+unsaved-changes prompt's Save, writes the value over the file it was opened
+from, keeps the file's id, reads the written file back as what was last
+saved, and ends in `SceneSaved`, with "Saved <address>" as the status until
+the next edit clears it. A failed save ends in `SaveFailed`, shows why, and leaves the tab unsaved.
+Discard decodes the file as last read or saved back into the value. There is
+no undo. A value whose type carries `ReflectSkeletonSource` gives the document
+the bones of the skeleton it names in `DocumentBones`, read again whenever an
+edit, a save or a discard changes the skeleton it names, so its `JointName`
+fields pick from them; see [Joint names](#joint-names). MCP works on the tab as on any document value: `open_asset`,
+`inspect`, `set_property`, `list_push`, `list_remove` and `save`.
+
+`InspectedAssetPlugin` marks edits unsaved, saves, loads and reads the skeleton
+in the `Update` set `InspectedAssetSystems`; a system that reads an inspected
+document's state for the frame runs after it. A custom editor for an inspected
+kind, registered with `register_creatable_asset_editor`, wins over the generic
+one and builds on it: its `build` calls
+`InspectedAssetEditor { record: InspectedAsset::of::<T>() }.build(editor)`,
+then inserts what it adds and replaces what it extends, such as
+`InspectedValues` with the kind's value followed by values of its own. The
+plugin's systems then open, mark unsaved, save and discard the tab unchanged.
+
+### Previews
+
+The Scene editor hosts an `App` for each open scene, with its own camera,
+selection, and tools. Any other asset editor can host one too, a preview, by
+returning a `PreviewSpec` from `AssetEditor::preview`, which is `None` unless
+it says otherwise:
+
+```rust,ignore
+impl AssetEditor for PaletteEditor {
+    fn preview(&self) -> Option<PreviewSpec> {
+        Some(PreviewSpec { build: palette_preview })
+    }
+}
+
+fn palette_preview(app: &mut App) {
+    app.add_system(Update, draw_swatches.at_preview_time())
+        .add_listener(set_swatches.at_preview_time());
+}
+```
+
+When a document of that kind opens, the editor begins a preview `App`,
+`App::for_previewing()`, built from the recipe passed to `EditorPlugin`, then
+`PreviewPlugin`, then `build`. It runs only the systems and listeners marked
+`.at_edit_time()` or `.at_preview_time()`, so it plays animation but spawns no
+startup scene and runs none of the game's unmarked systems. It is built
+asynchronously, like a scene's, and gets the project's content and registry.
+A build that panics sets the document's status to `Preview failed: <message>`,
+and the preview is not built again until the tab is closed and reopened.
+Closing the tab drops the preview. Opening another asset of the same kind
+reuses the document and keeps its preview; reset it through signals when the
+asset changes.
+
+`PreviewPlugin` gives every preview an orbit camera around the origin
+(left-drag orbits, the wheel zooms, middle-drag pans), the world grid when the
+recipe has a renderer, one directional light, and the default
+`CameraEnvironment`. Only its camera draws, through `ExclusiveCamera`, so a
+camera the preview spawns, inside a character scene for instance, does not.
+None of the scene tools are added.
+
+The preview shows in the shared viewport, which stands in for the document's
+`canvas` host: a previewing document gets `left` and `inspector` hosts and no
+`canvas`. Build the editor's own controls in those two hosts, and in `bottom`
+when the editor asks for it; the hierarchy panel is hidden on a preview tab, as
+on any custom editor's tab, and so is the inspector panel unless the document
+has `InspectedValues`. A preview carries only `ViewportTarget`, which the viewport shows, routes input
+to, and steps, and never `EditTarget`, which `EditWorld<T>` and
+`EditWorldSignals` read. A preview is stepped only while its tab is in front
+and the viewport is shown; a preview in the background is frozen.
+
+Drive the preview with the `PreviewSignals` system parameter:
+`previews.trigger(document, signal)` queues the signal, and it is triggered in
+the preview's world in `First`, before the preview's next step. A signal sent
+before the preview is built waits for it; one for a closed document, a failed
+preview, or a document with no preview is dropped. Read back through the
+preview's events: call `forward_hosted_event::<E>()` before the editor `App`
+finishes building, and read `EventReader<Hosted<E>>`, whose `document` says
+which preview wrote it.
+
+### The clip, rig and graph editors
+
+The editors of an `AnimationClip`, of a `RetargetRig` and of an
+`AnimationGraph` are in the crate
+[`concerto-animation-editor`](../animation-editor/README.md), which a game lists
+in its `Cargo.toml`. The clip tab plays a clip on its skeleton. The rig tab
+inspects a rig beside a second rig and a clip, with both characters side by
+side in its preview. Both play through the crate's transport widget, a play,
+step, loop and speed row and a timeline over the document's `ClipTransport`,
+public for any tab whose preview plays a clip. The graph tab shows a graph's
+nodes on a [graph canvas](#the-graph-canvas), where they are added, wired,
+inspected and saved, and plays the graph in view on a character in its preview,
+at the parameters set in the tab. In a game that doesn't list the crate a clip or a graph
+has no editor, so opening one opens no tab, and a rig opens in the generic
+inspector.
+
+### The texture tab
+
+The editor of a `Texture` is in the crate
+[`concerto-texture-editor`](../texture-editor/README.md), which a game lists
+in its `Cargo.toml`. The tab previews the texture's derived levels, as the GPU
+samples them, under a line giving their size, format, level count and memory,
+and edits its compression settings in the inspector; a save keeps the source and
+reloads the texture in open scenes. In a game that doesn't list the crate a
+texture has no editor, so opening one opens no tab.
+
+### The timeline
+
+`concerto_editor::timeline::Timeline` is a component on a UI node, which
+`TimelinePlugin` turns into a readout over a ruler, a track, a marker lane and
+track rows.
+The node's owner sizes it and writes its `duration`, `rate`, `time`,
+`selection`, `selectable`, `markers`, `selected_marker` and `tracks`; the
+widget never writes them. `Timeline` has no builders: an owner compares what it
+wants with what is shown each frame and writes only what differs, field by
+field when a field such as `tracks` is costly to clone.
+
+- Pressing or dragging on the ruler sends `TimelineScrubbed { time }` to the
+  `Timeline` entity. The time snaps to a frame when there is a rate.
+- With `selectable` set, a drag on the track sends
+  `TimelineSelected { range: Some((first, last)) }`, in frames, inclusive,
+  either way round, and a click sends `range: None`. Without a rate there are
+  no frames, so the track selects nothing. With `selectable` false the track
+  never sends `TimelineSelected` and the selection band stays hidden.
+- The marker lane sits under the track and is hidden while `markers` is
+  empty. Each `TimelineMarker { time, label, locked }` is a line with its label
+  beside it, in the accent colour, the muted text colour when `locked`, and the
+  selection colour when its index is `selected_marker`. Markers at the same
+  time stack one row each, and the lane grows to the most rows.
+- Pressing a marker sends `TimelineMarkerSelected { index: Some(index) }`. A
+  click on the track or on the lane outside a marker sends `index: None`, along
+  with `TimelineSelected { range: None }` when the track would send it.
+- Dragging an unlocked marker sends `TimelineMarkerMoved { index, time }`, the
+  time under the pointer snapped to a frame when there is a rate. A locked
+  marker sends nothing when dragged.
+- Each `TimelineTrack { label, warning, keys }` in `tracks` is a read-only row
+  under the marker lane, in a scroll area that takes the wheel and fills the
+  space left below the lane. A row draws a tick at each key, and keys within
+  3 px of the one before join into a bar, so a clip keyed on every frame draws
+  one bar. Rows take no clicks.
+- While `tracks` is not empty, a label column runs down the left of every
+  band: the marker lane's reads `Events` and each row's its `label`, in the
+  warning colour when `warning` is set. The ruler, track, lane, rows and head
+  all start after the column and stop short of the scrollbar, so times line
+  up, and the track shrinks to one row's height. With no tracks there is no
+  column and the track fills the space under the ruler.
+
+The lane is rebuilt only when the markers' labels or lock flags change; a
+moved or newly selected marker keeps its node. The rows are rebuilt only when
+`tracks` or the ruler's width change. The head is drawn in an overlay
+over every band, so it crosses the lane.
+
+Put the listeners for these signals on the `Timeline` entity, and write back
+what they decide: a `Timeline` nobody writes to does not move, and a marker
+nobody moves stays where it was. `frame_at`,
+`time_of_frame` and `frame_count` are the widget's conversions. Ticks keep at
+least 64 px between labels. There is no zoom.
+
+### The graph canvas
+
+`concerto_editor::graph_canvas::GraphCanvas` is a component on a UI node, which
+`GraphCanvasPlugin` turns into a canvas of boxes joined by links. The node's
+owner sizes it and writes its `nodes`, `links`, `mode` and `selection`; the
+widget never writes them. Every gesture is a signal sent to the `GraphCanvas`
+entity, and a canvas nobody answers changes nothing.
+
+- A `CanvasNode::new(id, title)` is a box, 224 px wide, with its title on the
+  first row. `with_subtitle` adds a muted second row, `with_input(label)` adds
+  one input pin with its label, `with_output()` gives it an output pin,
+  `with_badge` puts a short readout at the right of the title row, and
+  `with_emphasis` outlines it: `CanvasEmphasis::Active` in the theme's `active`
+  colour, which is not the accent a selection is drawn in, `Warning` in the
+  warning colour. The `id` is a `CanvasNodeId`, a
+  `u32` the owner chooses; links, the selection and the signals name a node by
+  it. An owner may rewrite a badge and a subtitle on every frame: they change
+  in place, and under `--mcp` a change of either does not keep the editor
+  busy.
+- A `CanvasLink::new(from, to)` runs out of `from` and into `to`. `with_slot`
+  names the input pin of `to` it ends on, `with_label` writes a label beside
+  it, and `with_emphasis` colours it as it does a node. A link
+  whose `from` or `to` is no node's id is not drawn. A link is named by its
+  index in `links`.
+- `mode` is a `CanvasMode`. In `Flow` a node shows its pins, an input per row
+  down its left side and the output at the right of its title row, and a link
+  runs from an output pin to the input pin of its slot. In `Diagram` no pin is
+  drawn, `inputs` and `output` are ignored, and a link is an arrow from box to
+  box.
+- `selection` is an `Option<CanvasTarget>`, `Node(id)` or `Link(index)`, drawn
+  in the accent colour.
+
+`GraphCanvas::new(mode)`, `with_node` and `with_link` build one. An owner
+compares what it wants with what is shown and writes only when they differ.
+
+- Pressing a node or a link sends `CanvasSelected { target: Some(..) }`; a
+  click on empty space sends `target: None`. Pressing a pin selects nothing.
+- A double click on a node, or Enter with a node selected, sends
+  `CanvasActivated { node }`.
+- In `Flow`, a drag from an output pin that ends on an input pin of another
+  node sends `CanvasConnected { from, to, slot: Some(slot) }`. In `Diagram`, a
+  drag from one box that ends on another sends it with `slot: None`. A line
+  follows the pointer during the drag. A drag that ends on empty space sends
+  `CanvasLinkDropped { from, at }`, `at` being the pointer's position in the
+  window, and one that ends anywhere else, its own node included, sends
+  nothing.
+- Delete with something selected sends `CanvasDeleted { target }`.
+- A right click sends `CanvasMenuRequested { at, on }`: `at` is the pointer's
+  position in the window, and `on` is a `CanvasPart`, one of `Node(id)`,
+  `Input { node, slot }`, `Output(id)`, `Link(index)` or `Empty`.
+
+A pin is hit within 7 px of its centre and a link within 4 px of its line; a
+pin wins over the node it sits on, and a node over a link behind it. Delete and
+Enter are the actions `DeleteCanvasSelection` and `ActivateCanvasSelection`,
+bound in `CanvasContext`, which is pushed after `EditorContextSet` while the
+pointer is over a canvas or one has keyboard focus, and not while the
+unsaved-changes prompt or the import dialog is open. They go to the canvas
+under the pointer, or else the focused one.
+
+The widget owns the view. A drag with the middle button pans it, without
+limit, and sending `FrameCanvasNode { node }` to the canvas scrolls that node
+into view, 24 px inside the edge, once the canvas has been laid out. There is
+no zoom.
+
+Where things sit is `graph_canvas::layout::layout(nodes, links, mode)`, a pure
+function that returns a `CanvasLayout`: a `NodeBox` per node with its
+rectangle and pin centres, a `LinkRoute` per link, and the content's size.
+`CanvasLayout::part_at(point)` is the hit test.
+
+- `Flow`: a node that is no link's `from` is a root, and each root is a tree
+  growing leftward from it: a node's inputs are one column to its left,
+  stacked top to bottom by `slot`, each with its own subtree, and the node is
+  centred on them. Roots stack top to bottom in node order, with the deepest
+  tree's leaves in the first column. A node a link would place twice, as a
+  loop does, stays where it was first placed.
+- `Diagram`: a node's column is its distance from the first node along links,
+  in the direction they point. Nodes stack in node order within a column, and
+  those no path reaches share a last column.
+
+A link between neighbouring columns is three thin boxes: out of its start, up
+or down, and into its end. In
+`Diagram` it ends in an arrowhead, the `caret-right` or `caret-left` glyph. A
+link to a later column leaves the right side of its box a third of the way
+down and enters the left side at the same height; a link to an earlier column
+leaves the left side two thirds of the way down and enters the right side
+there. A link within a column, or from a node to itself, leaves the right side
+at the upper height and comes back into the right side at the lower one. Two
+links between the same pair in opposite directions so differ in height at
+both ends and in where they turn. Columns of a diagram are 200 px apart, which
+leaves room for the labels: a link to a later column has its label over its
+last run, before the arrowhead, a link to an earlier column under its last
+run, after the arrowhead, and a link within a column beside its vertical run.
+Labels of links that end at the same place stack, in link order, away from the
+line. A link that spans more than one column goes round the boxes between: it
+turns 60 px out of its start, runs along a lane under the lowest box of the
+columns it passes, and comes up to its end, five boxes in all.
+`LinkRoute::detour` is that turn and lane, and `segments()` answers three runs
+or five.
+
+The boxes are rebuilt only when the layout could change: the mode, a node's
+id, title, pins or having a subtitle, or a link's ends, slot or label. A
+changed selection, emphasis, badge or subtitle text is written to the nodes
+that are there.
+
+### Drag and drop
+
+`concerto_editor::drag_drop` carries a value from one UI node to another under
+the left button. `DragDropPlugin` draws the label and cancels a drag; a payload
+type `P`, any `Clone + Send + Sync + 'static` value, is registered once with
+`app.add_drag_payload::<P>()` (`DragDropAppExt`), and a second call for the
+same `P` does nothing.
+
+- `DragSource<P> { payload, label }`, built with `DragSource::new(payload,
+  label)`, on an `Interactable` node makes it draggable. It can be inserted or
+  removed at any time: the widget puts its own `UIDrag` and `UIPointerUp`
+  listeners on the node when the component appears, with the payload and label
+  as they were then, and takes them off when it goes. The node keeps its click
+  and double-click listeners, but a `UIDrag` or `UIPointerUp` listener of its
+  own would be replaced.
+- `DropTarget<P>`, built with `DropTarget::new()`, marks a node that takes a
+  `P`. The drop goes to the nearest target among the hovered node and its
+  ancestors, so the target or a node inside it must be `Interactable`.
+- `Dropped<P> { payload, position }` is sent to that target when the button is
+  released over it, with the pointer position in logical pixels from the
+  window's top-left corner. Put the listener on the target.
+
+A press becomes a drag once the pointer is `DRAG_THRESHOLD`, 4 px, from where
+it went down, the distance at which the UI stops treating the release as a
+click, so a press that does not move still clicks. From then the label follows
+the cursor on a layer above everything else, outlined in the accent colour
+over a target and muted anywhere else. It is not `Interactable`, so it never
+becomes the hovered node. Releasing anywhere but over a target sends nothing.
+Esc cancels the drag, and it stays cancelled until the button is released. A
+drag also ends when its source is despawned or loses its `DragSource<P>`, or
+when the press is taken from the source some other way.

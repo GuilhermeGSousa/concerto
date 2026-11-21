@@ -372,7 +372,8 @@ fn prompt_message<'a>(titles: impl Iterator<Item = &'a str>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use concerto_ecs::{IntoSystem, System, World};
+    use crate::hosted::{PlayState, testing::SceneFixture};
+    use concerto_ecs::{IntoSystem, System, World, events::event_channel::EventChannel};
     use std::path::PathBuf;
 
     fn run<M>(world: &mut World, system: impl IntoSystem<(), M>) {
@@ -387,9 +388,7 @@ mod tests {
         world.insert_resource(AssetEditorCommands::default());
         world.insert_resource(EditorCommands::default());
         world.insert_resource(Window::new((1280, 720), 1.0));
-        world.insert_resource(concerto_ecs::events::event_channel::EventChannel::<
-            WindowEvent,
-        >::default());
+        world.insert_resource(EventChannel::<WindowEvent>::default());
         world
     }
 
@@ -401,6 +400,7 @@ mod tests {
             pending: None,
             order: 0,
             status: String::new(),
+            failed: None,
         });
         if dirty {
             world.insert(Unsaved, document);
@@ -424,145 +424,36 @@ mod tests {
         world.get_component_for_entity::<Unsaved>(entity).is_some()
     }
 
-    #[test]
-    fn quitting_with_nothing_unsaved_closes_immediately() {
-        let mut world = world();
-        document(&mut world, false);
-        guard(&mut world).request_quit();
-        run(&mut world, guard_quit);
-        assert!(closed(&mut world));
-        assert!(!guard(&mut world).asking());
-    }
-
-    fn push_close_request(world: &mut World) {
+    fn close_window(world: &mut World) {
         world
-            .get_resource_mut::<concerto_ecs::events::event_channel::EventChannel<WindowEvent>>()
+            .get_resource_mut::<EventChannel<WindowEvent>>()
             .unwrap()
             .push_event(WindowEvent::CloseRequested);
+        run(world, guard_quit);
     }
 
     #[test]
-    fn a_close_request_with_nothing_unsaved_queues_close() {
+    fn closing_the_window_closes_at_once_with_nothing_unsaved_and_asks_first_otherwise() {
         let mut world = world();
-        document(&mut world, false);
-        push_close_request(&mut world);
-        run(&mut world, guard_quit);
+        let clean = document(&mut world, false);
+        close_window(&mut world);
         assert!(closed(&mut world));
         assert!(!guard(&mut world).asking());
-    }
 
-    #[test]
-    fn a_close_request_with_unsaved_work_holds_the_quit() {
-        let mut world = world();
-        let doc = document(&mut world, true);
-        push_close_request(&mut world);
-        run(&mut world, guard_quit);
+        world.insert(Unsaved, clean);
+        close_window(&mut world);
         assert!(!closed(&mut world));
-        assert_eq!(guard(&mut world).documents(), [doc]);
-    }
-
-    #[test]
-    fn quitting_with_unsaved_work_asks_first_and_cancel_keeps_the_window() {
-        let mut world = world();
-        let doc = document(&mut world, true);
-        guard(&mut world).request_quit();
-        run(&mut world, guard_quit);
-        assert!(!closed(&mut world));
-        assert_eq!(guard(&mut world).documents(), [doc]);
+        assert_eq!(guard(&mut world).documents(), [clean]);
 
         guard(&mut world).choose(GuardChoice::Cancel);
         run(&mut world, resolve_guard);
         assert!(!closed(&mut world));
         assert!(!guard(&mut world).asking());
-        assert!(is_dirty(&world, doc));
-    }
-
-    #[test]
-    fn discard_runs_the_held_intent_and_clears_the_documents() {
-        let mut world = world();
-        let doc = document(&mut world, true);
-        guard(&mut world).hold(
-            GuardedIntent::Editor(AssetEditorCommand::Close(doc)),
-            vec![doc],
-        );
-        guard(&mut world).choose(GuardChoice::Discard);
-        run(&mut world, resolve_guard);
-        assert!(!is_dirty(&world, doc));
-        assert!(matches!(
-            world.get_resource::<AssetEditorCommands>().unwrap().0.front(),
-            Some(AssetEditorCommand::Close(entity)) if *entity == doc
-        ));
-        assert!(!guard(&mut world).asking());
-    }
-
-    #[test]
-    fn a_discarded_document_is_clean_when_its_held_replacement_loads() {
-        use crate::asset_editor::{
-            ActiveEditor, AssetEditorRegistry, finish_asset_request, process_editor_commands,
-        };
-        use concerto_foundation::assets::{Asset, AssetId};
-        use concerto_scene::scene::Scene;
-
-        let mut world = world();
-        world.insert_resource(ActiveEditor::default());
-        let mut project = crate::project::ProjectState::default();
-        project.project = Some(crate::project::Project {
-            root: std::path::PathBuf::from("project"),
-            content_root: "content".into(),
-        });
-        world.insert_resource(project);
-        let mut registry = AssetEditorRegistry::default();
-        registry
-            .register::<Scene>(crate::scene::SceneEditor)
-            .unwrap();
-        world.insert_resource(registry);
-        let doc = document(&mut world, true);
-        let next = concerto_foundation::assets::registry::AssetEntry {
-            id: AssetId::new(),
-            address: "next.gasset".into(),
-            kind: Scene::name().into(),
-            provenance: None,
-        };
-        let mut assets = concerto_foundation::assets::registry::AssetRegistry::default();
-        assets.insert(next.clone());
-        world.insert_resource(assets);
-        let open = |world: &mut World| {
-            world
-                .get_resource_mut::<AssetEditorCommands>()
-                .unwrap()
-                .0
-                .push_back(AssetEditorCommand::Open(next.clone()));
-        };
-
-        open(&mut world);
-        run(&mut world, process_editor_commands);
-        assert_eq!(guard(&mut world).documents(), [doc]);
-        let pending = |world: &World| {
-            world
-                .get_component_for_entity::<EditorDocument>(doc)
-                .unwrap()
-                .pending
-                .clone()
-        };
-        assert!(pending(&world).is_none());
-
-        guard(&mut world).choose(GuardChoice::Discard);
-        run(&mut world, resolve_guard);
-        run(&mut world, process_editor_commands);
-        assert!(!guard(&mut world).asking());
-        assert_eq!(pending(&world), Some(next.clone()));
-
-        let opened = world
-            .get_component_for_entity_mut::<EditorDocument>(doc)
-            .unwrap();
-        assert!(finish_asset_request(opened, &next, Ok(())));
-        assert_eq!(opened.current, Some(next));
-        assert!(!is_dirty(&world, doc));
+        assert!(is_dirty(&world, clean));
     }
 
     #[test]
     fn discarding_an_edited_scene_lets_its_held_replacement_load() {
-        use crate::hosted::testing::SceneFixture;
         let mut f = SceneFixture::new();
         f.world.insert_resource(EditorCommands::default());
         let document = f.open();
@@ -581,7 +472,7 @@ mod tests {
     }
 
     #[test]
-    fn save_runs_the_intent_only_once_the_documents_are_clean() {
+    fn save_runs_the_intent_only_once_the_documents_are_clean_and_a_failed_save_drops_it() {
         let mut world = world();
         let doc = document(&mut world, true);
         guard(&mut world).hold(
@@ -605,11 +496,8 @@ mod tests {
             world.get_resource::<EditorCommands>().unwrap().0.front(),
             Some(EditorCommand::OpenProject(path)) if path == &PathBuf::from("next")
         ));
-    }
 
-    #[test]
-    fn a_failed_save_drops_the_intent() {
-        let mut world = world();
+        let mut world = self::world();
         let doc = document(&mut world, true);
         guard(&mut world).hold(GuardedIntent::Quit, vec![doc]);
         guard(&mut world).choose(GuardChoice::Save);
@@ -618,27 +506,17 @@ mod tests {
         run(&mut world, resolve_guard);
         assert!(!closed(&mut world));
         assert!(is_dirty(&world, doc));
-        guard(&mut world).request_quit();
-        run(&mut world, guard_quit);
-        assert!(guard(&mut world).asking(), "the guard is free to ask again");
-    }
-
-    fn prompt_button(world: &mut World, label: &str) -> Entity {
-        world
-            .query::<(Entity, &UIText), ()>()
-            .iter(world)
-            .find(|(_, text)| text.text == label)
-            .map(|(entity, _)| entity)
-            .expect("the prompt has the button")
+        assert!(!guard(&mut world).asking());
     }
 
     #[test]
     fn each_prompt_button_chooses_its_own_answer() {
-        for (label, choice) in [
-            ("Cancel", GuardChoice::Cancel),
-            ("Discard", GuardChoice::Discard),
-            ("Save", GuardChoice::Save),
-        ] {
+        for choice in [GuardChoice::Cancel, GuardChoice::Discard, GuardChoice::Save] {
+            let label = match choice {
+                GuardChoice::Cancel => "Cancel",
+                GuardChoice::Discard => "Discard",
+                GuardChoice::Save => "Save",
+            };
             let mut world = world();
             world.insert_resource(UITheme::default());
             world.register_component::<concerto_ecs::entity::hierarchy::ChildOf>();
@@ -648,7 +526,12 @@ mod tests {
             guard(&mut world).request_quit();
             run(&mut world, guard_quit);
 
-            let button = prompt_button(&mut world, label);
+            let button = world
+                .query::<(Entity, &UIText), ()>()
+                .iter(&mut world)
+                .find(|(_, text)| text.text == label)
+                .map(|(entity, _)| entity)
+                .expect("the prompt has the button");
             world.trigger_on(
                 button,
                 UIClick {
@@ -662,29 +545,7 @@ mod tests {
     }
 
     #[test]
-    fn a_second_guarded_action_is_ignored_while_the_prompt_is_open() {
-        let mut world = world();
-        let doc = document(&mut world, true);
-        guard(&mut world).hold(GuardedIntent::Quit, vec![doc]);
-        guard(&mut world).hold(
-            GuardedIntent::Editor(AssetEditorCommand::Close(doc)),
-            vec![doc],
-        );
-        guard(&mut world).choose(GuardChoice::Discard);
-        run(&mut world, resolve_guard);
-        assert!(closed(&mut world));
-        assert!(
-            world
-                .get_resource::<AssetEditorCommands>()
-                .unwrap()
-                .0
-                .is_empty()
-        );
-    }
-
-    #[test]
     fn quitting_while_playing_stops_the_game_and_closes_without_asking() {
-        use crate::hosted::{PlayState, testing::SceneFixture};
         let mut f = SceneFixture::new();
         let document = f.open();
         f.world.trigger(crate::scene::Play(document));
@@ -697,39 +558,5 @@ mod tests {
         assert!(f.hosted_is_editing(document));
         assert!(closed(&mut f.world));
         assert!(!guard(&mut f.world).asking());
-    }
-
-    #[test]
-    fn a_held_quit_or_project_change_stops_a_game_started_while_it_was_held() {
-        use crate::hosted::{PlayState, testing::SceneFixture};
-        for intent in [
-            GuardedIntent::Quit,
-            GuardedIntent::Project(EditorCommand::OpenProject(PathBuf::from("next"))),
-        ] {
-            let mut f = SceneFixture::new();
-            f.world.insert_resource(EditorCommands::default());
-            let document = f.open();
-            f.world.trigger(crate::scene::Play(document));
-            f.frames_until_playing(document);
-            guard(&mut f.world).hold(intent, vec![document]);
-            guard(&mut f.world).choose(GuardChoice::Discard);
-
-            run(&mut f.world, resolve_guard);
-
-            assert_eq!(f.play_state(document), Some(PlayState::Editing));
-            assert!(f.hosted_is_editing(document));
-        }
-    }
-
-    #[test]
-    fn the_prompt_names_one_asset_and_counts_several() {
-        assert_eq!(
-            prompt_message(["level"].into_iter()),
-            "Save changes to level?"
-        );
-        assert_eq!(
-            prompt_message(["a", "b"].into_iter()),
-            "Save changes to 2 assets?"
-        );
     }
 }

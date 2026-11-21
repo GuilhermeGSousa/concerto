@@ -1,9 +1,10 @@
 //! Camera control as a stack.
 //!
-//! One [`MainCamera`] entity owns the window's render resources for the whole
-//! run. Everything that wants to control the view spawns a [`VirtualCamera`] —
-//! a pose with a priority — and the [`CameraDirector`] stacks them by priority.
-//! Whatever is on top drives the main camera, blending on takeover.
+//! The level holds the real camera, marked [`MainCamera`]; the director spawns
+//! none, and drives the one with the lowest entity index. Everything that wants to
+//! control the view spawns a [`VirtualCamera`] — a pose with a priority — and
+//! the [`CameraDirector`] stacks them by priority. Whatever is on top drives the
+//! main camera, blending on takeover.
 //!
 //! Having the component is being in the stack: a camera enters and leaves by
 //! the component being added and removed. `priority` and `enabled` are read from
@@ -31,11 +32,7 @@ pub mod director;
 pub mod main_camera;
 pub mod virtual_camera;
 
-use concerto_app::{
-    App, Plugin,
-    edit_time::AtEditTime,
-    schedule_groups::{Startup, Update},
-};
+use concerto_app::{App, Plugin, edit_time::AtEditTime, schedule_groups::Update};
 use concerto_ecs::IntoSystemConfig;
 
 pub use director::CameraDirector;
@@ -51,17 +48,106 @@ pub struct CameraDirectorPlugin;
 
 impl Plugin for CameraDirectorPlugin {
     fn build(&self, app: &mut App) {
-        app.insert_resource(CameraDirector::default());
-        app.register_type::<VirtualCamera>();
+        if app.get_resource::<CameraDirector>().is_none() {
+            app.insert_resource(CameraDirector::default());
+        }
+        app.register_type::<VirtualCamera>()
+            .register_type::<MainCamera>();
 
-        app.add_system(Startup, main_camera::spawn_main_camera);
-
+        app.add_system(
+            Update,
+            main_camera::adopt_main_camera.before(director::drive_main_camera),
+        );
         app.add_system(Update, director::drive_main_camera);
         app.add_system(
             Update,
             director::sync_virtual_cameras
                 .before(director::drive_main_camera)
                 .at_edit_time(),
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use concerto_app::{
+        App,
+        main_schedule::MainSchedulePlugin,
+        plugins::{TimePlugin, TransformPlugin},
+    };
+    use concerto_ecs::{Entity, With};
+    use concerto_foundation::transform::{GlobalTransform, Transform};
+    use glam::Vec3;
+
+    use super::{CameraDirector, CameraDirectorPlugin, MainCamera, VirtualCamera};
+
+    fn global(app: &mut App, entity: Entity) -> Vec3 {
+        app.main_mut()
+            .world_mut()
+            .get_component_for_entity::<GlobalTransform>(entity)
+            .unwrap()
+            .translation()
+    }
+
+    fn settle(app: &mut App) {
+        for _ in 0..3 {
+            app.update();
+        }
+    }
+
+    #[test]
+    fn the_director_drives_the_level_main_camera() {
+        let mut app = App::new();
+        app.register_plugin(MainSchedulePlugin)
+            .register_plugin(TimePlugin)
+            .register_plugin(TransformPlugin)
+            .register_plugin(CameraDirectorPlugin);
+        app.finish_plugin_build();
+        app.update();
+        let world = app.main_mut().world_mut();
+        assert_eq!(
+            world
+                .query::<Entity, With<MainCamera>>()
+                .iter(world)
+                .count(),
+            0,
+            "the director spawns no camera"
+        );
+
+        let parent = world.spawn(Transform::from_translation(Vec3::X * 10.0));
+        let driven = world.spawn((MainCamera, Transform::from_translation(Vec3::Z * 5.0)));
+        world.entity_mut(parent).add_child(driven);
+        let other = world.spawn((MainCamera, Transform::from_translation(Vec3::Y)));
+        settle(&mut app);
+        assert_eq!(
+            app.get_resource::<CameraDirector>().unwrap().main_camera(),
+            Some(driven),
+            "the lowest entity index is driven"
+        );
+        assert_eq!(
+            global(&mut app, driven),
+            Vec3::new(10.0, 0.0, 5.0),
+            "with no live virtual camera the authored pose stays"
+        );
+
+        let shot = app.main_mut().world_mut().spawn((
+            VirtualCamera::new(0),
+            Transform::from_translation(Vec3::new(1.0, 2.0, 3.0)),
+        ));
+        settle(&mut app);
+        let taken = global(&mut app, driven);
+        assert!(
+            taken.distance(Vec3::new(1.0, 2.0, 3.0)) < 1e-4,
+            "the parented camera reaches the virtual camera's world pose: {taken}"
+        );
+        assert_eq!(global(&mut app, other), Vec3::Y);
+
+        app.main_mut().world_mut().despawn(shot);
+        settle(&mut app);
+        let held = global(&mut app, driven);
+        assert!(
+            held.distance(Vec3::new(1.0, 2.0, 3.0)) < 1e-4,
+            "the camera stays where the last live camera left it: {held}"
         );
     }
 }

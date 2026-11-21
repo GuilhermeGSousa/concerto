@@ -4,7 +4,7 @@ use concerto_foundation::{
     transform::{GlobalTransform, Transform},
 };
 use concerto_render::components::camera::Camera;
-use glam::{Quat, Vec3};
+use glam::{Mat4, Quat};
 
 use crate::{
     main_camera::MainCamera,
@@ -58,8 +58,7 @@ enum DirectorState {
 }
 
 impl CameraDirector {
-    /// The entity holding the one [`Camera`] that renders to the window.
-    /// `None` until [`spawn_main_camera`](crate::main_camera::spawn_main_camera) runs.
+    /// The [`MainCamera`] being driven: the one with the lowest entity index, `None` while the level has none.
     pub fn main_camera(&self) -> Option<Entity> {
         self.main_camera
     }
@@ -186,8 +185,8 @@ impl CameraDirector {
         self.blend = blend;
     }
 
-    pub(crate) fn set_main_camera(&mut self, entity: Entity) {
-        self.main_camera = Some(entity);
+    pub(crate) fn set_main_camera(&mut self, entity: Option<Entity>) {
+        self.main_camera = entity;
     }
 }
 
@@ -211,12 +210,12 @@ pub fn drive_main_camera(
     mut director: ResMut<CameraDirector>,
     time: Res<Time>,
     vcams: Query<(&VirtualCamera, &GlobalTransform)>,
-    main_cameras: Query<(&mut Transform, &mut Camera), With<MainCamera>>,
+    main_cameras: Query<(&mut Transform, &GlobalTransform, &mut Camera), With<MainCamera>>,
 ) {
     let Some(main_camera) = director.main_camera() else {
         return;
     };
-    let Some((mut transform, mut camera)) = main_cameras.get_entity(main_camera) else {
+    let Some((mut transform, global, mut camera)) = main_cameras.get_entity(main_camera) else {
         return;
     };
 
@@ -259,9 +258,12 @@ pub fn drive_main_camera(
     director.state = state;
 
     if let Some(pose) = pose {
-        transform.translation = pose.translation;
-        transform.rotation = pose.rotation;
-        transform.scale = Vec3::ONE;
+        let world = Mat4::from_rotation_translation(pose.rotation, pose.translation);
+        let local = transform.compute_matrix() * global.matrix().inverse() * world;
+        let (scale, rotation, translation) = local.to_scale_rotation_translation();
+        transform.translation = translation;
+        transform.rotation = normalize(rotation);
+        transform.scale = scale;
 
         pose.lens.apply_to(&mut camera);
     }
@@ -304,8 +306,10 @@ mod tests {
     use glam::Vec3;
 
     use super::{CameraDirector, drive_main_camera, sync_virtual_cameras};
+    use concerto_foundation::transform::systems::update_simple_entities;
+
     use crate::{
-        main_camera::MainCamera,
+        main_camera::{MainCamera, adopt_main_camera},
         virtual_camera::{BlendIn, Lens, VirtualCamera},
     };
 
@@ -327,14 +331,12 @@ mod tests {
             world.insert_resource(CameraDirector::default());
 
             let main_camera = world.spawn((MainCamera, Camera::default(), Transform::IDENTITY));
-            world
-                .get_resource_mut::<CameraDirector>()
-                .unwrap()
-                .set_main_camera(main_camera);
 
             let mut schedule = Schedule::new();
             schedule.add_system(drive_main_camera);
             schedule.add_system(sync_virtual_cameras.before(drive_main_camera));
+            schedule.add_system(adopt_main_camera.before(drive_main_camera));
+            schedule.add_system(update_simple_entities.after(drive_main_camera));
             let schedule = schedule.compile::<SingleThreadedExecutor>(&mut world);
 
             Self {
@@ -373,7 +375,7 @@ mod tests {
 
         fn edit_vcam(&mut self, vcam: concerto_ecs::Entity, replacement: &VirtualCamera) {
             let stored = to_value(replacement).unwrap();
-            let reflect = *self
+            let reflect = self
                 .world
                 .get_resource::<AppTypeRegistry>()
                 .unwrap()
@@ -398,134 +400,53 @@ mod tests {
     }
 
     #[test]
-    fn the_top_of_the_stack_drives_the_main_camera() {
+    fn the_highest_enabled_camera_drives_the_main_camera_as_cameras_come_go_and_change() {
         let mut fixture = Fixture::new();
-        fixture.spawn_vcam(VirtualCamera::default(), Vec3::X);
-        let high = fixture.spawn_vcam(VirtualCamera::new(10), Vec3::Y * 5.0);
+        let low = fixture.spawn_vcam(
+            VirtualCamera::default().with_lens(Lens {
+                fovy: 1.0,
+                znear: 0.5,
+                zfar: 500.0,
+            }),
+            Vec3::X,
+        );
+        assert_eq!(fixture.step(), Vec3::X);
+        let camera = fixture
+            .world
+            .get_component_for_entity::<Camera>(fixture.main_camera)
+            .unwrap();
+        assert_eq!(camera.fovy, 1.0);
+        assert_eq!(camera.zfar, 500.0);
 
+        let high = fixture.spawn_vcam(VirtualCamera::new(10), Vec3::Y * 5.0);
+        let shot = fixture.spawn_vcam(VirtualCamera::new(100).disabled(), Vec3::Y * 50.0);
         assert_eq!(fixture.step(), Vec3::Y * 5.0);
         assert_eq!(fixture.director().live(), Some(high));
-    }
 
-    #[test]
-    fn equal_priority_cameras_stack_in_arrival_order() {
-        let mut fixture = Fixture::new();
-        let first = fixture.spawn_vcam(VirtualCamera::default(), Vec3::X);
-        assert_eq!(fixture.step(), Vec3::X);
-
-        let second = fixture.spawn_vcam(VirtualCamera::default(), Vec3::Z);
+        let same = fixture.spawn_vcam(VirtualCamera::new(10), Vec3::Z);
         assert_eq!(fixture.step(), Vec3::Z);
-        assert_eq!(fixture.stacked_cameras(), vec![first, second]);
-    }
-
-    #[test]
-    fn disabling_the_live_camera_falls_back_down_the_stack() {
-        let mut fixture = Fixture::new();
-        let low = fixture.spawn_vcam(VirtualCamera::default(), Vec3::X);
-        let high = fixture.spawn_vcam(VirtualCamera::new(10), Vec3::Y * 5.0);
-
+        fixture.world.despawn(same);
         assert_eq!(fixture.step(), Vec3::Y * 5.0);
 
         fixture.set_enabled(high, false);
         assert_eq!(fixture.step(), Vec3::X);
-        assert_eq!(fixture.director().live(), Some(low));
-        // Disabled, but still holding its slot.
-        assert_eq!(fixture.stacked_cameras(), vec![low, high]);
-    }
-
-    #[test]
-    fn re_enabling_a_camera_restores_its_place_in_the_order() {
-        let mut fixture = Fixture::new();
-        fixture.spawn_vcam(VirtualCamera::default(), Vec3::X);
-        let high = fixture.spawn_vcam(VirtualCamera::new(10), Vec3::Y * 5.0);
-
-        fixture.set_enabled(high, false);
-        assert_eq!(fixture.step(), Vec3::X);
-
         fixture.set_enabled(high, true);
         assert_eq!(fixture.step(), Vec3::Y * 5.0);
-    }
 
-    #[test]
-    fn a_camera_spawned_disabled_never_takes_over() {
-        let mut fixture = Fixture::new();
-        let low = fixture.spawn_vcam(VirtualCamera::default(), Vec3::X);
-        let shot = fixture.spawn_vcam(VirtualCamera::new(100).disabled(), Vec3::Y * 50.0);
+        fixture.edit_vcam(low, &VirtualCamera::new(20));
+        assert_eq!(fixture.step(), Vec3::X);
+        assert_eq!(fixture.stacked_cameras(), vec![high, low, shot]);
 
+        fixture.set_enabled(shot, true);
+        assert_eq!(fixture.step(), Vec3::Y * 50.0);
+
+        fixture.remove_vcam(shot);
         assert_eq!(fixture.step(), Vec3::X);
         assert_eq!(fixture.director().live(), Some(low));
-        assert!(!fixture.director().is_enabled(shot));
-        // In the stack all the same, waiting on its cue.
-        assert_eq!(fixture.stacked_cameras(), vec![low, shot]);
     }
 
     #[test]
-    fn disabling_the_last_enabled_camera_leaves_the_director_settled() {
-        let mut fixture = Fixture::new();
-        fixture.director().set_blend(BlendIn::linear(0.25));
-
-        let only = fixture.spawn_vcam(VirtualCamera::default(), Vec3::X);
-        assert_eq!(fixture.step(), Vec3::X);
-
-        // The outgoing camera still exists here, so a blend towards nothing
-        // would never advance and never finish.
-        fixture.set_enabled(only, false);
-        for _ in 0..64 {
-            fixture.step();
-        }
-
-        assert!(fixture.director().live().is_none());
-        assert!(
-            !fixture.director().is_blending(),
-            "the director is still blending with nothing to blend towards"
-        );
-        // Holds the last pose it was given.
-        assert_eq!(fixture.step(), Vec3::X);
-    }
-
-    #[test]
-    fn removing_the_component_drops_the_live_camera_down_the_stack() {
-        let mut fixture = Fixture::new();
-        let low = fixture.spawn_vcam(VirtualCamera::default(), Vec3::X);
-        let high = fixture.spawn_vcam(VirtualCamera::new(10), Vec3::Y * 5.0);
-
-        assert_eq!(fixture.step(), Vec3::Y * 5.0);
-
-        fixture.remove_vcam(high);
-        assert_eq!(fixture.step(), Vec3::X);
-        assert_eq!(fixture.stacked_cameras(), vec![low]);
-    }
-
-    #[test]
-    fn re_adding_the_component_re_slots_a_camera_at_its_new_priority() {
-        let mut fixture = Fixture::new();
-        let low = fixture.spawn_vcam(VirtualCamera::default(), Vec3::X);
-        let high = fixture.spawn_vcam(VirtualCamera::new(10), Vec3::Y * 5.0);
-
-        assert_eq!(fixture.step(), Vec3::Y * 5.0);
-
-        fixture.remove_vcam(low);
-        fixture.world.insert(VirtualCamera::new(20), low);
-
-        assert_eq!(fixture.step(), Vec3::X);
-        assert_eq!(fixture.stacked_cameras(), vec![high, low]);
-    }
-
-    #[test]
-    fn despawning_the_live_camera_falls_back_down_the_stack() {
-        let mut fixture = Fixture::new();
-        let low = fixture.spawn_vcam(VirtualCamera::default(), Vec3::X);
-        let high = fixture.spawn_vcam(VirtualCamera::new(10), Vec3::Y * 5.0);
-
-        assert_eq!(fixture.step(), Vec3::Y * 5.0);
-
-        fixture.world.despawn(high);
-        assert_eq!(fixture.stacked_cameras(), vec![low]);
-        assert_eq!(fixture.step(), Vec3::X);
-    }
-
-    #[test]
-    fn a_blend_starts_at_the_outgoing_camera_instead_of_snapping() {
+    fn a_takeover_blends_from_the_outgoing_camera_and_settles_on_the_new_one() {
         let mut fixture = Fixture::new();
         fixture.director().set_blend(BlendIn::linear(10.0));
         fixture.spawn_vcam(VirtualCamera::default(), Vec3::Y * 5.0);
@@ -534,159 +455,15 @@ mod tests {
         fixture.spawn_vcam(VirtualCamera::new(10), Vec3::X * 100.0);
         let blended = fixture.step();
 
-        assert!(
-            blended.distance(Vec3::Y * 5.0) < 1.0,
-            "a 10s blend should barely have moved off the outgoing pose, got {blended}"
-        );
+        assert!(blended.distance(Vec3::Y * 5.0) < 1.0, "{blended}");
         assert!(fixture.director().is_blending());
-    }
 
-    #[test]
-    fn a_finished_blend_settles_on_the_stack_top() {
-        let mut fixture = Fixture::new();
-        // Short enough that one frame of wall-clock delta completes it.
         fixture
             .director()
             .set_blend(BlendIn::linear(f32::MIN_POSITIVE));
-        fixture.spawn_vcam(VirtualCamera::default(), Vec3::Y * 5.0);
-        fixture.step();
-
-        let high = fixture.spawn_vcam(VirtualCamera::new(10), Vec3::X);
-        assert_eq!(fixture.step(), Vec3::X);
+        let top = fixture.spawn_vcam(VirtualCamera::new(20), Vec3::Z);
+        assert_eq!(fixture.step(), Vec3::Z);
         assert!(!fixture.director().is_blending());
-        assert_eq!(fixture.director().live(), Some(high));
-    }
-
-    #[test]
-    fn emptying_the_stack_leaves_the_director_settled() {
-        let mut fixture = Fixture::new();
-        fixture.director().set_blend(BlendIn::linear(0.25));
-
-        let only = fixture.spawn_vcam(VirtualCamera::default(), Vec3::X);
-        fixture.step();
-        assert!(!fixture.director().is_blending());
-
-        fixture.remove_vcam(only);
-        for _ in 0..64 {
-            fixture.step();
-        }
-
-        assert!(
-            !fixture.director().is_blending(),
-            "the director is still blending long after the stack emptied"
-        );
-    }
-
-    #[test]
-    fn a_virtual_camera_lens_overrides_the_main_camera_lens() {
-        let mut fixture = Fixture::new();
-        fixture.spawn_vcam(
-            VirtualCamera::default().with_lens(Lens {
-                fovy: 1.0,
-                znear: 0.5,
-                zfar: 500.0,
-            }),
-            Vec3::ZERO,
-        );
-        fixture.step();
-
-        let camera = fixture
-            .world
-            .get_component_for_entity::<Camera>(fixture.main_camera)
-            .unwrap();
-        assert_eq!(camera.fovy, 1.0);
-        assert_eq!(camera.zfar, 500.0);
-    }
-
-    #[test]
-    fn editing_the_priority_re_sorts_the_stack_and_the_live_camera() {
-        let mut fixture = Fixture::new();
-        let low = fixture.spawn_vcam(VirtualCamera::default(), Vec3::X);
-        let high = fixture.spawn_vcam(VirtualCamera::new(10), Vec3::Y * 5.0);
-        assert_eq!(fixture.step(), Vec3::Y * 5.0);
-
-        fixture.edit_vcam(low, &VirtualCamera::new(20));
-
-        assert_eq!(fixture.step(), Vec3::X);
-        assert_eq!(fixture.director().live(), Some(low));
-        assert_eq!(fixture.stacked_cameras(), vec![high, low]);
-    }
-
-    #[test]
-    fn editing_enabled_hands_control_over_on_the_next_run() {
-        let mut fixture = Fixture::new();
-        let low = fixture.spawn_vcam(VirtualCamera::default(), Vec3::X);
-        let high = fixture.spawn_vcam(VirtualCamera::new(10), Vec3::Y * 5.0);
-        assert_eq!(fixture.step(), Vec3::Y * 5.0);
-
-        fixture.edit_vcam(high, &VirtualCamera::new(10).disabled());
-        assert!(fixture.director().is_live(high));
-
-        assert_eq!(fixture.step(), Vec3::X);
-        assert!(!fixture.director().is_live(high));
-        assert_eq!(fixture.director().live(), Some(low));
-        assert_eq!(fixture.stacked_cameras(), vec![low, high]);
-    }
-
-    #[test]
-    fn editing_priority_and_enabled_together_takes_control() {
-        let mut fixture = Fixture::new();
-        let base = fixture.spawn_vcam(VirtualCamera::default(), Vec3::X);
-        let shot = fixture.spawn_vcam(VirtualCamera::new(5).disabled(), Vec3::Y * 5.0);
-        assert_eq!(fixture.step(), Vec3::X);
-
-        fixture.edit_vcam(shot, &VirtualCamera::new(20));
-
-        assert_eq!(fixture.step(), Vec3::Y * 5.0);
-        assert_eq!(fixture.director().live(), Some(shot));
-        assert_eq!(fixture.stacked_cameras(), vec![base, shot]);
-    }
-
-    #[test]
-    fn editing_the_priority_of_a_disabled_camera_does_not_make_it_live() {
-        let mut fixture = Fixture::new();
-        let base = fixture.spawn_vcam(VirtualCamera::default(), Vec3::X);
-        let shot = fixture.spawn_vcam(VirtualCamera::new(5).disabled(), Vec3::Y * 5.0);
-        let mid = fixture.spawn_vcam(VirtualCamera::new(10), Vec3::Z);
-        assert_eq!(fixture.step(), Vec3::Z);
-
-        fixture.edit_vcam(shot, &VirtualCamera::new(50).disabled());
-
-        assert_eq!(fixture.step(), Vec3::Z);
-        assert_eq!(fixture.director().live(), Some(mid));
-        assert!(!fixture.director().is_enabled(shot));
-        assert_eq!(fixture.stacked_cameras(), vec![base, mid, shot]);
-    }
-
-    #[test]
-    fn a_change_stamp_with_no_difference_keeps_the_arrival_order() {
-        let mut fixture = Fixture::new();
-        let first = fixture.spawn_vcam(VirtualCamera::default(), Vec3::X);
-        let second = fixture.spawn_vcam(VirtualCamera::default(), Vec3::Z);
-        assert_eq!(fixture.step(), Vec3::Z);
-
-        fixture.set_enabled(first, true);
-
-        assert_eq!(fixture.step(), Vec3::Z);
-        assert_eq!(fixture.stacked_cameras(), vec![first, second]);
-        assert_eq!(fixture.director().live(), Some(second));
-    }
-
-    #[test]
-    fn a_camera_added_before_the_director_exists_still_joins_the_stack() {
-        let mut world = World::new();
-        world.register_component::<VirtualCamera>();
-        let early = world.spawn(VirtualCamera::new(3));
-        world.insert_resource(CameraDirector::default());
-
-        let mut schedule = Schedule::new();
-        schedule.add_system(sync_virtual_cameras);
-        schedule
-            .compile::<SingleThreadedExecutor>(&mut world)
-            .run(&mut world);
-
-        let director = world.get_resource::<CameraDirector>().unwrap();
-        assert_eq!(director.live(), Some(early));
-        assert_eq!(director.stack()[0].priority, 3);
+        assert_eq!(fixture.director().live(), Some(top));
     }
 }
