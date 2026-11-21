@@ -94,7 +94,9 @@ namespace
 extern "C"
 {
 
-	JoltRagdollSettings *jolt_ragdoll_settings_create(const JoltRagdollPart *parts, uint32_t count)
+	JoltRagdollSettings *jolt_ragdoll_settings_create(const JoltRagdollPart *parts,
+													  uint32_t count,
+													  float max_linear_velocity)
 	{
 		jolt_global_init();
 		if (count == 0)
@@ -124,6 +126,7 @@ extern "C"
 			part.mObjectLayer = Layers::MOVING;
 			part.mOverrideMassProperties = JPH::EOverrideMassProperties::CalculateInertia;
 			part.mMassPropertiesOverride.mMass = source.mass;
+			part.mMaxLinearVelocity = max_linear_velocity;
 
 			if (source.parent < 0)
 				continue;

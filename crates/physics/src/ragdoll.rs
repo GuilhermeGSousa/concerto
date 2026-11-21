@@ -230,14 +230,30 @@ impl PartSettings {
 }
 
 /// The parts of one ragdoll as plain data, built into a [`BuiltRagdoll`] before use.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct RagdollSettings {
     pub parts: Vec<PartSettings>,
+    /// The fastest any part may move, in m/s; a part hit harder is slowed to it.
+    pub max_speed: f32,
+}
+
+impl Default for RagdollSettings {
+    fn default() -> Self {
+        Self {
+            parts: Vec::new(),
+            max_speed: 50.0,
+        }
+    }
 }
 
 impl RagdollSettings {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn with_max_speed(mut self, max_speed: f32) -> Self {
+        self.max_speed = max_speed;
+        self
     }
 
     pub fn with_part(mut self, part: PartSettings) -> Self {

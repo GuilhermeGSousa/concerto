@@ -36,6 +36,9 @@ Performance guarantees, such as "an idle frame lays nothing out", are
 cargo bench -p concerto-benches --features run
 ```
 
+The `ragdoll` benchmark measures one fixed step with 1, 8 and 32 reference
+humanoids, limp, kinematic and powered.
+
 Benchmarks do not run in CI, and without the `run` feature the crate builds
 without `criterion` and skips them. Run them by hand before and after a change
 that could slow the code they measure. Production types carry no `#[cfg(test)]` fields,

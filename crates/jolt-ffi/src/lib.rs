@@ -429,10 +429,11 @@ extern "C" {
         position: *const f32,
     );
 
-    /// Builds ragdoll settings from `count` parts, or returns null when they are invalid.
+    /// Builds ragdoll settings from `count` parts, none of which ever moves faster than `max_linear_velocity`, or returns null when they are invalid.
     pub fn jolt_ragdoll_settings_create(
         parts: *const JoltRagdollPart,
         count: u32,
+        max_linear_velocity: f32,
     ) -> *mut JoltRagdollSettings;
 
     pub fn jolt_ragdoll_settings_destroy(settings: *mut JoltRagdollSettings);
