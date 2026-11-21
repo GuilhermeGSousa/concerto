@@ -14,7 +14,9 @@ use concerto_physics::plugin::PhysicsPlugin;
 use concerto_physics::query::{QueryFilter, RagdollQuery};
 use concerto_physics::ragdoll::{BodyPose, RagdollId};
 use concerto_physics::rigid_body::{AllowedDofs, RigidBody};
-use concerto_ragdoll::testing::{SpawnedHumanoid, reference_humanoid, spawn_humanoid};
+use concerto_ragdoll::testing::{
+    SpawnedHumanoid, humanoid_skeleton, reference_humanoid, spawn_humanoid,
+};
 use concerto_ragdoll::{CharacterRagdoll, RagdollBody, RagdollPlugin};
 use glam::{Quat, Vec3};
 
@@ -178,4 +180,172 @@ fn a_characters_ragdoll_follows_its_bones_names_the_bone_a_ray_hits_and_leaves_w
             .is_none(),
         "despawning the character should leave no bodies behind"
     );
+}
+
+fn pose_at_rest(app: &mut App, humanoid: &SpawnedHumanoid, root: Vec3) {
+    let rest = humanoid_skeleton();
+    let world = app.main_mut().world_mut();
+    for (bone, local) in humanoid.bones.iter().zip(rest.rest_pose.iter()) {
+        let transform = world
+            .get_component_for_entity_mut::<Transform>(*bone)
+            .unwrap();
+        transform.translation = local.translation;
+        transform.rotation = local.rotation;
+    }
+    world
+        .get_component_for_entity_mut::<Transform>(humanoid.skeleton)
+        .unwrap()
+        .translation = root;
+}
+
+fn character(app: &mut App, humanoid: &SpawnedHumanoid) -> CharacterRagdoll {
+    app.main()
+        .world()
+        .get_component_for_entity::<CharacterRagdoll>(humanoid.skeleton)
+        .unwrap()
+        .clone()
+}
+
+fn edit(app: &mut App, humanoid: &SpawnedHumanoid, change: impl FnOnce(&mut CharacterRagdoll)) {
+    change(
+        app.main_mut()
+            .world_mut()
+            .get_component_for_entity_mut::<CharacterRagdoll>(humanoid.skeleton)
+            .unwrap(),
+    );
+}
+
+#[test]
+fn a_walking_character_gone_limp_keeps_its_speed_falls_to_rest_and_is_drawn_by_weight() {
+    let mut app = App::new();
+    app.register_plugin(MainSchedulePlugin)
+        .register_plugin(TimePlugin)
+        .register_plugin(AssetManagerPlugin)
+        .register_plugin(TransformPlugin)
+        .register_plugin(PhysicsPlugin)
+        .register_plugin(RagdollPlugin);
+    app.finish_plugin_build();
+    let server = app.get_resource::<AssetServer>().unwrap().clone();
+    let reference = reference_humanoid();
+    let skeleton = server.add(reference.skeleton);
+    let mut asset = reference.ragdoll;
+    asset.skeleton = skeleton.clone();
+    let asset = server.add(asset);
+    app.update();
+    let world = app.main_mut().world_mut();
+    world.spawn((
+        Collider::cuboid(50.0, 0.5, 50.0),
+        Transform::from_translation(Vec3::new(0.0, -0.5, 0.0)),
+    ));
+    let humanoid = spawn_humanoid(world, skeleton, Transform::default());
+    world.insert(CharacterRagdoll::new(asset), humanoid.skeleton);
+
+    let mut root = Vec3::new(0.0, 0.02, 0.0);
+    for _ in 0..20 {
+        root.x += 0.05;
+        pose_at_rest(&mut app, &humanoid, root);
+        frame(&mut app);
+    }
+    let world = app.main().world();
+    let ragdoll = *world
+        .get_component_for_entity::<RagdollId>(humanoid.skeleton)
+        .unwrap();
+    let body = world
+        .get_component_for_entity::<RagdollBody>(humanoid.skeleton)
+        .unwrap()
+        .clone();
+    let pelvis = body.resolved().part_of("pelvis").unwrap();
+    let mut pose = Vec::new();
+    let state = app.get_resource::<PhysicsState>().unwrap();
+    state.ragdoll_pose(ragdoll, &mut pose);
+    let let_go_at = pose[pelvis].translation.x;
+
+    edit(&mut app, &humanoid, CharacterRagdoll::go_limp);
+    for _ in 0..10 {
+        pose_at_rest(&mut app, &humanoid, root);
+        frame(&mut app);
+    }
+    let state = app.get_resource::<PhysicsState>().unwrap();
+    state.ragdoll_pose(ragdoll, &mut pose);
+    let carried = pose[pelvis].translation.x - let_go_at;
+    assert!(
+        carried > 0.3,
+        "a body let go at 1.5 m/s keeps travelling, it moved {carried} m in a third of a second"
+    );
+
+    for _ in 0..360 {
+        pose_at_rest(&mut app, &humanoid, root);
+        frame(&mut app);
+    }
+    let state = app.get_resource::<PhysicsState>().unwrap();
+    state.ragdoll_pose(ragdoll, &mut pose);
+    let drawn = bone_poses(&app, body.bones());
+    let stepped = app
+        .main()
+        .world()
+        .get_component_for_entity::<RagdollBody>(humanoid.skeleton)
+        .unwrap()
+        .interpolated_pose(
+            app.get_resource::<concerto_foundation::time::Time>()
+                .unwrap()
+                .fixed_alpha(),
+        );
+    for (part, (simulated, bone)) in stepped.iter().zip(&drawn).enumerate() {
+        let speed = state
+            .linear_velocity(state.ragdoll_bodies(ragdoll)[part])
+            .length();
+        assert!(
+            speed < 0.1,
+            "part {part} should be at rest, moved at {speed} m/s"
+        );
+        assert!(
+            simulated.translation.y < 0.6,
+            "part {part} should lie on the floor, was at y = {}",
+            simulated.translation.y
+        );
+        let off = simulated.translation.distance(bone.translation);
+        assert!(
+            off < 1e-3 && simulated.rotation.dot(bone.rotation).abs() > 0.9999,
+            "the bone of part {part} ({:?}) is drawn {off} m from its part",
+            body.bone_name(part)
+        );
+    }
+    let finger =
+        position(&app, humanoid.bone("index_l")).distance(position(&app, humanoid.bone("hand_l")));
+    assert!(
+        (finger - 0.08).abs() < 1e-3,
+        "a bone with no part keeps its animated pose under its parent, the finger was {finger} m from the hand"
+    );
+
+    let fallen = pose[pelvis].translation;
+    let animated = root + Vec3::new(0.0, 1.0, 0.0);
+    edit(&mut app, &humanoid, |character| character.weight = 0.0);
+    pose_at_rest(&mut app, &humanoid, root);
+    frame(&mut app);
+    let shown = position(&app, humanoid.bone("pelvis"));
+    assert!(
+        shown.distance(animated) < 1e-4,
+        "at weight 0 the bones show the animation, the pelvis was at {shown}"
+    );
+
+    edit(&mut app, &humanoid, |character| {
+        character.weight = 0.5;
+        character.part_weights = CharacterRagdoll::default()
+            .with_part_weight("Head", 1.0)
+            .part_weights;
+    });
+    pose_at_rest(&mut app, &humanoid, root);
+    frame(&mut app);
+    let shown = position(&app, humanoid.bone("pelvis"));
+    assert!(
+        shown.distance((animated + fallen) / 2.0) < 1e-3,
+        "at weight 0.5 the pelvis is halfway between {animated} and {fallen}, it was at {shown}"
+    );
+    let head = body.resolved().part_of("Head").unwrap();
+    let shown = position(&app, humanoid.bone("Head"));
+    assert!(
+        shown.distance(pose[head].translation) < 1e-3,
+        "a part with its own weight of 1 is drawn on its body"
+    );
+    assert_eq!(character(&mut app, &humanoid).weight_of("Head"), 1.0);
 }

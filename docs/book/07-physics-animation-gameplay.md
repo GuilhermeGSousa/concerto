@@ -478,12 +478,38 @@ current pose and the entity gets a `RagdollId` and a `RagdollBody`. Removing
 rebuilds it. An asset that does not fit the skeleton is reported once and the
 entity is marked `RagdollRefused`.
 
-Its `mode` is `RagdollMode::FollowsAnimation`: every part is kinematic, and
+Its `mode` starts as `RagdollMode::FollowsAnimation`: every part is kinematic, and
 each fixed step, before physics steps, it is driven to its bone's pose. The
 parts trail the drawn pose by up to one frame. They push dynamic props, so an
 arm swing knocks a bottle over, and they are already in the right place at the
 right speed the moment something disturbs the character. The animation is not
 changed.
+
+`RagdollMode::Limp` lets the body go: every part turns dynamic with its motors
+off and keeps the linear and angular velocity it had while it followed the
+animation, so a running character that goes limp keeps travelling.
+
+What is drawn is a separate matter, set by weights. `weight` runs from 0, the
+animated pose, to 1, the ragdoll's; `part_weights` gives single parts a weight
+of their own by bone name. `go_limp()` sets the mode and a weight of 1:
+
+```rust
+fn die(characters: Query<&mut CharacterRagdoll, With<Dead>>) {
+    for mut ragdoll in characters.iter() {
+        ragdoll.go_limp();
+    }
+}
+```
+
+Each frame, after the animation has written the bones and before transforms
+propagate, the bones of parts with a weight above 0 are moved towards the
+ragdoll's pose, interpolated between the last two fixed steps so the body does
+not judder at the fixed rate. A bone with no part keeps its animated pose under
+its parent, so fingers and a face still animate on a limp body. Bones are
+placed in world terms, so the mesh stays on the body wherever the character's
+own entity is. Changing a weight over time is how animation and physics are
+blended. While a character whose parts have weight is itself moving, the drawn
+body trails it by one frame's motion.
 
 Ragdoll parts are on a collision layer of their own:
 

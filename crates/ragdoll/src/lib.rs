@@ -9,7 +9,7 @@ pub mod resolve;
 pub mod testing;
 
 pub use asset::{Ragdoll, RagdollJoint, RagdollMotor, RagdollPart, RagdollShape};
-pub use character::{CharacterRagdoll, RagdollBody, RagdollMode, RagdollRefused};
+pub use character::{CharacterRagdoll, PartWeight, RagdollBody, RagdollMode, RagdollRefused};
 pub use generate::{GenerateError, HumanoidChains, HumanoidSettings, Segment, generate_humanoid};
 pub use plugin::RagdollPlugin;
 pub use resolve::{RagdollError, ResolvedRagdoll};
