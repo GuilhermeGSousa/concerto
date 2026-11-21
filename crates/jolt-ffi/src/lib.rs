@@ -331,6 +331,12 @@ extern "C" {
         capacity: u32,
     ) -> u32;
 
+    /// The body's current motion type; static for an id that is not in the world.
+    pub fn jolt_body_get_motion_type(world: *const JoltWorld, body: JoltBodyId) -> JoltMotionType;
+
+    /// Whether the body is being simulated: false for a static or sleeping body.
+    pub fn jolt_body_is_active(world: *const JoltWorld, body: JoltBodyId) -> bool;
+
     /// Turns the reporting of `body`'s contacts with solid bodies on or off. Must not be called while the world steps.
     pub fn jolt_body_set_contact_reporting(world: *mut JoltWorld, body: JoltBodyId, enabled: bool);
 

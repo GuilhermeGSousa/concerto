@@ -110,6 +110,12 @@ extern "C"
                                               JoltSensorContact *out,
                                               uint32_t capacity);
 
+    /* The body's current motion type; JOLT_MOTION_TYPE_STATIC for an id that is not in the world. */
+    JoltMotionType jolt_body_get_motion_type(const JoltWorld *world, JoltBodyId body);
+
+    /* Whether the body is being simulated: false for a static or sleeping body. */
+    bool jolt_body_is_active(const JoltWorld *world, JoltBodyId body);
+
     typedef uint8_t JoltContactKind;
     enum
     {

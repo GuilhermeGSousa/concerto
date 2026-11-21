@@ -260,7 +260,7 @@ impl RagdollSettings {
         }
         Ok(BuiltRagdoll {
             handle: Arc::new(ActiveBackend::build_ragdoll(self)?),
-            parts: self.parts.len(),
+            settings: Arc::new(self.clone()),
         })
     }
 }
@@ -302,12 +302,17 @@ impl Error for RagdollBuildError {}
 #[derive(Clone)]
 pub struct BuiltRagdoll {
     pub(crate) handle: Arc<<ActiveBackend as PhysicsBackend>::RagdollSettingsHandle>,
-    parts: usize,
+    settings: Arc<RagdollSettings>,
 }
 
 impl BuiltRagdoll {
     pub fn part_count(&self) -> usize {
-        self.parts
+        self.settings.parts.len()
+    }
+
+    /// The settings this was built from.
+    pub fn settings(&self) -> &RagdollSettings {
+        &self.settings
     }
 }
 

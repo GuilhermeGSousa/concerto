@@ -14,6 +14,7 @@ use crate::backend::{
     MeshShapeCreationError, PhysicsBackend, RawContact, RawContactKind, RawGroundHit, RawRayHit,
     RawSensorContact, RawShapeHit, SensorContactKind,
 };
+use crate::body::BodyActivity;
 use crate::collider::{Collider, ColliderOffset};
 use crate::ragdoll::{BodyPose, JointDrive, PartShape, RagdollBuildError, RagdollSettings};
 use crate::rigid_body::{AllowedDofs, MotionType, RigidBody};
@@ -370,6 +371,22 @@ impl PhysicsBackend for JoltBackend {
             if count < CONTACT_BATCH {
                 break;
             }
+        }
+    }
+
+    fn body_activity(&self, body: Self::BodyHandle) -> BodyActivity {
+        // SAFETY: `self.world` is a valid world; the shim answers static and inactive for an id it does not hold.
+        let (motion_type, active) = unsafe {
+            (
+                concerto_jolt_ffi::jolt_body_get_motion_type(self.world, body),
+                concerto_jolt_ffi::jolt_body_is_active(self.world, body),
+            )
+        };
+        match motion_type {
+            concerto_jolt_ffi::JOLT_MOTION_TYPE_STATIC => BodyActivity::Static,
+            _ if !active => BodyActivity::Asleep,
+            concerto_jolt_ffi::JOLT_MOTION_TYPE_KINEMATIC => BodyActivity::Kinematic,
+            _ => BodyActivity::Dynamic,
         }
     }
 

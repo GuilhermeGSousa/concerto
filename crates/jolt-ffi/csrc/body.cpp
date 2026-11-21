@@ -146,6 +146,20 @@ extern "C"
 		world->sensor_contact_listener.Forget(id);
 	}
 
+	JoltMotionType jolt_body_get_motion_type(const JoltWorld *world, JoltBodyId body)
+	{
+		const JPH::BodyInterface &bi = const_cast<JoltWorld *>(world)->system.GetBodyInterface();
+		JPH::BodyID id(body);
+		if (!bi.IsAdded(id))
+			return JOLT_MOTION_TYPE_STATIC;
+		return static_cast<JoltMotionType>(bi.GetMotionType(id));
+	}
+
+	bool jolt_body_is_active(const JoltWorld *world, JoltBodyId body)
+	{
+		return const_cast<JoltWorld *>(world)->system.GetBodyInterface().IsActive(JPH::BodyID(body));
+	}
+
 	void jolt_body_set_contact_reporting(JoltWorld *world, JoltBodyId body, bool enabled)
 	{
 		JPH::BodyID id(body);

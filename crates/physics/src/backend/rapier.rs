@@ -32,6 +32,7 @@ use crate::backend::{
     Aabb, MeshShapeCreationError, PhysicsBackend, RawContact, RawContactKind, RawGroundHit,
     RawRayHit, RawSensorContact, RawShapeHit, SensorContactKind,
 };
+use crate::body::BodyActivity;
 use crate::collider::{Collider, ColliderOffset};
 use crate::ragdoll::{BodyPose, JointDrive, RagdollBuildError, RagdollSettings};
 use crate::rigid_body::{AllowedDofs, MotionType, RigidBody};
@@ -513,6 +514,21 @@ impl PhysicsBackend for RapierBackend {
         out.extend(starts);
         out.append(&mut self.touches);
         out.extend(ends);
+    }
+
+    fn body_activity(&self, body: Self::BodyHandle) -> BodyActivity {
+        let Some(rigid_body) = self.bodies.get(body) else {
+            return BodyActivity::Static;
+        };
+        if rigid_body.is_fixed() {
+            BodyActivity::Static
+        } else if rigid_body.is_sleeping() {
+            BodyActivity::Asleep
+        } else if rigid_body.is_kinematic() {
+            BodyActivity::Kinematic
+        } else {
+            BodyActivity::Dynamic
+        }
     }
 
     fn body_transform(&self, body: Self::BodyHandle) -> Transform {
