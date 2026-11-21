@@ -213,6 +213,12 @@ extern "C" {
         out_max: *mut f32,
     );
 
+    /// Scales gravity for the body: 1 by default, 0 for a body that moves only by the velocities it is given.
+    pub fn jolt_body_creation_settings_set_gravity_factor(
+        settings: *mut JoltBodyCreationSettings,
+        gravity_factor: f32,
+    );
+
     /// Makes the body a kinematic, always active sensor on the sensor layer.
     pub fn jolt_body_creation_settings_set_is_sensor(
         settings: *mut JoltBodyCreationSettings,

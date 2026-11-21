@@ -1,12 +1,12 @@
 use concerto_ecs::{
     query::{filter::With, Query},
-    resource::ResMut,
+    resource::{Res, ResMut},
 };
 use concerto_foundation::transform::Transform;
 
 use crate::{
     body::BodyId, interpolation::TransformInterpolation, physics_pipeline::PhysicsPipeline,
-    physics_state::PhysicsState, rigid_body::RigidBody,
+    physics_state::PhysicsState, rigid_body::RigidBody, settings::PhysicsSettings,
 };
 
 /// Steps the simulation and writes each simulated body's pose to its `Transform`; a static collider's `Transform` is left to whoever moves the entity.
@@ -14,10 +14,12 @@ pub fn step_simulation(
     query: Query<(&BodyId, &mut Transform, Option<&mut TransformInterpolation>), With<RigidBody>>,
     mut pipeline: ResMut<PhysicsPipeline>,
     mut state: ResMut<PhysicsState>,
+    settings: Option<Res<PhysicsSettings>>,
 ) {
     {
         profiling::scope!("jolt::step");
-        pipeline.step(&mut state);
+        let settings = settings.map(|settings| *settings).unwrap_or_default();
+        pipeline.step_with(&mut state, &settings);
     }
 
     {

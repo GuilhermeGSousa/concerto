@@ -3,6 +3,7 @@ use concerto_foundation::time::Time;
 
 use crate::backend::PhysicsBackend;
 use crate::physics_state::PhysicsState;
+use crate::settings::PhysicsSettings;
 use crate::ActiveBackend;
 
 /// Per-step scratch resources for advancing the simulation (what these are is
@@ -21,11 +22,18 @@ impl PhysicsPipeline {
         }
     }
 
-    /// Advances `state` by one fixed timestep.
+    /// Advances `state` by one fixed timestep under the default `PhysicsSettings`.
     pub fn step(&mut self, state: &mut PhysicsState) {
-        state
-            .backend_mut()
-            .step(&mut self.stepper, Time::fixed_delta_time().as_secs_f32());
+        self.step_with(state, &PhysicsSettings::default());
+    }
+
+    /// Advances `state` by one fixed timestep, split into the collision steps `settings` asks for.
+    pub fn step_with(&mut self, state: &mut PhysicsState, settings: &PhysicsSettings) {
+        state.backend_mut().step(
+            &mut self.stepper,
+            Time::fixed_delta_time().as_secs_f32(),
+            settings.collision_steps(),
+        );
         state.gather_sensor_contacts();
     }
 }

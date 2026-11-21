@@ -80,11 +80,16 @@ impl PhysicsState {
         rigid_body: Option<&RigidBody>,
         offset: Option<&ColliderOffset>,
         sensor: bool,
+        gravity_scale: f32,
     ) -> BodyId {
-        BodyId(
-            self.backend
-                .create_body(collider, transform, rigid_body, offset, sensor),
-        )
+        BodyId(self.backend.create_body(
+            collider,
+            transform,
+            rigid_body,
+            offset,
+            sensor,
+            gravity_scale,
+        ))
     }
 
     /// Removes `body` from the simulation and destroys it. Called by
