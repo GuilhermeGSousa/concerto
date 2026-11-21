@@ -6,6 +6,7 @@ use concerto_ecs::IntoSystemConfig;
 
 use crate::{
     collider::{build_box_colliders, register_colliders, BoxCollider},
+    contact::report_contacts,
     ground::probe_ground,
     interpolation::interpolate_body_transforms,
     physics_pipeline::PhysicsPipeline,
@@ -37,6 +38,7 @@ impl Plugin for PhysicsPlugin {
                 LateFixedUpdate,
                 report_sensor_contacts.after(step_simulation),
             )
+            .add_system(LateFixedUpdate, report_contacts.after(step_simulation))
             .add_system(Update, generate_mesh_shapes)
             .add_system(Update, build_box_colliders)
             // LateUpdate, so `TransformPlugin` has already propagated global

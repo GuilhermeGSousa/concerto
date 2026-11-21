@@ -9,6 +9,7 @@ pub mod aabb;
 pub mod backend;
 pub mod body;
 pub mod collider;
+pub mod contact;
 pub mod ground;
 pub mod interpolation;
 pub mod physics_pipeline;

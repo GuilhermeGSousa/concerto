@@ -1,6 +1,7 @@
 mod box_collider;
 mod collision_steps;
 mod common;
+mod contact;
 mod despawn;
 mod edit_app;
 mod falls;

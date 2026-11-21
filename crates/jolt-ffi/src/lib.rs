@@ -117,6 +117,26 @@ pub struct JoltSensorContact {
     pub entered: u8,
 }
 
+/// Mirrors the `JoltContactKind` constants in `body.h`.
+pub type JoltContactKind = u8;
+pub const JOLT_CONTACT_START: JoltContactKind = 0;
+pub const JOLT_CONTACT_TOUCH: JoltContactKind = 1;
+pub const JOLT_CONTACT_END: JoltContactKind = 2;
+
+/// A contact between two solid bodies of which at least one reports contacts (mirrors `JoltContact` in `body.h`).
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct JoltContact {
+    pub body1: JoltBodyId,
+    pub body2: JoltBodyId,
+    pub kind: JoltContactKind,
+    pub point: [f32; 3],
+    /// Points from `body1` to `body2`.
+    pub normal: [f32; 3],
+    /// The estimated normal impulse of one collision step.
+    pub impulse: f32,
+}
+
 extern "C" {
     /// Process-global one-time Jolt setup. Thread-safe and idempotent;
     /// `jolt_world_create` calls it implicitly.
@@ -270,6 +290,16 @@ extern "C" {
     pub fn jolt_world_drain_sensor_contacts(
         world: *mut JoltWorld,
         out: *mut JoltSensorContact,
+        capacity: u32,
+    ) -> u32;
+
+    /// Turns the reporting of `body`'s contacts with solid bodies on or off. Must not be called while the world steps.
+    pub fn jolt_body_set_contact_reporting(world: *mut JoltWorld, body: JoltBodyId, enabled: bool);
+
+    /// Moves up to `capacity` queued contacts, oldest first, into `out` and returns how many it wrote.
+    pub fn jolt_world_drain_contacts(
+        world: *mut JoltWorld,
+        out: *mut JoltContact,
         capacity: u32,
     ) -> u32;
 
