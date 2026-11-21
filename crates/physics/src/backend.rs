@@ -169,6 +169,12 @@ pub trait PhysicsBackend: Send + Sync + Sized {
     /// Moves the contacts seen since the last drain into `out`, in order; call it after [`drain_sensor_contacts`](Self::drain_sensor_contacts).
     fn drain_contacts(&mut self, out: &mut Vec<RawContact<Self::BodyHandle>>);
 
+    /// Makes a dynamic or kinematic body collide with nothing and be skipped by every query, or puts it back.
+    fn set_body_ghost(&mut self, body: Self::BodyHandle, ghost: bool);
+
+    /// Moves the body's origin at once, keeping its rotation and velocity.
+    fn set_body_translation(&mut self, body: Self::BodyHandle, translation: Vec3);
+
     /// How `body` is moving right now.
     fn body_activity(&self, body: Self::BodyHandle) -> BodyActivity;
 

@@ -27,14 +27,15 @@ JPH_SUPPRESS_WARNINGS
 
 // Object layers: statics collide with dynamics and ragdoll parts; sensors
 // only with dynamics; dynamics with everything; ragdoll parts with
-// everything but sensors.
+// everything but sensors; ghosts with nothing.
 namespace Layers
 {
 	constexpr JPH::ObjectLayer NON_MOVING = 0;
 	constexpr JPH::ObjectLayer MOVING = 1;
 	constexpr JPH::ObjectLayer SENSOR = 2;
 	constexpr JPH::ObjectLayer RAGDOLL = 3;
-	constexpr JPH::uint NUM_LAYERS = 4;
+	constexpr JPH::ObjectLayer GHOST = 4;
+	constexpr JPH::uint NUM_LAYERS = 5;
 } // namespace Layers
 
 namespace BroadPhaseLayers
@@ -55,11 +56,13 @@ public:
 		case Layers::NON_MOVING:
 			return inObject2 == Layers::MOVING || inObject2 == Layers::RAGDOLL;
 		case Layers::MOVING:
-			return true;
+			return inObject2 != Layers::GHOST;
 		case Layers::SENSOR:
 			return inObject2 == Layers::MOVING;
 		case Layers::RAGDOLL:
-			return inObject2 != Layers::SENSOR;
+			return inObject2 != Layers::SENSOR && inObject2 != Layers::GHOST;
+		case Layers::GHOST:
+			return false;
 		default:
 			JPH_ASSERT(false);
 			return false;
@@ -76,6 +79,7 @@ public:
 		mObjectToBroadPhase[Layers::MOVING] = BroadPhaseLayers::MOVING;
 		mObjectToBroadPhase[Layers::SENSOR] = BroadPhaseLayers::SENSOR;
 		mObjectToBroadPhase[Layers::RAGDOLL] = BroadPhaseLayers::MOVING;
+		mObjectToBroadPhase[Layers::GHOST] = BroadPhaseLayers::MOVING;
 	}
 
 	JPH::uint GetNumBroadPhaseLayers() const override
@@ -126,6 +130,8 @@ public:
 			return inLayer2 == BroadPhaseLayers::MOVING;
 		case Layers::RAGDOLL:
 			return inLayer2 != BroadPhaseLayers::SENSOR;
+		case Layers::GHOST:
+			return false;
 		default:
 			JPH_ASSERT(false);
 			return false;
@@ -170,7 +176,7 @@ public:
 
 	bool ShouldCollide(JPH::ObjectLayer inLayer) const override
 	{
-		if (inLayer == Layers::SENSOR)
+		if (inLayer == Layers::SENSOR || inLayer == Layers::GHOST)
 			return false;
 		if (ragdolls == JOLT_RAGDOLL_QUERY_SKIP)
 			return inLayer != Layers::RAGDOLL;

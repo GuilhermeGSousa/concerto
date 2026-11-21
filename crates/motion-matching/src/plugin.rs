@@ -17,7 +17,9 @@ use crate::{
     features::{BonePositions, BoneVelocities, TrajectoryDirections, TrajectoryPositions},
     node::{MotionMatchingNode, MotionMatchingTrajectory},
     simulation::{CharacterSimulation, DesiredMotion, TrajectorySample},
-    systems::{apply_character_displacement, drive_body, publish_trajectory},
+    systems::{
+        apply_character_displacement, drive_body, publish_trajectory, restart_released_simulation,
+    },
 };
 
 pub struct MotionMatchingPlugin;
@@ -42,6 +44,7 @@ impl Plugin for MotionMatchingPlugin {
             .register_type::<Param<f32>>()
             .register_type::<MotionMatchingTrajectory>()
             .register_animation_node::<MotionMatchingNode>()
+            .add_listener(restart_released_simulation)
             .add_system(FixedUpdate, drive_body)
             .add_system(LateFixedUpdate, publish_trajectory.after(step_simulation))
             .add_system(

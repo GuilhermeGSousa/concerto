@@ -497,6 +497,16 @@ impl PhysicsState {
         }
     }
 
+    /// Makes a dynamic or kinematic body collide with nothing and be skipped by every query, or puts it back; a static body, a sensor and a ragdoll part are left alone.
+    pub fn set_body_ghost(&mut self, body: BodyId, ghost: bool) {
+        self.backend.set_body_ghost(body.0, ghost);
+    }
+
+    /// Moves the body's origin at once, keeping its rotation and velocity.
+    pub fn set_body_translation(&mut self, body: BodyId, translation: Vec3) {
+        self.backend.set_body_translation(body.0, translation);
+    }
+
     pub fn set_linear_velocity(&mut self, body: BodyId, velocity: Vec3) {
         self.backend.set_linear_velocity(body.0, velocity);
     }

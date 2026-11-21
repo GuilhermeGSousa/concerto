@@ -24,8 +24,8 @@ use rapier3d::pipeline::EventHandler;
 use rapier3d::prelude::{
     ActiveCollisionTypes, ActiveEvents, BroadPhaseBvh, CCDSolver, ColliderBuilder, ColliderSet,
     CollisionEvent, CollisionEventFlags, ContactPair, ImpulseJointSet, IntegrationParameters,
-    IslandManager, LockedAxes, MultibodyJointSet, NarrowPhase, Ray, RigidBodyBuilder,
-    RigidBodyHandle, RigidBodySet, SharedShape,
+    InteractionGroups, IslandManager, LockedAxes, MultibodyJointSet, NarrowPhase, Ray,
+    RigidBodyBuilder, RigidBodyHandle, RigidBodySet, SharedShape,
 };
 
 use crate::backend::{
@@ -144,6 +144,7 @@ pub struct RapierBackend {
     ccd_solver: CCDSolver,
     collision_events: CollisionEventCollector,
     reporting: HashSet<RigidBodyHandle>,
+    ghosts: HashSet<RigidBodyHandle>,
     contact_changes: Vec<RawContact<RigidBodyHandle>>,
     touches: Vec<RawContact<RigidBodyHandle>>,
 }
@@ -294,6 +295,7 @@ impl PhysicsBackend for RapierBackend {
             ccd_solver: CCDSolver::new(),
             collision_events: CollisionEventCollector::default(),
             reporting: HashSet::new(),
+            ghosts: HashSet::new(),
             contact_changes: Vec::new(),
             touches: Vec::new(),
         }
@@ -426,6 +428,7 @@ impl PhysicsBackend for RapierBackend {
             true,
         );
         self.reporting.remove(&body);
+        self.ghosts.remove(&body);
         self.contact_changes
             .retain(|change| change.first != body && change.second != body);
         self.touches
@@ -526,6 +529,36 @@ impl PhysicsBackend for RapierBackend {
         out.extend(ends);
     }
 
+    fn set_body_ghost(&mut self, body: Self::BodyHandle, ghost: bool) {
+        let Some(rigid_body) = self.bodies.get(body) else {
+            return;
+        };
+        if rigid_body.is_fixed() {
+            return;
+        }
+        let groups = if ghost {
+            InteractionGroups::none()
+        } else {
+            InteractionGroups::all()
+        };
+        for handle in rigid_body.colliders().to_vec() {
+            if let Some(collider) = self.colliders.get_mut(handle) {
+                collider.set_collision_groups(groups);
+            }
+        }
+        if ghost {
+            self.ghosts.insert(body);
+        } else {
+            self.ghosts.remove(&body);
+        }
+    }
+
+    fn set_body_translation(&mut self, body: Self::BodyHandle, translation: Vec3) {
+        if let Some(rigid_body) = self.bodies.get_mut(body) {
+            rigid_body.set_translation(to_rapier_vec(translation), false);
+        }
+    }
+
     fn body_activity(&self, body: Self::BodyHandle) -> BodyActivity {
         let Some(rigid_body) = self.bodies.get(body) else {
             return BodyActivity::Static;
@@ -595,7 +628,7 @@ impl PhysicsBackend for RapierBackend {
             let body = collider
                 .parent()
                 .expect("every collider is created with a parent body");
-            if collider.is_sensor() || ignore.contains(&body) {
+            if collider.is_sensor() || ignore.contains(&body) || self.ghosts.contains(&body) {
                 continue;
             }
             let Some(intersection) =
@@ -642,7 +675,7 @@ impl PhysicsBackend for RapierBackend {
             let body = collider
                 .parent()
                 .expect("every collider is created with a parent body");
-            if collider.is_sensor() || ignore.contains(&body) {
+            if collider.is_sensor() || ignore.contains(&body) || self.ghosts.contains(&body) {
                 continue;
             }
             let pose = collider.position();
@@ -700,6 +733,9 @@ impl PhysicsBackend for RapierBackend {
             for (_, ground_collider) in self.colliders.iter() {
                 if ground_collider.parent() == Some(body)
                     || ground_collider.is_sensor()
+                    || ground_collider
+                        .parent()
+                        .is_some_and(|parent| self.ghosts.contains(&parent))
                     || !candidates.intersects(&ground_collider.compute_aabb())
                 {
                     continue;
