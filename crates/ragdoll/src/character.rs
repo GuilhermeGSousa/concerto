@@ -3,7 +3,7 @@ use concerto_ecs::{
     component::scene::SceneEntityRef,
     reflect::{ReflectComponent, ReflectSceneComponent},
     signal::{
-        On,
+        EntitySignal, On, Signal,
         lifecycle::{Remove, Replace},
     },
 };
@@ -21,14 +21,17 @@ use concerto_physics::{
     physics_pipeline::PhysicsPipeline,
     physics_state::PhysicsState,
     query::QueryFilter,
-    ragdoll::{BodyPose, JointDrive, RagdollId},
+    ragdoll::{BodyPose, JointDrive, JointSpring, RagdollId},
     rigid_body::MotionType,
 };
 use concerto_reflect::{Reflect, ReflectDefault};
 use glam::{Mat4, Quat, Vec3};
 use log::warn;
 
-use crate::{asset::Ragdoll, resolve::ResolvedRagdoll};
+use crate::{
+    asset::{PartStrength, Ragdoll},
+    resolve::ResolvedRagdoll,
+};
 
 /// What a character's ragdoll does.
 #[derive(Reflect, Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -39,7 +42,15 @@ pub enum RagdollMode {
     FollowsAnimation,
     /// Every part is dynamic with its motors off, and keeps the velocity it had: the body falls as a body.
     Limp,
+    /// Each part is held to the animated pose as the character's strength profile says: kinematic, powered by its joint's motor, or limp. The body tries to do what the animation says and physics decides how well it manages.
+    Powered,
 }
+
+/// Triggered on a character whose root part has been further than `lost_distance` from its animated place for `lost_seconds`: it can no longer hold the pose.
+pub struct PoseLost;
+
+impl Signal for PoseLost {}
+impl EntitySignal for PoseLost {}
 
 /// How much of one part's simulated pose is drawn, overriding the character's `weight` for the part on `bone`.
 #[derive(Reflect, Clone, Copy, Debug, Default, PartialEq)]
@@ -50,7 +61,7 @@ pub struct PartWeight {
 }
 
 /// Gives a character a physical body: goes on the entity with the `SkeletonComponent`, names the ragdoll asset of that skeleton, and builds the ragdoll at the current pose once both have loaded.
-#[derive(Component, Reflect, Clone, Debug, Default, PartialEq)]
+#[derive(Component, Reflect, Clone, Debug, PartialEq)]
 #[reflect(Component, Default, SceneComponent)]
 pub struct CharacterRagdoll {
     pub ragdoll: AssetHandle<Ragdoll>,
@@ -61,6 +72,30 @@ pub struct CharacterRagdoll {
     pub weight: f32,
     /// Weights of single parts, each replacing `weight` for its part.
     pub part_weights: Vec<PartWeight>,
+    /// The strength profile of the ragdoll asset used in the powered mode.
+    pub profile: Name,
+    /// The seconds over which a change of profile takes hold.
+    pub blend: f32,
+    /// How far the root part may be from its animated place, in metres, before the pose counts as lost.
+    pub lost_distance: f32,
+    /// How long the root part must stay that far for `PoseLost` to be triggered.
+    pub lost_seconds: f32,
+}
+
+impl Default for CharacterRagdoll {
+    fn default() -> Self {
+        Self {
+            ragdoll: AssetHandle::default(),
+            capsule: SceneEntityRef::default(),
+            mode: RagdollMode::default(),
+            weight: 0.0,
+            part_weights: Vec::new(),
+            profile: Name::default(),
+            blend: 0.2,
+            lost_distance: 0.5,
+            lost_seconds: 0.3,
+        }
+    }
 }
 
 impl CharacterRagdoll {
@@ -96,6 +131,18 @@ impl CharacterRagdoll {
         self
     }
 
+    pub fn with_profile(mut self, profile: impl Into<Name>) -> Self {
+        self.profile = profile.into();
+        self
+    }
+
+    /// Holds the body to the animation with the strength profile `profile`, and draws the simulated pose.
+    pub fn power(&mut self, profile: impl Into<Name>) {
+        self.mode = RagdollMode::Powered;
+        self.profile = profile.into();
+        self.weight = 1.0;
+    }
+
     /// Lets the body go: every part dynamic, and the whole simulated pose drawn.
     pub fn go_limp(&mut self) {
         self.mode = RagdollMode::Limp;
@@ -112,13 +159,94 @@ impl CharacterRagdoll {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Held {
+    kinematic: bool,
+    stiffness: f32,
+    damping: f32,
+    torque_limit: f32,
+}
+
+const SLACK_TORQUE: f32 = 1.0e-3;
+const MAX_LEAD: f32 = 0.5;
+
+impl Held {
+    const KINEMATIC: Self = Self {
+        kinematic: true,
+        stiffness: 0.0,
+        damping: 0.0,
+        torque_limit: 0.0,
+    };
+
+    fn of(strength: PartStrength) -> Self {
+        match strength {
+            PartStrength::Kinematic => Self::KINEMATIC,
+            PartStrength::Powered {
+                stiffness,
+                damping,
+                torque_limit,
+            } => Self {
+                kinematic: false,
+                stiffness,
+                damping,
+                torque_limit,
+            },
+            PartStrength::Limp => Self {
+                kinematic: false,
+                ..Self::KINEMATIC
+            },
+        }
+    }
+
+    fn slack(&self) -> bool {
+        self.torque_limit <= SLACK_TORQUE || self.stiffness <= 0.0
+    }
+
+    fn towards(self, wanted: Self, step: f32) -> Self {
+        if self.kinematic || wanted.kinematic || step >= 1.0 {
+            return wanted;
+        }
+        let from = if self.slack() {
+            Self {
+                stiffness: wanted.stiffness,
+                damping: wanted.damping,
+                ..self
+            }
+        } else {
+            self
+        };
+        let to = if wanted.slack() {
+            Self {
+                stiffness: from.stiffness,
+                damping: from.damping,
+                ..wanted
+            }
+        } else {
+            wanted
+        };
+        Self {
+            kinematic: false,
+            stiffness: from.stiffness + (to.stiffness - from.stiffness) * step,
+            damping: from.damping + (to.damping - from.damping) * step,
+            torque_limit: from.torque_limit + (to.torque_limit - from.torque_limit) * step,
+        }
+    }
+}
+
 /// A character's built ragdoll, beside its `RagdollId`: which bone each part follows.
 #[derive(Component, Clone)]
 pub struct RagdollBody {
     resolved: ResolvedRagdoll,
     bones: Vec<Entity>,
     skeleton_bones: Vec<Entity>,
-    motion: MotionType,
+    held: Vec<Held>,
+    aimed: Vec<Quat>,
+    slack: Vec<bool>,
+    lost_for: f32,
+    lost: bool,
+    animated: Vec<BodyPose>,
+    animated_model: Vec<Mat4>,
+    part_roots: Vec<usize>,
     previous: Vec<BodyPose>,
     current: Vec<BodyPose>,
     drawn_roots: Vec<Option<Mat4>>,
@@ -147,6 +275,11 @@ impl RagdollBody {
     /// The name of the bone the part follows.
     pub fn bone_name(&self, part: usize) -> Option<Name> {
         self.resolved.bone_name(part)
+    }
+
+    /// The world pose the animation asked of every part on the last frame, in part order, whatever was drawn.
+    pub fn animated_pose(&self) -> &[BodyPose] {
+        &self.animated
     }
 
     /// The bone entity of every part, in part order.
@@ -238,6 +371,17 @@ pub fn create_character_ragdolls(
         let Some(id) = state.create_ragdoll(resolved.built(), entity, &pose) else {
             continue;
         };
+        let part_roots: Vec<usize> = resolved
+            .bones()
+            .iter()
+            .map(|bone| {
+                let mut root = *bone;
+                while let Some(parent) = skeleton.parents[root] {
+                    root = parent as usize;
+                }
+                root
+            })
+            .collect();
         if let Some(capsule) = character.capsule.entity() {
             let layers = capsules.get_entity(capsule).copied().unwrap_or_default();
             if layers.collides_with(&resolved.settings().layers) {
@@ -257,7 +401,14 @@ pub fn create_character_ragdolls(
                     bones,
                     drawn_roots: vec![None; skeleton_bones.len()],
                     skeleton_bones,
-                    motion: MotionType::Kinematic,
+                    held: vec![Held::KINEMATIC; pose.len()],
+                    aimed: vec![Quat::IDENTITY; pose.len()],
+                    slack: vec![false; pose.len()],
+                    lost_for: 0.0,
+                    lost: false,
+                    animated: pose.clone(),
+                    animated_model: vec![Mat4::IDENTITY; pose.len()],
+                    part_roots,
                     previous: pose.clone(),
                     current: pose,
                     carrying: None,
@@ -268,34 +419,121 @@ pub fn create_character_ragdolls(
     }
 }
 
-/// Each fixed step, before physics steps, makes every ragdoll's parts kinematic or dynamic as its mode asks, and drives the parts of one that follows its animation to its bones' poses.
-pub fn drive_character_ragdolls(
-    characters: Query<(&CharacterRagdoll, &RagdollId, &mut RagdollBody)>,
-    transforms: Query<&GlobalTransform>,
-    mut state: ResMut<PhysicsState>,
-) {
-    for (character, id, mut body) in characters.iter() {
-        let motion = match character.mode {
-            RagdollMode::FollowsAnimation => MotionType::Kinematic,
-            RagdollMode::Limp => MotionType::Dynamic,
-        };
-        if !matches!(
-            (body.motion, motion),
-            (MotionType::Kinematic, MotionType::Kinematic)
-                | (MotionType::Dynamic, MotionType::Dynamic)
-        ) {
-            for part in 0..body.resolved.part_count() {
-                state.set_ragdoll_part_motion(*id, part, motion);
-                if matches!(motion, MotionType::Dynamic) {
-                    state.set_ragdoll_joint_drive(*id, part, JointDrive::Off);
-                }
-            }
-            body.motion = motion;
+fn wanted_strengths(
+    character: &CharacterRagdoll,
+    body: &RagdollBody,
+    ragdoll: Option<&Ragdoll>,
+) -> Vec<Held> {
+    let parts = body.resolved.part_count();
+    match character.mode {
+        RagdollMode::FollowsAnimation => vec![Held::KINEMATIC; parts],
+        RagdollMode::Limp => vec![Held::of(PartStrength::Limp); parts],
+        RagdollMode::Powered => {
+            let profile = ragdoll.and_then(|ragdoll| ragdoll.profile(&character.profile));
+            (0..parts)
+                .map(|part| {
+                    let strength = match (profile, body.bone_name(part)) {
+                        (Some(profile), Some(bone)) => profile.strength_of(&bone),
+                        _ => PartStrength::Kinematic,
+                    };
+                    Held::of(strength)
+                })
+                .collect()
         }
-        if character.mode == RagdollMode::FollowsAnimation
-            && let Some(pose) = part_poses(&body.bones, &transforms)
-        {
-            state.drive_ragdoll_kinematic(*id, &pose);
+    }
+}
+
+/// Each fixed step, before physics steps, holds every ragdoll's parts to the animated pose as its mode and strength profile ask: a kinematic part is driven to its bone, a powered part's motor is aimed at its bone's rotation under its parent's, leading it by the animation's own speed, and a limp part's motor is off. A change of strength takes hold over the character's `blend`. Triggers `PoseLost` when the root part has been too far from its animated place for too long.
+pub fn drive_character_ragdolls(
+    characters: Query<(Entity, &CharacterRagdoll, &RagdollId, &mut RagdollBody)>,
+    ragdolls: Res<AssetStore<Ragdoll>>,
+    mut state: ResMut<PhysicsState>,
+    mut cmd: CommandQueue,
+) {
+    let dt = Time::fixed_delta_time().as_secs_f32();
+    let mut simulated = Vec::new();
+    for (entity, character, id, mut body) in characters.iter() {
+        let animated = body.animated.clone();
+        let wanted = wanted_strengths(character, &body, ragdolls.get(&character.ragdoll));
+        let step = if character.blend > 0.0 {
+            dt / character.blend
+        } else {
+            1.0
+        };
+        let body = &mut *body;
+        let parts = &body.resolved.settings().parts;
+        for part in 0..parts.len() {
+            let before = body.held[part];
+            let held = before.towards(wanted[part], step);
+            body.held[part] = held;
+            if before.kinematic != held.kinematic {
+                let motion = if held.kinematic {
+                    MotionType::Kinematic
+                } else {
+                    MotionType::Dynamic
+                };
+                state.set_ragdoll_part_motion(*id, part, motion);
+            }
+            if held.kinematic {
+                body.slack[part] = false;
+                let part_body = state.ragdoll_bodies(*id)[part];
+                state.move_body_kinematic(part_body, animated[part]);
+                body.aimed[part] = Quat::IDENTITY;
+                continue;
+            }
+            let Some(parent) = parts[part].parent else {
+                continue;
+            };
+            if held.slack() {
+                if !body.slack[part] {
+                    state.set_ragdoll_joint_drive(*id, part, JointDrive::Off);
+                    body.slack[part] = true;
+                }
+                body.aimed[part] = Quat::IDENTITY;
+                continue;
+            }
+            body.slack[part] = false;
+            let target =
+                (animated[parent].rotation.inverse() * animated[part].rotation).normalize();
+            let before_target = if before.kinematic || before.slack() {
+                target
+            } else {
+                body.aimed[part]
+            };
+            let turned = (target * before_target.inverse()).normalize();
+            let turned = if turned.w < 0.0 { -turned } else { turned };
+            let lead = held.damping / held.stiffness;
+            let ahead = (turned.to_scaled_axis() / dt * lead).clamp_length_max(MAX_LEAD);
+            body.aimed[part] = target;
+            state.set_ragdoll_joint_drive(
+                *id,
+                part,
+                JointDrive::Spring(JointSpring {
+                    rotation: (Quat::from_scaled_axis(ahead) * target).normalize(),
+                    stiffness: held.stiffness,
+                    damping: held.damping,
+                    torque_limit: held.torque_limit,
+                }),
+            );
+        }
+        if body.held.first().is_some_and(|root| root.kinematic) {
+            body.lost_for = 0.0;
+            body.lost = false;
+            continue;
+        }
+        state.ragdoll_pose(*id, &mut simulated);
+        let astray = simulated.first().is_some_and(|root| {
+            root.translation.distance(animated[0].translation) > character.lost_distance
+        });
+        if !astray {
+            body.lost_for = 0.0;
+            body.lost = false;
+            continue;
+        }
+        body.lost_for += dt;
+        if !body.lost && body.lost_for >= character.lost_seconds {
+            body.lost = true;
+            cmd.entity(entity).trigger(PoseLost);
         }
     }
 }
@@ -420,7 +658,7 @@ fn blend(animated: Mat4, simulated: BodyPose, weight: f32) -> Mat4 {
     )
 }
 
-/// Each frame, after the animation has written the bones and before transforms propagate, writes onto the bones the ragdoll's pose, interpolated between the last two fixed steps, by each part's weight. A bone with no part keeps its animated pose under its parent, so fingers and a face still animate on a limp body.
+/// Each frame, after the animation has written the bones and before transforms propagate, notes the animated pose of every part and writes onto the bones the ragdoll's pose, interpolated between the last two fixed steps, by each part's weight. A bone with no part keeps its animated pose under its parent, so fingers and a face still animate on a limp body.
 pub fn write_ragdoll_poses(
     characters: Query<(&CharacterRagdoll, &mut RagdollBody, &SkeletonComponent)>,
     skeletons: Res<AssetStore<Skeleton>>,
@@ -439,25 +677,27 @@ pub fn write_ragdoll_poses(
                     .map_or(0.0, |bone| character.weight_of(&bone))
             })
             .collect();
-        if weights.iter().all(|weight| *weight <= 0.0) {
-            body.drawn_roots.iter_mut().for_each(|drawn| *drawn = None);
-            continue;
-        }
         let simulated = body.interpolated_pose(alpha);
         let mut part_of_bone: Vec<Option<usize>> = vec![None; body.skeleton_bones.len()];
         for (part, bone) in body.resolved.bones().iter().enumerate() {
             part_of_bone[*bone] = Some(part);
         }
         let mut world: Vec<Mat4> = Vec::with_capacity(body.skeleton_bones.len());
+        let mut model: Vec<Mat4> = Vec::with_capacity(body.skeleton_bones.len());
         for (bone, entity) in body.skeleton_bones.clone().into_iter().enumerate() {
             let Some(mut local) = locals.get_entity(entity) else {
                 world.push(Mat4::IDENTITY);
+                model.push(Mat4::IDENTITY);
                 continue;
             };
             let animated_local = local.compute_matrix();
             let parent = match skeleton.parents[bone] {
-                Some(parent) => world[parent as usize],
+                Some(parent) => {
+                    model.push(model[parent as usize] * animated_local);
+                    world[parent as usize]
+                }
                 None => {
+                    model.push(animated_local);
                     let propagated = globals
                         .get_entity(entity)
                         .map_or(Mat4::IDENTITY, GlobalTransform::matrix);
@@ -480,6 +720,33 @@ pub fn write_ragdoll_poses(
                 body.drawn_roots[bone] = Some(local.compute_matrix());
             }
             world.push(drawn);
+        }
+        let body = &mut *body;
+        for (part, bone) in body.resolved.bones().iter().enumerate() {
+            body.animated_model[part] = model[*bone];
+        }
+    }
+}
+
+/// Each frame, after transforms have propagated, places every part's animated pose in the world: the pose the animation asked for, whatever was drawn.
+pub fn record_animated_poses(
+    characters: Query<&mut RagdollBody>,
+    globals: Query<&GlobalTransform>,
+) {
+    for mut body in characters.iter() {
+        let body = &mut *body;
+        for part in 0..body.animated.len() {
+            let root = body.part_roots[part];
+            let (Some(global), Some(drawn)) = (
+                globals.get_entity(body.skeleton_bones[root]),
+                body.drawn_roots[root],
+            ) else {
+                continue;
+            };
+            let (_, rotation, translation) =
+                (global.matrix() * drawn.inverse() * body.animated_model[part])
+                    .to_scale_rotation_translation();
+            body.animated[part] = BodyPose::new(translation, rotation.normalize());
         }
     }
 }

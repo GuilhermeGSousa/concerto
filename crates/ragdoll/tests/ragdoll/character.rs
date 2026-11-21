@@ -5,6 +5,7 @@ use concerto_app::{
     schedule_groups::{FixedUpdate, LateFixedUpdate, LateUpdate, Update},
 };
 use concerto_ecs::entity::Entity;
+use concerto_ecs::resource::Resource;
 use concerto_foundation::assets::asset_server::AssetServer;
 use concerto_foundation::transform::{GlobalTransform, Transform};
 use concerto_physics::body::BodyId;
@@ -474,5 +475,222 @@ fn a_limp_characters_capsule_is_carried_under_its_body_and_moves_again_when_let_
     assert!(
         resumed.x - held.x > 1.0 && (resumed.z - held.z).abs() < 0.2,
         "the capsule walks again from where the body lay at {held}, it got to {resumed}"
+    );
+}
+
+#[derive(Resource, Default)]
+struct Lost(u32);
+
+fn count_lost() -> concerto_ecs::signal::listener::Listener<concerto_ragdoll::PoseLost> {
+    use concerto_ecs::signal::listener::IntoListener;
+    (|_: concerto_ecs::signal::On<concerto_ragdoll::PoseLost>,
+      mut lost: concerto_ecs::resource::ResMut<Lost>| {
+        lost.0 += 1;
+    })
+    .into_listener()
+}
+
+fn pose_walking(app: &mut App, humanoid: &SpawnedHumanoid, root: Vec3, time: f32) {
+    pose_at_rest(app, humanoid, root);
+    let world = app.main_mut().world_mut();
+    let swing = (time * 4.0).sin() * 0.5;
+    for (bone, turn) in [
+        ("upperarm_l", Quat::from_rotation_z(swing)),
+        ("upperarm_r", Quat::from_rotation_z(swing)),
+        ("spine_02", Quat::from_rotation_y(swing * 0.4)),
+        ("lowerarm_l", Quat::from_rotation_y(-0.4 - swing * 0.4)),
+    ] {
+        world
+            .get_component_for_entity_mut::<Transform>(humanoid.bone(bone))
+            .unwrap()
+            .rotation = turn;
+    }
+}
+
+fn joint_errors(app: &App, humanoid: &SpawnedHumanoid, body: &RagdollBody) -> Vec<f32> {
+    let ragdoll = *app
+        .main()
+        .world()
+        .get_component_for_entity::<RagdollId>(humanoid.skeleton)
+        .unwrap();
+    let mut pose = Vec::new();
+    app.get_resource::<PhysicsState>()
+        .unwrap()
+        .ragdoll_pose(ragdoll, &mut pose);
+    let animated = app
+        .main()
+        .world()
+        .get_component_for_entity::<RagdollBody>(humanoid.skeleton)
+        .unwrap()
+        .animated_pose()
+        .to_vec();
+    body.resolved()
+        .settings()
+        .parts
+        .iter()
+        .enumerate()
+        .map(|(part, settings)| match settings.parent {
+            Some(parent) => {
+                let wanted = animated[parent].rotation.inverse() * animated[part].rotation;
+                let held = pose[parent].rotation.inverse() * pose[part].rotation;
+                wanted.angle_between(held)
+            }
+            None => 0.0,
+        })
+        .collect()
+}
+
+#[test]
+fn a_powered_body_tracks_its_animation_gives_to_a_push_hangs_when_weak_and_says_when_it_is_lost() {
+    use concerto_ragdoll::{BRACED, FLINCH, PartStrength, StrengthProfile};
+
+    let mut app = App::new();
+    app.register_plugin(MainSchedulePlugin)
+        .register_plugin(TimePlugin)
+        .register_plugin(AssetManagerPlugin)
+        .register_plugin(TransformPlugin)
+        .register_plugin(PhysicsPlugin)
+        .register_plugin(RagdollPlugin);
+    app.finish_plugin_build();
+    app.insert_resource(Lost::default());
+    app.main_mut()
+        .world_mut()
+        .register_component::<concerto_ecs::signal::listener::Listener<concerto_ragdoll::PoseLost>>(
+        );
+    let server = app.get_resource::<AssetServer>().unwrap().clone();
+    let reference = reference_humanoid();
+    let skeleton = server.add(reference.skeleton);
+    let mut asset = reference.ragdoll;
+    asset.skeleton = skeleton.clone();
+    let mut weak = asset.profile(FLINCH).unwrap().clone();
+    weak.name = "weak".into();
+    for bone in [
+        "upperarm_l",
+        "lowerarm_l",
+        "hand_l",
+        "upperarm_r",
+        "lowerarm_r",
+        "hand_r",
+    ] {
+        weak = weak.with_part(bone, PartStrength::powered(300.0, 0.5));
+    }
+    let weak = StrengthProfile {
+        parts: weak.parts.into_iter().rev().collect(),
+        ..weak
+    };
+    let asset = server.add(asset.with_profile(weak));
+    app.update();
+    let world = app.main_mut().world_mut();
+    world.spawn((
+        Collider::cuboid(50.0, 0.5, 50.0),
+        Transform::from_translation(Vec3::new(0.0, -0.5, 0.0)),
+    ));
+    let humanoid = spawn_humanoid(world, skeleton, Transform::default());
+    let mut character = CharacterRagdoll::new(asset);
+    character.power(FLINCH);
+    world.insert((character, count_lost()), humanoid.skeleton);
+
+    let step = 0.033;
+    let mut root = Vec3::new(0.0, 0.02, 0.0);
+    let mut time = 0.0;
+    pose_walking(&mut app, &humanoid, root, time);
+    frame(&mut app);
+    frame(&mut app);
+    let body = app
+        .main()
+        .world()
+        .get_component_for_entity::<RagdollBody>(humanoid.skeleton)
+        .unwrap()
+        .clone();
+    let mut worst = 0.0f32;
+    for index in 0..120 {
+        time += step;
+        root.x += step;
+        pose_walking(&mut app, &humanoid, root, time);
+        frame(&mut app);
+        if index >= 30 {
+            let errors = joint_errors(&app, &humanoid, &body);
+            worst = errors.into_iter().fold(worst, f32::max);
+        }
+    }
+    assert!(
+        worst < 0.15,
+        "a powered upper body tracks a swinging clip within 0.15 rad a joint, the worst was {worst}"
+    );
+
+    let chest = body.resolved().part_of("spine_03").unwrap();
+    let ragdoll = *app
+        .main()
+        .world()
+        .get_component_for_entity::<RagdollId>(humanoid.skeleton)
+        .unwrap();
+    for _ in 0..30 {
+        pose_at_rest(&mut app, &humanoid, root);
+        frame(&mut app);
+    }
+    let torso = |app: &App| {
+        let errors = joint_errors(app, &humanoid, &body);
+        ["spine_01", "spine_02", "spine_03"]
+            .into_iter()
+            .map(|bone| errors[body.resolved().part_of(bone).unwrap()])
+            .fold(0.0, f32::max)
+    };
+    let standing = torso(&app);
+    let state = app.get_resource_mut::<PhysicsState>().unwrap();
+    let chest_body = state.ragdoll_bodies(ragdoll)[chest];
+    state.add_impulse(chest_body, Vec3::new(0.0, 0.0, 80.0));
+    let mut bent = 0.0f32;
+    for _ in 0..30 {
+        pose_at_rest(&mut app, &humanoid, root);
+        frame(&mut app);
+        bent = bent.max(torso(&app));
+    }
+    let settled = torso(&app);
+    assert!(
+        bent > standing + 0.05,
+        "a push on the chest bends the torso, it bent {bent} rad from {standing}"
+    );
+    assert!(
+        settled < standing + 0.02,
+        "the torso is back on its pose a second after the push, it was {settled} rad off against {standing} before"
+    );
+    assert_eq!(app.get_resource::<Lost>().unwrap().0, 0);
+
+    edit(&mut app, &humanoid, |character| {
+        character.profile = "weak".into()
+    });
+    for _ in 0..90 {
+        pose_at_rest(&mut app, &humanoid, root);
+        frame(&mut app);
+    }
+    let mut pose = Vec::new();
+    app.get_resource::<PhysicsState>()
+        .unwrap()
+        .ragdoll_pose(ragdoll, &mut pose);
+    let shoulder = pose[body.resolved().part_of("upperarm_l").unwrap()].translation;
+    let hand = pose[body.resolved().part_of("hand_l").unwrap()].translation;
+    assert!(
+        shoulder.y - hand.y > 0.3,
+        "arms with half a newton metre of muscle hang, the hand was at {hand} under a shoulder at {shoulder}"
+    );
+
+    edit(&mut app, &humanoid, |character| {
+        character.profile = BRACED.into()
+    });
+    for _ in 0..15 {
+        pose_at_rest(&mut app, &humanoid, root);
+        frame(&mut app);
+    }
+    let state = app.get_resource_mut::<PhysicsState>().unwrap();
+    let chest_body = state.ragdoll_bodies(ragdoll)[chest];
+    state.add_impulse(chest_body, Vec3::new(0.0, 0.0, 60.0));
+    for _ in 0..120 {
+        pose_at_rest(&mut app, &humanoid, root);
+        frame(&mut app);
+    }
+    assert_eq!(
+        app.get_resource::<Lost>().unwrap().0,
+        1,
+        "a body on its own feet that is pushed over says once that it lost its pose"
     );
 }

@@ -10,9 +10,17 @@ pub mod sandbox;
 #[cfg(feature = "test-support")]
 pub mod testing;
 
-pub use asset::{Ragdoll, RagdollJoint, RagdollMotor, RagdollPart, RagdollShape};
-pub use character::{CharacterRagdoll, PartWeight, RagdollBody, RagdollMode, RagdollRefused};
-pub use generate::{GenerateError, HumanoidChains, HumanoidSettings, Segment, generate_humanoid};
+pub use asset::{
+    BoneStrength, PartStrength, Ragdoll, RagdollJoint, RagdollMotor, RagdollPart, RagdollShape,
+    StrengthProfile,
+};
+pub use character::{
+    CharacterRagdoll, PartWeight, PoseLost, RagdollBody, RagdollMode, RagdollRefused,
+};
+pub use generate::{
+    BRACED, FLINCH, GenerateError, HumanoidChains, HumanoidSettings, LIMP, Segment,
+    generate_humanoid,
+};
 pub use overlap::PartOverlap;
 pub use plugin::RagdollPlugin;
 pub use resolve::{RagdollError, ResolvedRagdoll};

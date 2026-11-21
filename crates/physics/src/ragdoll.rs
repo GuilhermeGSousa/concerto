@@ -116,13 +116,28 @@ pub struct JointTarget {
     pub motor: MotorSettings,
 }
 
+/// Where a joint's motor aims, held by a spring given in absolute terms: unlike a frequency, its pull does not shrink with the size of the part, so it holds a limb against the weight of what hangs from it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct JointSpring {
+    /// The rotation the part should have relative to its parent part.
+    pub rotation: Quat,
+    /// The spring's stiffness, in N·m/rad.
+    pub stiffness: f32,
+    /// The spring's damping, in N·m·s/rad.
+    pub damping: f32,
+    /// The most torque the motor applies, in N·m.
+    pub torque_limit: f32,
+}
+
 /// What the motor of the joint between a part and its parent does.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum JointDrive {
     /// The joint swings freely within its limits, slowed by its friction.
     Off,
-    /// The motor pulls the part towards a rotation.
+    /// The motor pulls the part towards a rotation with a spring given as a frequency.
     Target(JointTarget),
+    /// The motor pulls the part towards a rotation with a spring given as a stiffness.
+    Spring(JointSpring),
 }
 
 /// The swing-twist joint between a ragdoll part and its parent, placed at the part's origin, with axes in the space of the reference pose.
@@ -239,6 +254,10 @@ pub struct RagdollSettings {
     pub max_speed: f32,
     /// The collision layers of every part; by default `CollisionLayers::ragdoll()`.
     pub layers: CollisionLayers,
+    /// The fewest velocity iterations the solver runs on bodies joined to this ragdoll. The default of 10 for other bodies cannot carry a heavy trunk through a chain of light parts: powered joints then give under the load and the body sways.
+    pub velocity_steps: u32,
+    /// The fewest position iterations the solver runs on bodies joined to this ragdoll.
+    pub position_steps: u32,
 }
 
 impl Default for RagdollSettings {
@@ -247,6 +266,8 @@ impl Default for RagdollSettings {
             parts: Vec::new(),
             max_speed: 50.0,
             layers: CollisionLayers::ragdoll(),
+            velocity_steps: 20,
+            position_steps: 2,
         }
     }
 }
@@ -263,6 +284,13 @@ impl RagdollSettings {
 
     pub fn with_layers(mut self, layers: CollisionLayers) -> Self {
         self.layers = layers;
+        self
+    }
+
+    /// Sets the fewest velocity and position iterations the solver runs on this ragdoll.
+    pub fn with_solver_steps(mut self, velocity_steps: u32, position_steps: u32) -> Self {
+        self.velocity_steps = velocity_steps;
+        self.position_steps = position_steps;
         self
     }
 

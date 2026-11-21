@@ -215,7 +215,10 @@ from the part, a mass, and the joint to its parent, which sits at the part's
 origin. The first part is the root; every other part names an earlier one as
 its parent. `build` balances the masses so the joints stay stable and stops
 each part colliding with its parent. No part ever moves faster than the settings'
-`max_speed`, 50 m/s by default, however hard it is hit.
+`max_speed`, 50 m/s by default, however hard it is hit. The solver runs at least
+`velocity_steps` iterations, 20 by default, on anything joined to a ragdoll:
+the 10 it gives other bodies cannot carry a heavy trunk through a chain of
+light parts, and powered joints then give under the load.
 
 `PhysicsState::create_ragdoll(&built, owner, &pose)` adds one to the world with
 each part at its world pose and returns a `RagdollId`; `destroy_ragdoll`
@@ -552,6 +555,39 @@ changed.
 `RagdollMode::Limp` lets the body go: every part turns dynamic with its motors
 off and keeps the linear and angular velocity it had while it followed the
 animation, so a running character that goes limp keeps travelling.
+
+`RagdollMode::Powered` is the state between the two: the body tries to do what
+the animation says and physics decides how well it manages. Each part is held
+as the character's strength `profile` says, one of the `StrengthProfile`s in
+the ragdoll asset:
+
+- `PartStrength::Kinematic`: the part follows its bone exactly;
+- `PartStrength::Powered { stiffness, damping, torque_limit }`: the part is
+  dynamic and its joint's motor pulls it towards its bone's rotation under its
+  parent's, with a spring of `stiffness` N·m/rad and `damping` N·m·s/rad, and
+  no more than `torque_limit` N·m. The target leads the bone by the
+  animation's own angular speed, so a fast clip is tracked without lag;
+- `PartStrength::Limp`: dynamic with the motor off.
+
+```rust
+ragdoll.power("flinch");
+```
+
+`power` sets the mode, the profile and a weight of 1. A generated humanoid has
+three profiles: `flinch`, with the pelvis and legs kinematic and everything
+above powered, which takes a hit without needing balance; `braced`, with every
+part powered; and `limp`. A change of profile takes hold over the component's
+`blend` seconds, except to and from kinematic, which is a step.
+
+Strength is a stiffness and not a frequency: a frequency scales the spring by
+the two parts a joint joins, so an upper arm's motor would be too weak to hold
+the forearm and hand that hang from it. A torque limit of half a newton metre
+makes a muscle that cannot hold its limb up at all.
+
+When the root part is not kinematic and has been further than `lost_distance`
+from its animated place for `lost_seconds`, the character is sent `PoseLost`,
+once, until it is back: it can no longer hold the pose, and something should
+catch it or let it fall.
 
 What is drawn is a separate matter, set by weights. `weight` runs from 0, the
 animated pose, to 1, the ragdoll's; `part_weights` gives single parts a weight

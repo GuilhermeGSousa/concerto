@@ -163,6 +163,15 @@ extern "C"
      * it. */
     void jolt_body_set_layers(JoltWorld *world, JoltBodyId body, uint32_t memberships, uint32_t filter);
 
+    /* Sets the body's velocities so that it reaches `position` and `rotation`
+     * (xyzw) after `delta_time`. Meant for a kinematic body, which then pushes
+     * dynamic bodies out of its way. */
+    void jolt_body_move_kinematic(JoltWorld *world,
+                                  JoltBodyId body,
+                                  const float position[3],
+                                  const float rotation[4],
+                                  float delta_time);
+
     /* Moves the body's origin at once, keeping its rotation and velocity. */
     void jolt_body_set_position(JoltWorld *world, JoltBodyId body, const float position[3]);
 

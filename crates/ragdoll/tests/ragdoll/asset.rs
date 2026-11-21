@@ -11,7 +11,8 @@ use concerto_physics::physics_pipeline::PhysicsPipeline;
 use concerto_physics::physics_state::PhysicsState;
 use concerto_physics::ragdoll::BodyPose;
 use concerto_ragdoll::{
-    Ragdoll, RagdollError, RagdollJoint, RagdollMotor, RagdollPart, RagdollShape,
+    PartStrength, Ragdoll, RagdollError, RagdollJoint, RagdollMotor, RagdollPart, RagdollShape,
+    StrengthProfile,
 };
 use glam::{Quat, Vec3};
 use proptest::prelude::*;
@@ -218,6 +219,10 @@ proptest! {
         let ragdoll = Ragdoll {
             skeleton: AssetHandle::weak(AssetId::new()),
             parts,
+            profiles: vec![
+                StrengthProfile::new("limp", PartStrength::Limp)
+                    .with_part("Hips", PartStrength::powered(400.0, 120.0)),
+            ],
         };
         let decoded: Ragdoll = bincode::deserialize(&bincode::serialize(&ragdoll).unwrap()).unwrap();
         prop_assert_eq!(decoded, ragdoll);
