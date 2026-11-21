@@ -1848,6 +1848,15 @@ at once that it only took the impulse. An unknown entity, one with no
 `CharacterRagdoll`, a ragdoll not built yet and an unknown bone (the reply lists
 the part bones) are errors that say what to do next.
 
+`body_report` is read-only, works on the game that is playing and needs `play`
+first. It takes `entity` (the character's id as `scene_tree` shows it) and
+answers at once with one line for the `CharacterRagdoll` (its mode, profile and
+weight), then the body's state, the behaviours it runs with their priority and
+the part bones they claim, and what it senses, from `describe_body`. Errors are
+the same as `hit_character`'s. There is no tool to start or stop a behaviour: a
+behaviour is a reflected component on the character, and the component tools
+add, edit and remove it.
+
 ### The texture tab
 
 The editor of a `Texture` is in the crate
