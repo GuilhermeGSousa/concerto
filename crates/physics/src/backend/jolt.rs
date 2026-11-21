@@ -15,6 +15,7 @@ use crate::backend::{
     RawSensorContact, RawShapeHit, SensorContactKind,
 };
 use crate::collider::{Collider, ColliderOffset};
+use crate::ragdoll::{BodyPose, PartShape, RagdollBuildError, RagdollSettings};
 use crate::rigid_body::{AllowedDofs, MotionType, RigidBody};
 
 const MAX_BODIES: u32 = 10_240;
@@ -35,6 +36,42 @@ const CONTACT_BATCH: usize = 64;
 pub struct JoltBackend {
     world: *mut concerto_jolt_ffi::JoltWorld,
     static_sensors: HashSet<concerto_jolt_ffi::JoltBodyId>,
+    next_collision_group: u32,
+}
+
+/// Owns one reference to Jolt ragdoll settings, released on drop.
+pub struct RagdollSettingsHandle(*mut concerto_jolt_ffi::JoltRagdollSettings);
+
+// SAFETY: Jolt ragdoll settings are immutable once built and creating a ragdoll only reads them; the reference count they are released through is atomic.
+unsafe impl Send for RagdollSettingsHandle {}
+unsafe impl Sync for RagdollSettingsHandle {}
+
+impl Drop for RagdollSettingsHandle {
+    fn drop(&mut self) {
+        // SAFETY: the pointer came from `jolt_ragdoll_settings_create` and this is its only release.
+        unsafe {
+            concerto_jolt_ffi::jolt_ragdoll_settings_destroy(self.0);
+        }
+    }
+}
+
+/// A Jolt ragdoll owned by the world it was created in.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct RagdollHandle(*mut concerto_jolt_ffi::JoltRagdoll);
+
+// SAFETY: the handle is only an address; it is dereferenced through `JoltBackend`, whose exclusive access the scheduler guarantees.
+unsafe impl Send for RagdollHandle {}
+unsafe impl Sync for RagdollHandle {}
+
+const POSE_FLOATS: usize = 7;
+
+fn flatten_pose(pose: &[BodyPose]) -> Vec<f32> {
+    let mut floats = Vec::with_capacity(pose.len() * POSE_FLOATS);
+    for transform in pose {
+        floats.extend(transform.translation.to_array());
+        floats.extend(transform.rotation.to_array());
+    }
+    floats
 }
 
 // SAFETY: `JoltBackend` holds a raw pointer into Jolt, which is not inherently
@@ -128,6 +165,10 @@ impl PhysicsBackend for JoltBackend {
 
     type Stepper = Stepper;
 
+    type RagdollSettingsHandle = RagdollSettingsHandle;
+
+    type RagdollHandle = RagdollHandle;
+
     fn new() -> Self {
         // SAFETY: `jolt_world_create` performs Jolt's process-global init
         // (idempotent) and returns an owned world, freed in `Drop`.
@@ -143,6 +184,7 @@ impl PhysicsBackend for JoltBackend {
         Self {
             world,
             static_sensors: HashSet::new(),
+            next_collision_group: 0,
         }
     }
 
@@ -508,6 +550,135 @@ impl PhysicsBackend for JoltBackend {
             normal: Vec3::from(result.normal),
             velocity: Vec3::from(result.velocity),
         })
+    }
+
+    fn build_ragdoll(
+        settings: &RagdollSettings,
+    ) -> Result<Self::RagdollSettingsHandle, RagdollBuildError> {
+        let parts: Vec<concerto_jolt_ffi::JoltRagdollPart> = settings
+            .parts
+            .iter()
+            .map(|part| {
+                let (shape_kind, shape_size) = match part.shape {
+                    PartShape::Sphere { radius } => (
+                        concerto_jolt_ffi::JOLT_PART_SHAPE_SPHERE,
+                        [radius, 0.0, 0.0],
+                    ),
+                    PartShape::Capsule {
+                        half_height,
+                        radius,
+                    } => (
+                        concerto_jolt_ffi::JOLT_PART_SHAPE_CAPSULE,
+                        [half_height, radius, 0.0],
+                    ),
+                    PartShape::Box { half_extents } => (
+                        concerto_jolt_ffi::JOLT_PART_SHAPE_BOX,
+                        half_extents.to_array(),
+                    ),
+                };
+                concerto_jolt_ffi::JoltRagdollPart {
+                    parent: part.parent.map_or(-1, |parent| parent as i32),
+                    position: part.pose.translation.to_array(),
+                    rotation: part.pose.rotation.to_array(),
+                    shape_kind,
+                    shape_size,
+                    shape_position: part.shape_offset.translation.to_array(),
+                    shape_rotation: part.shape_offset.rotation.to_array(),
+                    mass: part.mass,
+                    twist_axis: part.joint.twist_axis.to_array(),
+                    plane_axis: part.joint.plane_axis.to_array(),
+                    normal_half_cone: part.joint.normal_half_cone,
+                    plane_half_cone: part.joint.plane_half_cone,
+                    twist_min: part.joint.twist_min,
+                    twist_max: part.joint.twist_max,
+                    max_friction_torque: part.joint.max_friction_torque,
+                    motor_frequency: part.joint.motor.frequency,
+                    motor_damping: part.joint.motor.damping,
+                    motor_torque_limit: part.joint.motor.torque_limit,
+                }
+            })
+            .collect();
+        // SAFETY: `parts` holds `parts.len()` parts, read during the call only.
+        let built = unsafe {
+            concerto_jolt_ffi::jolt_ragdoll_settings_create(parts.as_ptr(), parts.len() as u32)
+        };
+        if built.is_null() {
+            Err(RagdollBuildError::Rejected)
+        } else {
+            Ok(RagdollSettingsHandle(built))
+        }
+    }
+
+    fn create_ragdoll(
+        &mut self,
+        built: &Self::RagdollSettingsHandle,
+        pose: &[BodyPose],
+    ) -> Option<Self::RagdollHandle> {
+        // SAFETY: `built.0` is live settings.
+        let parts = unsafe { concerto_jolt_ffi::jolt_ragdoll_settings_part_count(built.0) };
+        if pose.len() != parts as usize {
+            return None;
+        }
+        let floats = flatten_pose(pose);
+        let collision_group = self.next_collision_group;
+        self.next_collision_group = self.next_collision_group.wrapping_add(1);
+        // SAFETY: the world and settings are live, and `floats` holds seven floats for each of the settings' parts.
+        let ragdoll = unsafe {
+            concerto_jolt_ffi::jolt_ragdoll_create(
+                self.world,
+                built.0,
+                collision_group,
+                floats.as_ptr(),
+            )
+        };
+        (!ragdoll.is_null()).then_some(RagdollHandle(ragdoll))
+    }
+
+    fn destroy_ragdoll(&mut self, ragdoll: Self::RagdollHandle) {
+        // SAFETY: `ragdoll` was created in this world and `PhysicsState` destroys each ragdoll once.
+        unsafe {
+            concerto_jolt_ffi::jolt_ragdoll_destroy(self.world, ragdoll.0);
+        }
+    }
+
+    fn ragdoll_bodies(&self, ragdoll: Self::RagdollHandle) -> Vec<Self::BodyHandle> {
+        // SAFETY: `ragdoll` is a live ragdoll of this world, and each index is below its part count.
+        unsafe {
+            let parts = concerto_jolt_ffi::jolt_ragdoll_part_count(ragdoll.0);
+            (0..parts)
+                .map(|part| concerto_jolt_ffi::jolt_ragdoll_part_body(ragdoll.0, part))
+                .collect()
+        }
+    }
+
+    fn ragdoll_pose(&self, ragdoll: Self::RagdollHandle, out: &mut Vec<BodyPose>) {
+        // SAFETY: `ragdoll` is a live ragdoll of this world, and `floats` holds seven floats for each of its parts.
+        let floats = unsafe {
+            let parts = concerto_jolt_ffi::jolt_ragdoll_part_count(ragdoll.0) as usize;
+            let mut floats = vec![0.0f32; parts * POSE_FLOATS];
+            concerto_jolt_ffi::jolt_ragdoll_get_pose(self.world, ragdoll.0, floats.as_mut_ptr());
+            floats
+        };
+        out.clear();
+        out.extend(floats.as_chunks::<POSE_FLOATS>().0.iter().map(|pose| {
+            BodyPose::new(
+                Vec3::new(pose[0], pose[1], pose[2]),
+                Quat::from_xyzw(pose[3], pose[4], pose[5], pose[6]),
+            )
+        }));
+    }
+
+    fn set_ragdoll_pose(&mut self, ragdoll: Self::RagdollHandle, pose: &[BodyPose]) {
+        // SAFETY: `ragdoll` is a live ragdoll of this world.
+        let parts = unsafe { concerto_jolt_ffi::jolt_ragdoll_part_count(ragdoll.0) };
+        if pose.len() != parts as usize {
+            return;
+        }
+        let floats = flatten_pose(pose);
+        // SAFETY: `floats` holds seven floats for each of the ragdoll's parts.
+        unsafe {
+            concerto_jolt_ffi::jolt_ragdoll_set_pose(ragdoll.0, floats.as_ptr());
+        }
     }
 
     fn shape_local_aabb(shape: &Self::ShapeHandle) -> Aabb {

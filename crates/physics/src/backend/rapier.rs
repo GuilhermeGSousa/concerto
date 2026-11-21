@@ -33,6 +33,7 @@ use crate::backend::{
     RawRayHit, RawSensorContact, RawShapeHit, SensorContactKind,
 };
 use crate::collider::{Collider, ColliderOffset};
+use crate::ragdoll::{BodyPose, RagdollBuildError, RagdollSettings};
 use crate::rigid_body::{AllowedDofs, MotionType, RigidBody};
 
 /// Jolt's default gravity, so both backends simulate the same world.
@@ -193,6 +194,10 @@ impl RapierBackend {
     }
 }
 
+/// The handle of a ragdoll on a backend that has none; never created.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct NoRagdoll;
+
 /// Per-step scratch: Rapier's execution pipeline and the integration
 /// parameters fed to it each step.
 pub struct Stepper {
@@ -215,6 +220,28 @@ impl PhysicsBackend for RapierBackend {
     type ShapeHandle = SharedShape;
 
     type Stepper = Stepper;
+
+    type RagdollSettingsHandle = ();
+
+    type RagdollHandle = NoRagdoll;
+
+    fn build_ragdoll(_settings: &RagdollSettings) -> Result<(), RagdollBuildError> {
+        Ok(())
+    }
+
+    fn create_ragdoll(&mut self, _built: &(), _pose: &[BodyPose]) -> Option<Self::RagdollHandle> {
+        None
+    }
+
+    fn destroy_ragdoll(&mut self, _ragdoll: Self::RagdollHandle) {}
+
+    fn ragdoll_bodies(&self, _ragdoll: Self::RagdollHandle) -> Vec<Self::BodyHandle> {
+        Vec::new()
+    }
+
+    fn ragdoll_pose(&self, _ragdoll: Self::RagdollHandle, _out: &mut Vec<BodyPose>) {}
+
+    fn set_ragdoll_pose(&mut self, _ragdoll: Self::RagdollHandle, _pose: &[BodyPose]) {}
 
     fn new() -> Self {
         Self {

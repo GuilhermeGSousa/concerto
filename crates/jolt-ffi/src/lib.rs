@@ -46,6 +46,50 @@ pub struct JoltShape {
     _marker: PhantomData<(*mut u8, PhantomPinned)>,
 }
 
+/// Opaque ragdoll recipe (wraps a reference to a `JPH::RagdollSettings`). Immutable once created.
+#[repr(C)]
+pub struct JoltRagdollSettings {
+    _data: [u8; 0],
+    _marker: PhantomData<(*mut u8, PhantomPinned)>,
+}
+
+/// Opaque ragdoll in a world (wraps a `JPH::Ragdoll`).
+#[repr(C)]
+pub struct JoltRagdoll {
+    _data: [u8; 0],
+    _marker: PhantomData<(*mut u8, PhantomPinned)>,
+}
+
+/// Mirrors the `JoltPartShape` constants in `ragdoll.h`.
+pub type JoltPartShape = u32;
+pub const JOLT_PART_SHAPE_SPHERE: JoltPartShape = 0;
+pub const JOLT_PART_SHAPE_CAPSULE: JoltPartShape = 1;
+pub const JOLT_PART_SHAPE_BOX: JoltPartShape = 2;
+
+/// One body of a ragdoll and the swing-twist joint to its parent (mirrors `JoltRagdollPart` in `ragdoll.h`).
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct JoltRagdollPart {
+    pub parent: i32,
+    pub position: [f32; 3],
+    pub rotation: [f32; 4],
+    pub shape_kind: JoltPartShape,
+    pub shape_size: [f32; 3],
+    pub shape_position: [f32; 3],
+    pub shape_rotation: [f32; 4],
+    pub mass: f32,
+    pub twist_axis: [f32; 3],
+    pub plane_axis: [f32; 3],
+    pub normal_half_cone: f32,
+    pub plane_half_cone: f32,
+    pub twist_min: f32,
+    pub twist_max: f32,
+    pub max_friction_torque: f32,
+    pub motor_frequency: f32,
+    pub motor_damping: f32,
+    pub motor_torque_limit: f32,
+}
+
 /// A Jolt body id (`JPH::BodyID::GetIndexAndSequenceNumber()`).
 pub type JoltBodyId = u32;
 
@@ -373,4 +417,38 @@ extern "C" {
         position: *const f32,
     );
 
+    /// Builds ragdoll settings from `count` parts, or returns null when they are invalid.
+    pub fn jolt_ragdoll_settings_create(
+        parts: *const JoltRagdollPart,
+        count: u32,
+    ) -> *mut JoltRagdollSettings;
+
+    pub fn jolt_ragdoll_settings_destroy(settings: *mut JoltRagdollSettings);
+
+    pub fn jolt_ragdoll_settings_part_count(settings: *const JoltRagdollSettings) -> u32;
+
+    /// Creates a ragdoll at `poses` (seven floats a part: position xyz, rotation xyzw) and adds it to the world, or returns null when the world is out of bodies.
+    pub fn jolt_ragdoll_create(
+        world: *mut JoltWorld,
+        settings: *const JoltRagdollSettings,
+        collision_group: u32,
+        poses: *const f32,
+    ) -> *mut JoltRagdoll;
+
+    /// Removes the ragdoll from the world and destroys it.
+    pub fn jolt_ragdoll_destroy(world: *mut JoltWorld, ragdoll: *mut JoltRagdoll);
+
+    pub fn jolt_ragdoll_part_count(ragdoll: *const JoltRagdoll) -> u32;
+
+    pub fn jolt_ragdoll_part_body(ragdoll: *const JoltRagdoll, part: u32) -> JoltBodyId;
+
+    /// Reads every part's world pose into `out_poses`, seven floats a part.
+    pub fn jolt_ragdoll_get_pose(
+        world: *const JoltWorld,
+        ragdoll: *const JoltRagdoll,
+        out_poses: *mut f32,
+    );
+
+    /// Moves every part to its world pose in `poses` at once.
+    pub fn jolt_ragdoll_set_pose(ragdoll: *mut JoltRagdoll, poses: *const f32);
 }

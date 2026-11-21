@@ -150,6 +150,46 @@ while touching. A body asleep on another keeps its contact listed, with the
 impulse of the last step it was simulated in. Sensors never appear here; they
 have their own signals.
 
+
+### Ragdolls
+
+A ragdoll is a tree of bodies joined by swing-twist joints, simulated by Jolt's
+own ragdoll. It is described as plain data and built once:
+
+```rust
+use concerto::physics::ragdoll::{BodyPose, JointSettings, PartSettings, PartShape, RagdollSettings};
+
+let link = |index: usize| {
+    PartSettings::new(
+        BodyPose::from_translation(Vec3::new(0.0, -0.5 * index as f32, 0.0)),
+        PartShape::Capsule { half_height: 0.15, radius: 0.08 },
+    )
+    .with_shape_offset(BodyPose::from_translation(Vec3::new(0.0, -0.25, 0.0)))
+    .with_mass(2.0)
+};
+let joint = JointSettings::new(Vec3::NEG_Y, Vec3::X).with_swing(0.6, 0.6).with_twist(-0.3, 0.3);
+let built = RagdollSettings::new()
+    .with_part(link(0))
+    .with_part(link(1).with_parent(0, joint))
+    .build()?;
+```
+
+Each part has a pose in one shared reference pose, a shape with its offset
+from the part, a mass, and the joint to its parent, which sits at the part's
+origin. The first part is the root; every other part names an earlier one as
+its parent. `build` balances the masses so the joints stay stable and stops
+each part colliding with its parent.
+
+`PhysicsState::create_ragdoll(&built, owner, &pose)` adds one to the world with
+each part at its world pose and returns a `RagdollId`; `destroy_ragdoll`
+removes it. `ragdoll_pose` reads every part's world pose and `set_ragdoll_pose`
+moves them all at once. `ragdoll_bodies` gives each part's `BodyId`, for
+velocities and impulses. A ray or sphere cast that hits a part reports the
+`owner` entity and the part's index in `RayHit::part`.
+
+Ragdolls exist on Jolt only. On Rapier, and so in the browser, `build`
+succeeds and `create_ragdoll` returns `None`.
+
 ### Queries and forces
 
 The `PhysicsState` resource answers questions about the simulated world and
