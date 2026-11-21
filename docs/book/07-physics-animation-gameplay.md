@@ -207,6 +207,32 @@ A ragdoll hangs from its joints until something drives it:
 Ragdolls exist on Jolt only. On Rapier, and so in the browser, `build`
 succeeds and `create_ragdoll` returns `None`.
 
+### Debug drawing
+
+The `concerto-physics-gizmos` crate, which a game adds itself, draws what the
+physics holds. Register `PhysicsGizmosPlugin` after `DefaultPlugins`; the
+`PhysicsGizmos` resource turns three layers on, all off by default:
+
+- `colliders` outlines every `Collider`: a sphere, a box, a capsule, or the
+  bounds of a mesh shape, carried by the entity's transform and its
+  `ColliderOffset`. Grey-blue is static, cyan kinematic, green dynamic and
+  violet asleep.
+- `ragdolls` draws each part's shape in the same colours, and at each joint
+  its frame, its swing cone from `normal_half_cone` and `plane_half_cone`, its
+  twist range as an arc, and the child's current twist axis in white, so you
+  see how close the joint is to a limit.
+- `contacts` draws a red cross at each contact of a body that holds
+  `Contacts`, with a line along its normal.
+
+In the editor the layers are component gizmo kinds, once the game lists
+`concerto-physics-editor`: `Collider`, `Ragdoll` (on the entity that holds the
+`RagdollId`), `Contacts`, and, drawn from the authored components where no body
+exists yet, `Box collider`, `Mesh collider` and `Sensor`. The viewport's Gizmos
+menu and the `gizmos` tool turn each on by name, for the selection or for every
+entity. In a game without the editor, use the `PhysicsGizmos` resource. Both
+need `DebugGizmosPlugin`, which the plugin adds when the `App` has a renderer.
+The crate's [README](../../crates/physics-gizmos/README.md) says more.
+
 ### Queries and forces
 
 The `PhysicsState` resource answers questions about the simulated world and

@@ -27,6 +27,7 @@ game adds itself when it needs them.
 | | `debug-gizmos` | immediate-mode debug lines and shapes, and `ComponentGizmo` with the engine's component gizmos for bounds, skeletons, lights and cameras | add `concerto-debug-gizmos` |
 | | `motion-matching-gizmos` | `MotionMatchingGizmos`, which draws a running character's motion matching, and the drawing the database preview shares | add `concerto-motion-matching-gizmos` |
 | | `navigation-gizmos` | `NavigationGizmosPlugin`, which draws the nav graph's points and links, in the game and the editor's scene view, and each agent's route and each loaded navmesh's polygons in the game; and `NavMeshGizmo`, the navmesh's gizmo in the editor | add `concerto-navigation-gizmos` |
+| | `physics-gizmos` | `PhysicsGizmosPlugin`, which draws colliders by body activity, each ragdoll's parts and joint limits, and contacts; and the component gizmos of `BoxCollider`, `MeshCollider` and `Sensor` | add `concerto-physics-gizmos` |
 | | `procedural-animation-gizmos` | `FootLockGizmos`, which draws each foot lock of a running player's `FootLockNode` | add `concerto-procedural-animation-gizmos` |
 | | `terminal-renderer` | a renderer that draws into a terminal | |
 | Simulation | `physics` | bodies, colliders, ray casts, character movement, over Jolt or Rapier | `physics` |
