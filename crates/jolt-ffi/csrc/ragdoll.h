@@ -1,0 +1,91 @@
+#pragma once
+
+#include <stdbool.h>
+#include <stdint.h>
+
+#include "body.h"
+#include "world.h"
+
+#ifdef __cplusplus
+extern "C"
+{
+#endif
+
+    /* Owns a reference to a JPH::RagdollSettings: the parts of one ragdoll and
+     * the constraints between them. Immutable once created, so any number of
+     * ragdolls on any thread may be created from it. */
+    typedef struct JoltRagdollSettings JoltRagdollSettings;
+
+    /* Owns a JPH::Ragdoll that is in a world. */
+    typedef struct JoltRagdoll JoltRagdoll;
+
+    typedef uint32_t JoltPartShape;
+    enum
+    {
+        /* shape_size[0] is the radius. */
+        JOLT_PART_SHAPE_SPHERE = 0,
+        /* shape_size[0] is the half height of the cylinder along Y, shape_size[1] the radius. */
+        JOLT_PART_SHAPE_CAPSULE = 1,
+        /* shape_size is the half extents. */
+        JOLT_PART_SHAPE_BOX = 2,
+    };
+
+    /* One body of a ragdoll and the swing-twist joint to its parent. Poses and
+     * axes are in the space of the reference pose, the one every part is
+     * described in. The joint sits at the part's position. */
+    typedef struct JoltRagdollPart
+    {
+        /* Index of the parent part, which must come earlier, or -1 for the root. */
+        int32_t parent;
+        float position[3];
+        float rotation[4];
+        JoltPartShape shape_kind;
+        float shape_size[3];
+        /* The shape's pose relative to the part. */
+        float shape_position[3];
+        float shape_rotation[4];
+        float mass;
+        float twist_axis[3];
+        float plane_axis[3];
+        float normal_half_cone;
+        float plane_half_cone;
+        float twist_min;
+        float twist_max;
+        float max_friction_torque;
+        float motor_frequency;
+        float motor_damping;
+        float motor_torque_limit;
+    } JoltRagdollPart;
+
+    /* Builds the settings, stabilizes their masses and disables collisions
+     * between each part and its parent. Returns null when a parent index is
+     * not an earlier part, a shape is degenerate, or stabilizing fails. */
+    JoltRagdollSettings *jolt_ragdoll_settings_create(const JoltRagdollPart *parts, uint32_t count);
+    void jolt_ragdoll_settings_destroy(JoltRagdollSettings *settings);
+    uint32_t jolt_ragdoll_settings_part_count(const JoltRagdollSettings *settings);
+
+    /* Creates a ragdoll, places each part at its world pose in `poses` (seven
+     * floats a part: position xyz, rotation xyzw) and adds it to the world,
+     * active. `collision_group` must be unique among the world's ragdolls.
+     * Returns null when the world is out of bodies. */
+    JoltRagdoll *jolt_ragdoll_create(JoltWorld *world,
+                                     const JoltRagdollSettings *settings,
+                                     uint32_t collision_group,
+                                     const float *poses);
+
+    /* Removes the ragdoll's bodies and constraints from the world and destroys
+     * them, waking what touched them. */
+    void jolt_ragdoll_destroy(JoltWorld *world, JoltRagdoll *ragdoll);
+
+    uint32_t jolt_ragdoll_part_count(const JoltRagdoll *ragdoll);
+    JoltBodyId jolt_ragdoll_part_body(const JoltRagdoll *ragdoll, uint32_t part);
+
+    /* Reads every part's world pose into `out_poses`, seven floats a part. */
+    void jolt_ragdoll_get_pose(const JoltWorld *world, const JoltRagdoll *ragdoll, float *out_poses);
+
+    /* Moves every part to its world pose in `poses` at once, keeping velocities. */
+    void jolt_ragdoll_set_pose(JoltRagdoll *ragdoll, const float *poses);
+
+#ifdef __cplusplus
+}
+#endif

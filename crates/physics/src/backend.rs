@@ -18,6 +18,7 @@ use glam::Vec3;
 
 use crate::aabb::Aabb;
 use crate::collider::{Collider, ColliderOffset};
+use crate::ragdoll::{BodyPose, RagdollBuildError, RagdollSettings};
 use crate::rigid_body::RigidBody;
 
 #[cfg(all(
@@ -114,6 +115,12 @@ pub trait PhysicsBackend: Send + Sync + Sized {
     /// by every [`Collider`] using it, hence the thread bounds.
     type ShapeHandle: Send + Sync;
 
+    /// The backend's ragdoll recipe, built once from [`RagdollSettings`] and shared by every ragdoll created from it.
+    type RagdollSettingsHandle: Send + Sync;
+
+    /// The backend's handle of a ragdoll in the world, wrapped by [`RagdollId`](crate::ragdoll::RagdollId).
+    type RagdollHandle: Copy + PartialEq + Eq + Hash + Debug + Send + Sync;
+
     /// Per-step scratch held by
     /// [`PhysicsPipeline`](crate::physics_pipeline::PhysicsPipeline),
     /// separate from the world so stepping can borrow both.
@@ -203,6 +210,30 @@ pub trait PhysicsBackend: Send + Sync + Sized {
         body: Self::BodyHandle,
         max_separation: f32,
     ) -> Option<RawGroundHit<Self::BodyHandle>>;
+
+    /// Builds a ragdoll recipe from already validated settings.
+    fn build_ragdoll(
+        settings: &RagdollSettings,
+    ) -> Result<Self::RagdollSettingsHandle, RagdollBuildError>;
+
+    /// Creates a ragdoll with each part at its world pose in `pose` and adds it to the simulation; `None` when the backend has no ragdolls or is out of bodies.
+    fn create_ragdoll(
+        &mut self,
+        built: &Self::RagdollSettingsHandle,
+        pose: &[BodyPose],
+    ) -> Option<Self::RagdollHandle>;
+
+    /// Removes the ragdoll's bodies and joints from the simulation and destroys them.
+    fn destroy_ragdoll(&mut self, ragdoll: Self::RagdollHandle);
+
+    /// The body of each part, in part order.
+    fn ragdoll_bodies(&self, ragdoll: Self::RagdollHandle) -> Vec<Self::BodyHandle>;
+
+    /// Writes every part's world pose into `out`, in part order.
+    fn ragdoll_pose(&self, ragdoll: Self::RagdollHandle, out: &mut Vec<BodyPose>);
+
+    /// Moves every part to its world pose in `pose` at once, keeping velocities.
+    fn set_ragdoll_pose(&mut self, ragdoll: Self::RagdollHandle, pose: &[BodyPose]);
 
     /// The shape's axis-aligned bounds (min, max) in its own local space,
     /// before any body pose or scale. The engine no longer stores a

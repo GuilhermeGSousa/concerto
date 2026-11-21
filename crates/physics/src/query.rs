@@ -14,6 +14,8 @@ pub struct QueryFilter<'a> {
 pub struct ShapeHit {
     pub body: BodyId,
     pub entity: Option<Entity>,
+    /// The index of the ragdoll part that was hit, when the body belongs to a ragdoll.
+    pub part: Option<usize>,
     /// How far along the sweep the sphere first touches, as a fraction `[0, 1]` of `direction`.
     pub fraction: f32,
     /// World-space contact point on the hit body.

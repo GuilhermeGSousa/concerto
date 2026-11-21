@@ -16,6 +16,7 @@ pub mod physics_pipeline;
 pub mod physics_state;
 pub mod plugin;
 pub mod query;
+pub mod ragdoll;
 pub mod ray;
 pub mod rigid_body;
 pub mod sensor;
