@@ -237,6 +237,9 @@ extern "C"
                              JoltBodyId body,
                              float force[3]);
 
+    /* Adds a torque, in N·m about the world axes, for the next step. */
+    void jolt_body_add_torque(JoltWorld *world, JoltBodyId body, const float torque[3]);
+
     void jolt_body_add_force_at(JoltWorld *world,
                                 JoltBodyId body,
                                 float force[3],

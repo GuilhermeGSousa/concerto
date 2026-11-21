@@ -521,6 +521,13 @@ impl PhysicsBackend for JoltBackend {
         }
     }
 
+    fn add_torque(&mut self, body: Self::BodyHandle, torque: Vec3) {
+        // SAFETY: `body` is a body in this world; the array a valid triple.
+        unsafe {
+            concerto_jolt_ffi::jolt_body_add_torque(self.world, body, torque.to_array().as_ptr());
+        }
+    }
+
     fn add_force_at(&mut self, body: Self::BodyHandle, force: Vec3, position: Vec3) {
         // SAFETY: `body` is a body in this world; the arrays valid triples.
         unsafe {

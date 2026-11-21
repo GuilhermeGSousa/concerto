@@ -200,6 +200,8 @@ pub trait PhysicsBackend: Send + Sync + Sized {
 
     fn add_force_at(&mut self, body: Self::BodyHandle, force: Vec3, position: Vec3);
 
+    fn add_torque(&mut self, body: Self::BodyHandle, torque: Vec3);
+
     /// Casts a ray from `origin` along `direction` — whose length is the
     /// maximum cast distance — and returns the closest hit, if any, skipping
     /// the bodies in `ignore`.
