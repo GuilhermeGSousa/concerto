@@ -6,6 +6,7 @@ use concerto_mcp::{McpTool, Needs, PendingCall, ToolCalls, ToolError};
 use concerto_physics::{physics_state::PhysicsState, ragdoll::RagdollId};
 use concerto_ragdoll::{
     BodyHit, CharacterRagdoll, Flinch, FlinchRecord, HitReaction, RagdollBody, RagdollMode,
+    ShotReaction,
 };
 use glam::Vec3;
 use schemars::JsonSchema;
@@ -25,6 +26,8 @@ pub struct HitCharacter {
     pub impulse: Option<[f32; 3]>,
     /// Where the hit lands, in world space; the part's current position without it.
     pub point: Option<[f32; 3]>,
+    /// True marks the hit as a gunshot: a character with a `ShotReaction` that is on its feet answers with its whole body, and the tool answers at once; call body_report to follow it. A blow without it.
+    pub shot: Option<bool>,
 }
 
 pub(crate) fn hit_tool() -> McpTool {
@@ -46,6 +49,7 @@ type Characters = Query<
         Option<&'static RagdollBody>,
         Option<&'static HitReaction>,
         Option<&'static Flinch>,
+        Option<&'static ShotReaction>,
     ),
 >;
 
@@ -122,7 +126,9 @@ pub(crate) fn hit_character(
             ));
             continue;
         };
-        let Some((character, id, body, reaction, flinch)) = characters.get_entity(entity) else {
+        let Some((character, id, body, reaction, flinch, shot_reaction)) =
+            characters.get_entity(entity)
+        else {
             reply.err(ToolError::new(
                 "unknown_entity",
                 format!(
@@ -179,12 +185,22 @@ pub(crate) fn hit_character(
                 }
             }
         };
-        signals.trigger(BodyHit {
-            character: entity,
-            part,
-            point,
-            impulse,
-        });
+        let hit = BodyHit::new(entity, part, point, impulse);
+        if arguments.shot == Some(true) {
+            signals.trigger(hit.shot());
+            if shot_reaction.is_some() && character.mode != RagdollMode::Limp {
+                reply.ok(format!(
+                    "Shot {} of {} with impulse {} N·s at {}; its shot reaction runs until its balance ends, and body_report shows it.",
+                    arguments.bone,
+                    arguments.entity,
+                    vec3_text(impulse),
+                    vec3_text(point)
+                ));
+                continue;
+            }
+        } else {
+            signals.trigger(hit);
+        }
         match outcome(character, reaction, flinch.is_some()) {
             Outcome::OnlyImpulse(why) => reply.ok(format!(
                 "Hit {} of {} with impulse {} N·s at {}; {why}, so the body only took the impulse.",

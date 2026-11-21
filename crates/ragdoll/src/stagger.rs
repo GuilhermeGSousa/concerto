@@ -178,6 +178,7 @@ pub fn stagger_bodies(
             pace: 1.0 + (stagger.slow_steps - 1.0).max(0.0) * stumble,
             strength: 1.0 - stagger.weak_legs * stumble,
             give: stumble,
+            ..Hindrance::default()
         });
 
         let muscle = PartStrength::Powered {
