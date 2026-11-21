@@ -1,4 +1,4 @@
-use concerto_ecs::{Component, Entity, Query, ResMut};
+use concerto_ecs::{Component, Entity, Query, ResMut, Without};
 use concerto_foundation::time::Time;
 use concerto_physics::{
     physics_state::PhysicsState,
@@ -7,7 +7,7 @@ use concerto_physics::{
 };
 use glam::Vec3;
 
-use crate::{character::RagdollBody, overlap::rounded_at};
+use crate::{character::RagdollBody, dying::Settled, overlap::rounded_at};
 
 const GRAVITY: f32 = 9.81;
 const GROUND_NORMAL: f32 = 0.5;
@@ -174,6 +174,11 @@ pub struct BodySense {
 }
 
 impl BodySense {
+    pub(crate) fn disturb(&mut self) {
+        self.still = 0.0;
+        self.at_rest = false;
+    }
+
     /// Whether the capture point is inside the support: the body can stay up without a step.
     pub fn balanced(&self) -> bool {
         self.support.len() >= 3 && self.off_balance == Vec3::ZERO
@@ -210,7 +215,7 @@ fn predicted_impact(state: &PhysicsState, from: Vec3, velocity: Vec3) -> Option<
 
 /// After each physics step, rewrites every `BodySense` from its ragdoll: centre of mass, support, capture point, lean, time in the air, predicted impacts and rest.
 pub fn sense_bodies(
-    characters: Query<(Entity, &RagdollId, &RagdollBody, &mut BodySense)>,
+    characters: Query<(Entity, &RagdollId, &RagdollBody, &mut BodySense), Without<Settled>>,
     mut state: ResMut<PhysicsState>,
 ) {
     let dt = Time::fixed_delta_time().as_secs_f32();

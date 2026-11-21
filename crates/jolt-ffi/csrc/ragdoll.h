@@ -128,6 +128,10 @@ extern "C"
                                            uint32_t part,
                                            JoltMotionType motion_type);
 
+    /* Frozen: every part becomes static where it is and leaves the
+     * simulation. Not frozen: every part becomes dynamic again and wakes. */
+    void jolt_ragdoll_set_frozen(JoltWorld *world, JoltRagdoll *ragdoll, bool frozen);
+
     /* The angular impulse the joint's motor applied in the last collision
      * step, about the joint's three axes. Zero for the root. */
     void jolt_ragdoll_get_joint_motor_impulse(const JoltRagdoll *ragdoll,

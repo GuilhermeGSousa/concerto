@@ -40,7 +40,7 @@ use concerto::{
 use concerto_debug_gizmos::DebugGizmos;
 use concerto_physics_gizmos::{PhysicsGizmos, PhysicsGizmosPlugin};
 use concerto_ragdoll::{
-    Balance, BodyDrive, BodyHit, BodySense, CharacterRagdoll, FallReaction, PhysicalState,
+    Balance, BodyDrive, BodyHit, BodySense, CharacterRagdoll, Die, FallReaction, PhysicalState,
     RagdollBody, RagdollMode, ShotReaction, Stagger, testing::reference_humanoid,
 };
 use glam::{Quat, Vec3};
@@ -58,6 +58,7 @@ const HUMANOID_CENTER: Vec3 = Vec3::new(1.5, 0.0, 0.0);
 const WALK_RADIUS: f32 = 1.0;
 const WALK_SPEED: f32 = 1.0;
 const PUSH: f32 = 60.0;
+const DYING_SECONDS: f32 = 1.0;
 const SHOT: f32 = 40.0;
 const STAGGER_SEVERITY: f32 = 0.5;
 const ARM_SWING: f32 = 0.8;
@@ -339,6 +340,12 @@ fn balance_humanoid(
             )
             .shot(),
         );
+    }
+    if input.is_just_pressed(PhysicalKey::Code(KeyCode::KeyX)) {
+        cmd.trigger(Die {
+            character: humanoid.skeleton,
+            seconds: DYING_SECONDS,
+        });
     }
     let shove = input.is_just_pressed(PhysicalKey::Code(KeyCode::KeyU));
     let stagger = input.is_just_pressed(PhysicalKey::Code(KeyCode::KeyY));

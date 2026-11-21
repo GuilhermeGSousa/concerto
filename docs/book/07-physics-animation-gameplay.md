@@ -247,6 +247,9 @@ A ragdoll hangs from its joints until something drives it:
 - `drive_ragdoll_kinematic(id, &pose)` sets each part's velocity so it reaches
   `pose` at the end of the next fixed step. Kinematic parts follow it exactly
   and push dynamic bodies aside.
+- `set_ragdoll_frozen(id, true)` makes every part static where it is: the
+  ragdoll blocks bodies and is found by queries, and costs the solver nothing.
+  `false` makes every part dynamic and awake again.
 
 Ragdolls exist on Jolt only. On Rapier, and so in the browser, `build`
 succeeds and `create_ragdoll` returns `None`.
@@ -736,7 +739,7 @@ When a behaviour ends by itself it triggers `BehaviourEnded` with
 - `Reacting`: on its feet and powered, flinching or driven by behaviours;
 - `Falling`: no longer supported. A behaviour that gives up its balance sets it;
 - `Down`: a falling or limp body lying at rest;
-- `Dead`: limp for good. A game or the dying behaviour sets it, and nothing the
+- `Dead`: limp for good. A game or `Dying` sets it, and nothing the
   engine does moves a character out of it.
 
 The engine moves it between `Animated` and `Reacting` and to `Down`. While
@@ -912,6 +915,49 @@ a constraint. A fall from a height, where a roll is the right answer, is not
 handled. On the reference humanoid pushed over with 300 N·s, forward or
 backward, the braced fall's peak contact impulse on the head is under half the
 limp fall's, and falling forward both hands land before the chest.
+
+#### Dying
+
+The engine has no health. When the game decides a character dies it says so,
+with the seconds the strength takes to leave the body:
+
+```rust
+cmd.trigger(Die { character, seconds: 1.0 });
+```
+
+Adding a `Dying` component does the same, which is how an editor tool starts
+it. While it is on the character:
+
+- every part's strength falls to zero, from the outside in: hands and feet
+  are spent at 40% of the time, forearms and shins at 60%, upper arms, thighs
+  and the head at 80%, the trunk at the end (`Dying::left`). The drive scales
+  whatever holds each part, the strength profile or a behaviour's claim with
+  its forces, so a behaviour still running loses its grip and a fall that
+  began braced ends limp. A character that was following its animation is
+  simulated in full from the first step;
+- when nothing is left the ragdoll is limp, `PhysicalState` is `Dead`, and
+  `Balance`, `Stagger`, `Shot`, `Fall` and `Flinch` are removed. Nothing the
+  engine does moves a character out of `Dead`;
+- `Die` with zero seconds does all of that at once, which a head shot wants. A
+  second `Die` never slows a death down.
+
+When a dead body lies at rest it settles: its parts become static where they
+lie (`PhysicsState::set_ragdoll_frozen`), it gets a `Settled` component, and
+`BodySettled { character }` is triggered. A settled body is no longer driven
+or sensed and its capsule is no longer carried, so it costs its static shapes
+and the pose write-back and nothing in the solver. Its shapes still block
+doors and stop bullets. The bones keep the pose it lies in.
+
+A `BodyHit` of at least `Settled::wake_impulse`, 50 N·s by default, wakes it:
+the parts are simulated again, the struck part takes the impulse, and the body
+settles again, with another `BodySettled`. A lighter hit does nothing. A
+dynamic body pushed into a settled one is stopped by it and does not wake it;
+send a `BodyHit` for an explosion or a door that should.
+
+The capsule is not removed. It stays where the body left it, in no collision
+layer; despawn it, or the character, when the game no longer needs the entity.
+A settled body is not saved as such: a scene or a save game that wants the
+corpse writes the bones' pose.
 
 Ragdoll parts are in `Layers::RAGDOLL` and collide with everything but
 `Layers::CHARACTER` (`CollisionLayers::ragdoll()`, or `RagdollSettings::layers`

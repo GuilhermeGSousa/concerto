@@ -17,6 +17,7 @@ enum Mode {
     Limp,
     Kinematic,
     Powered,
+    Settled,
 }
 
 impl Mode {
@@ -25,6 +26,7 @@ impl Mode {
             Mode::Limp => "limp",
             Mode::Kinematic => "kinematic",
             Mode::Powered => "powered",
+            Mode::Settled => "settled",
         }
     }
 }
@@ -59,6 +61,7 @@ fn crowd(humanoid: &ReferenceHumanoid, count: usize, mode: Mode) -> Crowd {
             .collect();
         match mode {
             Mode::Limp => {}
+            Mode::Settled => world.state().set_ragdoll_frozen(ragdoll.id, true),
             Mode::Kinematic => {
                 for part in 0..parts {
                     world
@@ -95,6 +98,7 @@ impl Crowd {
                         self.world.state().set_ragdoll_pose(ragdoll.id, target);
                     }
                 }
+                Mode::Settled => {}
                 Mode::Kinematic => {
                     let sway = Vec3::new(0.3 * phase.sin(), 0.0, 0.0);
                     let moved: Vec<BodyPose> = target
@@ -136,7 +140,7 @@ impl Crowd {
 fn fixed_step(c: &mut Criterion) {
     let humanoid = reference_humanoid();
     let mut group = c.benchmark_group("ragdoll_fixed_step");
-    for mode in [Mode::Limp, Mode::Kinematic, Mode::Powered] {
+    for mode in [Mode::Limp, Mode::Kinematic, Mode::Powered, Mode::Settled] {
         for count in COUNTS {
             let mut crowd = crowd(&humanoid, count, mode);
             group.bench_function(BenchmarkId::new(mode.name(), count), |b| {

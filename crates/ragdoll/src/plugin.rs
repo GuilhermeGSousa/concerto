@@ -22,6 +22,7 @@ use crate::{
         drop_removed_ragdoll, drop_replaced_ragdoll, record_animated_poses, record_ragdoll_poses,
         write_ragdoll_poses,
     },
+    dying::{Dying, Settled, die_when_told, drain_dying, settle_dead_bodies, wake_when_hit},
     fall::{Fall, FallReaction, fall_bodies, fall_when_falling},
     hit::{HitReaction, flinch_when_hit, update_flinches},
     sensing::sense_bodies,
@@ -67,6 +68,20 @@ impl Plugin for RagdollPlugin {
             .add_system(
                 FixedUpdate,
                 fall_bodies.in_set(BehaviourSet).at_preview_time(),
+            );
+        app.register_type::<Dying>();
+        app.register_type::<Settled>();
+        app.add_listener(die_when_told.at_preview_time())
+            .add_listener(wake_when_hit.at_preview_time())
+            .add_system(
+                FixedUpdate,
+                drain_dying.in_set(BehaviourSet).at_preview_time(),
+            )
+            .add_system(
+                LateFixedUpdate,
+                settle_dead_bodies
+                    .after(update_physical_states)
+                    .at_preview_time(),
             );
         app.register_type::<ShotReaction>();
         app.add_listener(react_when_shot.at_preview_time())
