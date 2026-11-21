@@ -16,7 +16,7 @@ use crate::backend::{
 };
 use crate::body::BodyActivity;
 use crate::collider::{Collider, ColliderOffset};
-use crate::query::RagdollQuery;
+use crate::layers::{CollisionLayers, Layers};
 use crate::ragdoll::{BodyPose, JointDrive, PartShape, RagdollBuildError, RagdollSettings};
 use crate::rigid_body::{AllowedDofs, MotionType, RigidBody};
 
@@ -126,14 +126,6 @@ pub struct Stepper {
 unsafe impl Send for Stepper {}
 unsafe impl Sync for Stepper {}
 
-fn to_jolt_ragdoll_query(ragdolls: RagdollQuery) -> concerto_jolt_ffi::JoltRagdollQuery {
-    match ragdolls {
-        RagdollQuery::Skip => concerto_jolt_ffi::JOLT_RAGDOLL_QUERY_SKIP,
-        RagdollQuery::Include => concerto_jolt_ffi::JOLT_RAGDOLL_QUERY_INCLUDE,
-        RagdollQuery::Only => concerto_jolt_ffi::JOLT_RAGDOLL_QUERY_ONLY,
-    }
-}
-
 fn to_jolt_dofs(dofs: AllowedDofs) -> concerto_jolt_ffi::JoltAllowedDofs {
     let mut jolt_dofs = 0;
     for (axis, jolt_axis) in [
@@ -238,6 +230,7 @@ impl PhysicsBackend for JoltBackend {
         offset: Option<&ColliderOffset>,
         sensor: bool,
         gravity_scale: f32,
+        layers: CollisionLayers,
     ) -> Self::BodyHandle {
         let position = transform.translation.to_array();
         let rotation = transform.rotation.to_array();
@@ -290,6 +283,11 @@ impl PhysicsBackend for JoltBackend {
                 collider.shape().0.as_ptr(),
             );
             concerto_jolt_ffi::jolt_body_creation_settings_set_is_sensor(settings, sensor);
+            concerto_jolt_ffi::jolt_body_creation_settings_set_layers(
+                settings,
+                layers.memberships.mask(),
+                layers.filter.mask(),
+            );
             concerto_jolt_ffi::jolt_body_creation_settings_set_gravity_factor(
                 settings,
                 gravity_scale,
@@ -388,10 +386,15 @@ impl PhysicsBackend for JoltBackend {
         }
     }
 
-    fn set_body_ghost(&mut self, body: Self::BodyHandle, ghost: bool) {
-        // SAFETY: `body` is a body in this world.
+    fn set_body_layers(&mut self, body: Self::BodyHandle, layers: CollisionLayers) {
+        // SAFETY: `self.world` is a valid world; the shim ignores a body that is not in it.
         unsafe {
-            concerto_jolt_ffi::jolt_body_set_ghost(self.world, body, ghost);
+            concerto_jolt_ffi::jolt_body_set_layers(
+                self.world,
+                body,
+                layers.memberships.mask(),
+                layers.filter.mask(),
+            );
         }
     }
 
@@ -505,7 +508,7 @@ impl PhysicsBackend for JoltBackend {
         origin: Vec3,
         direction: Vec3,
         ignore: &[Self::BodyHandle],
-        ragdolls: RagdollQuery,
+        layers: Layers,
     ) -> Option<RawRayHit<Self::BodyHandle>> {
         let origin_array = origin.to_array();
         let direction_array = direction.to_array();
@@ -523,7 +526,7 @@ impl PhysicsBackend for JoltBackend {
                 direction_array.as_ptr(),
                 ignore.as_ptr(),
                 ignore.len() as u32,
-                to_jolt_ragdoll_query(ragdolls),
+                layers.mask(),
                 &mut hit,
             )
         };
@@ -541,7 +544,7 @@ impl PhysicsBackend for JoltBackend {
         radius: f32,
         direction: Vec3,
         ignore: &[Self::BodyHandle],
-        ragdolls: RagdollQuery,
+        layers: Layers,
     ) -> Option<RawShapeHit<Self::BodyHandle>> {
         let origin_array = origin.to_array();
         let direction_array = direction.to_array();
@@ -561,7 +564,7 @@ impl PhysicsBackend for JoltBackend {
                 direction_array.as_ptr(),
                 ignore.as_ptr(),
                 ignore.len() as u32,
-                to_jolt_ragdoll_query(ragdolls),
+                layers.mask(),
                 &mut hit,
             )
         };
@@ -662,6 +665,8 @@ impl PhysicsBackend for JoltBackend {
                 parts.as_ptr(),
                 parts.len() as u32,
                 settings.max_speed,
+                settings.layers.memberships.mask(),
+                settings.layers.filter.mask(),
             )
         };
         if built.is_null() {
@@ -700,22 +705,6 @@ impl PhysicsBackend for JoltBackend {
         // SAFETY: `ragdoll` was created in this world and `PhysicsState` destroys each ragdoll once.
         unsafe {
             concerto_jolt_ffi::jolt_ragdoll_destroy(self.world, ragdoll.0);
-        }
-    }
-
-    fn set_ragdoll_ignored_body(
-        &mut self,
-        ragdoll: Self::RagdollHandle,
-        body: Option<Self::BodyHandle>,
-    ) {
-        // SAFETY: `ragdoll` is a live ragdoll of this world, which is not stepping while it is exclusively borrowed.
-        unsafe {
-            concerto_jolt_ffi::jolt_ragdoll_set_ignored_body(
-                self.world,
-                ragdoll.0,
-                body.unwrap_or(0),
-                body.is_some(),
-            );
         }
     }
 

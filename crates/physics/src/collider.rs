@@ -11,6 +11,7 @@ use log::warn;
 use crate::body::BodyId;
 use crate::contact::Contacts;
 use crate::interpolation::TransformInterpolation;
+use crate::layers::CollisionLayers;
 use crate::physics_state::PhysicsState;
 use crate::rigid_body::{MotionType, RigidBody};
 use crate::sensor::Sensor;
@@ -158,6 +159,7 @@ pub fn register_colliders(
             Option<&BoxCollider>,
             Option<&Contacts>,
             Option<&GravityScale>,
+            Option<&CollisionLayers>,
         ),
         Without<BodyId>,
     >,
@@ -175,6 +177,7 @@ pub fn register_colliders(
         box_collider,
         contacts,
         gravity_scale,
+        layers,
     ) in colliders.iter()
     {
         let mesh_shape = mesh_collider.is_some() && box_collider.is_none();
@@ -201,6 +204,11 @@ pub fn register_colliders(
             offset,
             sensor,
             gravity_scale.map_or(1.0, |scale| scale.0),
+            layers.copied().unwrap_or(if sensor {
+                CollisionLayers::sensor()
+            } else {
+                CollisionLayers::default()
+            }),
         );
         physics_state.register_body_entity(body_id, entity);
         if contacts.is_some() {

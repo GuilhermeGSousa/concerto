@@ -93,8 +93,7 @@ pub struct JoltRagdollPart {
 /// A Jolt body id (`JPH::BodyID::GetIndexAndSequenceNumber()`).
 pub type JoltBodyId = u32;
 
-/// Mirrors `JPH::EMotionType`. Static bodies live on the NON_MOVING collision
-/// layer, kinematic and dynamic bodies on MOVING.
+/// Mirrors `JPH::EMotionType`.
 pub type JoltMotionType = u32;
 pub const JOLT_MOTION_TYPE_STATIC: JoltMotionType = 0;
 pub const JOLT_MOTION_TYPE_KINEMATIC: JoltMotionType = 1;
@@ -160,12 +159,6 @@ pub struct JoltSensorContact {
     pub other: JoltBodyId,
     pub entered: u8,
 }
-
-/// Whether a scene query sees the bodies of ragdoll parts (mirrors `JoltRagdollQuery` in `body.h`).
-pub type JoltRagdollQuery = u32;
-pub const JOLT_RAGDOLL_QUERY_SKIP: JoltRagdollQuery = 0;
-pub const JOLT_RAGDOLL_QUERY_INCLUDE: JoltRagdollQuery = 1;
-pub const JOLT_RAGDOLL_QUERY_ONLY: JoltRagdollQuery = 2;
 
 /// Mirrors the `JoltContactKind` constants in `body.h`.
 pub type JoltContactKind = u8;
@@ -289,6 +282,13 @@ extern "C" {
         gravity_factor: f32,
     );
 
+    /// The collision layers the body is in and the ones it collides with, each a mask of bits 0 to 13; by default in layer 0 and colliding with every layer.
+    pub fn jolt_body_creation_settings_set_layers(
+        settings: *mut JoltBodyCreationSettings,
+        memberships: u32,
+        filter: u32,
+    );
+
     /// Makes the body a kinematic, always active sensor on the sensor layer.
     pub fn jolt_body_creation_settings_set_is_sensor(
         settings: *mut JoltBodyCreationSettings,
@@ -343,8 +343,13 @@ extern "C" {
         capacity: u32,
     ) -> u32;
 
-    /// Makes a dynamic or kinematic body collide with nothing and be skipped by every query, or puts it back among the moving bodies.
-    pub fn jolt_body_set_ghost(world: *mut JoltWorld, body: JoltBodyId, ghost: bool);
+    /// Puts the body in the layers `memberships` and makes it collide with the layers `filter`; with no memberships it collides with nothing and no query sees it.
+    pub fn jolt_body_set_layers(
+        world: *mut JoltWorld,
+        body: JoltBodyId,
+        memberships: u32,
+        filter: u32,
+    );
 
     /// Moves the body's origin at once, keeping its rotation and velocity.
     pub fn jolt_body_set_position(world: *mut JoltWorld, body: JoltBodyId, position: *const f32);
@@ -409,7 +414,7 @@ extern "C" {
         direction: *const f32,
         ignore: *const JoltBodyId,
         ignore_count: u32,
-        ragdolls: JoltRagdollQuery,
+        layers: u32,
         out_hit: *mut JoltRayHit,
     ) -> bool;
 
@@ -421,7 +426,7 @@ extern "C" {
         direction: *const f32,
         ignore: *const JoltBodyId,
         ignore_count: u32,
-        ragdolls: JoltRagdollQuery,
+        layers: u32,
         out_hit: *mut JoltShapeHit,
     ) -> bool;
 
@@ -448,6 +453,8 @@ extern "C" {
         parts: *const JoltRagdollPart,
         count: u32,
         max_linear_velocity: f32,
+        memberships: u32,
+        filter: u32,
     ) -> *mut JoltRagdollSettings;
 
     pub fn jolt_ragdoll_settings_destroy(settings: *mut JoltRagdollSettings);
@@ -464,14 +471,6 @@ extern "C" {
 
     /// Removes the ragdoll from the world and destroys it.
     pub fn jolt_ragdoll_destroy(world: *mut JoltWorld, ragdoll: *mut JoltRagdoll);
-
-    /// Stops every part of the ragdoll colliding with `body`, or lets them collide again when `ignored` is false.
-    pub fn jolt_ragdoll_set_ignored_body(
-        world: *mut JoltWorld,
-        ragdoll: *mut JoltRagdoll,
-        body: JoltBodyId,
-        ignored: bool,
-    );
 
     pub fn jolt_ragdoll_part_count(ragdoll: *const JoltRagdoll) -> u32;
 

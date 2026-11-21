@@ -11,6 +11,7 @@ use crate::body::{BodyActivity, BodyId};
 use crate::collider::{Collider, ColliderOffset};
 use crate::contact::{Contact, ContactChange};
 use crate::ground::{GroundContact, GroundState};
+use crate::layers::CollisionLayers;
 use crate::query::{QueryFilter, ShapeHit};
 use crate::ragdoll::{BodyPose, BuiltRagdoll, JointDrive, RagdollId, RagdollSettings};
 use crate::ray::RayHit;
@@ -181,14 +182,6 @@ impl PhysicsState {
         self.backend.body_activity(body.0)
     }
 
-    /// Stops every part of the ragdoll colliding with `body`, a character's own capsule; `None` lets them collide with everything again.
-    pub fn set_ragdoll_ignored_body(&mut self, ragdoll: RagdollId, body: Option<BodyId>) {
-        if self.ragdolls.contains_key(&ragdoll) {
-            self.backend
-                .set_ragdoll_ignored_body(ragdoll.0, body.map(|body| body.0));
-        }
-    }
-
     /// The body of each part of the ragdoll, in part order; empty for a destroyed ragdoll.
     pub fn ragdoll_bodies(&self, ragdoll: RagdollId) -> &[BodyId] {
         self.ragdolls
@@ -227,6 +220,7 @@ impl PhysicsState {
         offset: Option<&ColliderOffset>,
         sensor: bool,
         gravity_scale: f32,
+        layers: CollisionLayers,
     ) -> BodyId {
         BodyId(self.backend.create_body(
             collider,
@@ -235,6 +229,7 @@ impl PhysicsState {
             offset,
             sensor,
             gravity_scale,
+            layers,
         ))
     }
 
@@ -497,9 +492,9 @@ impl PhysicsState {
         }
     }
 
-    /// Makes a dynamic or kinematic body collide with nothing and be skipped by every query, or puts it back; a static body, a sensor and a ragdoll part are left alone.
-    pub fn set_body_ghost(&mut self, body: BodyId, ghost: bool) {
-        self.backend.set_body_ghost(body.0, ghost);
+    /// Gives the body its collision layers, as a `CollisionLayers` beside its `Collider` does when the body is created. `CollisionLayers::NONE` makes it collide with nothing and hides it from every query.
+    pub fn set_body_layers(&mut self, body: BodyId, layers: CollisionLayers) {
+        self.backend.set_body_layers(body.0, layers);
     }
 
     /// Moves the body's origin at once, keeping its rotation and velocity.
@@ -526,7 +521,7 @@ impl PhysicsState {
     pub fn cast_ray(&self, origin: Vec3, direction: Vec3, filter: QueryFilter) -> Option<RayHit> {
         let ignore: Vec<_> = filter.ignore.iter().map(|body| body.0).collect();
         self.backend
-            .cast_ray(origin, direction, &ignore, filter.ragdolls)
+            .cast_ray(origin, direction, &ignore, filter.layers)
             .map(|hit| {
                 let body = BodyId(hit.body);
 
@@ -556,7 +551,7 @@ impl PhysicsState {
                 radius.max(MIN_SPHERE_CAST_RADIUS),
                 direction,
                 &ignore,
-                filter.ragdolls,
+                filter.layers,
             )
             .map(|hit| {
                 let body = BodyId(hit.body);

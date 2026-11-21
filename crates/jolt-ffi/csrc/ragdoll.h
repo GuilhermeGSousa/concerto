@@ -60,10 +60,13 @@ extern "C"
     /* Builds the settings, stabilizes their masses and disables collisions
      * between each part and its parent. Returns null when a parent index is
      * not an earlier part, a shape is degenerate, or stabilizing fails. No
-     * part ever moves faster than `max_linear_velocity`, in m/s. */
+     * part ever moves faster than `max_linear_velocity`, in m/s. Every part is
+     * in the collision layers `memberships` and collides with `filter`. */
     JoltRagdollSettings *jolt_ragdoll_settings_create(const JoltRagdollPart *parts,
                                                       uint32_t count,
-                                                      float max_linear_velocity);
+                                                      float max_linear_velocity,
+                                                      uint32_t memberships,
+                                                      uint32_t filter);
     void jolt_ragdoll_settings_destroy(JoltRagdollSettings *settings);
     uint32_t jolt_ragdoll_settings_part_count(const JoltRagdollSettings *settings);
 
@@ -79,15 +82,6 @@ extern "C"
     /* Removes the ragdoll's bodies and constraints from the world and destroys
      * them, waking what touched them. */
     void jolt_ragdoll_destroy(JoltWorld *world, JoltRagdoll *ragdoll);
-
-    /* Stops every part of the ragdoll colliding with `body`, a character's
-     * own capsule, or lets them collide again when `ignored` is false. A
-     * ragdoll ignores one body at a time. Must not be called while the world
-     * steps. */
-    void jolt_ragdoll_set_ignored_body(JoltWorld *world,
-                                       JoltRagdoll *ragdoll,
-                                       JoltBodyId body,
-                                       bool ignored);
 
     uint32_t jolt_ragdoll_part_count(const JoltRagdoll *ragdoll);
     JoltBodyId jolt_ragdoll_part_body(const JoltRagdoll *ragdoll, uint32_t part);

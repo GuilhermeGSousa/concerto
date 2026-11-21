@@ -11,6 +11,6 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 exec "${CXX:-c++}" -fsyntax-only -std=c++17 \
-	-DNDEBUG -DJPH_OBJECT_LAYER_BITS=16 \
+	-DNDEBUG -DJPH_OBJECT_LAYER_BITS=32 \
 	-Ivendor/JoltPhysics -Icsrc \
 	csrc/*.cpp
