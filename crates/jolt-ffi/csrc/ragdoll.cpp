@@ -131,6 +131,7 @@ extern "C"
 			part.mOverrideMassProperties = JPH::EOverrideMassProperties::CalculateInertia;
 			part.mMassPropertiesOverride.mMass = source.mass;
 			part.mMaxLinearVelocity = max_linear_velocity;
+			part.mFriction = source.friction;
 
 			if (source.parent < 0)
 				continue;

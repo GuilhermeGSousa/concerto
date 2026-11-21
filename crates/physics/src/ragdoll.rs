@@ -211,6 +211,8 @@ pub struct PartSettings {
     pub shape_offset: BodyPose,
     /// Mass in kg.
     pub mass: f32,
+    /// The friction coefficient. Two bodies in contact slide by the geometric mean of theirs, and other bodies have 0.2.
+    pub friction: f32,
     /// The joint to the parent; unused on the root.
     pub joint: JointSettings,
 }
@@ -224,6 +226,7 @@ impl PartSettings {
             shape,
             shape_offset: BodyPose::IDENTITY,
             mass: 1.0,
+            friction: 0.5,
             joint: JointSettings::new(Vec3::Y, Vec3::X),
         }
     }
@@ -242,6 +245,11 @@ impl PartSettings {
 
     pub fn with_mass(mut self, mass: f32) -> Self {
         self.mass = mass;
+        self
+    }
+
+    pub fn with_friction(mut self, friction: f32) -> Self {
+        self.friction = friction;
         self
     }
 }

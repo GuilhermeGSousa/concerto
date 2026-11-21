@@ -548,6 +548,39 @@ fn skinned_radius(points: &[Vec3], start: Vec3, end: Vec3) -> Option<f32> {
     (count >= MIN_SKIN_POINTS).then(|| total / count as f32)
 }
 
+enum ShapeAxis {
+    Along(Vec3),
+    Forward(Vec3),
+}
+
+struct Sole {
+    centre: Vec3,
+    forward: Vec3,
+    half_extents: Vec3,
+}
+
+const HEEL: f32 = 0.06;
+const SOLE_UNDER_TOE: f32 = 0.02;
+
+impl Sole {
+    fn under(plan: &Planned, frame: &Frame, radius: f32) -> Option<Self> {
+        let reach = plan.end - plan.start;
+        let flat = reach - frame.up * reach.dot(frame.up);
+        let forward = flat.try_normalize()?;
+        let top = plan.start.dot(frame.up);
+        let toe = top + reach.dot(frame.up) / 1.5;
+        let bottom = top.min(toe) - SOLE_UNDER_TOE;
+        let length = flat.length() + HEEL;
+        let height = (top - bottom).max(0.02);
+        Some(Self {
+            centre: plan.start + forward * (length / 2.0 - HEEL)
+                - frame.up * (top - (top + bottom) / 2.0),
+            forward,
+            half_extents: Vec3::new(radius.max(0.03), height / 2.0, length / 2.0),
+        })
+    }
+}
+
 fn part(
     skeleton: &Skeleton,
     model: &[Mat4],
@@ -573,6 +606,17 @@ fn part(
             half_height: (length / 2.0 - radius).max(0.005),
             radius: radius.min(length / 2.0).max(0.02),
         }
+    };
+    let sole = Sole::under(plan, frame, radius);
+    let (shape, centre, direction_of_shape) = match (plan.segment, sole) {
+        (Segment::Foot, Some(sole)) => (
+            RagdollShape::Box {
+                half_extents: sole.half_extents,
+            },
+            sole.centre,
+            ShapeAxis::Forward(sole.forward),
+        ),
+        _ => (shape, centre, ShapeAxis::Along(direction)),
     };
     let joint = match plan.joint_model {
         JointModel::Ball {
@@ -603,7 +647,14 @@ fn part(
     };
     RagdollPart::new(skeleton.names[plan.bone].as_ref(), shape)
         .with_offset(to_bone * (centre - bone_position))
-        .with_rotation((to_bone * Quat::from_rotation_arc(Vec3::Y, direction)).normalize())
+        .with_rotation(
+            (to_bone
+                * match direction_of_shape {
+                    ShapeAxis::Along(direction) => Quat::from_rotation_arc(Vec3::Y, direction),
+                    ShapeAxis::Forward(forward) => Quat::from_rotation_arc(Vec3::Z, forward),
+                })
+            .normalize(),
+        )
         .with_mass(plan.mass)
         .with_segment(plan.segment, plan.side)
         .with_joint(joint.with_friction((plan.mass * FRICTION_PER_KG).clamp(0.3, 5.0)))

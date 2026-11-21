@@ -78,6 +78,7 @@ pub struct JoltRagdollPart {
     pub shape_position: [f32; 3],
     pub shape_rotation: [f32; 4],
     pub mass: f32,
+    pub friction: f32,
     pub twist_axis: [f32; 3],
     pub plane_axis: [f32; 3],
     pub normal_half_cone: f32,

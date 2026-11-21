@@ -17,7 +17,7 @@ and white lines and crosses draw the skeleton, so the parts and the bones can
 be compared. Its bones are reset to the rest pose every frame, as an animation
 would rewrite them.
 
-- `H` lets the humanoid go limp: it falls and the simulated pose is drawn on
+- `H` lets the humanoid go limp: it stops walking, falls and the simulated pose is drawn on
   the skeleton.
 - `J` puts it back to following its animation with weight 0.
 - `B` sets the weight to 0.5, to see the blend.
@@ -25,6 +25,11 @@ would rewrite them.
   animation exactly, everything above is held to it by motors.
 - `O` powers it with the `braced` profile: every part on motors, standing on
   its own feet until it loses its balance.
+
+- `K` starts the balance behaviour: the humanoid stops walking and stands on
+  its own feet, powered and held upright, until `J` or a fall.
+- `U` pushes its chest with 60 N·s. While it balances it steps to catch
+  itself; push again mid-step and it gives up and falls.
 
 Set `RAGDOLL_TEST_LIMP_AFTER=<seconds>` and it goes limp that long after
 startup, for capturing without a keyboard.
