@@ -142,7 +142,28 @@ extern "C"
 		}
 		bi.DestroyBody(id);
 		world->sensors.erase(id);
+		world->reporting.erase(id);
 		world->sensor_contact_listener.Forget(id);
+	}
+
+	void jolt_body_set_contact_reporting(JoltWorld *world, JoltBodyId body, bool enabled)
+	{
+		JPH::BodyID id(body);
+		if (enabled)
+		{
+			world->reporting.insert(id);
+			world->system.GetBodyInterface().ActivateBody(id);
+		}
+		else
+		{
+			world->reporting.erase(id);
+			world->sensor_contact_listener.ForgetSolid(id);
+		}
+	}
+
+	uint32_t jolt_world_drain_contacts(JoltWorld *world, JoltContact *out, uint32_t capacity)
+	{
+		return world->sensor_contact_listener.DrainContacts(out, capacity);
 	}
 
 	uint32_t jolt_world_drain_sensor_contacts(JoltWorld *world,
