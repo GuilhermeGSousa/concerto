@@ -84,7 +84,35 @@ pub struct Balance {
     steady: f32,
     #[reflect(skip)]
     since_step: f32,
+    #[reflect(skip)]
+    hindrance: Hindrance,
 }
+
+/// What another behaviour takes from balance for one fixed step, so the body stumbles instead of recovering as well as it can.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Hindrance {
+    /// The share of the step balance wants that the foot covers, from 0 to 1.
+    pub reach: f32,
+    /// How many times longer a step takes.
+    pub pace: f32,
+    /// The share of their strength the legs and the assists keep, from 0 to 1.
+    pub strength: f32,
+    /// How much of their strength the knees lose for a moment after each landing, from 0 to 1.
+    pub give: f32,
+}
+
+impl Default for Hindrance {
+    fn default() -> Self {
+        Self {
+            reach: 1.0,
+            pace: 1.0,
+            strength: 1.0,
+            give: 0.0,
+        }
+    }
+}
+
+const GIVE_SECONDS: f32 = 0.25;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Step {
@@ -124,6 +152,7 @@ impl Default for Balance {
             steps: 0,
             steady: 0.0,
             since_step: f32::MAX,
+            hindrance: Hindrance::default(),
         }
     }
 }
@@ -155,6 +184,11 @@ impl Balance {
     pub fn with_settle_seconds(mut self, settle_seconds: f32) -> Self {
         self.settle_seconds = settle_seconds;
         self
+    }
+
+    /// Hinders balance for the next fixed step; a behaviour that makes the body stumble calls it every step it runs, before `balance_bodies`.
+    pub fn hinder(&mut self, hindrance: Hindrance) {
+        self.hindrance = hindrance;
     }
 
     /// The steps taken since balance started or last stood still.
@@ -260,6 +294,8 @@ pub fn balance_bodies(
         characters.iter()
     {
         let balance = &mut *balance;
+        let hindrance = std::mem::take(&mut balance.hindrance);
+        let kept = hindrance.strength.clamp(0.0, 1.0);
         if !balance.started {
             character.power(balance.profile);
             balance.started = true;
@@ -321,20 +357,29 @@ pub fn balance_bodies(
         let tilt = if tilt.w < 0.0 { -tilt } else { tilt };
         let torque = (tilt.to_scaled_axis() * balance.upright_stiffness
             - state.angular_velocity(bodies[pelvis]) * balance.upright_damping)
-            .clamp_length_max(balance.max_upright_torque);
+            .clamp_length_max(balance.max_upright_torque * kept);
         let pelvis_velocity = state.linear_velocity(bodies[pelvis]);
         let standing_height = animated[pelvis].translation.y - sense.ground;
         let lift = ((sense.ground + standing_height - pose[pelvis].translation.y)
             * balance.height_stiffness
             - pelvis_velocity.y * balance.height_damping)
-            .clamp(-balance.max_lift, balance.max_lift);
+            .clamp(-balance.max_lift * kept, balance.max_lift * kept);
         let sway = Vec3::new(sense.centre.velocity.x, 0.0, sense.centre.velocity.z);
         let centring = (sense.off_balance * -balance.centring - sway * balance.sway_damping)
-            .clamp_length_max(balance.max_centring);
+            .clamp_length_max(balance.max_centring * kept);
         let muscle = PartStrength::Powered {
-            stiffness: balance.leg_stiffness,
-            damping: balance.leg_stiffness * 0.1,
-            torque_limit: balance.leg_torque,
+            stiffness: balance.leg_stiffness * kept,
+            damping: balance.leg_stiffness * kept * 0.1,
+            torque_limit: balance.leg_torque * kept,
+        };
+        let given = kept
+            * (1.0
+                - hindrance.give.clamp(0.0, 1.0)
+                    * (1.0 - balance.since_step / GIVE_SECONDS).clamp(0.0, 1.0));
+        let knee = PartStrength::Powered {
+            stiffness: balance.leg_stiffness * given,
+            damping: balance.leg_stiffness * given * 0.1,
+            torque_limit: balance.leg_torque * given,
         };
         drive.claim(
             BALANCE,
@@ -394,7 +439,8 @@ pub fn balance_bodies(
             let stance = pose[standing.foot].translation;
             let aim = sense.capture_point + outward * balance.step_beyond;
             let from_stance = Vec3::new(aim.x - stance.x, 0.0, aim.z - stance.z)
-                .clamp_length_max(leg_length * balance.max_step);
+                .clamp_length_max(leg_length * balance.max_step)
+                * hindrance.reach.clamp(0.0, 1.0);
             let above = Vec3::new(stance.x, sense.ground + 0.5, stance.z) + from_stance;
             let landing = state.cast_ray(above, Vec3::NEG_Y, QueryFilter::default());
             match landing {
@@ -437,14 +483,14 @@ pub fn balance_bodies(
                         part,
                         BALANCE_PRIORITY,
                         1.0,
-                        PartCommand::held(muscle),
+                        PartCommand::held(if part == leg.shin { knee } else { muscle }),
                     );
                 }
                 continue;
             };
             step.elapsed += dt;
             let phase = if balance.step_seconds > 0.0 {
-                step.elapsed / balance.step_seconds
+                step.elapsed / (balance.step_seconds * hindrance.pace.max(1.0))
             } else {
                 1.0
             };

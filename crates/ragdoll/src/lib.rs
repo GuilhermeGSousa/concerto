@@ -11,6 +11,7 @@ pub mod plugin;
 pub mod resolve;
 pub mod sandbox;
 pub mod sensing;
+pub mod stagger;
 #[cfg(feature = "test-support")]
 pub mod testing;
 
@@ -18,7 +19,7 @@ pub use asset::{
     BoneStrength, PartStrength, Ragdoll, RagdollJoint, RagdollMotor, RagdollPart, RagdollShape,
     Segment, Side, StrengthProfile,
 };
-pub use balance::{BALANCE, BALANCE_PRIORITY, Balance};
+pub use balance::{BALANCE, BALANCE_PRIORITY, Balance, Hindrance};
 pub use behaviour::{
     BehaviourEnded, BehaviourSet, BodyDrive, BodyState, BodyStateChanged, Claim, Outcome,
     PartCommand, PhysicalState, RunningBehaviour, describe_body,
@@ -35,3 +36,4 @@ pub use plugin::RagdollPlugin;
 pub use resolve::{Landmarks, Limbs, RagdollError, ResolvedRagdoll};
 pub use sandbox::{Trial, TrialReport, run_trial};
 pub use sensing::{BodySense, Impact, MassPoint};
+pub use stagger::{STAGGER, STAGGER_PRIORITY, Stagger};
