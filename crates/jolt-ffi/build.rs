@@ -30,11 +30,11 @@ fn main() {
         // aborts at RegisterTypes() if the caller and library disagree. Keep
         // this define list as the single source of truth.
         //
-        // NDEBUG keeps Jolt's asserts out of every profile, and 16 object-layer
-        // bits is Jolt's default (made explicit because it is part of the
-        // version check). All other feature bits are deliberately off.
+        // NDEBUG keeps Jolt's asserts out of every profile, and object layers are 32
+        // bits wide, to hold a body's collision layers and their filter (part
+        // of the version check). All other feature bits are deliberately off.
         .define("NDEBUG", None)
-        .define("JPH_OBJECT_LAYER_BITS", "16")
+        .define("JPH_OBJECT_LAYER_BITS", "32")
         // Jolt's own build disables FMA contraction on GCC: contracted
         // multiply-adds change rounding in ways that break collision-detection
         // precision assumptions.

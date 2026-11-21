@@ -5,9 +5,10 @@ use concerto_foundation::transform::Transform;
 use glam::{Quat, Vec3};
 
 use concerto_physics::collider::Collider;
+use concerto_physics::layers::Layers;
 use concerto_physics::physics_pipeline::PhysicsPipeline;
 use concerto_physics::physics_state::PhysicsState;
-use concerto_physics::query::{QueryFilter, RagdollQuery};
+use concerto_physics::query::QueryFilter;
 use concerto_physics::ragdoll::{
     BodyPose, JointSettings, PartSettings, PartShape, RagdollSettings,
 };
@@ -75,7 +76,7 @@ fn a_three_part_chain_dropped_on_a_floor_stays_joined_within_its_limits_and_come
         .cast_ray(
             middle + Vec3::new(0.0, 0.0, 2.0),
             Vec3::new(0.0, 0.0, -4.0),
-            QueryFilter::default().with_ragdolls(RagdollQuery::Only),
+            QueryFilter::default().with_layers(Layers::RAGDOLL),
         )
         .expect("a ray at the middle link should hit it");
     assert_eq!(hit.entity, Some(owner));
@@ -139,7 +140,7 @@ fn a_three_part_chain_dropped_on_a_floor_stays_joined_within_its_limits_and_come
             .cast_ray(
                 above,
                 Vec3::new(0.0, 0.0, -4.0),
-                QueryFilter::default().with_ragdolls(RagdollQuery::Include)
+                QueryFilter::default().with_layers(Layers::ALL)
             )
             .is_none(),
         "a destroyed ragdoll should leave no bodies behind"

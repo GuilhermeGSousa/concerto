@@ -15,7 +15,7 @@ extern "C"
 							 const float direction[3],
 							 const JoltBodyId *ignore,
 							 uint32_t ignore_count,
-							 JoltRagdollQuery ragdolls,
+							 uint32_t layers,
 							 JoltRayHit *out_hit)
 	{
 		JPH::RRayCast ray(JPH::RVec3(origin[0], origin[1], origin[2]),
@@ -28,7 +28,7 @@ extern "C"
 
 		JPH::BroadPhaseLayerFilter all_broad_phase_layers;
 		NonSensorBroadPhaseLayerFilter broad_phase_filter(all_broad_phase_layers);
-		QueryObjectLayerFilter object_filter(ragdolls);
+		QueryObjectLayerFilter object_filter(layers);
 
 		JPH::RayCastResult hit;
 		if (!world->system.GetNarrowPhaseQuery().CastRay(ray, hit, broad_phase_filter, object_filter, body_filter))

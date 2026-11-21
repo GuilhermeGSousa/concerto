@@ -4,6 +4,7 @@ use concerto_physics::{
     body::BodyId,
     carried::Carried,
     collider::{Collider, ColliderOffset, GravityScale},
+    layers::CollisionLayers,
     physics_state::PhysicsState,
     query::QueryFilter,
     rigid_body::{AllowedDofs, MotionType, RigidBody},
@@ -234,6 +235,7 @@ pub fn spawn_first_person_walker(
         collider,
         offset,
         GravityScale(0.0),
+        CollisionLayers::character(),
         transform,
         walker,
     ))

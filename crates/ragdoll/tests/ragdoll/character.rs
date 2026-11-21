@@ -9,9 +9,10 @@ use concerto_foundation::assets::asset_server::AssetServer;
 use concerto_foundation::transform::{GlobalTransform, Transform};
 use concerto_physics::body::BodyId;
 use concerto_physics::collider::Collider;
+use concerto_physics::layers::{CollisionLayers, Layers};
 use concerto_physics::physics_state::PhysicsState;
 use concerto_physics::plugin::PhysicsPlugin;
-use concerto_physics::query::{QueryFilter, RagdollQuery};
+use concerto_physics::query::QueryFilter;
 use concerto_physics::ragdoll::{BodyPose, RagdollId};
 use concerto_physics::rigid_body::{AllowedDofs, RigidBody};
 use concerto_ragdoll::testing::{
@@ -93,6 +94,7 @@ fn a_characters_ragdoll_follows_its_bones_names_the_bone_a_ray_hits_and_leaves_w
             ..RigidBody::default()
         },
         Collider::capsule(0.5, 0.35),
+        CollisionLayers::character(),
         Transform::from_translation(capsule_start),
     ));
     let humanoid = spawn_humanoid(world, skeleton, Transform::default());
@@ -139,7 +141,7 @@ fn a_characters_ragdoll_follows_its_bones_names_the_bone_a_ray_hits_and_leaves_w
         .distance(capsule_start);
     assert!(
         pushed < 0.02,
-        "the character's parts should pass through its own capsule, they pushed it {pushed} m"
+        "ragdoll parts should pass through a capsule on the character layer, they pushed it {pushed} m"
     );
 
     let forearm = (position(&app, humanoid.bone("lowerarm_l"))
@@ -149,7 +151,7 @@ fn a_characters_ragdoll_follows_its_bones_names_the_bone_a_ray_hits_and_leaves_w
         .cast_ray(
             forearm + Vec3::new(0.0, 0.0, 1.0),
             Vec3::new(0.0, 0.0, -2.0),
-            QueryFilter::default().with_ragdolls(RagdollQuery::Only),
+            QueryFilter::default().with_layers(Layers::RAGDOLL),
         )
         .expect("a ray at the forearm should hit a part");
     assert_eq!(shot.entity, Some(humanoid.skeleton));
@@ -175,7 +177,7 @@ fn a_characters_ragdoll_follows_its_bones_names_the_bone_a_ray_hits_and_leaves_w
             .cast_ray(
                 forearm + Vec3::new(0.0, 0.0, 1.0),
                 Vec3::new(0.0, 0.0, -2.0),
-                QueryFilter::default().with_ragdolls(RagdollQuery::Only),
+                QueryFilter::default().with_layers(Layers::RAGDOLL),
             )
             .is_none(),
         "despawning the character should leave no bodies behind"
@@ -390,6 +392,7 @@ fn a_limp_characters_capsule_is_carried_under_its_body_and_moves_again_when_let_
         },
         shape,
         offset,
+        CollisionLayers::character(),
         Transform::from_translation(Vec3::new(0.0, 0.02, 0.0)),
         CharacterSimulation::default(),
         DesiredMotion {
