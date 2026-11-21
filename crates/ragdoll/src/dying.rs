@@ -90,10 +90,23 @@ impl Default for Settled {
     }
 }
 
+type Behaviours<'w, 's> = Query<
+    'w,
+    's,
+    (
+        Option<&'static Balance>,
+        Option<&'static Stagger>,
+        Option<&'static Shot>,
+        Option<&'static Fall>,
+        Option<&'static Flinch>,
+    ),
+>;
+
 fn kill(
     entity: Entity,
     character: &mut CharacterRagdoll,
     physical: Option<&mut PhysicalState>,
+    behaviours: &Behaviours,
     cmd: &mut CommandQueue,
 ) {
     character.go_limp();
@@ -102,11 +115,24 @@ fn kill(
     {
         physical.state = BodyState::Dead;
     }
-    cmd.remove::<Balance>(entity);
-    cmd.remove::<Stagger>(entity);
-    cmd.remove::<Shot>(entity);
-    cmd.remove::<Fall>(entity);
-    cmd.remove::<Flinch>(entity);
+    let Some((balance, stagger, shot, fall, flinch)) = behaviours.get_entity(entity) else {
+        return;
+    };
+    if balance.is_some() {
+        cmd.remove::<Balance>(entity);
+    }
+    if stagger.is_some() {
+        cmd.remove::<Stagger>(entity);
+    }
+    if shot.is_some() {
+        cmd.remove::<Shot>(entity);
+    }
+    if fall.is_some() {
+        cmd.remove::<Fall>(entity);
+    }
+    if flinch.is_some() {
+        cmd.remove::<Flinch>(entity);
+    }
 }
 
 /// Starts a character dying when the game says so; with zero seconds it is limp and `Dead` at once. A character that is already dying dies no slower.
@@ -117,6 +143,7 @@ pub fn die_when_told(
         Option<&mut PhysicalState>,
         Option<&mut Dying>,
     )>,
+    behaviours: Behaviours,
     mut cmd: CommandQueue,
 ) {
     let die = *on.signal();
@@ -133,7 +160,7 @@ pub fn die_when_told(
         if let Some(physical) = physical.as_mut() {
             physical.state = BodyState::Dead;
         }
-        kill(die.character, &mut character, None, &mut cmd);
+        kill(die.character, &mut character, None, &behaviours, &mut cmd);
     }
     match dying {
         Some(mut dying) => {
@@ -155,6 +182,7 @@ pub fn drain_dying(
         &mut CharacterRagdoll,
         &mut PhysicalState,
     )>,
+    behaviours: Behaviours,
     mut cmd: CommandQueue,
 ) {
     let dt = Time::fixed_delta_time().as_secs_f32();
@@ -165,7 +193,13 @@ pub fn drain_dying(
         }
         dying.elapsed += dt;
         if dying.elapsed >= dying.seconds {
-            kill(entity, &mut character, Some(&mut physical), &mut cmd);
+            kill(
+                entity,
+                &mut character,
+                Some(&mut physical),
+                &behaviours,
+                &mut cmd,
+            );
             cmd.remove::<Dying>(entity);
         }
     }
