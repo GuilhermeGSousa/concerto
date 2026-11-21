@@ -121,6 +121,15 @@ extern "C"
     /* Whether the body is being simulated: false for a static or sleeping body. */
     bool jolt_body_is_active(const JoltWorld *world, JoltBodyId body);
 
+    /* Whether a scene query sees the bodies of ragdoll parts. */
+    typedef uint32_t JoltRagdollQuery;
+    enum
+    {
+        JOLT_RAGDOLL_QUERY_SKIP = 0,
+        JOLT_RAGDOLL_QUERY_INCLUDE = 1,
+        JOLT_RAGDOLL_QUERY_ONLY = 2,
+    };
+
     typedef uint8_t JoltContactKind;
     enum
     {

@@ -34,6 +34,7 @@ use crate::backend::{
 };
 use crate::body::BodyActivity;
 use crate::collider::{Collider, ColliderOffset};
+use crate::query::RagdollQuery;
 use crate::ragdoll::{BodyPose, JointDrive, RagdollBuildError, RagdollSettings};
 use crate::rigid_body::{AllowedDofs, MotionType, RigidBody};
 
@@ -235,6 +236,13 @@ impl PhysicsBackend for RapierBackend {
     }
 
     fn destroy_ragdoll(&mut self, _ragdoll: Self::RagdollHandle) {}
+
+    fn set_ragdoll_ignored_body(
+        &mut self,
+        _ragdoll: Self::RagdollHandle,
+        _body: Option<Self::BodyHandle>,
+    ) {
+    }
 
     fn ragdoll_bodies(&self, _ragdoll: Self::RagdollHandle) -> Vec<Self::BodyHandle> {
         Vec::new()
@@ -575,6 +583,7 @@ impl PhysicsBackend for RapierBackend {
         origin: Vec3,
         direction: Vec3,
         ignore: &[Self::BodyHandle],
+        _ragdolls: RagdollQuery,
     ) -> Option<RawRayHit<Self::BodyHandle>> {
         // With an unnormalised direction, a time of impact of 1.0 is the tip
         // of `direction` — so the hit's time of impact is exactly the
@@ -617,6 +626,7 @@ impl PhysicsBackend for RapierBackend {
         radius: f32,
         direction: Vec3,
         ignore: &[Self::BodyHandle],
+        _ragdolls: RagdollQuery,
     ) -> Option<RawShapeHit<Self::BodyHandle>> {
         let ball = Ball::new(radius);
         let ball_pose = rapier3d::math::Pose::from_translation(to_rapier_vec(origin));

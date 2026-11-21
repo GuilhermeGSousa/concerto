@@ -2,7 +2,8 @@ use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::sync::Arc;
 
-use concerto_ecs::Component;
+use concerto_ecs::component::{Component, ComponentLifecycleCallback, ComponentLifecycleContext};
+use concerto_ecs::world::RestrictedWorld;
 use concerto_foundation::transform::Transform;
 use glam::{Quat, Vec3};
 
@@ -333,6 +334,25 @@ impl BuiltRagdoll {
     }
 }
 
-/// A ragdoll living inside the physics simulation, owned by [`PhysicsState`](crate::physics_state::PhysicsState) until it is destroyed. As a component it marks the entity that owns the ragdoll.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Component)]
+/// A ragdoll living inside the physics simulation, owned by [`PhysicsState`](crate::physics_state::PhysicsState) until it is destroyed. As a component it marks the entity that owns the ragdoll: removing it, or despawning the entity, destroys the ragdoll.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct RagdollId(pub(crate) <ActiveBackend as PhysicsBackend>::RagdollHandle);
+
+impl Component for RagdollId {
+    fn on_replace() -> Option<ComponentLifecycleCallback> {
+        Some(destroy_owned_ragdoll)
+    }
+
+    fn on_remove() -> Option<ComponentLifecycleCallback> {
+        Some(destroy_owned_ragdoll)
+    }
+}
+
+fn destroy_owned_ragdoll(mut world: RestrictedWorld, context: ComponentLifecycleContext) {
+    let Some(&ragdoll) = world.get_component_for_entity::<RagdollId>(context.entity) else {
+        return;
+    };
+    if let Some(state) = world.get_resource_mut::<crate::physics_state::PhysicsState>() {
+        state.destroy_ragdoll(ragdoll);
+    }
+}

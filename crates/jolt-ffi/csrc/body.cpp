@@ -263,7 +263,21 @@ extern "C"
 			system.GetDefaultBroadPhaseLayerFilter(layer);
 		JPH::DefaultObjectLayerFilter default_object_filter = system.GetDefaultLayerFilter(layer);
 		NonSensorBroadPhaseLayerFilter broadphase_filter(default_broadphase_filter);
-		NonSensorObjectLayerFilter object_filter(default_object_filter);
+		NonSensorObjectLayerFilter non_sensor_filter(default_object_filter);
+		class SolidGroundFilter final : public JPH::ObjectLayerFilter
+		{
+		public:
+			explicit SolidGroundFilter(const JPH::ObjectLayerFilter &inner) : inner(inner) {}
+
+			bool ShouldCollide(JPH::ObjectLayer inLayer) const override
+			{
+				return inLayer != Layers::RAGDOLL && inner.ShouldCollide(inLayer);
+			}
+
+		private:
+			const JPH::ObjectLayerFilter &inner;
+		};
+		SolidGroundFilter object_filter(non_sensor_filter);
 		JPH::IgnoreSingleBodyFilter body_filter(id);
 
 		Collector collector(position);
