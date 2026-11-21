@@ -627,6 +627,10 @@ impl PhysicsBackend for RapierBackend {
         self.bodies[body].add_force(to_rapier_vec(force), true);
     }
 
+    fn add_torque(&mut self, body: Self::BodyHandle, torque: Vec3) {
+        self.bodies[body].add_torque(to_rapier_vec(torque), true);
+    }
+
     fn add_force_at(&mut self, body: Self::BodyHandle, force: Vec3, position: Vec3) {
         self.bodies[body].add_force_at_point(to_rapier_vec(force), to_rapier_vec(position), true);
     }

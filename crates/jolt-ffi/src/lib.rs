@@ -456,6 +456,9 @@ extern "C" {
 
     pub fn jolt_body_add_force(world: *const JoltWorld, body: JoltBodyId, force: *const f32);
 
+    /// Adds a torque, in N·m about the world axes, for the next step.
+    pub fn jolt_body_add_torque(world: *mut JoltWorld, body: JoltBodyId, torque: *const f32);
+
     pub fn jolt_body_add_force_at(
         world: *const JoltWorld,
         body: JoltBodyId,
