@@ -7,6 +7,7 @@
 #include <Jolt/Physics/Constraints/SwingTwistConstraint.h>
 #include <Jolt/Physics/Ragdoll/Ragdoll.h>
 #include <Jolt/Skeleton/Skeleton.h>
+#include <Jolt/Skeleton/SkeletonPose.h>
 
 #include <string>
 
@@ -20,6 +21,17 @@ struct JoltRagdollSettings
 struct JoltRagdoll
 {
 	JPH::Ref<JPH::Ragdoll> ragdoll;
+	JPH::RefConst<JPH::RagdollSettings> settings;
+
+	JPH::SwingTwistConstraint *Joint(uint32_t part) const
+	{
+		if (part >= ragdoll->GetBodyCount())
+			return nullptr;
+		int constraint = settings->GetConstraintIndexForBodyIndex(static_cast<int>(part));
+		if (constraint < 0)
+			return nullptr;
+		return static_cast<JPH::SwingTwistConstraint *>(ragdoll->GetConstraint(constraint));
+	}
 };
 
 namespace
@@ -175,7 +187,7 @@ extern "C"
 		std::vector<JPH::Mat44> matrices = ToMatrices(poses, static_cast<uint32_t>(ragdoll->GetBodyCount()));
 		ragdoll->SetPose(JPH::RVec3::sZero(), matrices.data());
 		ragdoll->AddToPhysicsSystem(JPH::EActivation::Activate);
-		return new JoltRagdoll{ragdoll};
+		return new JoltRagdoll{ragdoll, settings->settings.GetPtr()};
 	}
 
 	void jolt_ragdoll_destroy(JoltWorld *world, JoltRagdoll *ragdoll)
@@ -238,6 +250,80 @@ extern "C"
 		std::vector<JPH::Mat44> matrices = ToMatrices(poses, static_cast<uint32_t>(ragdoll->ragdoll->GetBodyCount()));
 		ragdoll->ragdoll->SetPose(JPH::RVec3::sZero(), matrices.data());
 		ragdoll->ragdoll->Activate();
+	}
+
+	void jolt_ragdoll_drive_kinematic(JoltRagdoll *ragdoll, const float *poses, float delta_time)
+	{
+		std::vector<JPH::Mat44> matrices = ToMatrices(poses, static_cast<uint32_t>(ragdoll->ragdoll->GetBodyCount()));
+		ragdoll->ragdoll->DriveToPoseUsingKinematics(JPH::RVec3::sZero(), matrices.data(), delta_time);
+	}
+
+	void jolt_ragdoll_drive_motors(JoltRagdoll *ragdoll, const float *poses)
+	{
+		uint32_t count = static_cast<uint32_t>(ragdoll->ragdoll->GetBodyCount());
+		std::vector<JPH::Mat44> matrices = ToMatrices(poses, count);
+		JPH::SkeletonPose pose;
+		pose.SetSkeleton(ragdoll->settings->GetSkeleton());
+		for (uint32_t i = 0; i < count; ++i)
+			pose.GetJointMatrix(static_cast<int>(i)) = matrices[i];
+		pose.CalculateJointStates();
+		ragdoll->ragdoll->DriveToPoseUsingMotors(pose);
+		ragdoll->ragdoll->Activate();
+	}
+
+	void jolt_ragdoll_set_joint_motor(JoltRagdoll *ragdoll,
+									  uint32_t part,
+									  bool enabled,
+									  const float target_rotation[4],
+									  float frequency,
+									  float damping,
+									  float torque_limit)
+	{
+		JPH::SwingTwistConstraint *joint = ragdoll->Joint(part);
+		if (joint == nullptr)
+			return;
+		if (enabled)
+		{
+			JPH::MotorSettings motor(frequency, damping);
+			motor.SetTorqueLimit(torque_limit);
+			joint->GetSwingMotorSettings() = motor;
+			joint->GetTwistMotorSettings() = motor;
+			joint->SetSwingMotorState(JPH::EMotorState::Position);
+			joint->SetTwistMotorState(JPH::EMotorState::Position);
+			joint->SetTargetOrientationBS(ToQuat(target_rotation));
+		}
+		else
+		{
+			joint->SetSwingMotorState(JPH::EMotorState::Off);
+			joint->SetTwistMotorState(JPH::EMotorState::Off);
+		}
+		ragdoll->ragdoll->Activate();
+	}
+
+	void jolt_ragdoll_set_part_motion_type(JoltWorld *world,
+										   JoltRagdoll *ragdoll,
+										   uint32_t part,
+										   JoltMotionType motion_type)
+	{
+		if (part >= ragdoll->ragdoll->GetBodyCount() || motion_type == JOLT_MOTION_TYPE_STATIC)
+			return;
+		world->system.GetBodyInterface().SetMotionType(ragdoll->ragdoll->GetBodyID(static_cast<int>(part)),
+													   static_cast<JPH::EMotionType>(motion_type),
+													   JPH::EActivation::Activate);
+	}
+
+	void jolt_ragdoll_get_joint_motor_impulse(const JoltRagdoll *ragdoll,
+											  uint32_t part,
+											  float out_impulse[3])
+	{
+		JPH::Vec3 impulse = JPH::Vec3::sZero();
+		const JPH::SwingTwistConstraint *joint = ragdoll->Joint(part);
+		if (joint != nullptr && (joint->GetSwingMotorState() != JPH::EMotorState::Off ||
+								 joint->GetTwistMotorState() != JPH::EMotorState::Off))
+			impulse = joint->GetTotalLambdaMotor();
+		out_impulse[0] = impulse.GetX();
+		out_impulse[1] = impulse.GetY();
+		out_impulse[2] = impulse.GetZ();
 	}
 
 } // extern "C"

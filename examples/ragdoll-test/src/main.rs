@@ -16,7 +16,11 @@ use concerto::{
     physics::{
         collider::Collider,
         physics_state::PhysicsState,
-        ragdoll::{BodyPose, JointSettings, PartSettings, PartShape, RagdollId, RagdollSettings},
+        ragdoll::{
+            BodyPose, JointDrive, JointSettings, MotorSettings, PartSettings, PartShape, RagdollId,
+            RagdollSettings,
+        },
+        rigid_body::MotionType,
     },
     render::{
         MaterialComponent,
@@ -33,6 +37,8 @@ const HALF_HEIGHT: f32 = 0.15;
 const RADIUS: f32 = 0.08;
 const DROP_HEIGHT: f32 = 2.5;
 const POKE: Vec3 = Vec3::new(0.0, 6.0, 3.0);
+const HOLD_BEND: f32 = -0.4;
+const HOLD_HEIGHT: f32 = 2.0;
 
 #[derive(Component)]
 struct ChainRagdoll {
@@ -61,7 +67,12 @@ fn chain_settings() -> RagdollSettings {
     };
     let joint = JointSettings::new(Vec3::NEG_Y, Vec3::X)
         .with_swing(SWING, SWING)
-        .with_twist(-0.3, 0.3);
+        .with_twist(-0.3, 0.3)
+        .with_max_friction_torque(0.5)
+        .with_motor(MotorSettings {
+            frequency: 10.0,
+            ..MotorSettings::default()
+        });
     RagdollSettings::new()
         .with_part(link(0))
         .with_part(link(1).with_parent(0, joint))
@@ -178,12 +189,42 @@ fn control_chains(
 ) {
     let reset = input.is_just_pressed(PhysicalKey::Code(KeyCode::KeyR));
     let poke = input.is_just_pressed(PhysicalKey::Code(KeyCode::Space));
+    let hold = input.is_just_pressed(PhysicalKey::Code(KeyCode::KeyM));
+    let limp = input.is_just_pressed(PhysicalKey::Code(KeyCode::KeyL));
     for chain in chains.iter() {
         if reset {
             state.set_ragdoll_pose(chain.id, &chain.start);
         }
         if poke && let Some(&body) = state.ragdoll_bodies(chain.id).last() {
             state.add_impulse(body, POKE);
+        }
+        if hold {
+            let root = BodyPose::from_translation(Vec3::new(0.0, HOLD_HEIGHT, 0.0));
+            let hanging: Vec<BodyPose> = chain
+                .settings
+                .parts
+                .iter()
+                .map(|part| root.then(part.pose))
+                .collect();
+            let target: Vec<BodyPose> = hanging
+                .iter()
+                .enumerate()
+                .map(|(part, pose)| {
+                    BodyPose::new(
+                        pose.translation,
+                        Quat::from_rotation_z(HOLD_BEND * part as f32),
+                    )
+                })
+                .collect();
+            state.set_ragdoll_pose(chain.id, &hanging);
+            state.set_ragdoll_part_motion(chain.id, 0, MotionType::Kinematic);
+            state.drive_ragdoll_motors(chain.id, &target);
+        }
+        if limp {
+            state.set_ragdoll_part_motion(chain.id, 0, MotionType::Dynamic);
+            for part in 1..chain.settings.parts.len() {
+                state.set_ragdoll_joint_drive(chain.id, part, JointDrive::Off);
+            }
         }
     }
 }

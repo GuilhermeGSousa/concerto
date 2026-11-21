@@ -105,6 +105,23 @@ impl Default for MotorSettings {
     }
 }
 
+/// Where a joint's motor aims and how hard it pulls.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct JointTarget {
+    /// The rotation the part should have relative to its parent part.
+    pub rotation: Quat,
+    pub motor: MotorSettings,
+}
+
+/// What the motor of the joint between a part and its parent does.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum JointDrive {
+    /// The joint swings freely within its limits, slowed by its friction.
+    Off,
+    /// The motor pulls the part towards a rotation.
+    Target(JointTarget),
+}
+
 /// The swing-twist joint between a ragdoll part and its parent, placed at the part's origin, with axes in the space of the reference pose.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct JointSettings {

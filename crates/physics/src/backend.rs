@@ -18,8 +18,8 @@ use glam::Vec3;
 
 use crate::aabb::Aabb;
 use crate::collider::{Collider, ColliderOffset};
-use crate::ragdoll::{BodyPose, RagdollBuildError, RagdollSettings};
-use crate::rigid_body::RigidBody;
+use crate::ragdoll::{BodyPose, JointDrive, RagdollBuildError, RagdollSettings};
+use crate::rigid_body::{MotionType, RigidBody};
 
 #[cfg(all(
     not(target_arch = "wasm32"),
@@ -234,6 +234,33 @@ pub trait PhysicsBackend: Send + Sync + Sized {
 
     /// Moves every part to its world pose in `pose` at once, keeping velocities.
     fn set_ragdoll_pose(&mut self, ragdoll: Self::RagdollHandle, pose: &[BodyPose]);
+
+    /// Sets each part's velocity so that it reaches its world pose in `pose` after `delta_time`.
+    fn drive_ragdoll_kinematic(
+        &mut self,
+        ragdoll: Self::RagdollHandle,
+        pose: &[BodyPose],
+        delta_time: f32,
+    );
+
+    /// Turns every joint's motor on, aimed at the rotation each part has relative to its parent in `pose`.
+    fn drive_ragdoll_motors(&mut self, ragdoll: Self::RagdollHandle, pose: &[BodyPose]);
+
+    fn set_ragdoll_joint_drive(
+        &mut self,
+        ragdoll: Self::RagdollHandle,
+        part: usize,
+        drive: JointDrive,
+    );
+
+    fn set_ragdoll_part_motion(
+        &mut self,
+        ragdoll: Self::RagdollHandle,
+        part: usize,
+        motion: MotionType,
+    );
+
+    fn ragdoll_joint_motor_impulse(&self, ragdoll: Self::RagdollHandle, part: usize) -> Vec3;
 
     /// The shape's axis-aligned bounds (min, max) in its own local space,
     /// before any body pose or scale. The engine no longer stores a

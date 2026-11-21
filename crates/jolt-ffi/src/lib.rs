@@ -457,4 +457,40 @@ extern "C" {
 
     /// Moves every part to its world pose in `poses` at once.
     pub fn jolt_ragdoll_set_pose(ragdoll: *mut JoltRagdoll, poses: *const f32);
+
+    /// Sets each part's velocity so that it reaches its world pose in `poses` after `delta_time`.
+    pub fn jolt_ragdoll_drive_kinematic(
+        ragdoll: *mut JoltRagdoll,
+        poses: *const f32,
+        delta_time: f32,
+    );
+
+    /// Turns every joint's motor on and aims it at the rotation the part has relative to its parent in `poses`.
+    pub fn jolt_ragdoll_drive_motors(ragdoll: *mut JoltRagdoll, poses: *const f32);
+
+    /// Turns the motor of the joint between `part` and its parent off, or on towards `target_rotation` (xyzw, the part relative to its parent).
+    pub fn jolt_ragdoll_set_joint_motor(
+        ragdoll: *mut JoltRagdoll,
+        part: u32,
+        enabled: bool,
+        target_rotation: *const f32,
+        frequency: f32,
+        damping: f32,
+        torque_limit: f32,
+    );
+
+    /// Makes one part kinematic or dynamic, keeping its velocity.
+    pub fn jolt_ragdoll_set_part_motion_type(
+        world: *mut JoltWorld,
+        ragdoll: *mut JoltRagdoll,
+        part: u32,
+        motion_type: JoltMotionType,
+    );
+
+    /// The angular impulse the joint's motor applied in the last collision step; zero for the root.
+    pub fn jolt_ragdoll_get_joint_motor_impulse(
+        ragdoll: *const JoltRagdoll,
+        part: u32,
+        out_impulse: *mut f32,
+    );
 }
