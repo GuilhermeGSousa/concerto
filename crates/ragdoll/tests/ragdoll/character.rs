@@ -349,3 +349,127 @@ fn a_walking_character_gone_limp_keeps_its_speed_falls_to_rest_and_is_drawn_by_w
     );
     assert_eq!(character(&mut app, &humanoid).weight_of("Head"), 1.0);
 }
+
+#[test]
+fn a_limp_characters_capsule_is_carried_under_its_body_and_moves_again_when_let_go() {
+    use concerto_animation::plugin::AnimationPlugin;
+    use concerto_motion_matching::plugin::MotionMatchingPlugin;
+    use concerto_motion_matching::simulation::{CharacterSimulation, DesiredMotion};
+    use concerto_physics::carried::Carried;
+    use concerto_physics::collider::ColliderOffset;
+    use concerto_ragdoll::RagdollMode;
+
+    let mut app = App::new();
+    app.register_plugin(MainSchedulePlugin)
+        .register_plugin(TimePlugin)
+        .register_plugin(AssetManagerPlugin)
+        .register_plugin(TransformPlugin)
+        .register_plugin(PhysicsPlugin)
+        .register_plugin(MotionMatchingPlugin)
+        .register_plugin(AnimationPlugin)
+        .register_plugin(RagdollPlugin);
+    app.finish_plugin_build();
+    let server = app.get_resource::<AssetServer>().unwrap().clone();
+    let reference = reference_humanoid();
+    let skeleton = server.add(reference.skeleton);
+    let mut asset = reference.ragdoll;
+    asset.skeleton = skeleton.clone();
+    let asset = server.add(asset);
+    app.update();
+    let world = app.main_mut().world_mut();
+    world.spawn((
+        Collider::cuboid(50.0, 0.5, 50.0),
+        Transform::from_translation(Vec3::new(0.0, -0.5, 0.0)),
+    ));
+    let shape = Collider::capsule(0.5, 0.3);
+    let offset = ColliderOffset::bottom_origin(&shape);
+    let capsule = world.spawn((
+        RigidBody {
+            allowed_dofs: AllowedDofs::TRANSLATION,
+            ..RigidBody::default()
+        },
+        shape,
+        offset,
+        Transform::from_translation(Vec3::new(0.0, 0.02, 0.0)),
+        CharacterSimulation::default(),
+        DesiredMotion {
+            velocity: Vec3::new(1.5, 0.0, 0.0),
+            rotation: Quat::IDENTITY,
+        },
+    ));
+    let humanoid = spawn_humanoid(world, skeleton, Transform::default());
+    world.insert(
+        CharacterRagdoll::new(asset).with_capsule(capsule),
+        humanoid.skeleton,
+    );
+    let stands = |app: &App| {
+        let world = app.main().world();
+        let body = *world.get_component_for_entity::<BodyId>(capsule).unwrap();
+        app.get_resource::<PhysicsState>()
+            .unwrap()
+            .body_transform(body)
+            .translation
+    };
+    let carried = |app: &App| {
+        app.main()
+            .world()
+            .get_component_for_entity::<Carried>(capsule)
+            .is_some()
+    };
+    let walk = |app: &mut App, frames: usize| {
+        for _ in 0..frames {
+            frame(app);
+            let root = stands(app);
+            pose_at_rest(app, &humanoid, root);
+        }
+    };
+
+    walk(&mut app, 60);
+    let walked = stands(&app);
+    assert!(
+        walked.x > 1.0,
+        "the capsule walks under its input, it got to {walked}"
+    );
+    assert!(!carried(&app));
+
+    edit(&mut app, &humanoid, CharacterRagdoll::go_limp);
+    walk(&mut app, 300);
+    let ragdoll = *app
+        .main()
+        .world()
+        .get_component_for_entity::<RagdollId>(humanoid.skeleton)
+        .unwrap();
+    let mut pose = Vec::new();
+    app.get_resource::<PhysicsState>()
+        .unwrap()
+        .ragdoll_pose(ragdoll, &mut pose);
+    let pelvis = pose[0].translation;
+    let fallen = stands(&app);
+    assert!(carried(&app), "the capsule of a limp character is carried");
+    assert!(
+        fallen.with_y(0.0).distance(pelvis.with_y(0.0)) < 0.05
+            && (fallen.y - walked.y).abs() < 0.05,
+        "the capsule stands on the ground under the fallen pelvis at {pelvis}, it was at {fallen}"
+    );
+    walk(&mut app, 30);
+    let held = stands(&app);
+    assert!(
+        held.distance(fallen) < 0.01,
+        "held input does not move a carried capsule, it went from {fallen} to {held}"
+    );
+
+    edit(&mut app, &humanoid, |character| {
+        character.mode = RagdollMode::FollowsAnimation;
+        character.weight = 0.0;
+    });
+    walk(&mut app, 60);
+    let resumed = stands(&app);
+    assert!(
+        !carried(&app),
+        "a capsule is let go when no part has weight"
+    );
+    assert!(
+        resumed.x - held.x > 1.0 && (resumed.z - held.z).abs() < 0.2,
+        "the capsule walks again from where the body lay at {held}, it got to {resumed}"
+    );
+}

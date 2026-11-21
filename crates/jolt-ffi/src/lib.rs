@@ -343,6 +343,12 @@ extern "C" {
         capacity: u32,
     ) -> u32;
 
+    /// Makes a dynamic or kinematic body collide with nothing and be skipped by every query, or puts it back among the moving bodies.
+    pub fn jolt_body_set_ghost(world: *mut JoltWorld, body: JoltBodyId, ghost: bool);
+
+    /// Moves the body's origin at once, keeping its rotation and velocity.
+    pub fn jolt_body_set_position(world: *mut JoltWorld, body: JoltBodyId, position: *const f32);
+
     /// The body's current motion type; static for an id that is not in the world.
     pub fn jolt_body_get_motion_type(world: *const JoltWorld, body: JoltBodyId) -> JoltMotionType;
 

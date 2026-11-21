@@ -271,7 +271,7 @@ extern "C"
 
 			bool ShouldCollide(JPH::ObjectLayer inLayer) const override
 			{
-				return inLayer != Layers::RAGDOLL && inner.ShouldCollide(inLayer);
+				return inLayer != Layers::RAGDOLL && inLayer != Layers::GHOST && inner.ShouldCollide(inLayer);
 			}
 
 		private:
@@ -314,6 +314,27 @@ extern "C"
 		out_result->velocity[0] = ground_velocity.GetX();
 		out_result->velocity[1] = ground_velocity.GetY();
 		out_result->velocity[2] = ground_velocity.GetZ();
+	}
+
+	void jolt_body_set_ghost(JoltWorld *world, JoltBodyId body, bool ghost)
+	{
+		JPH::BodyInterface &bi = world->system.GetBodyInterface();
+		JPH::BodyID id(body);
+		JPH::ObjectLayer layer = bi.GetObjectLayer(id);
+		if (ghost && layer == Layers::MOVING)
+			bi.SetObjectLayer(id, Layers::GHOST);
+		else if (!ghost && layer == Layers::GHOST)
+		{
+			bi.SetObjectLayer(id, Layers::MOVING);
+			bi.ActivateBody(id);
+		}
+	}
+
+	void jolt_body_set_position(JoltWorld *world, JoltBodyId body, const float position[3])
+	{
+		world->system.GetBodyInterface().SetPosition(JPH::BodyID(body),
+													 JPH::RVec3(position[0], position[1], position[2]),
+													 JPH::EActivation::DontActivate);
 	}
 
 	void jolt_body_set_linear_velocity(JoltWorld *world,

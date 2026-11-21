@@ -2,6 +2,7 @@ use concerto_ecs::{CommandQueue, Component, Entity, Query, Res, ResMut, Without}
 use concerto_foundation::{time::Time, transform::Transform};
 use concerto_physics::{
     body::BodyId,
+    carried::Carried,
     collider::{Collider, ColliderOffset, GravityScale},
     physics_state::PhysicsState,
     query::QueryFilter,
@@ -276,9 +277,9 @@ pub fn read_first_person_input(
     }
 }
 
-/// Sets each walker's body velocity for the fixed step: its push along the ground, and whatever holds its feet on the ground under it.
+/// Sets each walker's body velocity for the fixed step: its push along the ground, and whatever holds its feet on the ground under it. A `Carried` walker is left alone.
 pub fn step_first_person_walkers(
-    walkers: Query<(&mut FirstPersonWalker, &BodyId)>,
+    walkers: Query<(&mut FirstPersonWalker, &BodyId), Without<Carried>>,
     mut physics: ResMut<PhysicsState>,
 ) {
     let dt = Time::fixed_delta_time().as_secs_f32();
