@@ -4,6 +4,7 @@ pub mod asset;
 pub mod balance;
 pub mod behaviour;
 pub mod character;
+pub mod fall;
 pub mod generate;
 pub mod hit;
 mod ik;
@@ -29,6 +30,7 @@ pub use behaviour::{
 pub use character::{
     CharacterRagdoll, PartWeight, PoseLost, RagdollBody, RagdollMode, RagdollRefused,
 };
+pub use fall::{FALL, FALL_PRIORITY, Fall, FallReaction};
 pub use generate::{
     BRACED, FLINCH, GenerateError, HumanoidChains, HumanoidSettings, LIMP, generate_humanoid,
 };

@@ -38,6 +38,9 @@ would rewrite them.
   back, the spine folds over the wound, a hand goes to it and the head looks
   at it and then at the shooter.
 
+When balance gives up, the humanoid falls with a `FallReaction`: hands to the
+ground, head held away, knees folding, then limp where it lies.
+
 Set `RAGDOLL_TEST_LIMP_AFTER=<seconds>` and it goes limp that long after
 startup, for capturing without a keyboard.
 

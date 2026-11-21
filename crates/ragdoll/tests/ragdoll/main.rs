@@ -3,6 +3,7 @@ mod balance;
 mod behaviour;
 mod character;
 mod common;
+mod fall;
 mod generate;
 mod shot;
 mod stability;
