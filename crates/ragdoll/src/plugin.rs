@@ -3,7 +3,7 @@ use concerto_app::{
     App,
     edit_time::AtPreviewTime,
     plugins::Plugin,
-    schedule_groups::{LateFixedUpdate, LateUpdate},
+    schedule_groups::{FixedUpdate, LateFixedUpdate, LateUpdate},
 };
 use concerto_ecs::IntoSystemConfig;
 use concerto_foundation::{
@@ -14,6 +14,8 @@ use concerto_physics::step_simulation;
 
 use crate::{
     asset::Ragdoll,
+    balance::{Balance, balance_bodies},
+    behaviour::BehaviourSet,
     behaviour::{PhysicalState, update_physical_states},
     character::{
         CharacterRagdoll, carry_capsules, create_character_ragdolls, drive_character_ragdolls,
@@ -50,6 +52,11 @@ impl Plugin for RagdollPlugin {
         app.add_system(
             LateFixedUpdate,
             update_physical_states.after(sense_bodies).at_preview_time(),
+        );
+        app.register_type::<Balance>();
+        app.add_system(
+            FixedUpdate,
+            balance_bodies.in_set(BehaviourSet).at_preview_time(),
         );
         app.add_listener(drop_removed_ragdoll.at_preview_time())
             .add_listener(drop_replaced_ragdoll.at_preview_time())

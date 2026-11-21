@@ -45,6 +45,8 @@ extern "C"
         float shape_position[3];
         float shape_rotation[4];
         float mass;
+        /* The part's friction coefficient. */
+        float friction;
         float twist_axis[3];
         float plane_axis[3];
         float normal_half_cone;

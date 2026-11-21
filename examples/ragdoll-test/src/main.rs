@@ -39,7 +39,10 @@ use concerto::{
 };
 use concerto_debug_gizmos::DebugGizmos;
 use concerto_physics_gizmos::{PhysicsGizmos, PhysicsGizmosPlugin};
-use concerto_ragdoll::{BodySense, CharacterRagdoll, RagdollMode, testing::reference_humanoid};
+use concerto_ragdoll::{
+    Balance, BodyDrive, BodySense, CharacterRagdoll, PhysicalState, RagdollBody, RagdollMode,
+    testing::reference_humanoid,
+};
 use glam::{Quat, Vec3};
 
 const LINK: f32 = 0.5;
@@ -54,6 +57,7 @@ const CHAIN_X: f32 = -3.0;
 const HUMANOID_CENTER: Vec3 = Vec3::new(1.5, 0.0, 0.0);
 const WALK_RADIUS: f32 = 1.0;
 const WALK_SPEED: f32 = 1.0;
+const PUSH: f32 = 60.0;
 const ARM_SWING: f32 = 0.8;
 
 #[derive(Resource)]
@@ -269,7 +273,7 @@ fn animate_humanoid(
     humanoid.elapsed += delta;
     let limp = characters
         .get_entity(humanoid.skeleton)
-        .is_some_and(|character| character.mode == RagdollMode::Limp);
+        .is_some_and(|character| character.mode != RagdollMode::FollowsAnimation);
     for (index, &bone) in humanoid.bones.iter().enumerate() {
         if let Some(mut transform) = transforms.get_entity(bone) {
             let rest = &humanoid.rest[index];
@@ -292,6 +296,35 @@ fn animate_humanoid(
         transform.translation =
             HUMANOID_CENTER + WALK_RADIUS * Vec3::new(angle.cos(), 0.0, angle.sin());
         transform.rotation = Quat::from_rotation_y((-angle.sin()).atan2(angle.cos()));
+    }
+}
+
+fn balance_humanoid(
+    input: Res<Input>,
+    humanoid: Option<Res<Humanoid>>,
+    bodies: Query<(&RagdollBody, &RagdollId)>,
+    mut physics: ResMut<PhysicsState>,
+    mut cmd: CommandQueue,
+) {
+    let Some(humanoid) = humanoid else {
+        return;
+    };
+    if input.is_just_pressed(PhysicalKey::Code(KeyCode::KeyK)) {
+        cmd.entity(humanoid.skeleton).insert((
+            Balance::default().with_settle_seconds(f32::MAX),
+            BodyDrive::default(),
+            PhysicalState::default(),
+        ));
+    }
+    if input.is_just_pressed(PhysicalKey::Code(KeyCode::KeyJ)) {
+        cmd.remove::<Balance>(humanoid.skeleton);
+    }
+    if input.is_just_pressed(PhysicalKey::Code(KeyCode::KeyU))
+        && let Some((body, &ragdoll)) = bodies.get_entity(humanoid.skeleton)
+        && let Some(chest) = body.resolved().landmarks().chest
+    {
+        let part = physics.ragdoll_bodies(ragdoll)[chest];
+        physics.add_impulse(part, PUSH * Vec3::Z);
     }
 }
 
@@ -444,6 +477,7 @@ fn game(app: &mut App) {
                 toggle_gizmos,
                 animate_humanoid,
                 control_humanoid,
+                balance_humanoid,
                 draw_skeleton,
             ),
         );

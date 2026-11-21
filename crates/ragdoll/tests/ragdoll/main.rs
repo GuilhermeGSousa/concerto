@@ -1,4 +1,5 @@
 mod asset;
+mod balance;
 mod behaviour;
 mod character;
 mod common;
