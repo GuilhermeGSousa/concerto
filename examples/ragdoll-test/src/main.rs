@@ -15,6 +15,7 @@ use concerto::{
     mesh::{MeshComponent, primitives},
     physics::{
         collider::Collider,
+        contact::Contacts,
         physics_state::PhysicsState,
         ragdoll::{
             BodyPose, JointDrive, JointSettings, MotorSettings, PartSettings, PartShape, RagdollId,
@@ -29,6 +30,7 @@ use concerto::{
     },
     window::input::{Input, KeyCode, PhysicalKey},
 };
+use concerto_physics_gizmos::{PhysicsGizmos, PhysicsGizmosPlugin};
 use glam::{Quat, Vec3};
 
 const LINK: f32 = 0.5;
@@ -116,11 +118,14 @@ fn spawn_chain(
                 .to_transform(),
         ));
     }
-    cmd.entity(owner).insert(ChainRagdoll {
+    cmd.entity(owner).insert((
         id,
-        settings,
-        start,
-    });
+        ChainRagdoll {
+            id,
+            settings,
+            start,
+        },
+    ));
 }
 
 fn spawn_scene(mut cmd: CommandQueue, mut state: ResMut<PhysicsState>, assets: Res<AssetServer>) {
@@ -143,6 +148,7 @@ fn spawn_scene(mut cmd: CommandQueue, mut state: ResMut<PhysicsState>, assets: R
     ));
     cmd.spawn((
         Collider::cuboid(20.0, 0.5, 20.0),
+        Contacts::default(),
         Transform::from_translation(Vec3::new(0.0, -0.5, 0.0)),
         MeshComponent {
             handle: assets.add(primitives::cuboid(Vec3::new(40.0, 1.0, 40.0))),
@@ -229,10 +235,25 @@ fn control_chains(
     }
 }
 
+fn toggle_gizmos(input: Res<Input>, mut shown: ResMut<PhysicsGizmos>) {
+    if input.is_just_pressed(PhysicalKey::Code(KeyCode::KeyG)) {
+        *shown = if *shown == PhysicsGizmos::default() {
+            PhysicsGizmos::all()
+        } else {
+            PhysicsGizmos::default()
+        };
+    }
+}
+
+fn show_gizmos(mut shown: ResMut<PhysicsGizmos>) {
+    *shown = PhysicsGizmos::all();
+}
+
 fn game(app: &mut App) {
     app.register_plugin(DefaultPlugins)
-        .add_system(Startup, spawn_scene)
-        .add_system(Update, (control_chains, sync_visuals));
+        .register_plugin(PhysicsGizmosPlugin)
+        .add_system(Startup, (spawn_scene, show_gizmos))
+        .add_system(Update, (control_chains, sync_visuals, toggle_gizmos));
 }
 
 fn main() {

@@ -1,0 +1,12 @@
+[package]
+name = "concerto-physics-editor"
+version.workspace = true
+edition = "2024"
+description.workspace = true
+repository.workspace = true
+license.workspace = true
+
+[dependencies]
+concerto-app.workspace = true
+concerto-editor.workspace = true
+concerto-physics-gizmos.workspace = true

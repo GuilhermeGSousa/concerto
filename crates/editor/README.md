@@ -1094,7 +1094,7 @@ it reads, and its kind's `NAME`, and draws one entity at a time. The scene
 tools (`src/tools/component_gizmos.rs`) register the engine's in every edit and
 play `App`: `Bounds` boxes each `Aabb`, `Skeleton` joins each bone to its
 parent, `Light` shows a light's reach (`range`, or 5 m when it is 0) and
-`Camera` a camera's frustum cut at 5 m. `app.register_component_gizmo::<G>()`
+`Camera` a camera's frustum cut at 5 m. A game that lists `concerto-physics-editor` adds `Collider`, `Ragdoll` (the entity holding a `RagdollId`), `Contacts`, `Box collider`, `Mesh collider` and `Sensor`, which draw the physics components; `gizmos kind=Collider always=true` draws every collider. `app.register_component_gizmo::<G>()`
 registers another in a hosted `App`; it lists the kind in that `App`'s
 `ComponentGizmos` resource, and draws it only when the `App` has
 `DebugGizmosPlugin`. Two gizmo types with one `NAME` panic. The

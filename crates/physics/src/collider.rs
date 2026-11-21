@@ -58,7 +58,8 @@ impl Collider {
         -self.shared_shape.local_aabb().min().y
     }
 
-    pub(crate) fn shape(&self) -> &PhysicsShape {
+    /// The collider's shape.
+    pub fn shape(&self) -> &PhysicsShape {
         &self.shared_shape
     }
 }

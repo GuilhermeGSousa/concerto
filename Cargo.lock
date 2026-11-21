@@ -1552,6 +1552,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "concerto-physics-editor"
+version = "0.1.0"
+dependencies = [
+ "concerto-app",
+ "concerto-editor",
+ "concerto-physics-gizmos",
+]
+
+[[package]]
+name = "concerto-physics-gizmos"
+version = "0.1.0"
+dependencies = [
+ "concerto-app",
+ "concerto-color",
+ "concerto-debug-gizmos",
+ "concerto-ecs",
+ "concerto-foundation",
+ "concerto-mesh",
+ "concerto-physics",
+ "concerto-render",
+ "glam 0.33.12",
+]
+
+[[package]]
 name = "concerto-procedural-animation"
 version = "0.1.0"
 dependencies = [
@@ -5240,6 +5264,7 @@ name = "ragdoll-test"
 version = "0.1.0"
 dependencies = [
  "concerto",
+ "concerto-physics-gizmos",
  "env_logger",
  "glam 0.33.12",
 ]

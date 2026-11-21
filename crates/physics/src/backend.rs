@@ -17,6 +17,7 @@ use concerto_mesh::Mesh;
 use glam::Vec3;
 
 use crate::aabb::Aabb;
+use crate::body::BodyActivity;
 use crate::collider::{Collider, ColliderOffset};
 use crate::ragdoll::{BodyPose, JointDrive, RagdollBuildError, RagdollSettings};
 use crate::rigid_body::{MotionType, RigidBody};
@@ -166,6 +167,9 @@ pub trait PhysicsBackend: Send + Sync + Sized {
 
     /// Moves the contacts seen since the last drain into `out`, in order; call it after [`drain_sensor_contacts`](Self::drain_sensor_contacts).
     fn drain_contacts(&mut self, out: &mut Vec<RawContact<Self::BodyHandle>>);
+
+    /// How `body` is moving right now.
+    fn body_activity(&self, body: Self::BodyHandle) -> BodyActivity;
 
     /// A body's current world-space pose (translation and rotation).
     fn body_transform(&self, body: Self::BodyHandle) -> Transform;
