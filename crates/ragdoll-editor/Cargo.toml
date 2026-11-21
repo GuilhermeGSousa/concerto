@@ -1,0 +1,32 @@
+[package]
+name = "concerto-ragdoll-editor"
+version.workspace = true
+edition = "2024"
+description.workspace = true
+repository.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow = "1"
+concerto-animation.workspace = true
+concerto-app.workspace = true
+concerto-ecs.workspace = true
+concerto-editor.workspace = true
+concerto-foundation.workspace = true
+concerto-mcp.workspace = true
+concerto-mesh.workspace = true
+concerto-ragdoll.workspace = true
+concerto-ui.workspace = true
+concerto-window.workspace = true
+schemars = "1"
+serde = { version = "1", features = ["derive"] }
+taffy = "0.9.2"
+
+[dev-dependencies]
+concerto = { path = "../.." }
+concerto-ragdoll = { workspace = true, features = ["test-support"] }
+concerto-render.workspace = true
+rmcp = { version = "3.5", features = ["client", "transport-io"] }
+serde_json = "1"
+tempfile = "3"
+tokio = { version = "1", features = ["rt", "io-util", "macros", "time"] }

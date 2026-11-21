@@ -446,6 +446,16 @@ split by body-segment fractions. Knees and elbows are hinges that bend one way
 only, shoulders and hips get a swing cone and a twist range, the spine and neck
 small ones, and every joint a little friction so a fallen body comes to rest.
 
+In the editor, a retarget rig's tab has a **Create ragdoll** button, and an
+agent has the `create_ragdoll` tool; both come from the extension crate
+`concerto-ragdoll-editor` and send one signal, `CreateRagdoll`. It reads the
+rig, its skeleton and its reference clip, runs `generate_humanoid`, checks the
+result with `Ragdoll::resolve`, and saves `ragdoll.gasset` beside the rig, or
+at an `address` you give. The tool takes `rig`, and optionally `address`,
+`total_mass` and `chains`, and answers one line per part with its bone, shape
+and mass. It reads no skinned mesh, so part radii follow the bones'
+proportions. Given a skeleton, it says to create a rig first.
+
 With the `test-support` feature, `concerto::ragdoll::testing` has a reference
 humanoid built in code (`reference_humanoid`) and a `RagdollWorld` to stand it
 in, hit a named part and step, without a GPU.

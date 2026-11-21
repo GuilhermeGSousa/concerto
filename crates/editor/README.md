@@ -1767,6 +1767,29 @@ at the parameters set in the tab. In a game that doesn't list the crate a clip o
 has no editor, so opening one opens no tab, and a rig opens in the generic
 inspector.
 
+### The ragdoll generator
+
+[`concerto-ragdoll-editor`](../ragdoll-editor/src/lib.rs) generates a humanoid
+`Ragdoll` from a retarget rig and saves it as a new asset in the open project,
+and the editor works without it. Its `install` registers the `CreateRagdoll`
+signal, whose one listener reads the rig, its skeleton and its reference clip,
+calls `generate_humanoid`, checks the result with `Ragdoll::resolve`, writes
+`ragdoll.gasset` next to the rig (or at `address`) and adds it to the asset
+registry, so the Asset Browser and `list_assets` show it at once. A rig that
+has no chain a humanoid needs, or an address that is taken, answers with what
+to change and writes nothing.
+
+The `create_ragdoll` tool sends the signal: `rig` is an address or id,
+`address`, `total_mass` (75 kg) and `chains` (names for the rig's chains where
+they are not `spine`, `neck`, `arm_l`, `arm_r`, `leg_l` and `leg_r`) are
+optional. It answers the new asset's address and one line per part with its
+bone, shape and mass. No skinned mesh is read, because a mesh names no
+skeleton, so part radii follow the bones' proportions. The Create ragdoll
+button on a rig tab sends the same signal for the tab's rig; it sits in the
+tab's inspector column, which the rig tab of `concerto-animation-editor` has,
+and a rig in the generic form tab has no button. A skeleton alone has no
+action: the tool answers that a rig comes first.
+
 ### The texture tab
 
 The editor of a `Texture` is in the crate

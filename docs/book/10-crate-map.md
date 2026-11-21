@@ -46,6 +46,8 @@ game adds itself when it needs them.
 | Tooling | `editor` | the editor, as a library | add `concerto-editor` in the `editor/` crate |
 | | `animation-editor` | the editor's tab for an animation clip | list it in the game's `Cargo.toml` |
 | | `navigation-editor` | the editor's navmesh gizmo, drawn while a navmesh's entity is selected | list it in the game's `Cargo.toml` |
+| | `physics-editor` | the editor's gizmo kinds for colliders, sensors, contacts and ragdolls | list it in the game's `Cargo.toml` |
+| | `ragdoll-editor` | the `create_ragdoll` tool and the Create ragdoll button on a rig's tab, which generate a humanoid `Ragdoll` from a retarget rig | list it in the game's `Cargo.toml` |
 | | `project` | `cargo concerto` | install with `cargo install --path crates/project` |
 | | `mcp` | an MCP server over any `App`, whose tools are systems; the editor's `--mcp` uses it | |
 
