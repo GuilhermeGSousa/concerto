@@ -39,7 +39,10 @@ cmd.spawn((MeshCollider, MeshComponent { handle: floor_mesh }, floor_transform))
 `AllowedDofs::TRANSLATION | AllowedDofs::ROTATION_Y` so it never tips over. A
 `ColliderOffset` moves the shape relative to the entity;
 `ColliderOffset::bottom_origin(&collider)` puts the entity's origin at the
-bottom of a capsule, where a character's feet are.
+bottom of a capsule, where a character's feet are. A `GravityScale` beside the
+`Collider` multiplies gravity for the body; `GravityScale(0.0)` makes a body
+that moves only by the velocities it is given, as the first-person walker's
+is.
 
 A static collider's `Transform` is yours: the simulation writes poses back
 only to entities with a `RigidBody`. Moving the entity does not move its body,
@@ -186,7 +189,9 @@ each part at its world pose and returns a `RagdollId`; `destroy_ragdoll`
 removes it. `ragdoll_pose` reads every part's world pose and `set_ragdoll_pose`
 moves them all at once. `ragdoll_bodies` gives each part's `BodyId`, for
 velocities and impulses. A ray or sphere cast that hits a part reports the
-`owner` entity and the part's index in `RayHit::part`.
+`owner` entity and the part's index in `RayHit::part`. `RagdollId` is also a
+component: put it on the owner, and removing it or despawning the owner
+destroys the ragdoll.
 
 A ragdoll hangs from its joints until something drives it:
 
@@ -444,6 +449,51 @@ small ones, and every joint a little friction so a fallen body comes to rest.
 With the `test-support` feature, `concerto::ragdoll::testing` has a reference
 humanoid built in code (`reference_humanoid`) and a `RagdollWorld` to stand it
 in, hit a named part and step, without a GPU.
+
+### A character's ragdoll
+
+`CharacterRagdoll` gives a character a physical body. It goes on the entity
+with the `SkeletonComponent`, names the `Ragdoll` asset of that skeleton, and
+optionally the character's `capsule`:
+
+```rust
+use concerto::ragdoll::CharacterRagdoll;
+
+cmd.insert(CharacterRagdoll::new(ragdoll).with_capsule(capsule), skeleton_entity);
+```
+
+Once the asset and the skeleton have loaded, the ragdoll is built at the bones'
+current pose and the entity gets a `RagdollId` and a `RagdollBody`. Removing
+`CharacterRagdoll`, or despawning the entity, destroys it; inserting it again
+rebuilds it. An asset that does not fit the skeleton is reported once and the
+entity is marked `RagdollRefused`.
+
+Its `mode` is `RagdollMode::FollowsAnimation`: every part is kinematic, and
+each fixed step, before physics steps, it is driven to its bone's pose. The
+parts trail the drawn pose by up to one frame. They push dynamic props, so an
+arm swing knocks a bottle over, and they are already in the right place at the
+right speed the moment something disturbs the character. The animation is not
+changed.
+
+Ragdoll parts are on a collision layer of their own:
+
+- they never collide with the character's own `capsule`;
+- a scene query skips them unless it asks: `QueryFilter::ragdolls` is
+  `RagdollQuery::Skip` by default, so foot placement and the camera boom never
+  meet a limb. `RagdollQuery::Include` sees them with everything else and
+  `RagdollQuery::Only` sees nothing else, which is what a shot uses;
+- the ground probe and sensors ignore them.
+
+A hit on a part reports the character and the bone:
+
+```rust
+let hit = physics.cast_ray(origin, direction, QueryFilter::default().with_ragdolls(RagdollQuery::Only))?;
+let body = bodies.get_entity(hit.entity?)?;
+let bone = body.bone(hit.part?);
+```
+
+Nothing happens in the editor's edit and preview `App`s, where physics is not
+stepped.
 
 ## Animation
 

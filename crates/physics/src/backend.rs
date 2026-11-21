@@ -19,6 +19,7 @@ use glam::Vec3;
 use crate::aabb::Aabb;
 use crate::body::BodyActivity;
 use crate::collider::{Collider, ColliderOffset};
+use crate::query::RagdollQuery;
 use crate::ragdoll::{BodyPose, JointDrive, RagdollBuildError, RagdollSettings};
 use crate::rigid_body::{MotionType, RigidBody};
 
@@ -142,7 +143,8 @@ pub trait PhysicsBackend: Send + Sync + Sized {
     /// [`body_transform`](Self::body_transform). A `sensor` body detects
     /// bodies without colliding with them, is never dynamic, and is skipped
     /// by [`cast_ray`](Self::cast_ray), [`cast_sphere`](Self::cast_sphere)
-    /// and [`probe_ground`](Self::probe_ground).
+    /// and [`probe_ground`](Self::probe_ground). `gravity_scale` multiplies
+    /// gravity for a dynamic body.
     fn create_body(
         &mut self,
         collider: &Collider,
@@ -150,6 +152,7 @@ pub trait PhysicsBackend: Send + Sync + Sized {
         rigid_body: Option<&RigidBody>,
         offset: Option<&ColliderOffset>,
         sensor: bool,
+        gravity_scale: f32,
     ) -> Self::BodyHandle;
 
     /// Removes `body` from the simulation and destroys it, waking any bodies
@@ -193,6 +196,7 @@ pub trait PhysicsBackend: Send + Sync + Sized {
         origin: Vec3,
         direction: Vec3,
         ignore: &[Self::BodyHandle],
+        ragdolls: RagdollQuery,
     ) -> Option<RawRayHit<Self::BodyHandle>>;
 
     /// Sweeps a sphere of `radius` from `origin` along `direction` and returns the first body it touches, skipping `ignore`.
@@ -202,6 +206,7 @@ pub trait PhysicsBackend: Send + Sync + Sized {
         radius: f32,
         direction: Vec3,
         ignore: &[Self::BodyHandle],
+        ragdolls: RagdollQuery,
     ) -> Option<RawShapeHit<Self::BodyHandle>>;
 
     /// Collides `body`'s shape against the world (ignoring `body` itself)
@@ -227,6 +232,13 @@ pub trait PhysicsBackend: Send + Sync + Sized {
 
     /// Removes the ragdoll's bodies and joints from the simulation and destroys them.
     fn destroy_ragdoll(&mut self, ragdoll: Self::RagdollHandle);
+
+    /// Stops every part of the ragdoll colliding with `body`, or with nothing in particular when it is `None`.
+    fn set_ragdoll_ignored_body(
+        &mut self,
+        ragdoll: Self::RagdollHandle,
+        body: Option<Self::BodyHandle>,
+    );
 
     /// The body of each part, in part order.
     fn ragdoll_bodies(&self, ragdoll: Self::RagdollHandle) -> Vec<Self::BodyHandle>;

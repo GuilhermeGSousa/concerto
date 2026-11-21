@@ -1,14 +1,16 @@
 //! A reference humanoid built in code, for tests and benchmarks of everything that stands on a ragdoll.
 
 use concerto_animation::retarget::{RetargetChain, RetargetRig};
+use concerto_ecs::component::scene::SceneEntityRef;
 use concerto_ecs::entity::Entity;
+use concerto_ecs::entity::hierarchy::ChildOf;
 use concerto_ecs::system::executor::single_thread::SingleThreadedExecutor;
 use concerto_ecs::system::schedule::Schedule;
 use concerto_ecs::world::World;
 use concerto_foundation::assets::handle::AssetHandle;
 use concerto_foundation::time::Time;
 use concerto_foundation::transform::Transform;
-use concerto_mesh::{JointPose, Skeleton};
+use concerto_mesh::{JointPose, Skeleton, SkeletonComponent};
 use concerto_physics::collider::{Collider, register_colliders};
 use concerto_physics::physics_pipeline::PhysicsPipeline;
 use concerto_physics::physics_state::PhysicsState;
@@ -292,4 +294,49 @@ pub fn joint_gaps(ragdoll: &ResolvedRagdoll, pose: &[BodyPose]) -> Vec<f32> {
             )
         })
         .collect()
+}
+
+/// The reference humanoid's skeleton as entities: one per bone under a skeleton entity that holds the `SkeletonComponent`.
+#[derive(Clone, Debug)]
+pub struct SpawnedHumanoid {
+    pub skeleton: Entity,
+    pub bones: Vec<Entity>,
+}
+
+impl SpawnedHumanoid {
+    /// The entity of the bone called `name`.
+    pub fn bone(&self, name: &str) -> Entity {
+        self.bones[index_of(name)]
+    }
+}
+
+/// Spawns the reference humanoid's bones in their rest pose under a new entity at `root`, which gets a `SkeletonComponent` naming `skeleton`.
+pub fn spawn_humanoid(
+    world: &mut World,
+    skeleton: AssetHandle<Skeleton>,
+    root: Transform,
+) -> SpawnedHumanoid {
+    let rest = humanoid_skeleton();
+    let entity = world.spawn(root);
+    let mut bones: Vec<Entity> = Vec::with_capacity(BONES.len());
+    for (index, bone) in BONES.iter().enumerate() {
+        let parent = bone.parent.map_or(entity, |parent| bones[index_of(parent)]);
+        let local = &rest.rest_pose[index];
+        bones.push(world.spawn((
+            Transform::from_translation_rotation(local.translation, local.rotation),
+            ChildOf::new(parent),
+        )));
+    }
+    world.insert(
+        SkeletonComponent::new(
+            skeleton,
+            bones.iter().copied().map(SceneEntityRef::Entity).collect(),
+            bones.first().copied().map(SceneEntityRef::Entity),
+        ),
+        entity,
+    );
+    SpawnedHumanoid {
+        skeleton: entity,
+        bones,
+    }
 }

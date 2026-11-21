@@ -2,7 +2,7 @@ use concerto_ecs::{CommandQueue, Component, Entity, Query, Res, ResMut, Without}
 use concerto_foundation::{time::Time, transform::Transform};
 use concerto_physics::{
     body::BodyId,
-    collider::{Collider, ColliderOffset},
+    collider::{Collider, ColliderOffset, GravityScale},
     physics_state::PhysicsState,
     query::QueryFilter,
     rigid_body::{AllowedDofs, MotionType, RigidBody},
@@ -232,6 +232,7 @@ pub fn spawn_first_person_walker(
         },
         collider,
         offset,
+        GravityScale(0.0),
         transform,
         walker,
     ))
@@ -286,9 +287,7 @@ pub fn step_first_person_walkers(
         let probe_radius = walker.radius * GROUND_PROBE_SCALE;
         let probe_from = feet + Vec3::Y * (walker.step_height + probe_radius);
         let reach = walker.step_height * 2.0;
-        let filter = QueryFilter {
-            ignore: std::slice::from_ref(body),
-        };
+        let filter = QueryFilter::ignoring(std::slice::from_ref(body));
         let ground = physics
             .cast_sphere(probe_from, probe_radius, Vec3::NEG_Y * reach, filter)
             .filter(|hit| hit.normal.y >= walker.max_slope_angle.cos())
@@ -296,9 +295,9 @@ pub fn step_first_person_walkers(
         let vertical = match ground {
             Some(rise) => {
                 let limit = rise.abs() / dt;
-                (rise * GROUND_FOLLOW_RATE).clamp(-limit, limit) + GRAVITY * dt
+                (rise * GROUND_FOLLOW_RATE).clamp(-limit, limit)
             }
-            None => physics.linear_velocity(*body).y,
+            None => physics.linear_velocity(*body).y - GRAVITY * dt,
         };
         if walker.grounded != ground.is_some() {
             walker.grounded = ground.is_some();

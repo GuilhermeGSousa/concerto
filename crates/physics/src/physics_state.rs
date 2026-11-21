@@ -181,6 +181,14 @@ impl PhysicsState {
         self.backend.body_activity(body.0)
     }
 
+    /// Stops every part of the ragdoll colliding with `body`, a character's own capsule; `None` lets them collide with everything again.
+    pub fn set_ragdoll_ignored_body(&mut self, ragdoll: RagdollId, body: Option<BodyId>) {
+        if self.ragdolls.contains_key(&ragdoll) {
+            self.backend
+                .set_ragdoll_ignored_body(ragdoll.0, body.map(|body| body.0));
+        }
+    }
+
     /// The body of each part of the ragdoll, in part order; empty for a destroyed ragdoll.
     pub fn ragdoll_bodies(&self, ragdoll: RagdollId) -> &[BodyId] {
         self.ragdolls
@@ -218,11 +226,16 @@ impl PhysicsState {
         rigid_body: Option<&RigidBody>,
         offset: Option<&ColliderOffset>,
         sensor: bool,
+        gravity_scale: f32,
     ) -> BodyId {
-        BodyId(
-            self.backend
-                .create_body(collider, transform, rigid_body, offset, sensor),
-        )
+        BodyId(self.backend.create_body(
+            collider,
+            transform,
+            rigid_body,
+            offset,
+            sensor,
+            gravity_scale,
+        ))
     }
 
     /// Sets each part's velocity so that it reaches its world pose in `pose` at the end of the next fixed step. Kinematic parts follow it exactly and push dynamic bodies aside; see [`set_ragdoll_part_motion`](Self::set_ragdoll_part_motion).
@@ -503,7 +516,7 @@ impl PhysicsState {
     pub fn cast_ray(&self, origin: Vec3, direction: Vec3, filter: QueryFilter) -> Option<RayHit> {
         let ignore: Vec<_> = filter.ignore.iter().map(|body| body.0).collect();
         self.backend
-            .cast_ray(origin, direction, &ignore)
+            .cast_ray(origin, direction, &ignore, filter.ragdolls)
             .map(|hit| {
                 let body = BodyId(hit.body);
 
@@ -533,6 +546,7 @@ impl PhysicsState {
                 radius.max(MIN_SPHERE_CAST_RADIUS),
                 direction,
                 &ignore,
+                filter.ragdolls,
             )
             .map(|hit| {
                 let body = BodyId(hit.body);

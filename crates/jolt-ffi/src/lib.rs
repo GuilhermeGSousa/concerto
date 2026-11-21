@@ -161,6 +161,12 @@ pub struct JoltSensorContact {
     pub entered: u8,
 }
 
+/// Whether a scene query sees the bodies of ragdoll parts (mirrors `JoltRagdollQuery` in `body.h`).
+pub type JoltRagdollQuery = u32;
+pub const JOLT_RAGDOLL_QUERY_SKIP: JoltRagdollQuery = 0;
+pub const JOLT_RAGDOLL_QUERY_INCLUDE: JoltRagdollQuery = 1;
+pub const JOLT_RAGDOLL_QUERY_ONLY: JoltRagdollQuery = 2;
+
 /// Mirrors the `JoltContactKind` constants in `body.h`.
 pub type JoltContactKind = u8;
 pub const JOLT_CONTACT_START: JoltContactKind = 0;
@@ -277,6 +283,12 @@ extern "C" {
         out_max: *mut f32,
     );
 
+    /// Scales gravity for the body: 1 by default, 0 for a body that moves only by the velocities it is given.
+    pub fn jolt_body_creation_settings_set_gravity_factor(
+        settings: *mut JoltBodyCreationSettings,
+        gravity_factor: f32,
+    );
+
     /// Makes the body a kinematic, always active sensor on the sensor layer.
     pub fn jolt_body_creation_settings_set_is_sensor(
         settings: *mut JoltBodyCreationSettings,
@@ -391,6 +403,7 @@ extern "C" {
         direction: *const f32,
         ignore: *const JoltBodyId,
         ignore_count: u32,
+        ragdolls: JoltRagdollQuery,
         out_hit: *mut JoltRayHit,
     ) -> bool;
 
@@ -402,6 +415,7 @@ extern "C" {
         direction: *const f32,
         ignore: *const JoltBodyId,
         ignore_count: u32,
+        ragdolls: JoltRagdollQuery,
         out_hit: *mut JoltShapeHit,
     ) -> bool;
 
@@ -444,6 +458,14 @@ extern "C" {
 
     /// Removes the ragdoll from the world and destroys it.
     pub fn jolt_ragdoll_destroy(world: *mut JoltWorld, ragdoll: *mut JoltRagdoll);
+
+    /// Stops every part of the ragdoll colliding with `body`, or lets them collide again when `ignored` is false.
+    pub fn jolt_ragdoll_set_ignored_body(
+        world: *mut JoltWorld,
+        ragdoll: *mut JoltRagdoll,
+        body: JoltBodyId,
+        ignored: bool,
+    );
 
     pub fn jolt_ragdoll_part_count(ragdoll: *const JoltRagdoll) -> u32;
 
