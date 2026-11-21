@@ -213,6 +213,7 @@ impl PhysicsBackend for RapierBackend {
         rigid_body: Option<&RigidBody>,
         offset: Option<&ColliderOffset>,
         sensor: bool,
+        gravity_scale: f32,
     ) -> Self::BodyHandle {
         let mut body_builder = match rigid_body {
             None => RigidBodyBuilder::fixed(),
@@ -223,7 +224,8 @@ impl PhysicsBackend for RapierBackend {
             },
         }
         // Only the translation and rotation: the scale belongs to the shape.
-        .pose(to_rapier_pose(transform));
+        .pose(to_rapier_pose(transform))
+        .gravity_scale(gravity_scale);
         if let Some(rigid_body) = rigid_body {
             body_builder = body_builder.locked_axes(to_locked_axes(rigid_body.allowed_dofs));
         }

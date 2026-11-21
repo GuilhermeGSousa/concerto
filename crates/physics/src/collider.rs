@@ -76,6 +76,10 @@ impl ColliderOffset {
     }
 }
 
+/// Multiplies gravity for the entity's dynamic body. Optional sibling of [`Collider`], read when the body is created: 0 makes a body that moves only by the velocities it is given.
+#[derive(Component, Clone, Copy, Debug, PartialEq)]
+pub struct GravityScale(pub f32);
+
 impl Component for Collider {
     fn on_add() -> Option<ComponentLifecycleCallback> {
         None
@@ -150,6 +154,7 @@ pub fn register_colliders(
             Option<&Sensor>,
             Option<&MeshCollider>,
             Option<&BoxCollider>,
+            Option<&GravityScale>,
         ),
         Without<BodyId>,
     >,
@@ -165,6 +170,7 @@ pub fn register_colliders(
         sensor,
         mesh_collider,
         box_collider,
+        gravity_scale,
     ) in colliders.iter()
     {
         let mesh_shape = mesh_collider.is_some() && box_collider.is_none();
@@ -184,7 +190,14 @@ pub fn register_colliders(
             (None, _) => false,
         };
         let transform = global_transform.to_transform();
-        let body_id = physics_state.create_body(collider, &transform, rigid_body, offset, sensor);
+        let body_id = physics_state.create_body(
+            collider,
+            &transform,
+            rigid_body,
+            offset,
+            sensor,
+            gravity_scale.map_or(1.0, |scale| scale.0),
+        );
         physics_state.register_body_entity(body_id, entity);
         cmd.insert(body_id, entity);
 
