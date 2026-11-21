@@ -1651,6 +1651,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "concerto-ragdoll-editor"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "concerto",
+ "concerto-animation",
+ "concerto-app",
+ "concerto-ecs",
+ "concerto-editor",
+ "concerto-foundation",
+ "concerto-mcp",
+ "concerto-mesh",
+ "concerto-ragdoll",
+ "concerto-render",
+ "concerto-ui",
+ "concerto-window",
+ "rmcp",
+ "schemars",
+ "serde",
+ "serde_json",
+ "taffy",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "concerto-reflect"
 version = "0.1.0"
 dependencies = [
