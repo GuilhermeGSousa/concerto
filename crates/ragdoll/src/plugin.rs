@@ -24,6 +24,7 @@ use crate::{
     },
     hit::{HitReaction, flinch_when_hit, update_flinches},
     sensing::sense_bodies,
+    stagger::{Stagger, end_staggers, note_balance_ended, stagger_bodies},
 };
 
 /// Registers the ragdoll asset and gives every `CharacterRagdoll` a physical body that follows its animation, is powered towards it or falls limp, drawn on its skeleton by weight; register it after `PhysicsPlugin`. Its systems also run in a preview `App`, where they do nothing until the preview has a `PhysicsPipeline`.
@@ -58,6 +59,19 @@ impl Plugin for RagdollPlugin {
             FixedUpdate,
             balance_bodies.in_set(BehaviourSet).at_preview_time(),
         );
+        app.register_type::<Stagger>();
+        app.add_listener(note_balance_ended.at_preview_time())
+            .add_system(
+                FixedUpdate,
+                end_staggers.in_set(BehaviourSet).at_preview_time(),
+            )
+            .add_system(
+                FixedUpdate,
+                stagger_bodies
+                    .in_set(BehaviourSet)
+                    .before(balance_bodies)
+                    .at_preview_time(),
+            );
         app.add_listener(drop_removed_ragdoll.at_preview_time())
             .add_listener(drop_replaced_ragdoll.at_preview_time())
             .add_system(

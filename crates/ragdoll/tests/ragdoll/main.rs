@@ -5,3 +5,4 @@ mod character;
 mod common;
 mod generate;
 mod stability;
+mod stagger;

@@ -41,7 +41,7 @@ use concerto_debug_gizmos::DebugGizmos;
 use concerto_physics_gizmos::{PhysicsGizmos, PhysicsGizmosPlugin};
 use concerto_ragdoll::{
     Balance, BodyDrive, BodySense, CharacterRagdoll, PhysicalState, RagdollBody, RagdollMode,
-    testing::reference_humanoid,
+    Stagger, testing::reference_humanoid,
 };
 use glam::{Quat, Vec3};
 
@@ -58,6 +58,7 @@ const HUMANOID_CENTER: Vec3 = Vec3::new(1.5, 0.0, 0.0);
 const WALK_RADIUS: f32 = 1.0;
 const WALK_SPEED: f32 = 1.0;
 const PUSH: f32 = 60.0;
+const STAGGER_SEVERITY: f32 = 0.5;
 const ARM_SWING: f32 = 0.8;
 
 #[derive(Resource)]
@@ -318,13 +319,20 @@ fn balance_humanoid(
     }
     if input.is_just_pressed(PhysicalKey::Code(KeyCode::KeyJ)) {
         cmd.remove::<Balance>(humanoid.skeleton);
+        cmd.remove::<Stagger>(humanoid.skeleton);
     }
-    if input.is_just_pressed(PhysicalKey::Code(KeyCode::KeyU))
+    let shove = input.is_just_pressed(PhysicalKey::Code(KeyCode::KeyU));
+    let stagger = input.is_just_pressed(PhysicalKey::Code(KeyCode::KeyY));
+    if (shove || stagger)
         && let Some((body, &ragdoll)) = bodies.get_entity(humanoid.skeleton)
         && let Some(chest) = body.resolved().landmarks().chest
     {
         let part = physics.ragdoll_bodies(ragdoll)[chest];
         physics.add_impulse(part, PUSH * Vec3::Z);
+        if stagger {
+            cmd.entity(humanoid.skeleton)
+                .insert(Stagger::new(Vec3::Z, STAGGER_SEVERITY));
+        }
     }
 }
 

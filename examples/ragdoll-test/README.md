@@ -31,6 +31,9 @@ would rewrite them.
 - `U` pushes its chest with 60 N·s. While it balances it steps to catch
   itself; push again mid-step and it gives up and falls.
 
+- `Y`, while it balances, pushes it the same way and staggers it at severity
+  0.5: shorter, later steps, the trunk bent forward and the arms circling.
+
 Set `RAGDOLL_TEST_LIMP_AFTER=<seconds>` and it goes limp that long after
 startup, for capturing without a keyboard.
 
