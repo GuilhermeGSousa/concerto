@@ -39,7 +39,10 @@ cmd.spawn((MeshCollider, MeshComponent { handle: floor_mesh }, floor_transform))
 `AllowedDofs::TRANSLATION | AllowedDofs::ROTATION_Y` so it never tips over. A
 `ColliderOffset` moves the shape relative to the entity;
 `ColliderOffset::bottom_origin(&collider)` puts the entity's origin at the
-bottom of a capsule, where a character's feet are.
+bottom of a capsule, where a character's feet are. A `GravityScale` beside the
+`Collider` multiplies gravity for the body; `GravityScale(0.0)` makes a body
+that moves only by the velocities it is given, as the first-person walker's
+is.
 
 A static collider's `Transform` is yours: the simulation writes poses back
 only to entities with a `RigidBody`. Moving the entity does not move its body,

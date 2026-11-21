@@ -194,11 +194,16 @@ impl PhysicsState {
         rigid_body: Option<&RigidBody>,
         offset: Option<&ColliderOffset>,
         sensor: bool,
+        gravity_scale: f32,
     ) -> BodyId {
-        BodyId(
-            self.backend
-                .create_body(collider, transform, rigid_body, offset, sensor),
-        )
+        BodyId(self.backend.create_body(
+            collider,
+            transform,
+            rigid_body,
+            offset,
+            sensor,
+            gravity_scale,
+        ))
     }
 
     /// Sets each part's velocity so that it reaches its world pose in `pose` at the end of the next fixed step. Kinematic parts follow it exactly and push dynamic bodies aside; see [`set_ragdoll_part_motion`](Self::set_ragdoll_part_motion).

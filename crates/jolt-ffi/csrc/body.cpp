@@ -55,6 +55,12 @@ extern "C"
 		settings->settings.mAllowedDOFs = static_cast<JPH::EAllowedDOFs>(allowed_dofs);
 	}
 
+	void jolt_body_creation_settings_set_gravity_factor(JoltBodyCreationSettings *settings,
+														float gravity_factor)
+	{
+		settings->settings.mGravityFactor = gravity_factor;
+	}
+
 	void jolt_body_creation_settings_set_is_sensor(JoltBodyCreationSettings *settings,
 												   bool is_sensor)
 	{
