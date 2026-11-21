@@ -24,6 +24,7 @@ use crate::{
     },
     hit::{HitReaction, flinch_when_hit, update_flinches},
     sensing::sense_bodies,
+    shot::{ShotReaction, end_shots, note_shot_balance_ended, react_when_shot, shot_bodies},
     stagger::{Stagger, end_staggers, note_balance_ended, stagger_bodies},
 };
 
@@ -59,6 +60,20 @@ impl Plugin for RagdollPlugin {
             FixedUpdate,
             balance_bodies.in_set(BehaviourSet).at_preview_time(),
         );
+        app.register_type::<ShotReaction>();
+        app.add_listener(react_when_shot.at_preview_time())
+            .add_listener(note_shot_balance_ended.at_preview_time())
+            .add_system(
+                FixedUpdate,
+                end_shots.in_set(BehaviourSet).at_preview_time(),
+            )
+            .add_system(
+                FixedUpdate,
+                shot_bodies
+                    .in_set(BehaviourSet)
+                    .before(balance_bodies)
+                    .at_preview_time(),
+            );
         app.register_type::<Stagger>();
         app.add_listener(note_balance_ended.at_preview_time())
             .add_system(

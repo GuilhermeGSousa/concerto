@@ -34,6 +34,10 @@ would rewrite them.
 - `Y`, while it balances, pushes it the same way and staggers it at severity
   0.5: shorter, later steps, the trunk bent forward and the arms circling.
 
+- `I` shoots it in the chest from the front with 40 N·s: the chest is thrown
+  back, the spine folds over the wound, a hand goes to it and the head looks
+  at it and then at the shooter.
+
 Set `RAGDOLL_TEST_LIMP_AFTER=<seconds>` and it goes limp that long after
 startup, for capturing without a keyboard.
 
