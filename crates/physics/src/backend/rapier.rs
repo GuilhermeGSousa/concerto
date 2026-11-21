@@ -552,6 +552,23 @@ impl PhysicsBackend for RapierBackend {
         }
     }
 
+    fn move_body_kinematic(&mut self, body: Self::BodyHandle, pose: BodyPose, delta_time: f32) {
+        let Some(rigid_body) = self.bodies.get_mut(body) else {
+            return;
+        };
+        if delta_time <= 0.0 {
+            return;
+        }
+        let current = rigid_body.position();
+        let from = Quat::from_array(current.rotation.to_array());
+        let turn = (pose.rotation * from.inverse()).normalize();
+        let turn = if turn.w < 0.0 { -turn } else { turn };
+        let linear = (pose.translation - from_rapier_vec(current.translation)) / delta_time;
+        let angular = turn.to_scaled_axis() / delta_time;
+        rigid_body.set_linvel(to_rapier_vec(linear), true);
+        rigid_body.set_angvel(to_rapier_vec(angular), true);
+    }
+
     fn set_body_translation(&mut self, body: Self::BodyHandle, translation: Vec3) {
         if let Some(rigid_body) = self.bodies.get_mut(body) {
             rigid_body.set_translation(to_rapier_vec(translation), false);

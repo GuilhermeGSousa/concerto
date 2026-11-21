@@ -98,7 +98,9 @@ extern "C"
 													  uint32_t count,
 													  float max_linear_velocity,
 													  uint32_t memberships,
-													  uint32_t filter)
+													  uint32_t filter,
+													  uint32_t velocity_steps,
+													  uint32_t position_steps)
 	{
 		jolt_global_init();
 		if (count == 0)
@@ -153,6 +155,8 @@ extern "C"
 			joint->mTwistMinAngle = source.twist_min;
 			joint->mTwistMaxAngle = source.twist_max;
 			joint->mMaxFrictionTorque = source.max_friction_torque;
+			joint->mNumVelocityStepsOverride = velocity_steps;
+			joint->mNumPositionStepsOverride = position_steps;
 			JPH::MotorSettings motor(source.motor_frequency, source.motor_damping);
 			motor.SetTorqueLimit(source.motor_torque_limit);
 			joint->mSwingMotorSettings = motor;
@@ -280,7 +284,8 @@ extern "C"
 									  uint32_t part,
 									  bool enabled,
 									  const float target_rotation[4],
-									  float frequency,
+									  bool by_stiffness,
+									  float spring,
 									  float damping,
 									  float torque_limit)
 	{
@@ -289,7 +294,11 @@ extern "C"
 			return;
 		if (enabled)
 		{
-			JPH::MotorSettings motor(frequency, damping);
+			JPH::MotorSettings motor;
+			motor.mSpringSettings = JPH::SpringSettings(by_stiffness ? JPH::ESpringMode::StiffnessAndDamping
+																	 : JPH::ESpringMode::FrequencyAndDamping,
+														spring,
+														damping);
 			motor.SetTorqueLimit(torque_limit);
 			joint->GetSwingMotorSettings() = motor;
 			joint->GetTwistMotorSettings() = motor;

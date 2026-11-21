@@ -322,6 +322,19 @@ extern "C"
 		bi.ActivateBody(id);
 	}
 
+	void jolt_body_move_kinematic(JoltWorld *world,
+								  JoltBodyId body,
+								  const float position[3],
+								  const float rotation[4],
+								  float delta_time)
+	{
+		world->system.GetBodyInterface().MoveKinematic(
+			JPH::BodyID(body),
+			JPH::RVec3(position[0], position[1], position[2]),
+			JPH::Quat(rotation[0], rotation[1], rotation[2], rotation[3]).Normalized(),
+			delta_time);
+	}
+
 	void jolt_body_set_position(JoltWorld *world, JoltBodyId body, const float position[3])
 	{
 		world->system.GetBodyInterface().SetPosition(JPH::BodyID(body),

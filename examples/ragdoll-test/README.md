@@ -21,6 +21,10 @@ would rewrite them.
   the skeleton.
 - `J` puts it back to following its animation with weight 0.
 - `B` sets the weight to 0.5, to see the blend.
+- `P` powers the humanoid with the `flinch` profile: pelvis and legs follow the
+  animation exactly, everything above is held to it by motors.
+- `O` powers it with the `braced` profile: every part on motors, standing on
+  its own feet until it loses its balance.
 
 Set `RAGDOLL_TEST_LIMP_AFTER=<seconds>` and it goes limp that long after
 startup, for capturing without a keyboard.

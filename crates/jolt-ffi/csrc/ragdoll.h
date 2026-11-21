@@ -61,12 +61,17 @@ extern "C"
      * between each part and its parent. Returns null when a parent index is
      * not an earlier part, a shape is degenerate, or stabilizing fails. No
      * part ever moves faster than `max_linear_velocity`, in m/s. Every part is
-     * in the collision layers `memberships` and collides with `filter`. */
+     * in the collision layers `memberships` and collides with `filter`. The
+     * solver runs at least `velocity_steps` velocity and `position_steps`
+     * position iterations on any island holding the ragdoll; 0 keeps the
+     * world's own. */
     JoltRagdollSettings *jolt_ragdoll_settings_create(const JoltRagdollPart *parts,
                                                       uint32_t count,
                                                       float max_linear_velocity,
                                                       uint32_t memberships,
-                                                      uint32_t filter);
+                                                      uint32_t filter,
+                                                      uint32_t velocity_steps,
+                                                      uint32_t position_steps);
     void jolt_ragdoll_settings_destroy(JoltRagdollSettings *settings);
     uint32_t jolt_ragdoll_settings_part_count(const JoltRagdollSettings *settings);
 
@@ -103,12 +108,15 @@ extern "C"
 
     /* Turns the motor of the joint between `part` and its parent off, or on
      * towards `target_rotation`, the part's rotation relative to its parent,
-     * with the given spring and torque limit. Does nothing for the root. */
+     * with the given spring and torque limit. `spring` is a frequency in Hz
+     * and `damping` a ratio, or with `by_stiffness` a stiffness in N·m/rad and
+     * a damping in N·m·s/rad. Does nothing for the root. */
     void jolt_ragdoll_set_joint_motor(JoltRagdoll *ragdoll,
                                       uint32_t part,
                                       bool enabled,
                                       const float target_rotation[4],
-                                      float frequency,
+                                      bool by_stiffness,
+                                      float spring,
                                       float damping,
                                       float torque_limit);
 

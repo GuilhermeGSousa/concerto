@@ -351,6 +351,15 @@ extern "C" {
         filter: u32,
     );
 
+    /// Sets the body's velocities so that it reaches `position` and `rotation` (xyzw) after `delta_time`.
+    pub fn jolt_body_move_kinematic(
+        world: *mut JoltWorld,
+        body: JoltBodyId,
+        position: *const f32,
+        rotation: *const f32,
+        delta_time: f32,
+    );
+
     /// Moves the body's origin at once, keeping its rotation and velocity.
     pub fn jolt_body_set_position(world: *mut JoltWorld, body: JoltBodyId, position: *const f32);
 
@@ -455,6 +464,8 @@ extern "C" {
         max_linear_velocity: f32,
         memberships: u32,
         filter: u32,
+        velocity_steps: u32,
+        position_steps: u32,
     ) -> *mut JoltRagdollSettings;
 
     pub fn jolt_ragdoll_settings_destroy(settings: *mut JoltRagdollSettings);
@@ -496,13 +507,14 @@ extern "C" {
     /// Turns every joint's motor on and aims it at the rotation the part has relative to its parent in `poses`.
     pub fn jolt_ragdoll_drive_motors(ragdoll: *mut JoltRagdoll, poses: *const f32);
 
-    /// Turns the motor of the joint between `part` and its parent off, or on towards `target_rotation` (xyzw, the part relative to its parent).
+    /// Turns the motor of the joint between `part` and its parent off, or on towards `target_rotation` (xyzw, the part relative to its parent); `spring` and `damping` are a frequency in Hz and a ratio, or with `by_stiffness` N·m/rad and N·m·s/rad.
     pub fn jolt_ragdoll_set_joint_motor(
         ragdoll: *mut JoltRagdoll,
         part: u32,
         enabled: bool,
         target_rotation: *const f32,
-        frequency: f32,
+        by_stiffness: bool,
+        spring: f32,
         damping: f32,
         torque_limit: f32,
     );
