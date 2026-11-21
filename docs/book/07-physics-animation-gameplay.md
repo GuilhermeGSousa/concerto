@@ -371,6 +371,49 @@ fn walk_each(
 The physics step runs in `LateFixedUpdate`, at a fixed rate; transforms of
 simulated bodies are interpolated between steps for display.
 
+### The ragdoll asset
+
+A `Ragdoll` asset describes the physical body of one skeleton, authored once
+and shared by every character on it. It names its `skeleton` and lists its
+parts. Each `RagdollPart` follows one bone and has a `RagdollShape` (capsule,
+box or sphere) with its `offset` and `rotation` in the bone's space, a `mass`,
+and the `RagdollJoint` to its parent part: a twist axis and a plane axis in the
+bone's space, the two swing half angles, the twist range, a friction torque
+and the motor's spring.
+
+```rust
+use concerto::ragdoll::{Ragdoll, RagdollJoint, RagdollPart, RagdollShape};
+
+let ragdoll = Ragdoll::new(skeleton)
+    .with_part(RagdollPart::new("pelvis", RagdollShape::Box { half_extents: Vec3::new(0.15, 0.1, 0.1) }).with_mass(10.0))
+    .with_part(
+        RagdollPart::new("thigh_l", RagdollShape::Capsule { half_height: 0.15, radius: 0.07 })
+            .with_offset(Vec3::new(0.0, -0.2, 0.0))
+            .with_mass(7.5)
+            .with_joint(RagdollJoint::new(Vec3::NEG_Y, Vec3::X).with_swing(1.0, 0.8).with_twist(-0.4, 0.4)),
+    )
+    .with_part(
+        RagdollPart::new("calf_l", RagdollShape::Capsule { half_height: 0.15, radius: 0.05 })
+            .with_offset(Vec3::new(0.0, -0.2, 0.0))
+            .with_mass(3.5)
+            .with_joint(RagdollJoint::hinge(Vec3::X, 0.0, 2.4)),
+    );
+```
+
+A ragdoll has far fewer parts than its skeleton has bones. The parts may be
+listed in any order: each is joined to the part of its nearest ancestor bone
+that has one, and a bone without a part moves with that ancestor's part. The
+parts must form one tree.
+
+`ragdoll.resolve(&skeleton)` fits the asset to the skeleton and builds the
+physics recipe, or says why it does not fit: a bone the skeleton lacks, two
+parts on one bone, or a part outside the tree. The `ResolvedRagdoll` gives the
+`BuiltRagdoll` for `PhysicsState::create_ragdoll`, the bone each part follows,
+and for each bone the part it moves with.
+
+The asset shows in the Asset Browser, where New creates one, and opens in the
+inspector's form.
+
 ## Animation
 
 A skinned model imported from glTF comes with a skeleton asset (bone names, parents, rest pose, inverse bind poses and bone ids, in `concerto::mesh`) and its animation

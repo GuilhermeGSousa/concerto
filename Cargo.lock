@@ -942,6 +942,7 @@ dependencies = [
  "concerto-noise",
  "concerto-physics",
  "concerto-procedural-animation",
+ "concerto-ragdoll",
  "concerto-reflect",
  "concerto-render",
  "concerto-scene",
@@ -1622,6 +1623,26 @@ dependencies = [
  "serde_json",
  "tempfile",
  "toml_edit",
+]
+
+[[package]]
+name = "concerto-ragdoll"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bincode",
+ "concerto-app",
+ "concerto-ecs",
+ "concerto-foundation",
+ "concerto-mesh",
+ "concerto-name",
+ "concerto-physics",
+ "concerto-reflect",
+ "glam 0.33.12",
+ "log",
+ "proptest",
+ "serde",
+ "uuid",
 ]
 
 [[package]]
