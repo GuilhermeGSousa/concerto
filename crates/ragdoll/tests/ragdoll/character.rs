@@ -694,3 +694,159 @@ fn a_powered_body_tracks_its_animation_gives_to_a_push_hangs_when_weak_and_says_
         "a body on its own feet that is pushed over says once that it lost its pose"
     );
 }
+
+#[test]
+fn a_hit_on_a_walking_character_throws_the_part_back_and_the_body_returns_to_its_animation() {
+    use concerto_ragdoll::{BodyHit, Flinch, FlinchRecord, HitReaction, RagdollMode};
+
+    let mut app = App::new();
+    app.register_plugin(MainSchedulePlugin)
+        .register_plugin(TimePlugin)
+        .register_plugin(AssetManagerPlugin)
+        .register_plugin(TransformPlugin)
+        .register_plugin(PhysicsPlugin)
+        .register_plugin(RagdollPlugin);
+    app.finish_plugin_build();
+    let server = app.get_resource::<AssetServer>().unwrap().clone();
+    let reference = reference_humanoid();
+    let skeleton = server.add(reference.skeleton);
+    let mut asset = reference.ragdoll;
+    asset.skeleton = skeleton.clone();
+    let asset = server.add(asset);
+    app.update();
+    let world = app.main_mut().world_mut();
+    world.spawn((
+        Collider::cuboid(50.0, 0.5, 50.0),
+        Transform::from_translation(Vec3::new(0.0, -0.5, 0.0)),
+    ));
+    let humanoid = spawn_humanoid(world, skeleton, Transform::default());
+    world.insert(
+        (CharacterRagdoll::new(asset), HitReaction::default()),
+        humanoid.skeleton,
+    );
+
+    let step = 0.033;
+    let mut root = Vec3::new(0.0, 0.02, 0.0);
+    let mut time = 0.0;
+    let mut walk = |app: &mut App, frames: usize| {
+        for _ in 0..frames {
+            time += step;
+            root.x += step;
+            pose_walking(app, &humanoid, root, time);
+            frame(app);
+        }
+    };
+    walk(&mut app, 20);
+    let body = app
+        .main()
+        .world()
+        .get_component_for_entity::<RagdollBody>(humanoid.skeleton)
+        .unwrap()
+        .clone();
+    let ragdoll = *app
+        .main()
+        .world()
+        .get_component_for_entity::<RagdollId>(humanoid.skeleton)
+        .unwrap();
+    let shoulder = body.resolved().part_of("upperarm_l").unwrap();
+    let feet = [
+        body.resolved().part_of("foot_l").unwrap(),
+        body.resolved().part_of("foot_r").unwrap(),
+    ];
+    let offsets = |app: &App| {
+        let mut pose = Vec::new();
+        app.get_resource::<PhysicsState>()
+            .unwrap()
+            .ragdoll_pose(ragdoll, &mut pose);
+        let animated = app
+            .main()
+            .world()
+            .get_component_for_entity::<RagdollBody>(humanoid.skeleton)
+            .unwrap()
+            .animated_pose()
+            .to_vec();
+        pose.iter()
+            .zip(&animated)
+            .map(|(simulated, animated)| simulated.translation - animated.translation)
+            .collect::<Vec<Vec3>>()
+    };
+    let hit = |app: &mut App| {
+        let mut pose = Vec::new();
+        app.get_resource::<PhysicsState>()
+            .unwrap()
+            .ragdoll_pose(ragdoll, &mut pose);
+        app.main_mut().world_mut().trigger(BodyHit {
+            character: humanoid.skeleton,
+            part: shoulder,
+            point: pose[shoulder].translation,
+            impulse: Vec3::new(0.0, 0.0, -30.0),
+        });
+    };
+    let character = |app: &App| {
+        app.main()
+            .world()
+            .get_component_for_entity::<CharacterRagdoll>(humanoid.skeleton)
+            .unwrap()
+            .clone()
+    };
+
+    hit(&mut app);
+    assert_eq!(character(&app).mode, RagdollMode::Powered);
+    let mut thrown = 0.0f32;
+    for index in 0..10 {
+        walk(&mut app, 1);
+        let offsets = offsets(&app);
+        thrown = thrown.max(-offsets[shoulder].z);
+        if index > 1 {
+            for foot in feet {
+                assert!(
+                    offsets[foot].length() < step + 2e-3,
+                    "a foot is more than a frame of walking from its animated place during a flinch: {} m",
+                    offsets[foot].length()
+                );
+            }
+        }
+    }
+    assert!(
+        thrown > 0.03,
+        "the hit shoulder is thrown back along the impulse, it went {thrown} m"
+    );
+
+    hit(&mut app);
+    walk(&mut app, 20);
+    assert!(
+        app.main()
+            .world()
+            .get_component_for_entity::<Flinch>(humanoid.skeleton)
+            .is_some(),
+        "a second hit restarts the recovery"
+    );
+    walk(&mut app, 25);
+    let settled = character(&app);
+    assert_eq!(settled.mode, RagdollMode::FollowsAnimation);
+    assert_eq!(settled.weight, 0.0);
+    let world = app.main().world();
+    assert!(
+        world
+            .get_component_for_entity::<Flinch>(humanoid.skeleton)
+            .is_none()
+    );
+    let record = *world
+        .get_component_for_entity::<FlinchRecord>(humanoid.skeleton)
+        .unwrap();
+    assert_eq!(record.part, shoulder);
+    assert!(record.peak_displacement >= thrown);
+    let lasted = record.recovered_after.expect("the flinch is over");
+    assert!(
+        lasted > 10.0 * step + 0.9 && lasted < 10.0 * step + 1.1,
+        "a flinch lasts its hold and settle from the last hit, it lasted {lasted} s"
+    );
+    walk(&mut app, 2);
+    for (part, offset) in offsets(&app).into_iter().enumerate() {
+        assert!(
+            offset.length() < 2.0 * step + 2e-3,
+            "part {part} is back on the animation, it was {} m off",
+            offset.length()
+        );
+    }
+}
