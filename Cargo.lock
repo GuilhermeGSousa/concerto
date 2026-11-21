@@ -1575,6 +1575,7 @@ dependencies = [
  "concerto-foundation",
  "concerto-mesh",
  "concerto-physics",
+ "concerto-ragdoll",
  "concerto-render",
  "glam 0.33.12",
 ]

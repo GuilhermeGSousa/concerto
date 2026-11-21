@@ -2,7 +2,8 @@
 use concerto_app::App;
 use concerto_editor::{scene::SceneToolsAppExt, tools::component_gizmos::ComponentGizmosAppExt};
 use concerto_physics_gizmos::{
-    BoxColliderGizmo, ColliderGizmo, ContactsGizmo, MeshColliderGizmo, RagdollGizmo, SensorGizmo,
+    BodySenseGizmo, BoxColliderGizmo, ColliderGizmo, ContactsGizmo, MeshColliderGizmo,
+    RagdollGizmo, SensorGizmo,
 };
 
 /// Draws each `Collider`, `RagdollId`, `Contacts`, `BoxCollider`, `MeshCollider` and `Sensor` in every edit and play `App` while its entity is selected.
@@ -16,5 +17,6 @@ fn register_gizmos(app: &mut App) {
         .register_component_gizmo::<ContactsGizmo>()
         .register_component_gizmo::<BoxColliderGizmo>()
         .register_component_gizmo::<MeshColliderGizmo>()
-        .register_component_gizmo::<SensorGizmo>();
+        .register_component_gizmo::<SensorGizmo>()
+        .register_component_gizmo::<BodySenseGizmo>();
 }

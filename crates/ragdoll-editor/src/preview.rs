@@ -498,6 +498,7 @@ pub fn ragdoll_preview(app: &mut App) {
             colliders: false,
             ragdolls: true,
             contacts: false,
+            sensing: false,
         })
         .insert_resource(RagdollStage::default())
         .add_system(Update, find_character.at_preview_time())

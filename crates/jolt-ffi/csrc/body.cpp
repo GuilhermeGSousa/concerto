@@ -322,6 +322,17 @@ extern "C"
 		bi.ActivateBody(id);
 	}
 
+	void jolt_body_get_angular_velocity(const JoltWorld *world,
+										JoltBodyId body,
+										float out_velocity[3])
+	{
+		JPH::Vec3 v = const_cast<JoltWorld *>(world)->system.GetBodyInterface().GetAngularVelocity(
+			JPH::BodyID(body));
+		out_velocity[0] = v.GetX();
+		out_velocity[1] = v.GetY();
+		out_velocity[2] = v.GetZ();
+	}
+
 	void jolt_body_move_kinematic(JoltWorld *world,
 								  JoltBodyId body,
 								  const float position[3],

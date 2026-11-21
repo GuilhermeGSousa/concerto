@@ -351,7 +351,8 @@ impl PhysicsState {
         }
     }
 
-    pub(crate) fn set_contact_reporting(&mut self, body: BodyId, enabled: bool) {
+    /// Turns the reporting of `body`'s contacts with solid bodies on or off. A `Contacts` component does this for its entity's body; call it for a body that has no entity of its own, such as a ragdoll part, and read the contacts with [`contacts_of`](Self::contacts_of).
+    pub fn set_contact_reporting(&mut self, body: BodyId, enabled: bool) {
         self.backend.set_contact_reporting(body.0, enabled);
         if enabled {
             self.reporting.insert(body);
@@ -446,7 +447,8 @@ impl PhysicsState {
         std::mem::take(&mut self.contact_changes)
     }
 
-    pub(crate) fn contacts_of(&self, body: BodyId) -> Vec<Contact> {
+    /// The solid bodies touching `body` after the last fixed step, when its contacts are reported.
+    pub fn contacts_of(&self, body: BodyId) -> Vec<Contact> {
         self.touching
             .iter()
             .filter(|(pair, _)| pair.holds(body))
@@ -514,6 +516,11 @@ impl PhysicsState {
 
     pub fn linear_velocity(&self, body: BodyId) -> Vec3 {
         self.backend.linear_velocity(body.0)
+    }
+
+    /// The body's angular velocity, in rad/s about the world axes.
+    pub fn angular_velocity(&self, body: BodyId) -> Vec3 {
+        self.backend.angular_velocity(body.0)
     }
 
     /// Reads a body's current world transform out of the simulation.
