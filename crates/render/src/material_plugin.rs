@@ -19,7 +19,7 @@ use concerto_ecs::{
 use concerto_foundation::assets::AssetId;
 
 use crate::{
-    assets::material::{AsBindGroup, ShaderRef, StandardMaterial},
+    assets::material::{AlphaMode, AsBindGroup, ShaderRef, StandardMaterial},
     batching::{
         clear_draw_stats, BatchedInstanceBuffers, BinCandidate, RenderDrawStats, ViewBatches,
     },
@@ -27,7 +27,7 @@ use crate::{
     components::{
         camera::RenderCamera,
         material::{HasMaterial, MaterialComponent, RenderMaterialComponent},
-        mesh::RenderMeshInstances,
+        mesh::{RenderMeshInstanceFlags, RenderMeshInstances},
         render_entity::{MainEntity, RenderEntity},
         shadows::RenderLighting,
         skeleton::{RenderSkeletonComponent, SkinUniforms},
@@ -55,13 +55,17 @@ use crate::{
 // meshes that use material type `M`:
 //
 // * Registers `M` as an asset type and `MaterialComponent<M>` for reflection.
-// * Creates a `wgpu::RenderPipeline` whose layout is built from `M`'s own bind
-//   group layout plus whichever engine bind groups `M` declares it needs via
-//   [`Material::needs_camera`], [`Material::needs_lighting`] and
-//   [`Material::needs_skeleton`].
+// * Creates an opaque and a blended `wgpu::RenderPipeline` whose layout is built
+//   from `M`'s own bind group layout plus whichever engine bind groups `M`
+//   declares it needs via [`Material::needs_camera`],
+//   [`Material::needs_lighting`] and [`Material::needs_skeleton`].
 // * Adds `queue_material_meshes<M>`, which culls and bins the mesh entities
-//   carrying [`MaterialComponent<M>`] for each camera, and a render pass
-//   (`material_renderpass<M>`) that draws those batches.
+//   carrying [`MaterialComponent<M>`] for each camera, opaque ones by key and
+//   `AlphaMode::Blend` ones back to front, and two render passes that draw
+//   them: `material_renderpass<M>` in `RenderSet::Draw` and
+//   `material_transparent_renderpass<M>` in `RenderSet::Transparent`.
+// * Adds `flag_blended_instances<M>`, which keeps blended instances out of
+//   the shadow maps.
 //
 // # Using a custom material
 //
@@ -88,20 +92,27 @@ pub(crate) const DEFAULT_SHADER_SOURCE: &str = include_str!("shaders/shader.wgsl
 
 // ─── MaterialPipeline ─────────────────────────────────────────────────────────
 
-// Stores the wgpu render pipeline and material bind-group layout for `M`.
+// Stores the wgpu render pipelines and material bind-group layout for `M`.
 //
 // Inserted as a resource by [`MaterialPlugin<M>::finish`].
 pub struct MaterialPipeline<M: 'static> {
     pub pipeline: wgpu::RenderPipeline,
+    /// The pipeline that blends `AlphaMode::Blend` assets without writing depth; `None` for a pipeline-only plugin.
+    pub blended_pipeline: Option<wgpu::RenderPipeline>,
     // The `@group(0)` bind-group layout for `M`'s own data.
     pub bind_group_layout: wgpu::BindGroupLayout,
     _marker: PhantomData<fn() -> M>,
 }
 
 impl<M: 'static> MaterialPipeline<M> {
-    pub fn new(pipeline: wgpu::RenderPipeline, bind_group_layout: wgpu::BindGroupLayout) -> Self {
+    pub fn new(
+        pipeline: wgpu::RenderPipeline,
+        blended_pipeline: Option<wgpu::RenderPipeline>,
+        bind_group_layout: wgpu::BindGroupLayout,
+    ) -> Self {
         Self {
             pipeline,
+            blended_pipeline,
             bind_group_layout,
             _marker: PhantomData,
         }
@@ -121,6 +132,8 @@ impl<M: 'static> Resource for MaterialPipeline<M> {
 // bound at `@group(0)` during the material render pass.
 pub struct RenderMaterial<M: 'static> {
     pub bind_group: wgpu::BindGroup,
+    /// The source asset's alpha mode when it was prepared.
+    pub alpha_mode: AlphaMode,
     _marker: PhantomData<fn() -> M>,
 }
 
@@ -147,6 +160,7 @@ impl<M: Material + 'static> RenderAsset for RenderMaterial<M> {
         )?;
         Ok(RenderMaterial {
             bind_group,
+            alpha_mode: source_asset.alpha_mode(),
             _marker: PhantomData,
         })
     }
@@ -160,6 +174,7 @@ pub(crate) struct MaterialBinKey {
 
 pub(crate) struct MaterialViewBatches<M> {
     views: EntityHashMap<ViewBatches<MaterialBinKey>>,
+    blended_views: EntityHashMap<ViewBatches<MaterialBinKey>>,
     _marker: PhantomData<fn() -> M>,
 }
 
@@ -167,6 +182,7 @@ impl<M> Default for MaterialViewBatches<M> {
     fn default() -> Self {
         Self {
             views: EntityHashMap::default(),
+            blended_views: EntityHashMap::default(),
             _marker: PhantomData,
         }
     }
@@ -285,6 +301,7 @@ pub(crate) fn assign_fallback_material(
             FALLBACK_MATERIAL,
             RenderMaterial {
                 bind_group,
+                alpha_mode: AlphaMode::Opaque,
                 _marker: PhantomData,
             },
         );
@@ -297,6 +314,25 @@ pub(crate) fn assign_fallback_material(
                 render_entity,
             );
         }
+    }
+}
+
+pub(crate) fn flag_blended_instances<M: Material>(
+    render_mesh_query: Query<(&MainEntity, &RenderMaterialComponent<M>)>,
+    render_materials: Res<RenderAssets<RenderMaterial<M>>>,
+    mut render_mesh_instances: ResMut<RenderMeshInstances>,
+) {
+    for (main_entity, material) in render_mesh_query.iter() {
+        let (Some(instance), Some(render_material)) = (
+            render_mesh_instances.get_mut(main_entity),
+            render_materials.get(&material.material_asset_id),
+        ) else {
+            continue;
+        };
+        instance.flags.set(
+            RenderMeshInstanceFlags::BLENDED,
+            render_material.alpha_mode == AlphaMode::Blend,
+        );
     }
 }
 
@@ -451,16 +487,19 @@ pub(crate) fn queue_material_meshes<M: Material>(
     queue: Res<RenderQueue>,
 ) {
     let view_batches = &mut *view_batches;
+    let (render_mesh_instances, render_meshes, render_materials) =
+        (&*render_mesh_instances, &*render_meshes, &*render_materials);
     for (camera, render_camera) in render_cameras.iter() {
         let frustum = Frustum::from_clip_from_world(render_camera.camera_uniform.view_proj());
-        let candidates =
+        let candidates = |blended: bool| {
             render_mesh_query
                 .iter()
-                .filter_map(|(main_entity, skeleton, material)| {
+                .filter_map(move |(main_entity, skeleton, material)| {
                     let instance = render_mesh_instances.get(main_entity)?;
+                    let render_material = render_materials.get(&material.material_asset_id)?;
                     if !instance.layers.intersects(render_camera.layers)
                         || !render_meshes.contains(&instance.mesh_asset_id)
-                        || !render_materials.contains(&material.material_asset_id)
+                        || (render_material.alpha_mode == AlphaMode::Blend) != blended
                     {
                         return None;
                     }
@@ -472,23 +511,137 @@ pub(crate) fn queue_material_meshes<M: Material>(
                         instance,
                         skeleton_offset: skeleton.map(|skeleton| skeleton.offset),
                     })
-                });
+                })
+        };
+
         let batches = view_batches
             .views
             .entry(camera)
             .or_insert_with(|| ViewBatches::new(&device, "Material View Instances Buffer"));
-        let stats = batches
-            .bins
-            .rebuild(candidates, &frustum, &buffers.current_input_buffer);
+        let opaque =
+            batches
+                .bins
+                .rebuild(candidates(false), &frustum, &buffers.current_input_buffer);
+        batches.upload(&device, &queue);
+
+        let batches = view_batches
+            .blended_views
+            .entry(camera)
+            .or_insert_with(|| ViewBatches::new(&device, "Blended Material View Instances Buffer"));
+        let blended = batches.bins.rebuild_back_to_front(
+            candidates(true),
+            &frustum,
+            render_camera.camera_uniform.view_position(),
+            &buffers.current_input_buffer,
+        );
         batches.upload(&device, &queue);
 
         let total = draw_stats.cameras.entry(camera).or_default();
-        total.draws += stats.draws;
-        total.culled += stats.culled;
+        total.draws += opaque.draws + blended.draws;
+        total.culled += opaque.culled + blended.culled;
     }
     view_batches
         .views
         .retain(|camera, _| render_cameras.contains_entity(*camera));
+    view_batches
+        .blended_views
+        .retain(|camera, _| render_cameras.contains_entity(*camera));
+}
+
+fn color_view<'a>(
+    render_camera: &'a RenderCamera,
+    render_window: &'a RenderWindow,
+) -> Option<&'a wgpu::TextureView> {
+    match &render_camera.render_target {
+        Some(rt) => Some(&rt.view),
+        None => render_window.get_view(),
+    }
+}
+
+fn begin_material_pass<'e, M: Material>(
+    encoder: &'e mut wgpu::CommandEncoder,
+    label: &'static str,
+    color_view: &wgpu::TextureView,
+    render_camera: &RenderCamera,
+    depth_load: wgpu::LoadOp<f32>,
+) -> wgpu::RenderPass<'e> {
+    encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        multiview_mask: None,
+        label: Some(label),
+        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+            depth_slice: None,
+            view: color_view,
+            resolve_target: None,
+            ops: wgpu::Operations {
+                load: wgpu::LoadOp::Load,
+                store: wgpu::StoreOp::Store,
+            },
+        })],
+        depth_stencil_attachment: M::depth_stencil().map(|_| {
+            wgpu::RenderPassDepthStencilAttachment {
+                view: &render_camera.depth_texture.view,
+                depth_ops: Some(wgpu::Operations {
+                    load: depth_load,
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: None,
+            }
+        }),
+        occlusion_query_set: None,
+        timestamp_writes: None,
+    })
+}
+
+struct MaterialDraw<'a, M: Material> {
+    render_meshes: &'a RenderAssets<RenderMesh>,
+    render_materials: &'a RenderAssets<RenderMaterial<M>>,
+    render_lighting: &'a RenderLighting,
+    skins: &'a SkinUniforms,
+}
+
+impl<M: Material> MaterialDraw<'_, M> {
+    fn draw(
+        &self,
+        render_pass: &mut wgpu::RenderPass<'_>,
+        pipeline: &wgpu::RenderPipeline,
+        render_camera: &RenderCamera,
+        batches: &ViewBatches<MaterialBinKey>,
+    ) {
+        render_pass.set_pipeline(pipeline);
+        render_pass.set_vertex_buffer(1, batches.instances.buffer().slice(..));
+
+        // Set the engine built-in bind groups that M declared it needs.
+        // Only the groups present in the pipeline layout are set — the
+        // layout was built with the same conditions in `MaterialPlugin::finish()`.
+        if M::needs_camera() {
+            render_pass.set_bind_group(1, &render_camera.camera_bind_group, &[]);
+        }
+        if M::needs_lighting() {
+            render_pass.set_bind_group(2, &self.render_lighting.bind_group, &[]);
+        }
+
+        let mut bound_material = None;
+        for batch in &batches.bins.batches {
+            let (Some(mesh), Some(render_mat)) = (
+                self.render_meshes.get(&batch.key.mesh),
+                self.render_materials.get(&batch.key.material),
+            ) else {
+                continue;
+            };
+            if bound_material != Some(batch.key.material) {
+                render_pass.set_bind_group(0, &render_mat.bind_group, &[]);
+                bound_material = Some(batch.key.material);
+            }
+
+            if M::needs_skeleton() {
+                render_pass.set_bind_group(3, self.skins.bind_group(), &[batch.skeleton_offset]);
+            }
+
+            render_pass.set_vertex_buffer(0, mesh.vertices.slice(..));
+            render_pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
+            render_pass.draw_indexed(0..mesh.index_count, 0, batch.instances.clone());
+        }
+    }
 }
 
 // Render pass for meshes that use material `M`.
@@ -508,6 +661,12 @@ pub(crate) fn material_renderpass<M: Material>(
     view_batches: Res<MaterialViewBatches<M>>,
     context: Res<RenderContext>,
 ) {
+    let draw = MaterialDraw {
+        render_meshes: &render_meshes,
+        render_materials: &render_materials,
+        render_lighting: &render_lighting,
+        skins: &skins,
+    };
     let encoder = device.command_encoder();
 
     for (camera, render_camera) in render_cameras.iter() {
@@ -520,42 +679,17 @@ pub(crate) fn material_renderpass<M: Material>(
         } else {
             wgpu::LoadOp::Load
         };
-
-        // Route to RTT for texture-targeted cameras, or to the swapchain for window cameras.
-        let swapchain_view = render_window.get_view();
-        let color_view: &wgpu::TextureView = match &render_camera.render_target {
-            Some(rt) => &rt.view,
-            None => match swapchain_view {
-                Some(v) => v,
-                None => continue,
-            },
+        let Some(color_view) = color_view(render_camera, &render_window) else {
+            continue;
         };
 
-        let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            multiview_mask: None,
-            label: Some("Material Render Pass"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                depth_slice: None,
-                view: color_view,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Load,
-                    store: wgpu::StoreOp::Store,
-                },
-            })],
-            depth_stencil_attachment: M::depth_stencil().map(|_| {
-                wgpu::RenderPassDepthStencilAttachment {
-                    view: &render_camera.depth_texture.view,
-                    depth_ops: Some(wgpu::Operations {
-                        load: depth_load,
-                        store: wgpu::StoreOp::Store,
-                    }),
-                    stencil_ops: None,
-                }
-            }),
-            occlusion_query_set: None,
-            timestamp_writes: None,
-        });
+        let mut render_pass = begin_material_pass::<M>(
+            encoder,
+            "Material Render Pass",
+            color_view,
+            render_camera,
+            depth_load,
+        );
         rect.apply(&mut render_pass);
 
         let Some(batches) = view_batches
@@ -565,41 +699,58 @@ pub(crate) fn material_renderpass<M: Material>(
         else {
             continue;
         };
+        draw.draw(&mut render_pass, &pipeline.pipeline, render_camera, batches);
+    }
+}
 
-        render_pass.set_pipeline(&pipeline.pipeline);
-        render_pass.set_vertex_buffer(1, batches.instances.buffer().slice(..));
+pub(crate) fn material_transparent_renderpass<M: Material>(
+    pipeline: Res<MaterialPipeline<M>>,
+    mut device: ResMut<RenderDevice>,
+    render_cameras: Query<(Entity, &RenderCamera)>,
+    render_meshes: Res<RenderAssets<RenderMesh>>,
+    render_materials: Res<RenderAssets<RenderMaterial<M>>>,
+    render_window: Res<RenderWindow>,
+    render_lighting: Res<RenderLighting>,
+    skins: Res<SkinUniforms>,
+    view_batches: Res<MaterialViewBatches<M>>,
+    context: Res<RenderContext>,
+) {
+    let Some(blended_pipeline) = &pipeline.blended_pipeline else {
+        return;
+    };
+    let draw = MaterialDraw {
+        render_meshes: &render_meshes,
+        render_materials: &render_materials,
+        render_lighting: &render_lighting,
+        skins: &skins,
+    };
+    let encoder = device.command_encoder();
 
-        // Set the engine built-in bind groups that M declared it needs.
-        // Only the groups present in the pipeline layout are set — the
-        // layout was built with the same conditions in `MaterialPlugin::finish()`.
-        if M::needs_camera() {
-            render_pass.set_bind_group(1, &render_camera.camera_bind_group, &[]);
+    for (camera, render_camera) in render_cameras.iter() {
+        let Some(batches) = view_batches
+            .blended_views
+            .get(&camera)
+            .filter(|batches| !batches.bins.batches.is_empty())
+        else {
+            continue;
+        };
+        let rect = render_camera.viewport_rect(render_camera.target_size(&context));
+        if rect.is_empty() {
+            continue;
         }
-        if M::needs_lighting() {
-            render_pass.set_bind_group(2, &render_lighting.bind_group, &[]);
-        }
+        let Some(color_view) = color_view(render_camera, &render_window) else {
+            continue;
+        };
 
-        let mut bound_material = None;
-        for batch in &batches.bins.batches {
-            let (Some(mesh), Some(render_mat)) = (
-                render_meshes.get(&batch.key.mesh),
-                render_materials.get(&batch.key.material),
-            ) else {
-                continue;
-            };
-            if bound_material != Some(batch.key.material) {
-                render_pass.set_bind_group(0, &render_mat.bind_group, &[]);
-                bound_material = Some(batch.key.material);
-            }
-
-            if M::needs_skeleton() {
-                render_pass.set_bind_group(3, skins.bind_group(), &[batch.skeleton_offset]);
-            }
-
-            render_pass.set_vertex_buffer(0, mesh.vertices.slice(..));
-            render_pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
-            render_pass.draw_indexed(0..mesh.index_count, 0, batch.instances.clone());
-        }
+        let mut render_pass = begin_material_pass::<M>(
+            encoder,
+            "Blended Material Render Pass",
+            color_view,
+            render_camera,
+            wgpu::LoadOp::Load,
+        );
+        rect.apply(&mut render_pass);
+        draw.draw(&mut render_pass, blended_pipeline, render_camera, batches);
     }
 }
 
@@ -672,13 +823,18 @@ impl<M: Material> Plugin for MaterialPlugin<M> {
         app.register_plugin(RenderAssetPlugin::<RenderMaterial<M>>::new());
 
         app.add_render_system(Extract, extract_materials::<M>)
+            .add_render_system(Render, flag_blended_instances::<M>.before(clear_draw_stats))
             .add_render_system(
                 Render,
                 queue_material_meshes::<M>
                     .in_set(RenderSet::Queue)
                     .after(clear_draw_stats),
             )
-            .add_render_system(Render, material_renderpass::<M>.in_set(RenderSet::Draw));
+            .add_render_system(Render, material_renderpass::<M>.in_set(RenderSet::Draw))
+            .add_render_system(
+                Render,
+                material_transparent_renderpass::<M>.in_set(RenderSet::Transparent),
+            );
     }
 
     fn finish(&self, app: &mut concerto_app::App) {
@@ -753,46 +909,66 @@ impl<M: Material> Plugin for MaterialPlugin<M> {
         // Use the vertex layouts from the material trait.
         let vertex_layouts: Vec<_> = M::vertex_layouts().into_iter().map(Some).collect();
 
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("Material Pipeline"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &vs_module,
-                entry_point: Some("vs_main"),
-                buffers: &vertex_layouts,
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &fs_module,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: surface_format,
-                    blend: M::blend_state(),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: M::topology(),
-                strip_index_format: None,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: M::cull_mode(),
-                polygon_mode: wgpu::PolygonMode::Fill,
-                unclipped_depth: false,
-                conservative: false,
-            },
-            depth_stencil: M::depth_stencil(),
-            multisample: wgpu::MultisampleState {
-                count: 1,
-                mask: !0,
-                alpha_to_coverage_enabled: false,
-            },
-            multiview_mask: None,
-            cache: None,
+        let create_pipeline =
+            |label: &str,
+             blend: Option<wgpu::BlendState>,
+             depth_stencil: Option<wgpu::DepthStencilState>| {
+                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some(label),
+                    layout: Some(&pipeline_layout),
+                    vertex: wgpu::VertexState {
+                        module: &vs_module,
+                        entry_point: Some("vs_main"),
+                        buffers: &vertex_layouts,
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    },
+                    fragment: Some(wgpu::FragmentState {
+                        module: &fs_module,
+                        entry_point: Some("fs_main"),
+                        targets: &[Some(wgpu::ColorTargetState {
+                            format: surface_format,
+                            blend,
+                            write_mask: wgpu::ColorWrites::ALL,
+                        })],
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    }),
+                    primitive: wgpu::PrimitiveState {
+                        topology: M::topology(),
+                        strip_index_format: None,
+                        front_face: wgpu::FrontFace::Ccw,
+                        cull_mode: M::cull_mode(),
+                        polygon_mode: wgpu::PolygonMode::Fill,
+                        unclipped_depth: false,
+                        conservative: false,
+                    },
+                    depth_stencil,
+                    multisample: wgpu::MultisampleState {
+                        count: 1,
+                        mask: !0,
+                        alpha_to_coverage_enabled: false,
+                    },
+                    multiview_mask: None,
+                    cache: None,
+                })
+            };
+
+        let pipeline = create_pipeline("Material Pipeline", M::blend_state(), M::depth_stencil());
+        let blended_pipeline = (!self.pipeline_only).then(|| {
+            create_pipeline(
+                "Blended Material Pipeline",
+                Some(wgpu::BlendState::ALPHA_BLENDING),
+                M::depth_stencil().map(|depth_stencil| wgpu::DepthStencilState {
+                    depth_write_enabled: Some(false),
+                    ..depth_stencil
+                }),
+            )
         });
 
-        app.render_mut()
-            .insert_resource(MaterialPipeline::<M>::new(pipeline, material_layout));
+        app.render_mut().insert_resource(MaterialPipeline::<M>::new(
+            pipeline,
+            blended_pipeline,
+            material_layout,
+        ));
         if !self.pipeline_only {
             app.render_mut()
                 .insert_resource(MaterialViewBatches::<M>::default());

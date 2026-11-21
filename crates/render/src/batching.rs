@@ -1,4 +1,4 @@
-use std::ops::Range;
+use std::{cmp::Reverse, ops::Range};
 
 use bytemuck::Pod;
 use concerto_ecs::{
@@ -6,6 +6,7 @@ use concerto_ecs::{
     resource::{ResMut, Resource},
 };
 use concerto_foundation::transform::GlobalTransformRaw;
+use glam::Vec3;
 use wgpu::{BufferDescriptor, Device, Queue};
 
 use crate::{
@@ -58,6 +59,7 @@ pub(crate) struct BatchedInstanceBuffers {
 pub(crate) struct Batch<K> {
     pub(crate) key: K,
     pub(crate) skeleton_offset: u32,
+    pub(crate) skinned: bool,
     pub(crate) instances: Range<u32>,
 }
 
@@ -91,6 +93,60 @@ impl<K> ViewBins<K> {
     where
         K: Ord + Copy,
     {
+        self.rebuild_in_order(candidates, frustum, input, |visible| {
+            visible.sort_by_key(|candidate| {
+                (
+                    candidate
+                        .instance
+                        .flags
+                        .contains(RenderMeshInstanceFlags::SKINNED),
+                    candidate.key,
+                )
+            });
+        })
+    }
+
+    pub(crate) fn rebuild_back_to_front<'a>(
+        &mut self,
+        candidates: impl IntoIterator<Item = BinCandidate<'a, K>>,
+        frustum: &Frustum,
+        view_position: Vec3,
+        input: &InstanceInputUniformBuffer<GlobalTransformRaw>,
+    ) -> ViewDrawStats
+    where
+        K: Ord + Copy,
+    {
+        let distance = |candidate: &BinCandidate<'a, K>| {
+            candidate
+                .instance
+                .world_aabb
+                .map_or_else(
+                    || {
+                        let matrix: [[f32; 4]; 4] =
+                            bytemuck::cast(input.get(candidate.instance.current_uniform_index));
+                        Vec3::from_slice(&matrix[3])
+                    },
+                    |aabb| aabb.center(),
+                )
+                .distance_squared(view_position)
+        };
+        self.rebuild_in_order(candidates, frustum, input, |visible| {
+            visible.sort_by_cached_key(|candidate| {
+                (Reverse(distance(candidate).to_bits()), candidate.key)
+            });
+        })
+    }
+
+    fn rebuild_in_order<'a>(
+        &mut self,
+        candidates: impl IntoIterator<Item = BinCandidate<'a, K>>,
+        frustum: &Frustum,
+        input: &InstanceInputUniformBuffer<GlobalTransformRaw>,
+        order: impl FnOnce(&mut [BinCandidate<'a, K>]),
+    ) -> ViewDrawStats
+    where
+        K: Ord + Copy,
+    {
         self.values.clear();
         self.batches.clear();
 
@@ -105,15 +161,7 @@ impl<K> ViewBins<K> {
                 visible
             })
             .collect();
-        visible.sort_by_key(|candidate| {
-            (
-                candidate
-                    .instance
-                    .flags
-                    .contains(RenderMeshInstanceFlags::SKINNED),
-                candidate.key,
-            )
-        });
+        order(&mut visible);
 
         for candidate in visible {
             let index = self.values.len() as u32;
@@ -127,7 +175,7 @@ impl<K> ViewBins<K> {
                 if let Some(batch) = self
                     .batches
                     .last_mut()
-                    .filter(|batch| batch.key == candidate.key)
+                    .filter(|batch| batch.key == candidate.key && !batch.skinned)
                 {
                     batch.instances.end = index + 1;
                     continue;
@@ -140,6 +188,7 @@ impl<K> ViewBins<K> {
                 } else {
                     0
                 },
+                skinned,
                 instances: index..index + 1,
             });
         }
@@ -261,21 +310,24 @@ mod tests {
 
     fn instance(
         input: &mut InstanceInputUniformBuffer<GlobalTransformRaw>,
-        translation: Vec3,
-        flags: RenderMeshInstanceFlags,
+        candidate: &Candidate,
     ) -> RenderMeshInstance {
-        let transform = Mat4::from_translation(translation);
+        let transform = Mat4::from_translation(candidate.at);
         RenderMeshInstance {
             mesh_asset_id: AssetId::new(),
-            flags,
+            flags: if candidate.skeleton_offset.is_some() {
+                RenderMeshInstanceFlags::SKINNED
+            } else {
+                RenderMeshInstanceFlags::empty()
+            },
             current_uniform_index: input.add(GlobalTransform::new(transform).to_raw()),
-            world_aabb: Some(
+            world_aabb: (!candidate.unbounded).then(|| {
                 Aabb {
                     min: Vec3::splat(-0.5),
                     max: Vec3::splat(0.5),
                 }
-                .transformed(transform),
-            ),
+                .transformed(transform)
+            }),
             layers: Default::default(),
         }
     }
@@ -303,6 +355,7 @@ mod tests {
         key: u32,
         at: Vec3,
         skeleton_offset: Option<u32>,
+        unbounded: bool,
     }
 
     fn at(key: u32, x: f32, y: f32, z: f32) -> Candidate {
@@ -310,6 +363,7 @@ mod tests {
             key,
             at: Vec3::new(x, y, z),
             skeleton_offset: None,
+            unbounded: false,
         }
     }
 
@@ -385,56 +439,159 @@ mod tests {
             },
         ];
         for case in &cases {
-            let mut input = InstanceInputUniformBuffer::new();
-            let instances: Vec<RenderMeshInstance> = case
-                .candidates
-                .iter()
-                .map(|candidate| {
-                    let flags = if candidate.skeleton_offset.is_some() {
-                        RenderMeshInstanceFlags::SKINNED
-                    } else {
-                        RenderMeshInstanceFlags::empty()
-                    };
-                    instance(&mut input, candidate.at, flags)
-                })
-                .collect();
-            let mut bins = ViewBins::default();
-
-            let stats = bins.rebuild(
-                case.candidates
-                    .iter()
-                    .zip(&instances)
-                    .map(|(candidate, instance)| BinCandidate {
-                        key: candidate.key,
-                        instance,
-                        skeleton_offset: candidate.skeleton_offset,
-                    }),
-                &frustum(),
-                &input,
-            );
-
-            assert_eq!(stats, case.stats, "{}", case.case);
-            let batches: Vec<Batch> = bins
-                .batches
-                .iter()
-                .map(|batch| Batch {
-                    key: batch.key,
-                    instances: batch.instances.clone(),
-                    skeleton_offset: batch.skeleton_offset,
-                })
-                .collect();
-            assert_eq!(batches, case.batches, "{}", case.case);
-            assert_eq!(
-                bins.values.iter().copied().map(matrix).collect::<Vec<_>>(),
-                case.drawn
-                    .iter()
-                    .copied()
-                    .map(Mat4::from_translation)
-                    .collect::<Vec<_>>(),
-                "{}",
-                case.case
-            );
+            assert_binned(case, |bins, candidates, input| {
+                bins.rebuild(candidates, &frustum(), input)
+            });
         }
+    }
+
+    #[test]
+    fn blended_instances_bin_farthest_first_merging_only_consecutive_keys() {
+        let cases = [
+            Binning {
+                case: "consecutive keys merge",
+                candidates: vec![
+                    at(1, 0.0, 0.0, -5.0),
+                    at(2, 0.0, 0.0, -20.0),
+                    at(2, 0.0, 0.0, -15.0),
+                ],
+                stats: stats(2, 0),
+                batches: vec![batch(2, 0..2), batch(1, 2..3)],
+                drawn: vec![
+                    Vec3::new(0.0, 0.0, -20.0),
+                    Vec3::new(0.0, 0.0, -15.0),
+                    Vec3::new(0.0, 0.0, -5.0),
+                ],
+            },
+            Binning {
+                case: "a nearer key interrupts",
+                candidates: vec![
+                    at(1, 0.0, 0.0, -10.0),
+                    at(2, 0.0, 0.0, -15.0),
+                    at(1, 0.0, 0.0, -20.0),
+                ],
+                stats: stats(3, 0),
+                batches: vec![batch(1, 0..1), batch(2, 1..2), batch(1, 2..3)],
+                drawn: vec![
+                    Vec3::new(0.0, 0.0, -20.0),
+                    Vec3::new(0.0, 0.0, -15.0),
+                    Vec3::new(0.0, 0.0, -10.0),
+                ],
+            },
+            Binning {
+                case: "an unskinned instance never joins a skinned batch",
+                candidates: vec![
+                    at(4, 0.0, 0.0, -10.0),
+                    Candidate {
+                        skeleton_offset: Some(256),
+                        ..at(4, 0.0, 0.0, -20.0)
+                    },
+                ],
+                stats: stats(2, 0),
+                batches: vec![
+                    Batch {
+                        skeleton_offset: 256,
+                        ..batch(4, 0..1)
+                    },
+                    batch(4, 1..2),
+                ],
+                drawn: vec![Vec3::new(0.0, 0.0, -20.0), Vec3::new(0.0, 0.0, -10.0)],
+            },
+            Binning {
+                case: "equal distances in key order",
+                candidates: vec![at(2, 0.0, 0.0, -10.0), at(1, 6.0, 0.0, -8.0)],
+                stats: stats(2, 0),
+                batches: vec![batch(1, 0..1), batch(2, 1..2)],
+                drawn: vec![Vec3::new(6.0, 0.0, -8.0), Vec3::new(0.0, 0.0, -10.0)],
+            },
+            Binning {
+                case: "no aabb sorts by translation",
+                candidates: vec![
+                    at(1, 0.0, 0.0, -5.0),
+                    Candidate {
+                        unbounded: true,
+                        ..at(2, 0.0, 0.0, 12.0)
+                    },
+                    at(3, 0.0, 0.0, -10.0),
+                ],
+                stats: stats(3, 0),
+                batches: vec![batch(2, 0..1), batch(3, 1..2), batch(1, 2..3)],
+                drawn: vec![
+                    Vec3::new(0.0, 0.0, 12.0),
+                    Vec3::new(0.0, 0.0, -10.0),
+                    Vec3::new(0.0, 0.0, -5.0),
+                ],
+            },
+            Binning {
+                case: "culled instances",
+                candidates: vec![
+                    at(1, 0.0, 0.0, -10.0),
+                    at(1, 0.0, 0.0, 10.0),
+                    at(1, 0.0, 0.0, -500.0),
+                ],
+                stats: stats(1, 2),
+                batches: vec![batch(1, 0..1)],
+                drawn: vec![Vec3::new(0.0, 0.0, -10.0)],
+            },
+        ];
+        for case in &cases {
+            assert_binned(case, |bins, candidates, input| {
+                bins.rebuild_back_to_front(candidates, &frustum(), Vec3::ZERO, input)
+            });
+        }
+    }
+
+    fn assert_binned(
+        case: &Binning,
+        rebuild: impl for<'a> Fn(
+            &mut ViewBins<u32>,
+            Vec<BinCandidate<'a, u32>>,
+            &InstanceInputUniformBuffer<GlobalTransformRaw>,
+        ) -> ViewDrawStats,
+    ) {
+        let mut input = InstanceInputUniformBuffer::new();
+        let instances: Vec<RenderMeshInstance> = case
+            .candidates
+            .iter()
+            .map(|candidate| instance(&mut input, candidate))
+            .collect();
+        let mut bins = ViewBins::default();
+
+        let stats = rebuild(
+            &mut bins,
+            case.candidates
+                .iter()
+                .zip(&instances)
+                .map(|(candidate, instance)| BinCandidate {
+                    key: candidate.key,
+                    instance,
+                    skeleton_offset: candidate.skeleton_offset,
+                })
+                .collect(),
+            &input,
+        );
+
+        assert_eq!(stats, case.stats, "{}", case.case);
+        let batches: Vec<Batch> = bins
+            .batches
+            .iter()
+            .map(|batch| Batch {
+                key: batch.key,
+                instances: batch.instances.clone(),
+                skeleton_offset: batch.skeleton_offset,
+            })
+            .collect();
+        assert_eq!(batches, case.batches, "{}", case.case);
+        assert_eq!(
+            bins.values.iter().copied().map(matrix).collect::<Vec<_>>(),
+            case.drawn
+                .iter()
+                .copied()
+                .map(Mat4::from_translation)
+                .collect::<Vec<_>>(),
+            "{}",
+            case.case
+        );
     }
 
     fn read_back(gpu: &Gpu, buffer: &wgpu::Buffer, len: usize) -> Vec<Mat4> {

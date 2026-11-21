@@ -149,6 +149,7 @@ impl Plugin for RenderPlugin {
                 RenderSet::Shadows,
                 RenderSet::Background,
                 RenderSet::Draw,
+                RenderSet::Transparent,
                 RenderSet::Overlay,
             )
                 .chain(),

@@ -761,6 +761,7 @@ pub(crate) fn queue_shadow_meshes(
                 if !instance
                     .flags
                     .contains(RenderMeshInstanceFlags::SHADOW_CASTER)
+                    || instance.flags.contains(RenderMeshInstanceFlags::BLENDED)
                     || !render_meshes.contains(&instance.mesh_asset_id)
                 {
                     return None;

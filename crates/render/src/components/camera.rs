@@ -278,6 +278,10 @@ impl CameraUniform {
     pub(crate) fn view_proj(&self) -> Mat4 {
         self.view_proj
     }
+
+    pub(crate) fn view_position(&self) -> Vec3 {
+        self.view_pos
+    }
 }
 
 impl Default for CameraUniform {

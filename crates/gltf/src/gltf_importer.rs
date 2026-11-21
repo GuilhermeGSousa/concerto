@@ -25,7 +25,7 @@ use concerto_mesh::skeleton::{JointPose, Skeleton, SkeletonComponent};
 use concerto_mesh::vertex::Vertex;
 use concerto_name::Name;
 use concerto_reflect::{Reflect, ReflectDefault};
-use concerto_render::assets::material::StandardMaterial;
+use concerto_render::assets::material::{AlphaMode, StandardMaterial};
 use concerto_render::assets::texture::{Texture, TextureRole};
 use concerto_render::components::light::{Light, LightType};
 use concerto_render::components::material::MaterialComponent;
@@ -186,10 +186,13 @@ impl Importer for GltfImporter {
                     material.set_occlusion_texture(texture_ref(info.texture(), TextureRole::Data));
                 }
 
-                if gltf_material.alpha_mode() == gltf::material::AlphaMode::Mask {
-                    // GLTF spec default for alphaCutoff is 0.5 when alpha_mode is MASK.
-                    material.set_alpha_cutoff(gltf_material.alpha_cutoff().unwrap_or(0.5));
-                }
+                material.set_alpha_mode(match gltf_material.alpha_mode() {
+                    gltf::material::AlphaMode::Opaque => AlphaMode::Opaque,
+                    gltf::material::AlphaMode::Mask => AlphaMode::Mask {
+                        cutoff: gltf_material.alpha_cutoff().unwrap_or(0.5),
+                    },
+                    gltf::material::AlphaMode::Blend => AlphaMode::Blend,
+                });
 
                 materials.push(material);
             }
