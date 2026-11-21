@@ -19,6 +19,7 @@ use concerto_physics::{
     ragdoll::{BodyPose, JointSettings, PartSettings, PartShape, RagdollSettings},
     rigid_body::RigidBody,
 };
+use concerto_ragdoll::{BodySense, MassPoint};
 use glam::{Mat4, Quat, Vec3};
 
 use crate::{PhysicsGizmos, PhysicsGizmosPlugin};
@@ -68,6 +69,18 @@ impl Stage {
             Transform::from_translation(Vec3::new(0.0, 0.52, 0.0)),
             GlobalTransform::new(Mat4::from_translation(Vec3::new(0.0, 0.52, 0.0))),
         ));
+        let mut sense = BodySense::default();
+        sense.centre = MassPoint {
+            mass: 1.0,
+            position: Vec3::new(-3.0, 1.0, 0.0),
+            velocity: Vec3::X,
+        };
+        sense.support = vec![
+            Vec3::new(-3.2, 0.0, -0.1),
+            Vec3::new(-2.8, 0.0, -0.1),
+            Vec3::new(-3.0, 0.0, 0.2),
+        ];
+        world.spawn(sense);
         let owner = world.spawn(Transform::default());
 
         let schedules = world.remove_resource::<Schedules>().unwrap();
@@ -143,6 +156,13 @@ fn each_layer_draws_its_physics_while_its_flag_is_on_and_nothing_when_all_are_of
             ..nothing.clone()
         }) > 0,
         "the box's contact with the floor"
+    );
+    assert!(
+        stage.segments(PhysicsGizmos {
+            sensing: true,
+            ..nothing.clone()
+        }) > 0,
+        "the body sense's centre, support and capture point"
     );
     assert_eq!(stage.segments(nothing), 0);
 }

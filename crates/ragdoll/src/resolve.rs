@@ -8,7 +8,7 @@ use concerto_physics::ragdoll::{
 };
 use glam::Mat4;
 
-use crate::asset::{Ragdoll, RagdollShape};
+use crate::asset::{Ragdoll, RagdollShape, Segment, Side};
 
 /// Why a ragdoll asset does not fit its skeleton or cannot be built.
 #[derive(Clone, Debug, PartialEq)]
@@ -53,11 +53,54 @@ impl fmt::Display for RagdollError {
 
 impl std::error::Error for RagdollError {}
 
+/// The parts of one arm and one leg, each when the ragdoll has it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Limbs {
+    pub upper_arm: Option<usize>,
+    pub lower_arm: Option<usize>,
+    pub hand: Option<usize>,
+    pub thigh: Option<usize>,
+    pub shin: Option<usize>,
+    pub foot: Option<usize>,
+}
+
+/// Which part is which, from the segment and side each part of the asset names.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Landmarks {
+    pub pelvis: Option<usize>,
+    /// The spine parts, from the lowest up.
+    pub spine: Vec<usize>,
+    /// The highest spine part, or the pelvis when the ragdoll has no spine part.
+    pub chest: Option<usize>,
+    pub head: Option<usize>,
+    pub left: Limbs,
+    pub right: Limbs,
+}
+
+impl Landmarks {
+    /// Both feet the ragdoll has.
+    pub fn feet(&self) -> impl Iterator<Item = usize> {
+        [self.left.foot, self.right.foot].into_iter().flatten()
+    }
+
+    /// The limbs of `side`; the centre has none.
+    pub fn limbs(&self, side: Side) -> Option<&Limbs> {
+        match side {
+            Side::Left => Some(&self.left),
+            Side::Right => Some(&self.right),
+            Side::Centre => None,
+        }
+    }
+}
+
 /// A ragdoll asset fitted to its skeleton: the physics settings, built, and which bone each part follows.
 #[derive(Clone)]
 pub struct ResolvedRagdoll {
     built: BuiltRagdoll,
     bones: Vec<usize>,
+    segments: Vec<Segment>,
+    sides: Vec<Side>,
+    landmarks: Landmarks,
     names: Vec<Name>,
     followed: Vec<Option<usize>>,
     rest: Vec<BodyPose>,
@@ -76,6 +119,21 @@ impl ResolvedRagdoll {
 
     pub fn part_count(&self) -> usize {
         self.bones.len()
+    }
+
+    /// Which part is which.
+    pub fn landmarks(&self) -> &Landmarks {
+        &self.landmarks
+    }
+
+    /// What part of the body `part` is.
+    pub fn segment(&self, part: usize) -> Segment {
+        self.segments.get(part).copied().unwrap_or_default()
+    }
+
+    /// The side of the body `part` is on.
+    pub fn side(&self, part: usize) -> Side {
+        self.sides.get(part).copied().unwrap_or_default()
     }
 
     /// The index in the skeleton of the bone each part follows, in part order.
@@ -168,9 +226,35 @@ impl Ragdoll {
             settings = settings.with_part(built);
         }
 
+        let mut landmarks = Landmarks::default();
+        for (index, source) in sources.iter().enumerate() {
+            let part = source.part;
+            let limbs = match part.side {
+                Side::Left => Some(&mut landmarks.left),
+                Side::Right => Some(&mut landmarks.right),
+                Side::Centre => None,
+            };
+            match (part.segment, limbs) {
+                (Segment::Pelvis, _) => landmarks.pelvis = Some(index),
+                (Segment::Spine, _) => landmarks.spine.push(index),
+                (Segment::Head, _) => landmarks.head = Some(index),
+                (Segment::UpperArm, Some(limbs)) => limbs.upper_arm = Some(index),
+                (Segment::LowerArm, Some(limbs)) => limbs.lower_arm = Some(index),
+                (Segment::Hand, Some(limbs)) => limbs.hand = Some(index),
+                (Segment::Thigh, Some(limbs)) => limbs.thigh = Some(index),
+                (Segment::Shin, Some(limbs)) => limbs.shin = Some(index),
+                (Segment::Foot, Some(limbs)) => limbs.foot = Some(index),
+                _ => {}
+            }
+        }
+        landmarks.chest = landmarks.spine.last().copied().or(landmarks.pelvis);
+
         Ok(ResolvedRagdoll {
             built: settings.build().map_err(RagdollError::Build)?,
             bones: sources.iter().map(|source| source.bone).collect(),
+            segments: sources.iter().map(|source| source.part.segment).collect(),
+            sides: sources.iter().map(|source| source.part.side).collect(),
+            landmarks,
             names: sources.iter().map(|source| source.part.bone.0).collect(),
             followed,
             rest,

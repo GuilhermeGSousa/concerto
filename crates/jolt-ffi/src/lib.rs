@@ -351,6 +351,12 @@ extern "C" {
         filter: u32,
     );
 
+    pub fn jolt_body_get_angular_velocity(
+        world: *const JoltWorld,
+        body: JoltBodyId,
+        out_velocity: *mut f32,
+    );
+
     /// Sets the body's velocities so that it reaches `position` and `rotation` (xyzw) after `delta_time`.
     pub fn jolt_body_move_kinematic(
         world: *mut JoltWorld,

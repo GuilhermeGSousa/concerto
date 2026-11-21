@@ -271,6 +271,32 @@ impl RagdollJoint {
     }
 }
 
+/// The kind of body segment a part is, which tells the sensing and the behaviours which parts are the feet, the trunk and the arms, and decides a generated part's mass, thickness and limits.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Reflect, Serialize, Deserialize)]
+pub enum Segment {
+    /// A part that is none of the others: a tail, a prop.
+    #[default]
+    Other,
+    Pelvis,
+    Spine,
+    Head,
+    UpperArm,
+    LowerArm,
+    Hand,
+    Thigh,
+    Shin,
+    Foot,
+}
+
+/// Which side of the body a part is on.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Reflect, Serialize, Deserialize)]
+pub enum Side {
+    #[default]
+    Centre,
+    Left,
+    Right,
+}
+
 /// One body of a ragdoll, following one bone.
 #[derive(Clone, Debug, PartialEq, Reflect, Serialize, Deserialize)]
 pub struct RagdollPart {
@@ -284,6 +310,9 @@ pub struct RagdollPart {
     pub mass: f32,
     /// The joint to the parent part; unused on the root part.
     pub joint: RagdollJoint,
+    /// What part of the body this is.
+    pub segment: Segment,
+    pub side: Side,
 }
 
 impl Default for RagdollPart {
@@ -295,6 +324,8 @@ impl Default for RagdollPart {
             rotation: Quat::IDENTITY,
             mass: 1.0,
             joint: RagdollJoint::default(),
+            segment: Segment::Other,
+            side: Side::Centre,
         }
     }
 }
@@ -326,6 +357,13 @@ impl RagdollPart {
 
     pub fn with_joint(mut self, joint: RagdollJoint) -> Self {
         self.joint = joint;
+        self
+    }
+
+    /// Says what part of the body this is.
+    pub fn with_segment(mut self, segment: Segment, side: Side) -> Self {
+        self.segment = segment;
+        self.side = side;
         self
     }
 }

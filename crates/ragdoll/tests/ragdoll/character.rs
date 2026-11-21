@@ -850,3 +850,145 @@ fn a_hit_on_a_walking_character_throws_the_part_back_and_the_body_returns_to_its
         );
     }
 }
+
+#[test]
+fn a_body_senses_its_support_its_balance_its_fall_and_its_rest() {
+    use concerto_ragdoll::{BRACED, BodySense, FLINCH};
+
+    let mut app = App::new();
+    app.register_plugin(MainSchedulePlugin)
+        .register_plugin(TimePlugin)
+        .register_plugin(AssetManagerPlugin)
+        .register_plugin(TransformPlugin)
+        .register_plugin(PhysicsPlugin)
+        .register_plugin(RagdollPlugin);
+    app.finish_plugin_build();
+    let server = app.get_resource::<AssetServer>().unwrap().clone();
+    let reference = reference_humanoid();
+    let skeleton = server.add(reference.skeleton);
+    let mut asset = reference.ragdoll;
+    asset.skeleton = skeleton.clone();
+    let asset = server.add(asset);
+    app.update();
+    let world = app.main_mut().world_mut();
+    world.spawn((
+        Collider::cuboid(50.0, 0.5, 50.0),
+        Transform::from_translation(Vec3::new(0.0, -0.5, 0.0)),
+    ));
+    let humanoid = spawn_humanoid(world, skeleton, Transform::default());
+    let mut character = CharacterRagdoll::new(asset);
+    character.power(FLINCH);
+    world.insert((character, BodySense::default()), humanoid.skeleton);
+    let root = Vec3::new(0.0, 0.05, 0.0);
+    let stand = |app: &mut App, frames: usize| {
+        for _ in 0..frames {
+            pose_at_rest(app, &humanoid, root);
+            frame(app);
+        }
+    };
+    let sense = |app: &App| {
+        app.main()
+            .world()
+            .get_component_for_entity::<BodySense>(humanoid.skeleton)
+            .unwrap()
+            .clone()
+    };
+    let push = |app: &mut App, impulse: Vec3| {
+        let world = app.main().world();
+        let ragdoll = *world
+            .get_component_for_entity::<RagdollId>(humanoid.skeleton)
+            .unwrap();
+        let chest = world
+            .get_component_for_entity::<RagdollBody>(humanoid.skeleton)
+            .unwrap()
+            .resolved()
+            .landmarks()
+            .chest
+            .unwrap();
+        let state = app.get_resource_mut::<PhysicsState>().unwrap();
+        let body = state.ragdoll_bodies(ragdoll)[chest];
+        state.add_impulse(body, impulse);
+    };
+
+    stand(&mut app, 12);
+    let standing = sense(&app);
+    assert_eq!(standing.supporting.len(), 2, "both feet are on the ground");
+    assert!(standing.support.len() >= 4, "{:?}", standing.support);
+    assert!(
+        standing.balanced(),
+        "off balance by {}",
+        standing.off_balance
+    );
+    assert!((standing.centre.mass - 75.0).abs() < 1e-3);
+    assert!(
+        (standing.centre.position.y - 1.0).abs() < 0.15 && standing.centre.position.x.abs() < 0.05,
+        "the centre of a standing body is near its pelvis, it was at {}",
+        standing.centre.position
+    );
+    assert!(standing.ground.abs() < 0.02 && standing.lean < 0.1 && standing.airborne == 0.0);
+    assert_eq!(standing.chest_impact, None);
+
+    push(&mut app, Vec3::new(0.0, 0.0, 4.0));
+    for _ in 0..4 {
+        stand(&mut app, 1);
+        let light = sense(&app);
+        assert!(
+            light.balanced(),
+            "a light push leaves the capture point inside the feet: {}",
+            light.off_balance
+        );
+    }
+
+    push(&mut app, Vec3::new(0.0, 0.0, 150.0));
+    stand(&mut app, 2);
+    let shoved = sense(&app);
+    assert!(
+        shoved.off_balance.z > 0.05 && shoved.off_balance.x.abs() < shoved.off_balance.z,
+        "a hard push sends the capture point out on the side of the push: {}",
+        shoved.off_balance
+    );
+    assert!(!shoved.at_rest);
+
+    stand(&mut app, 60);
+    edit(&mut app, &humanoid, |character| {
+        character.profile = BRACED.into();
+        character.blend = 0.0;
+    });
+    stand(&mut app, 3);
+    assert_eq!(
+        sense(&app).supporting.len(),
+        2,
+        "feet that are simulated are on the ground by their contacts"
+    );
+    push(&mut app, Vec3::new(0.0, 0.0, 150.0));
+    stand(&mut app, 300);
+    let fallen = sense(&app);
+    assert!(fallen.at_rest, "a fallen body comes to rest");
+    assert!(fallen.centre.position.y < 0.5 && fallen.lean > 0.5);
+
+    let ragdoll = *app
+        .main()
+        .world()
+        .get_component_for_entity::<RagdollId>(humanoid.skeleton)
+        .unwrap();
+    edit(&mut app, &humanoid, CharacterRagdoll::go_limp);
+    stand(&mut app, 1);
+    let state = app.get_resource_mut::<PhysicsState>().unwrap();
+    let mut pose = Vec::new();
+    state.ragdoll_pose(ragdoll, &mut pose);
+    for part in &mut pose {
+        part.translation.y += 3.0;
+    }
+    state.set_ragdoll_pose(ragdoll, &pose);
+    stand(&mut app, 3);
+    let dropped = sense(&app);
+    assert!(dropped.supporting.is_empty() && dropped.airborne > 0.05);
+    let impact = dropped
+        .chest_impact
+        .expect("a falling chest is headed for the ground");
+    assert!(
+        impact.point.y.abs() < 0.3 && impact.seconds > 0.4 && impact.seconds < 1.0,
+        "the chest, about three metres up, lands in under a second: {impact:?}"
+    );
+    assert!(dropped.head_impact.is_some());
+}
