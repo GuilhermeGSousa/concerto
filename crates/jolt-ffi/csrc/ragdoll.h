@@ -59,8 +59,11 @@ extern "C"
 
     /* Builds the settings, stabilizes their masses and disables collisions
      * between each part and its parent. Returns null when a parent index is
-     * not an earlier part, a shape is degenerate, or stabilizing fails. */
-    JoltRagdollSettings *jolt_ragdoll_settings_create(const JoltRagdollPart *parts, uint32_t count);
+     * not an earlier part, a shape is degenerate, or stabilizing fails. No
+     * part ever moves faster than `max_linear_velocity`, in m/s. */
+    JoltRagdollSettings *jolt_ragdoll_settings_create(const JoltRagdollPart *parts,
+                                                      uint32_t count,
+                                                      float max_linear_velocity);
     void jolt_ragdoll_settings_destroy(JoltRagdollSettings *settings);
     uint32_t jolt_ragdoll_settings_part_count(const JoltRagdollSettings *settings);
 

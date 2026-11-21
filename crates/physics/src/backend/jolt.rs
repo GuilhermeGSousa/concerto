@@ -625,7 +625,11 @@ impl PhysicsBackend for JoltBackend {
             .collect();
         // SAFETY: `parts` holds `parts.len()` parts, read during the call only.
         let built = unsafe {
-            concerto_jolt_ffi::jolt_ragdoll_settings_create(parts.as_ptr(), parts.len() as u32)
+            concerto_jolt_ffi::jolt_ragdoll_settings_create(
+                parts.as_ptr(),
+                parts.len() as u32,
+                settings.max_speed,
+            )
         };
         if built.is_null() {
             Err(RagdollBuildError::Rejected)
