@@ -456,6 +456,37 @@ at an `address` you give. The tool takes `rig`, and optionally `address`,
 and mass. It reads no skinned mesh, so part radii follow the bones'
 proportions. Given a skeleton, it says to create a rig first.
 
+A `Ragdoll` opens in its own tab, from the same crate. The left panel is the
+part tree, each part under the part of its nearest ancestor bone, labelled with
+its bone; the selected part's shape, offset, rotation, mass and joint (axes,
+swing, twist, friction, motor) are the **Part** form, written with the
+inspector's usual number fields, radians for angles. **Add part** lists the
+bones that have none, and **Remove part** drops the selected one. The preview
+stands the skeleton's character, with its skinned mesh when the skeleton's
+folder has a `scene`, on a floor, with `concerto-physics-gizmos` drawing each
+part and each joint's limits over it, and the buttons **Drop**, **Poke**,
+**Play** and **Reset** act on it: Drop lifts the body to `drop_height` and lets
+it go limp, Poke hits the part on `poke_bone` with `poke_impulse` (making the
+body limp first), Play plays the `clip` of the **Preview** value with the
+ragdoll following it kinematically, and Reset stands it in its rest pose again.
+Powered playback, where the body pulls itself toward the clip, does not exist
+yet. Drop and Poke also run the headless trial `run_trial` on the tab's current
+value and print its report under the buttons.
+
+The tools do the same without a screenshot. `ragdoll_parts` lists the parts:
+bone, parent part, shape and sizes, mass, and the joint's limits. `set_ragdoll_part`
+sets one bone's shape, `radius`, `half_height`, `half_extents`, `mass`,
+`offset`, swing and twist limits and `friction`, adds a part on a bone that has
+none, or `remove`s one, on the ragdoll open in a tab; the tab becomes unsaved,
+and `save` writes it. `test_ragdoll` runs a drop (`height`, 0.5 m by default)
+or a poke (`bone`, `impulse`) for `seconds` (5 by default) in a physics world of
+its own and answers whether the body came to rest and when, its peak speed, the
+widest its joints opened and which pairs of parts interpenetrate in the rest
+pose, by bone with the depth in metres. It reads the tab's value, saved or not,
+so a loop of `set_ragdoll_part` and `test_ragdoll` finds an overlap and fixes it
+before anything is written. `preview_ragdoll` is the buttons' other half: it
+sends the tab's preview a drop, poke, play or reset.
+
 With the `test-support` feature, `concerto::ragdoll::testing` has a reference
 humanoid built in code (`reference_humanoid`) and a `RagdollWorld` to stand it
 in, hit a named part and step, without a GPU.

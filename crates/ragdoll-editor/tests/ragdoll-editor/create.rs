@@ -23,19 +23,19 @@ use rmcp::{
 };
 use serde_json::{Value, json};
 
-const SIZE: (u32, u32) = (800, 600);
-const PATIENCE: Duration = Duration::from_secs(120);
-const RIG: &str = "content/hero/rig.gasset";
+pub(crate) const SIZE: (u32, u32) = (800, 600);
+pub(crate) const PATIENCE: Duration = Duration::from_secs(120);
+pub(crate) const RIG: &str = "content/hero/rig.gasset";
 const BROKEN_RIG: &str = "content/hero/broken_rig.gasset";
-const SKELETON: &str = "content/hero/skeleton.gasset";
+pub(crate) const SKELETON: &str = "content/hero/skeleton.gasset";
 
-type Client = RunningService<RoleClient, ()>;
+pub(crate) type Client = RunningService<RoleClient, ()>;
 
-fn game(app: &mut App) {
+pub(crate) fn game(app: &mut App) {
     app.register_plugin(concerto::DefaultPlugins);
 }
 
-fn write_project(root: &Path) {
+pub(crate) fn write_project(root: &Path) {
     let mut registry = AssetRegistry::new();
     let skeleton =
         save_content_asset_into(&humanoid_skeleton(), root, SKELETON, &mut registry).unwrap();
@@ -46,7 +46,7 @@ fn write_project(root: &Path) {
     save_content_asset_into(&broken, root, BROKEN_RIG, &mut registry).unwrap();
 }
 
-async fn call(client: &Client, tool: &'static str, arguments: Value) -> CallToolResult {
+pub(crate) async fn call(client: &Client, tool: &'static str, arguments: Value) -> CallToolResult {
     client
         .call_tool(
             CallToolRequestParams::new(tool)
@@ -56,7 +56,7 @@ async fn call(client: &Client, tool: &'static str, arguments: Value) -> CallTool
         .unwrap()
 }
 
-fn text(result: &CallToolResult) -> String {
+pub(crate) fn text(result: &CallToolResult) -> String {
     result
         .content
         .iter()
@@ -64,13 +64,13 @@ fn text(result: &CallToolResult) -> String {
         .collect()
 }
 
-async fn ok(client: &Client, tool: &'static str, arguments: Value) -> String {
+pub(crate) async fn ok(client: &Client, tool: &'static str, arguments: Value) -> String {
     let result = call(client, tool, arguments).await;
     assert_eq!(result.is_error, Some(false), "{tool}: {result:?}");
     text(&result)
 }
 
-async fn until_idle(client: &Client) {
+pub(crate) async fn until_idle(client: &Client) {
     let started = Instant::now();
     loop {
         let status = ok(client, "status", json!({})).await;
@@ -136,7 +136,7 @@ async fn generate_ragdolls(client: Client) -> Generated {
     }
 }
 
-fn saved_ragdoll(root: &Path, address: &str) -> Ragdoll {
+pub(crate) fn saved_ragdoll(root: &Path, address: &str) -> Ragdoll {
     let bytes = std::fs::read(root.join(address)).unwrap();
     read_content_asset(&bytes).unwrap();
     decode_content_asset::<Ragdoll>(&bytes).unwrap().1
