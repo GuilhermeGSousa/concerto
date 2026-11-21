@@ -14,6 +14,7 @@ use crate::{
     balance::{BALANCE, Balance, Hindrance},
     behaviour::{BehaviourEnded, BodyDrive, Outcome, PartCommand, PhysicalState},
     character::RagdollBody,
+    ik::bent_spine,
     resolve::Limbs,
     sensing::BodySense,
 };
@@ -40,6 +41,8 @@ pub struct Stagger {
     pub slow_steps: f32,
     /// The share of their strength the legs lose at severity 1.
     pub weak_legs: f32,
+    /// The steps the body may take on top of balance's `max_steps` while it stumbles.
+    pub more_steps: u32,
     /// The bend of the whole spine at severity 1, in radians.
     pub bend: f32,
     /// The stiffness of the spine and arm muscles while staggering, in N·m/rad.
@@ -69,6 +72,7 @@ impl Default for Stagger {
             short_steps: 0.6,
             slow_steps: 1.8,
             weak_legs: 0.7,
+            more_steps: 4,
             bend: 0.7,
             stiffness: 400.0,
             torque: 120.0,
@@ -178,6 +182,7 @@ pub fn stagger_bodies(
             pace: 1.0 + (stagger.slow_steps - 1.0).max(0.0) * stumble,
             strength: 1.0 - stagger.weak_legs * stumble,
             give: stumble,
+            more_steps: if stumble > 0.0 { stagger.more_steps } else { 0 },
             ..Hindrance::default()
         });
 
@@ -191,28 +196,15 @@ pub fn stagger_bodies(
             .try_normalize()
             .unwrap_or(Vec3::Z);
         let tip = Vec3::Y.cross(direction);
-        if !landmarks.spine.is_empty() && stumble > 0.0 {
-            let share = stagger.bend * stumble / landmarks.spine.len() as f32;
-            let axis = turned.inverse() * tip;
-            for (index, &part) in landmarks.spine.iter().enumerate() {
-                let Some(parent) = settings[part].parent else {
-                    continue;
-                };
-                let bent = Quat::from_axis_angle(axis, share * (index + 1) as f32);
-                let below = Quat::from_axis_angle(axis, share * index as f32);
-                let target = (animated[parent].rotation.inverse()
-                    * below.inverse()
-                    * bent
-                    * animated[part].rotation)
-                    .normalize();
-                drive.claim(
-                    STAGGER,
-                    part,
-                    STAGGER_PRIORITY,
-                    left,
-                    PartCommand::held(muscle).with_target(target),
-                );
-            }
+        let bend = turned.inverse() * tip * stagger.bend * stumble;
+        for aimed in bent_spine(&landmarks.spine, settings, animated, bend) {
+            drive.claim(
+                STAGGER,
+                aimed.part,
+                STAGGER_PRIORITY,
+                left,
+                PartCommand::held(muscle).with_target(aimed.target),
+            );
         }
 
         let spin = Vec3::new(sense.trunk_spin.x, 0.0, sense.trunk_spin.z);

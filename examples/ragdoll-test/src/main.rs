@@ -40,8 +40,8 @@ use concerto::{
 use concerto_debug_gizmos::DebugGizmos;
 use concerto_physics_gizmos::{PhysicsGizmos, PhysicsGizmosPlugin};
 use concerto_ragdoll::{
-    Balance, BodyDrive, BodyHit, BodySense, CharacterRagdoll, PhysicalState, RagdollBody,
-    RagdollMode, ShotReaction, Stagger, testing::reference_humanoid,
+    Balance, BodyDrive, BodyHit, BodySense, CharacterRagdoll, FallReaction, PhysicalState,
+    RagdollBody, RagdollMode, ShotReaction, Stagger, testing::reference_humanoid,
 };
 use glam::{Quat, Vec3};
 
@@ -246,6 +246,7 @@ fn spawn_humanoid(cmd: &mut CommandQueue, assets: &AssetServer) {
         CharacterRagdoll::new(ragdoll),
         BodySense::default(),
         ShotReaction::default(),
+        FallReaction::default(),
     ));
     let limp_after = std::env::var("RAGDOLL_TEST_LIMP_AFTER")
         .ok()

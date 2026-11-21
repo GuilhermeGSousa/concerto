@@ -22,6 +22,7 @@ use crate::{
         drop_removed_ragdoll, drop_replaced_ragdoll, record_animated_poses, record_ragdoll_poses,
         write_ragdoll_poses,
     },
+    fall::{Fall, FallReaction, fall_bodies, fall_when_falling},
     hit::{HitReaction, flinch_when_hit, update_flinches},
     sensing::sense_bodies,
     shot::{ShotReaction, end_shots, note_shot_balance_ended, react_when_shot, shot_bodies},
@@ -60,6 +61,13 @@ impl Plugin for RagdollPlugin {
             FixedUpdate,
             balance_bodies.in_set(BehaviourSet).at_preview_time(),
         );
+        app.register_type::<Fall>();
+        app.register_type::<FallReaction>();
+        app.add_listener(fall_when_falling.at_preview_time())
+            .add_system(
+                FixedUpdate,
+                fall_bodies.in_set(BehaviourSet).at_preview_time(),
+            );
         app.register_type::<ShotReaction>();
         app.add_listener(react_when_shot.at_preview_time())
             .add_listener(note_shot_balance_ended.at_preview_time())
