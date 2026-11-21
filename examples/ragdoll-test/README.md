@@ -41,6 +41,9 @@ would rewrite them.
 When balance gives up, the humanoid falls with a `FallReaction`: hands to the
 ground, head held away, knees folding, then limp where it lies.
 
+- `X` kills it over one second: strength drains from the hands and feet
+  inwards, it drops, and once at rest it is frozen where it lies.
+
 Set `RAGDOLL_TEST_LIMP_AFTER=<seconds>` and it goes limp that long after
 startup, for capturing without a keyboard.
 

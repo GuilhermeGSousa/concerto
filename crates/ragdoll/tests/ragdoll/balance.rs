@@ -17,8 +17,8 @@ use concerto_ragdoll::testing::{
     SpawnedHumanoid, humanoid_skeleton, reference_humanoid, spawn_humanoid,
 };
 use concerto_ragdoll::{
-    Balance, BehaviourEnded, BodyDrive, BodySense, BodyState, CharacterRagdoll, Outcome,
-    PhysicalState, RagdollBody, RagdollPlugin,
+    Balance, BehaviourEnded, BodyDrive, BodySense, BodySettled, BodyState, CharacterRagdoll,
+    Outcome, PhysicalState, RagdollBody, RagdollPlugin,
 };
 use glam::Vec3;
 
@@ -27,6 +27,13 @@ struct Ended(Vec<BehaviourEnded>);
 
 fn record(on: On<BehaviourEnded>, mut ended: ResMut<Ended>) {
     ended.0.push(*on.signal());
+}
+
+#[derive(Resource, Default)]
+struct Settles(usize);
+
+fn count_settles(_: On<BodySettled>, mut settles: ResMut<Settles>) {
+    settles.0 += 1;
 }
 
 pub struct Stage {
@@ -45,6 +52,8 @@ impl Stage {
             .register_plugin(PhysicsPlugin)
             .register_plugin(RagdollPlugin);
         app.add_listener(record).insert_resource(Ended::default());
+        app.add_listener(count_settles)
+            .insert_resource(Settles::default());
         app.finish_plugin_build();
         let server = app.get_resource::<AssetServer>().unwrap().clone();
         let reference = reference_humanoid();
@@ -138,6 +147,10 @@ impl Stage {
             .get_component_for_entity::<PhysicalState>(self.character)
             .unwrap()
             .state
+    }
+
+    pub fn settles(&self) -> usize {
+        self.app.get_resource::<Settles>().unwrap().0
     }
 
     pub fn ended(&self) -> Vec<BehaviourEnded> {

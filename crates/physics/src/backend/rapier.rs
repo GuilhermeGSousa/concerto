@@ -290,6 +290,8 @@ impl PhysicsBackend for RapierBackend {
     ) {
     }
 
+    fn set_ragdoll_frozen(&mut self, _ragdoll: Self::RagdollHandle, _frozen: bool) {}
+
     fn ragdoll_joint_motor_impulse(&self, _ragdoll: Self::RagdollHandle, _part: usize) -> Vec3 {
         Vec3::ZERO
     }

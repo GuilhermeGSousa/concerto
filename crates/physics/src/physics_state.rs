@@ -266,6 +266,13 @@ impl PhysicsState {
         }
     }
 
+    /// Freezes a ragdoll where it lies, or lets it go again. A frozen ragdoll's parts are static: they block bodies and are found by queries, but nothing moves them and they cost the solver nothing. Letting it go makes every part dynamic and awake.
+    pub fn set_ragdoll_frozen(&mut self, ragdoll: RagdollId, frozen: bool) {
+        if self.ragdolls.contains_key(&ragdoll) {
+            self.backend.set_ragdoll_frozen(ragdoll.0, frozen);
+        }
+    }
+
     /// The angular impulse the motor of the joint between `part` and its parent applied in the last collision step, about the joint's twist, normal and plane axes; a motor at its torque limit is saturated.
     pub fn ragdoll_joint_motor_impulse(&self, ragdoll: RagdollId, part: usize) -> Vec3 {
         if self.ragdolls.contains_key(&ragdoll) {

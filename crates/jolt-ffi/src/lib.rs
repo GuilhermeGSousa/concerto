@@ -537,6 +537,9 @@ extern "C" {
         motion_type: JoltMotionType,
     );
 
+    /// Frozen makes every part static where it is; not frozen makes every part dynamic again and wakes it.
+    pub fn jolt_ragdoll_set_frozen(world: *mut JoltWorld, ragdoll: *mut JoltRagdoll, frozen: bool);
+
     /// The angular impulse the joint's motor applied in the last collision step; zero for the root.
     pub fn jolt_ragdoll_get_joint_motor_impulse(
         ragdoll: *const JoltRagdoll,
