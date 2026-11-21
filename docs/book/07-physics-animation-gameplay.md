@@ -55,6 +55,18 @@ A `MeshComponent` with no material is drawn plain grey, so a `MeshCollider`
 entity like the floor above is visible. Give it a material to choose how it
 looks.
 
+### Collision steps
+
+The fixed step is 33 ms. Physics divides it into the fewest equal collision
+steps of at most 1/60 s, two at 33 ms, so fast bodies, stacks and joints stay
+stable. `PhysicsSettings::max_collision_step` sets the limit:
+
+```rust
+app.insert_resource(PhysicsSettings { max_collision_step: 1.0 / 120.0 });
+```
+
+`FixedUpdate` still runs once per fixed step; only the simulation is divided.
+
 ### Sensors
 
 A `Sensor` next to a `Collider` makes it a trigger volume. A sensor detects the

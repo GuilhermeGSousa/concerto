@@ -101,8 +101,8 @@ pub trait PhysicsBackend: Send + Sync + Sized {
 
     fn new_stepper() -> Self::Stepper;
 
-    /// Advances the world by `delta_time` seconds (one fixed timestep).
-    fn step(&mut self, stepper: &mut Self::Stepper, delta_time: f32);
+    /// Advances the world by `delta_time` seconds (one fixed timestep), in `collision_steps` equal collision steps.
+    fn step(&mut self, stepper: &mut Self::Stepper, delta_time: f32, collision_steps: u32);
 
     /// Creates a body from the shared descriptors and adds it to the
     /// simulation: static when `rigid_body` is `None`, otherwise dynamic or

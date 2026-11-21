@@ -185,22 +185,25 @@ impl PhysicsBackend for RapierBackend {
         }
     }
 
-    fn step(&mut self, stepper: &mut Stepper, delta_time: f32) {
-        stepper.integration_parameters.dt = delta_time;
-        stepper.pipeline.step(
-            rapier3d::math::Vector::from_array(GRAVITY),
-            &stepper.integration_parameters,
-            &mut self.islands,
-            &mut self.broad_phase,
-            &mut self.narrow_phase,
-            &mut self.bodies,
-            &mut self.colliders,
-            &mut self.impulse_joints,
-            &mut self.multibody_joints,
-            &mut self.ccd_solver,
-            &(),
-            &self.collision_events,
-        );
+    fn step(&mut self, stepper: &mut Stepper, delta_time: f32, collision_steps: u32) {
+        let collision_steps = collision_steps.max(1);
+        stepper.integration_parameters.dt = delta_time / collision_steps as f32;
+        for _ in 0..collision_steps {
+            stepper.pipeline.step(
+                rapier3d::math::Vector::from_array(GRAVITY),
+                &stepper.integration_parameters,
+                &mut self.islands,
+                &mut self.broad_phase,
+                &mut self.narrow_phase,
+                &mut self.bodies,
+                &mut self.colliders,
+                &mut self.impulse_joints,
+                &mut self.multibody_joints,
+                &mut self.ccd_solver,
+                &(),
+                &self.collision_events,
+            );
+        }
     }
 
     fn create_body(

@@ -157,10 +157,15 @@ impl PhysicsBackend for JoltBackend {
         Stepper { stepper }
     }
 
-    fn step(&mut self, stepper: &mut Stepper, delta_time: f32) {
+    fn step(&mut self, stepper: &mut Stepper, delta_time: f32, collision_steps: u32) {
         // SAFETY: both pointers are valid and exclusively borrowed.
         unsafe {
-            concerto_jolt_ffi::jolt_world_step(self.world, stepper.stepper, delta_time, 1);
+            concerto_jolt_ffi::jolt_world_step(
+                self.world,
+                stepper.stepper,
+                delta_time,
+                collision_steps.max(1) as i32,
+            );
         }
     }
 
