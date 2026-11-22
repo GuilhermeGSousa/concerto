@@ -40,7 +40,10 @@ fn query_mutations_and_replacements_are_observed_without_touching_other_componen
     let read_at = world.change_tick();
     fn read(values: Query<(Entity, &mut Value)>) {
         for (entity, value) in values.iter() {
-            assert_eq!(values.get_entity(entity).map(|(_, same)| same.0), Some(value.0));
+            assert_eq!(
+                values.get_entity(entity).map(|(_, same)| same.0),
+                Some(value.0)
+            );
         }
     }
     let mut reader = read.into_system();
