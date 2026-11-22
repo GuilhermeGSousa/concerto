@@ -154,6 +154,39 @@ cmd.spawn((Camera::default(), Bloom::default(), Transform::IDENTITY));
   a strong light on a pale wall, the sun's disk. A `clear_color` near white is
   bright too.
 
+### Ambient occlusion
+
+`ScreenSpaceAmbientOcclusion` on a camera darkens the standard material's
+ambient light where nearby surfaces block it: room corners, the foot of a wall,
+the ground under a character's feet. Light from lamps and the sun is not
+touched. `AmbientOcclusionPlugin` draws it, and `DefaultPlugins` registers it.
+
+```rust
+use concerto::render::ScreenSpaceAmbientOcclusion;
+
+cmd.spawn((
+    Camera::default(),
+    ScreenSpaceAmbientOcclusion::default(),
+    Transform::IDENTITY,
+));
+```
+
+- `radius`, 0.5 by default, is how far a surface looks for what blocks it, in
+  world units. `intensity`, 1 by default, scales the result; at 0 the passes
+  are skipped and the frame is unchanged.
+- It is computed from a depth prepass of the camera's view, drawn only for
+  cameras that have the component: every mesh that casts a shadow and is not
+  blended is drawn once more, depth only. A mesh with `NotShadowCaster` neither
+  occludes nor is drawn there.
+- The prepass ignores materials, as the shadow pass does: an alpha-cutout
+  surface occludes as its whole mesh, and a material that moves vertices in its
+  own shader occludes from where the mesh was.
+- A custom material reads the result from `@group(1) @binding(3)`, a
+  `texture_2d<f32>` the size of the camera's target, white where the camera has
+  no occlusion; `screen_occlusion` in the standard shader shows how.
+- It needs float render targets; on an adapter without them the component has
+  no effect and the plugin says so once.
+
 ### Layers
 
 A camera draws a mesh when the two share a layer. `RenderLayers` goes on

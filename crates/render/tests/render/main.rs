@@ -1,3 +1,4 @@
+mod ambient_occlusion;
 mod blended_materials;
 mod bloom;
 mod camera_environment_edit;

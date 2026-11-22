@@ -564,6 +564,10 @@ impl RenderShadowCasterViewProj {
     pub(crate) fn write(&self, queue: &wgpu::Queue, view_proj: Mat4) {
         queue.write_buffer(&self.buffer, 0, &view_proj_bytes(view_proj));
     }
+
+    pub(crate) fn bind_group(&self) -> &wgpu::BindGroup {
+        &self.bind_group
+    }
 }
 
 #[derive(Resource, Default)]

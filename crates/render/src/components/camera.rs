@@ -22,6 +22,7 @@ use wgpu::util::DeviceExt;
 use crate::components::visibility::RenderLayers;
 use crate::{
     assets::texture::Texture,
+    assets::texture::TextureRole,
     components::{
         camera_environment::{CameraEnvironment, DEFAULT_AMBIENT_INTENSITY},
         render_entity::RenderEntity,
@@ -29,7 +30,11 @@ use crate::{
     device::RenderDevice,
     layouts::CameraLayout,
     queue::RenderQueue,
-    render_asset::{render_texture::RenderTexture, render_window::RenderWindow, RenderAssets},
+    render_asset::{
+        render_texture::{FallbackTextures, RenderTexture},
+        render_window::RenderWindow,
+        RenderAssets,
+    },
     resources::RenderContext,
     sky_light::{CameraSkyLight, SkyRadianceMap},
     tonemapping::{Exposure, Tonemapping},
@@ -293,6 +298,10 @@ impl CameraUniform {
     pub(crate) fn view_position(&self) -> Vec3 {
         self.view_pos
     }
+
+    pub(crate) fn inverse_view_proj(&self) -> Mat4 {
+        self.inverse_view_proj
+    }
 }
 
 impl Default for CameraUniform {
@@ -312,6 +321,7 @@ pub struct RenderCamera {
     pub render_target: Option<RenderTexture>,
     pub(crate) viewport: Option<Viewport>,
     pub(crate) layers: RenderLayers,
+    pub(crate) ambient_occlusion: Option<wgpu::TextureView>,
 }
 
 impl RenderCamera {
@@ -341,6 +351,24 @@ impl RenderCamera {
     /// The pixels this camera covers on a target of `target` size.
     pub fn viewport_rect(&self, target: UVec2) -> PixelRect {
         viewport_rect(self.viewport.as_ref(), target)
+    }
+
+    pub(crate) fn rebind(
+        &mut self,
+        device: &wgpu::Device,
+        layout: &CameraLayout,
+        sky_radiance: &SkyRadianceMap,
+        fallbacks: &FallbackTextures,
+    ) {
+        self.camera_bind_group = camera_bind_group(
+            device,
+            layout,
+            &self.camera_buffer,
+            sky_radiance,
+            self.ambient_occlusion
+                .as_ref()
+                .unwrap_or(&fallbacks.for_role(TextureRole::Data).view),
+        );
     }
 
     pub fn resize_render_target(
@@ -412,6 +440,7 @@ pub(crate) fn extract_cameras(
     mut render_textures: ResMut<RenderAssets<RenderTexture>>,
     queue: Res<RenderQueue>,
     sky_radiance: Res<SkyRadianceMap>,
+    fallbacks: Res<FallbackTextures>,
 ) {
     for (
         entity,
@@ -488,8 +517,13 @@ pub(crate) fn extract_cameras(
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
-        let camera_bind_group =
-            camera_bind_group(&device, &camera_layouts, &camera_buffer, &sky_radiance);
+        let camera_bind_group = camera_bind_group(
+            &device,
+            &camera_layouts,
+            &camera_buffer,
+            &sky_radiance,
+            &fallbacks.for_role(TextureRole::Data).view,
+        );
 
         let render_target: Option<RenderTexture> = target_size.map(|size| {
             create_rtt(
@@ -518,6 +552,7 @@ pub(crate) fn extract_cameras(
             render_target,
             viewport: camera.viewport,
             layers,
+            ambient_occlusion: None,
         };
         publish_render_target(camera, &render_cam, &mut render_textures);
 
@@ -530,6 +565,7 @@ fn camera_bind_group(
     layout: &CameraLayout,
     camera_buffer: &wgpu::Buffer,
     sky_radiance: &SkyRadianceMap,
+    ambient_occlusion: &wgpu::TextureView,
 ) -> wgpu::BindGroup {
     device.create_bind_group(&wgpu::BindGroupDescriptor {
         layout: &layout.camera_layout,
@@ -546,6 +582,10 @@ fn camera_bind_group(
                 binding: 2,
                 resource: wgpu::BindingResource::Sampler(&sky_radiance.sampler),
             },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: wgpu::BindingResource::TextureView(ambient_occlusion),
+            },
         ],
         label: Some("camera_bind_group"),
     })
@@ -556,17 +596,13 @@ pub(crate) fn rebind_sky_radiance(
     render_cameras: Query<&mut RenderCamera>,
     device: Res<RenderDevice>,
     camera_layouts: Res<CameraLayout>,
+    fallbacks: Res<FallbackTextures>,
 ) {
     if !sky_radiance.is_changed() {
         return;
     }
     for mut render_camera in render_cameras.iter() {
-        render_camera.camera_bind_group = camera_bind_group(
-            &device,
-            &camera_layouts,
-            &render_camera.camera_buffer,
-            &sky_radiance,
-        );
+        render_camera.rebind(&device, &camera_layouts, &sky_radiance, &fallbacks);
     }
 }
 
