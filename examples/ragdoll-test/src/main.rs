@@ -138,7 +138,7 @@ fn spawn_chain(
     let material = assets.add(
         StandardMaterial::new(None, None).with_base_color_factor(Color::rgba(0.9, 0.35, 0.2, 1.0)),
     );
-    for part in 0..settings.parts.len() {
+    for (part, (pose, settings)) in start.iter().zip(&settings.parts).enumerate() {
         cmd.spawn((
             RagdollVisual { owner, part },
             MeshComponent {
@@ -147,9 +147,7 @@ fn spawn_chain(
             MaterialComponent {
                 handle: material.clone(),
             },
-            start[part]
-                .then(settings.parts[part].shape_offset)
-                .to_transform(),
+            pose.then(settings.shape_offset).to_transform(),
         ));
     }
     cmd.entity(owner).insert((

@@ -1,11 +1,13 @@
 use concerto_ecs::{
     CommandQueue, Component, Entity, Query, ResMut,
+    query::change_detection::Mut,
     reflect::{ReflectComponent, ReflectSceneComponent},
     signal::On,
 };
 use concerto_foundation::time::Time;
 use concerto_name::Name;
 use concerto_physics::{
+    body::BodyId,
     physics_state::PhysicsState,
     ragdoll::{BodyPose, RagdollId},
 };
@@ -297,90 +299,16 @@ pub fn shot_bodies(
             continue;
         }
         let bodies = state.ragdoll_bodies(*id).to_vec();
-        for wound in &mut shot.wounds {
-            if let Some(waited) = wound.waiting {
-                if !body.is_kinematic(wound.part) {
-                    state.add_impulse_at(
-                        bodies[wound.part],
-                        wound.impulse,
-                        pose[wound.part].transform_point(wound.point),
-                    );
-                    wound.waiting = None;
-                } else if waited >= PATIENCE {
-                    wound.waiting = None;
-                } else {
-                    wound.waiting = Some(waited + 1);
-                }
-            }
-            wound.age += dt;
-        }
+        strike_wounds(&mut shot.wounds, body, &bodies, &pose, &mut state, dt);
 
-        let mut scale = vec![1.0_f32; count];
-        let mut touched = vec![false; count];
-        let mut legs = Hindrance::default();
-        for wound in &shot.wounds {
-            let segment = resolved.segment(wound.part);
-            if segment == Segment::Head {
-                continue;
-            }
-            let healed = if reaction.recover > 0.0 {
-                ((wound.age - reaction.snap_seconds) / reaction.recover).clamp(0.0, 1.0)
-            } else {
-                1.0
-            };
-            let lasting = if is_arm(segment) {
-                reaction.hanging_arm
-            } else if is_leg(segment) {
-                reaction.lame_leg
-            } else {
-                reaction.wounded
-            };
-            wounds.weaken(wound.part, lasting, count);
-            let now = if wound.age < reaction.snap_seconds {
-                reaction.spike
-            } else {
-                reaction.slack.min(lasting) + (lasting - reaction.slack.min(lasting)) * healed
-            };
-            if is_leg(segment) {
-                let share = now.min(1.0);
-                match resolved.side(wound.part) {
-                    Side::Left => legs.left_leg = legs.left_leg.min(share),
-                    Side::Right => legs.right_leg = legs.right_leg.min(share),
-                    Side::Centre => {}
-                }
-                continue;
-            }
-            for part in 0..count {
-                let near = part == wound.part || joined(resolved, part, wound.part);
-                let limb = is_arm(segment)
-                    && is_arm(resolved.segment(part))
-                    && resolved.side(part) == resolved.side(wound.part);
-                if !(near || limb)
-                    || is_leg(resolved.segment(part))
-                    || Some(part) == landmarks.pelvis
-                {
-                    continue;
-                }
-                let share = if part == wound.part || limb {
-                    now
-                } else {
-                    now.max(reaction.wounded).min(now.max(1.0))
-                };
-                scale[part] = if touched[part] {
-                    if share > 1.0 || scale[part] > 1.0 {
-                        scale[part].max(share)
-                    } else {
-                        scale[part].min(share)
-                    }
-                } else {
-                    share
-                };
-                touched[part] = true;
-            }
-        }
+        let mut muscles = Muscles {
+            scale: vec![1.0_f32; count],
+            touched: vec![false; count],
+            targets: vec![None; count],
+        };
+        let legs = weaken_wounded(reaction, &shot.wounds, resolved, &mut wounds, &mut muscles);
         balance.hinder(legs);
 
-        let mut targets: Vec<Option<Quat>> = vec![None; count];
         let pelvis = landmarks.pelvis.unwrap_or(0);
         let turned = pose[pelvis].rotation * animated[pelvis].rotation.inverse();
         let carried: Vec<Quat> = animated
@@ -389,126 +317,284 @@ pub fn shot_bodies(
             .collect();
         let rest: Vec<BodyPose> = settings.iter().map(|part| part.pose).collect();
 
-        let mut fold = Vec3::ZERO;
-        for wound in &shot.wounds {
-            if !is_trunk(resolved.segment(wound.part)) || reaction.fold_seconds <= 0.0 {
-                continue;
-            }
-            let from = Vec3::new(-wound.impulse.x, 0.0, -wound.impulse.z);
-            let Some(from) = from.try_normalize() else {
-                continue;
-            };
-            let left = (1.0 - wound.age / reaction.fold_seconds).clamp(0.0, 1.0);
-            let risen = (wound.age / reaction.snap_seconds.max(dt)).clamp(0.0, 1.0);
-            fold += Vec3::Y.cross(from) * reaction.fold * left * risen;
-        }
-        let fold = fold.clamp_length_max(reaction.fold);
+        let fold = fold_over_wounds(reaction, &shot.wounds, resolved, dt);
         for aimed in bent_spine(
             &landmarks.spine,
             settings,
             animated,
             turned.inverse() * fold,
         ) {
-            targets[aimed.part] = Some(aimed.target);
-            touched[aimed.part] = true;
+            muscles.targets[aimed.part] = Some(aimed.target);
+            muscles.touched[aimed.part] = true;
         }
 
         let across = (pose[pelvis].rotation * rest[pelvis].rotation.inverse() * Vec3::X)
             .try_normalize()
             .unwrap_or(Vec3::X);
         let forward = across.cross(Vec3::Y).try_normalize().unwrap_or(Vec3::Z);
-        let newest =
-            shot.wounds.iter().rev().find(|wound| {
-                !matches!(resolved.segment(wound.part), Segment::Head | Segment::Hand)
-            });
-        if let Some(wound) = newest.filter(|wound| wound.age >= reaction.reach_delay) {
-            let place = pose[wound.part].transform_point(wound.point);
-            let free = |arm: &Arm| {
-                !shot.wounds.iter().any(|other| {
-                    is_arm(resolved.segment(other.part)) && resolved.side(other.part) == arm.side
-                })
-            };
-            let arm = [
-                Arm::of(&landmarks.left, Side::Left),
-                Arm::of(&landmarks.right, Side::Right),
-            ]
-            .into_iter()
-            .flatten()
-            .filter(free)
-            .min_by(|a, b| {
-                let near = |arm: &Arm| pose[arm.hand].translation.distance(place);
-                near(a).total_cmp(&near(b))
-            });
-            if let Some(arm) = arm
-                && let Some(shoulder) = settings[arm.upper].parent
-            {
-                let outward = match arm.side {
-                    Side::Left => across,
-                    _ => -across,
-                };
-                let aimed = reach_hinged(
-                    &Chain {
-                        upper: arm.upper,
-                        lower: arm.lower,
-                        end: arm.hand,
-                    },
-                    settings,
-                    &rest,
-                    &carried,
-                    pose[arm.upper].translation,
-                    place,
-                    outward - Vec3::Y - forward * 0.3,
+        let posed = Posed {
+            resolved,
+            pose: &pose,
+            rest: &rest,
+            carried: &carried,
+            across,
+            forward,
+        };
+        hand_to_wound(reaction, &shot.wounds, &posed, &mut muscles);
+        look_at_wound(reaction, &shot.wounds, &posed, &mut muscles);
+        claim_muscles(reaction, &muscles, &mut drive);
+    }
+}
+
+struct Muscles {
+    scale: Vec<f32>,
+    touched: Vec<bool>,
+    targets: Vec<Option<Quat>>,
+}
+
+struct Posed<'a> {
+    resolved: &'a ResolvedRagdoll,
+    pose: &'a [BodyPose],
+    rest: &'a [BodyPose],
+    carried: &'a [Quat],
+    across: Vec3,
+    forward: Vec3,
+}
+
+fn strike_wounds(
+    wounds: &mut [Wound],
+    body: &RagdollBody,
+    bodies: &[BodyId],
+    pose: &[BodyPose],
+    state: &mut ResMut<PhysicsState>,
+    dt: f32,
+) {
+    for wound in wounds {
+        if let Some(waited) = wound.waiting {
+            if !body.is_kinematic(wound.part) {
+                state.add_impulse_at(
+                    bodies[wound.part],
+                    wound.impulse,
+                    pose[wound.part].transform_point(wound.point),
                 );
-                let upper = aimed.upper;
-                let lower = aimed.lower;
-                targets[arm.upper] = Some((pose[shoulder].rotation.inverse() * upper).normalize());
-                targets[arm.lower] = Some((upper.inverse() * lower).normalize());
-                for part in [arm.upper, arm.lower, arm.hand] {
-                    touched[part] = true;
-                }
-            }
-        }
-
-        if let (Some(head), Some(wound)) = (landmarks.head, shot.wounds.last())
-            && let Some(neck) = settings[head].parent
-            && resolved.segment(wound.part) != Segment::Head
-        {
-            let eyes = pose[head].translation;
-            let towards = if wound.age < reaction.look_seconds {
-                pose[wound.part].transform_point(wound.point) - eyes
+                wound.waiting = None;
+            } else if waited >= PATIENCE {
+                wound.waiting = None;
             } else {
-                Vec3::new(-wound.impulse.x, 0.0, -wound.impulse.z)
-            };
-            if let Some(towards) = towards.try_normalize() {
-                let facing = rest[head].rotation.inverse() * Vec3::Z;
-                let turn = Quat::from_rotation_arc(carried[head] * facing, towards);
-                let angle = turn.to_scaled_axis().length();
-                let turn = if angle > reaction.max_look {
-                    Quat::IDENTITY.slerp(turn, reaction.max_look / angle)
-                } else {
-                    turn
-                };
-                targets[head] =
-                    Some((pose[neck].rotation.inverse() * turn * carried[head]).normalize());
-                touched[head] = true;
+                wound.waiting = Some(waited + 1);
             }
         }
+        wound.age += dt;
+    }
+}
 
-        for part in 0..count {
-            if !touched[part] {
-                continue;
-            }
-            let kept = scale[part].max(0.0);
-            let mut command = PartCommand::held(PartStrength::Powered {
-                stiffness: reaction.stiffness * kept,
-                damping: reaction.stiffness * kept * 0.1,
-                torque_limit: reaction.torque * kept,
-            });
-            if let Some(target) = targets[part] {
-                command = command.with_target(target);
-            }
-            drive.claim(SHOT, part, SHOT_PRIORITY, 1.0, command);
+fn weaken_wounded(
+    reaction: &ShotReaction,
+    struck: &[Wound],
+    resolved: &ResolvedRagdoll,
+    wounds: &mut Mut<Wounds>,
+    muscles: &mut Muscles,
+) -> Hindrance {
+    let count = muscles.scale.len();
+    let mut legs = Hindrance::default();
+    for wound in struck {
+        let segment = resolved.segment(wound.part);
+        if segment == Segment::Head {
+            continue;
         }
+        let healed = if reaction.recover > 0.0 {
+            ((wound.age - reaction.snap_seconds) / reaction.recover).clamp(0.0, 1.0)
+        } else {
+            1.0
+        };
+        let lasting = if is_arm(segment) {
+            reaction.hanging_arm
+        } else if is_leg(segment) {
+            reaction.lame_leg
+        } else {
+            reaction.wounded
+        };
+        wounds.weaken(wound.part, lasting, count);
+        let now = if wound.age < reaction.snap_seconds {
+            reaction.spike
+        } else {
+            reaction.slack.min(lasting) + (lasting - reaction.slack.min(lasting)) * healed
+        };
+        if is_leg(segment) {
+            let share = now.min(1.0);
+            match resolved.side(wound.part) {
+                Side::Left => legs.left_leg = legs.left_leg.min(share),
+                Side::Right => legs.right_leg = legs.right_leg.min(share),
+                Side::Centre => {}
+            }
+            continue;
+        }
+        spread_wound(reaction, wound, resolved, now, muscles);
+    }
+    legs
+}
+
+fn spread_wound(
+    reaction: &ShotReaction,
+    wound: &Wound,
+    resolved: &ResolvedRagdoll,
+    now: f32,
+    muscles: &mut Muscles,
+) {
+    let segment = resolved.segment(wound.part);
+    let pelvis = resolved.landmarks().pelvis;
+    for part in 0..muscles.scale.len() {
+        let near = part == wound.part || joined(resolved, part, wound.part);
+        let limb = is_arm(segment)
+            && is_arm(resolved.segment(part))
+            && resolved.side(part) == resolved.side(wound.part);
+        if !(near || limb) || is_leg(resolved.segment(part)) || Some(part) == pelvis {
+            continue;
+        }
+        let share = if part == wound.part || limb {
+            now
+        } else {
+            now.max(reaction.wounded).min(now.max(1.0))
+        };
+        muscles.scale[part] = if muscles.touched[part] {
+            if share > 1.0 || muscles.scale[part] > 1.0 {
+                muscles.scale[part].max(share)
+            } else {
+                muscles.scale[part].min(share)
+            }
+        } else {
+            share
+        };
+        muscles.touched[part] = true;
+    }
+}
+
+fn fold_over_wounds(
+    reaction: &ShotReaction,
+    struck: &[Wound],
+    resolved: &ResolvedRagdoll,
+    dt: f32,
+) -> Vec3 {
+    let mut fold = Vec3::ZERO;
+    for wound in struck {
+        if !is_trunk(resolved.segment(wound.part)) || reaction.fold_seconds <= 0.0 {
+            continue;
+        }
+        let from = Vec3::new(-wound.impulse.x, 0.0, -wound.impulse.z);
+        let Some(from) = from.try_normalize() else {
+            continue;
+        };
+        let left = (1.0 - wound.age / reaction.fold_seconds).clamp(0.0, 1.0);
+        let risen = (wound.age / reaction.snap_seconds.max(dt)).clamp(0.0, 1.0);
+        fold += Vec3::Y.cross(from) * reaction.fold * left * risen;
+    }
+    fold.clamp_length_max(reaction.fold)
+}
+
+fn hand_to_wound(reaction: &ShotReaction, struck: &[Wound], posed: &Posed, muscles: &mut Muscles) {
+    let resolved = posed.resolved;
+    let landmarks = resolved.landmarks();
+    let settings = &resolved.settings().parts;
+    let pose = posed.pose;
+    let newest = struck
+        .iter()
+        .rev()
+        .find(|wound| !matches!(resolved.segment(wound.part), Segment::Head | Segment::Hand));
+    let Some(wound) = newest.filter(|wound| wound.age >= reaction.reach_delay) else {
+        return;
+    };
+    let place = pose[wound.part].transform_point(wound.point);
+    let free = |arm: &Arm| {
+        !struck.iter().any(|other| {
+            is_arm(resolved.segment(other.part)) && resolved.side(other.part) == arm.side
+        })
+    };
+    let arm = [
+        Arm::of(&landmarks.left, Side::Left),
+        Arm::of(&landmarks.right, Side::Right),
+    ]
+    .into_iter()
+    .flatten()
+    .filter(free)
+    .min_by(|a, b| {
+        let near = |arm: &Arm| pose[arm.hand].translation.distance(place);
+        near(a).total_cmp(&near(b))
+    });
+    if let Some(arm) = arm
+        && let Some(shoulder) = settings[arm.upper].parent
+    {
+        let outward = match arm.side {
+            Side::Left => posed.across,
+            _ => -posed.across,
+        };
+        let aimed = reach_hinged(
+            &Chain {
+                upper: arm.upper,
+                lower: arm.lower,
+                end: arm.hand,
+            },
+            settings,
+            posed.rest,
+            posed.carried,
+            pose[arm.upper].translation,
+            place,
+            outward - Vec3::Y - posed.forward * 0.3,
+        );
+        let upper = aimed.upper;
+        let lower = aimed.lower;
+        muscles.targets[arm.upper] = Some((pose[shoulder].rotation.inverse() * upper).normalize());
+        muscles.targets[arm.lower] = Some((upper.inverse() * lower).normalize());
+        for part in [arm.upper, arm.lower, arm.hand] {
+            muscles.touched[part] = true;
+        }
+    }
+}
+
+fn look_at_wound(reaction: &ShotReaction, struck: &[Wound], posed: &Posed, muscles: &mut Muscles) {
+    let resolved = posed.resolved;
+    let settings = &resolved.settings().parts;
+    let pose = posed.pose;
+    if let (Some(head), Some(wound)) = (resolved.landmarks().head, struck.last())
+        && let Some(neck) = settings[head].parent
+        && resolved.segment(wound.part) != Segment::Head
+    {
+        let eyes = pose[head].translation;
+        let towards = if wound.age < reaction.look_seconds {
+            pose[wound.part].transform_point(wound.point) - eyes
+        } else {
+            Vec3::new(-wound.impulse.x, 0.0, -wound.impulse.z)
+        };
+        if let Some(towards) = towards.try_normalize() {
+            let facing = posed.rest[head].rotation.inverse() * Vec3::Z;
+            let turn = Quat::from_rotation_arc(posed.carried[head] * facing, towards);
+            let angle = turn.to_scaled_axis().length();
+            let turn = if angle > reaction.max_look {
+                Quat::IDENTITY.slerp(turn, reaction.max_look / angle)
+            } else {
+                turn
+            };
+            muscles.targets[head] =
+                Some((pose[neck].rotation.inverse() * turn * posed.carried[head]).normalize());
+            muscles.touched[head] = true;
+        }
+    }
+}
+
+fn claim_muscles(reaction: &ShotReaction, muscles: &Muscles, drive: &mut Mut<BodyDrive>) {
+    for part in 0..muscles.scale.len() {
+        if !muscles.touched[part] {
+            continue;
+        }
+        let kept = muscles.scale[part].max(0.0);
+        let mut command = PartCommand::held(PartStrength::Powered {
+            stiffness: reaction.stiffness * kept,
+            damping: reaction.stiffness * kept * 0.1,
+            torque_limit: reaction.torque * kept,
+        });
+        if let Some(target) = muscles.targets[part] {
+            command = command.with_target(target);
+        }
+        drive.claim(SHOT, part, SHOT_PRIORITY, 1.0, command);
     }
 }
 

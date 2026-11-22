@@ -1,5 +1,6 @@
 use concerto_ecs::{
     CommandQueue, Component, Entity, Query, Res,
+    query::change_detection::Mut,
     reflect::{ReflectComponent, ReflectSceneComponent},
 };
 use concerto_foundation::time::Time;
@@ -380,59 +381,25 @@ pub fn balance_bodies(
         let leg_length = (rest[left.shin].translation - rest[left.thigh].translation).length()
             + (rest[left.foot].translation - rest[left.shin].translation).length();
 
+        let stance = Stance {
+            pose: &pose,
+            rest: &rest,
+            carried: &carried,
+            pelvis,
+            across,
+            forward,
+            sideways,
+            leg_length,
+            given,
+            pace: hindrance.pace,
+            dt,
+        };
+
         balance.since_step += dt;
         if balance.step.is_none() && wants_step && balance.since_step >= balance.step_rest {
-            let distance = |leg: &Leg| {
-                let foot = pose[leg.foot].translation;
-                Vec3::new(
-                    foot.x - sense.capture_point.x,
-                    0.0,
-                    foot.z - sense.capture_point.z,
-                )
-                .length()
-            };
-            let grounded = |leg: &Leg| sense.supporting.contains(&leg.foot);
-            let sideways = sense.off_balance.dot(across);
-            let lengthways = sense.off_balance.dot(forward);
-            let lame = |share: f32| share < 0.5;
-            let swing = match (grounded(&left), grounded(&right)) {
-                _ if lame(hindrance.left_leg) && !lame(hindrance.right_leg) => Side::Left,
-                _ if lame(hindrance.right_leg) && !lame(hindrance.left_leg) => Side::Right,
-                (true, false) => Side::Right,
-                (false, true) => Side::Left,
-                _ if sideways.abs() > lengthways.abs() * 0.5 => {
-                    if sideways > 0.0 {
-                        Side::Left
-                    } else {
-                        Side::Right
-                    }
-                }
-                _ if distance(&left) >= distance(&right) => Side::Left,
-                _ => Side::Right,
-            };
-            let (swinging, standing) = match swing {
-                Side::Left => (&left, &right),
-                _ => (&right, &left),
-            };
-            let outward = sense.off_balance.try_normalize().unwrap_or(forward);
-            let stance = pose[standing.foot].translation;
-            let aim = sense.capture_point + outward * balance.step_beyond;
-            let from_stance = Vec3::new(aim.x - stance.x, 0.0, aim.z - stance.z)
-                .clamp_length_max(leg_length * balance.max_step)
-                * hindrance.reach.clamp(0.0, 1.0);
-            let above = Vec3::new(stance.x, sense.ground + 0.5, stance.z) + from_stance;
-            let landing = state.cast_ray(above, Vec3::NEG_Y, QueryFilter::default());
-            match landing {
-                Some(hit) => {
-                    let from = pose[swinging.foot].translation;
-                    let clearance = (from.y - sense.ground).max(0.0);
-                    balance.step = Some(Step {
-                        swing,
-                        from,
-                        to: hit.point + Vec3::Y * clearance,
-                        elapsed: 0.0,
-                    });
-                }
+            let planned = plan_step(balance, &hindrance, sense, &stance, &left, &right, &state);
+            match planned {
+                Some(step) => balance.step = Some(step),
                 None => {
                     physical.state = BodyState::Falling;
                     ended(Outcome::GaveUp, &mut cmd);
@@ -456,106 +423,8 @@ pub fn balance_bodies(
                 share: hindrance.right_leg.clamp(0.0, 1.0),
             },
         ] {
-            let leg = sided.leg;
-            let side = sided.side;
-            let muscle = balance.muscle(sided.kept);
-            let knee = balance.muscle(sided.kept * given);
-            let stepping = balance.step.filter(|step| step.swing == side);
-            let Some(mut step) = stepping else {
-                let crouch = LAME_CROUCH * (1.0 - sided.share / 0.5).clamp(0.0, 1.0);
-                if crouch > 0.0 {
-                    let thigh =
-                        (Quat::from_axis_angle(sideways, -crouch) * carried[leg.thigh]).normalize();
-                    let shin =
-                        (Quat::from_axis_angle(sideways, crouch) * carried[leg.shin]).normalize();
-                    drive.claim(
-                        BALANCE,
-                        leg.thigh,
-                        BALANCE_PRIORITY,
-                        1.0,
-                        PartCommand::held(muscle)
-                            .with_target((pose[pelvis].rotation.inverse() * thigh).normalize()),
-                    );
-                    drive.claim(
-                        BALANCE,
-                        leg.shin,
-                        BALANCE_PRIORITY,
-                        1.0,
-                        PartCommand::held(knee).with_target((thigh.inverse() * shin).normalize()),
-                    );
-                    drive.claim(
-                        BALANCE,
-                        leg.foot,
-                        BALANCE_PRIORITY,
-                        1.0,
-                        PartCommand::held(muscle)
-                            .with_target((shin.inverse() * carried[leg.foot]).normalize()),
-                    );
-                    continue;
-                }
-                for part in [leg.thigh, leg.shin, leg.foot] {
-                    drive.claim(
-                        BALANCE,
-                        part,
-                        BALANCE_PRIORITY,
-                        1.0,
-                        PartCommand::held(if part == leg.shin { knee } else { muscle }),
-                    );
-                }
-                continue;
-            };
-            step.elapsed += dt;
-            let phase = if balance.step_seconds > 0.0 {
-                step.elapsed / (balance.step_seconds * hindrance.pace.max(1.0))
-            } else {
-                1.0
-            };
-            let ankle = step.from.lerp(step.to, smooth(phase))
-                + Vec3::Y
-                    * (leg_length
-                        * balance.step_height
-                        * (phase.clamp(0.0, 1.0) * std::f32::consts::PI).sin());
-            let aimed = reach(
-                &Chain {
-                    upper: leg.thigh,
-                    lower: leg.shin,
-                    end: leg.foot,
-                },
-                &rest,
-                &carried,
-                pose[leg.thigh].translation,
-                ankle,
-                forward,
-            );
-            drive.claim(
-                BALANCE,
-                leg.thigh,
-                BALANCE_PRIORITY,
-                1.0,
-                PartCommand::held(muscle)
-                    .with_target((pose[pelvis].rotation.inverse() * aimed.upper).normalize()),
-            );
-            drive.claim(
-                BALANCE,
-                leg.shin,
-                BALANCE_PRIORITY,
-                1.0,
-                PartCommand::held(muscle)
-                    .with_target((aimed.upper.inverse() * aimed.lower).normalize()),
-            );
-            drive.claim(
-                BALANCE,
-                leg.foot,
-                BALANCE_PRIORITY,
-                1.0,
-                PartCommand::held(muscle)
-                    .with_target((aimed.lower.inverse() * carried[leg.foot]).normalize()),
-            );
-            let touched = phase > 0.6 && sense.supporting.contains(&leg.foot);
-            if phase >= 1.0 || touched {
+            if drive_leg(balance, &sided, &stance, sense, &mut drive) {
                 landed = true;
-            } else {
-                balance.step = Some(step);
             }
         }
         if landed {
@@ -574,4 +443,210 @@ struct Sided<'a> {
     side: Side,
     kept: f32,
     share: f32,
+}
+
+struct Stance<'a> {
+    pose: &'a [BodyPose],
+    rest: &'a [BodyPose],
+    carried: &'a [Quat],
+    pelvis: usize,
+    across: Vec3,
+    forward: Vec3,
+    sideways: Vec3,
+    leg_length: f32,
+    given: f32,
+    pace: f32,
+    dt: f32,
+}
+
+fn swing_side(
+    hindrance: &Hindrance,
+    sense: &BodySense,
+    stance: &Stance,
+    left: &Leg,
+    right: &Leg,
+) -> Side {
+    let distance = |leg: &Leg| {
+        let foot = stance.pose[leg.foot].translation;
+        Vec3::new(
+            foot.x - sense.capture_point.x,
+            0.0,
+            foot.z - sense.capture_point.z,
+        )
+        .length()
+    };
+    let grounded = |leg: &Leg| sense.supporting.contains(&leg.foot);
+    let sideways = sense.off_balance.dot(stance.across);
+    let lengthways = sense.off_balance.dot(stance.forward);
+    let lame = |share: f32| share < 0.5;
+    match (grounded(left), grounded(right)) {
+        _ if lame(hindrance.left_leg) && !lame(hindrance.right_leg) => Side::Left,
+        _ if lame(hindrance.right_leg) && !lame(hindrance.left_leg) => Side::Right,
+        (true, false) => Side::Right,
+        (false, true) => Side::Left,
+        _ if sideways.abs() > lengthways.abs() * 0.5 => {
+            if sideways > 0.0 {
+                Side::Left
+            } else {
+                Side::Right
+            }
+        }
+        _ if distance(left) >= distance(right) => Side::Left,
+        _ => Side::Right,
+    }
+}
+
+fn plan_step(
+    balance: &Balance,
+    hindrance: &Hindrance,
+    sense: &BodySense,
+    stance: &Stance,
+    left: &Leg,
+    right: &Leg,
+    state: &PhysicsState,
+) -> Option<Step> {
+    let pose = stance.pose;
+    let swing = swing_side(hindrance, sense, stance, left, right);
+    let (swinging, standing) = match swing {
+        Side::Left => (left, right),
+        _ => (right, left),
+    };
+    let outward = sense.off_balance.try_normalize().unwrap_or(stance.forward);
+    let stand = pose[standing.foot].translation;
+    let aim = sense.capture_point + outward * balance.step_beyond;
+    let from_stance = Vec3::new(aim.x - stand.x, 0.0, aim.z - stand.z)
+        .clamp_length_max(stance.leg_length * balance.max_step)
+        * hindrance.reach.clamp(0.0, 1.0);
+    let above = Vec3::new(stand.x, sense.ground + 0.5, stand.z) + from_stance;
+    let hit = state.cast_ray(above, Vec3::NEG_Y, QueryFilter::default())?;
+    let from = pose[swinging.foot].translation;
+    let clearance = (from.y - sense.ground).max(0.0);
+    Some(Step {
+        swing,
+        from,
+        to: hit.point + Vec3::Y * clearance,
+        elapsed: 0.0,
+    })
+}
+
+fn hold_leg(
+    sided: &Sided,
+    stance: &Stance,
+    muscle: PartStrength,
+    knee: PartStrength,
+    drive: &mut Mut<BodyDrive>,
+) {
+    let leg = sided.leg;
+    let carried = stance.carried;
+    let crouch = LAME_CROUCH * (1.0 - sided.share / 0.5).clamp(0.0, 1.0);
+    if crouch > 0.0 {
+        let thigh =
+            (Quat::from_axis_angle(stance.sideways, -crouch) * carried[leg.thigh]).normalize();
+        let shin = (Quat::from_axis_angle(stance.sideways, crouch) * carried[leg.shin]).normalize();
+        drive.claim(
+            BALANCE,
+            leg.thigh,
+            BALANCE_PRIORITY,
+            1.0,
+            PartCommand::held(muscle)
+                .with_target((stance.pose[stance.pelvis].rotation.inverse() * thigh).normalize()),
+        );
+        drive.claim(
+            BALANCE,
+            leg.shin,
+            BALANCE_PRIORITY,
+            1.0,
+            PartCommand::held(knee).with_target((thigh.inverse() * shin).normalize()),
+        );
+        drive.claim(
+            BALANCE,
+            leg.foot,
+            BALANCE_PRIORITY,
+            1.0,
+            PartCommand::held(muscle).with_target((shin.inverse() * carried[leg.foot]).normalize()),
+        );
+        return;
+    }
+    for part in [leg.thigh, leg.shin, leg.foot] {
+        drive.claim(
+            BALANCE,
+            part,
+            BALANCE_PRIORITY,
+            1.0,
+            PartCommand::held(if part == leg.shin { knee } else { muscle }),
+        );
+    }
+}
+
+fn drive_leg(
+    balance: &mut Balance,
+    sided: &Sided,
+    stance: &Stance,
+    sense: &BodySense,
+    drive: &mut Mut<BodyDrive>,
+) -> bool {
+    let leg = sided.leg;
+    let side = sided.side;
+    let pose = stance.pose;
+    let carried = stance.carried;
+    let muscle = balance.muscle(sided.kept);
+    let knee = balance.muscle(sided.kept * stance.given);
+    let stepping = balance.step.filter(|step| step.swing == side);
+    let Some(mut step) = stepping else {
+        hold_leg(sided, stance, muscle, knee, drive);
+        return false;
+    };
+    step.elapsed += stance.dt;
+    let phase = if balance.step_seconds > 0.0 {
+        step.elapsed / (balance.step_seconds * stance.pace.max(1.0))
+    } else {
+        1.0
+    };
+    let ankle = step.from.lerp(step.to, smooth(phase))
+        + Vec3::Y
+            * (stance.leg_length
+                * balance.step_height
+                * (phase.clamp(0.0, 1.0) * std::f32::consts::PI).sin());
+    let aimed = reach(
+        &Chain {
+            upper: leg.thigh,
+            lower: leg.shin,
+            end: leg.foot,
+        },
+        stance.rest,
+        carried,
+        pose[leg.thigh].translation,
+        ankle,
+        stance.forward,
+    );
+    drive.claim(
+        BALANCE,
+        leg.thigh,
+        BALANCE_PRIORITY,
+        1.0,
+        PartCommand::held(muscle)
+            .with_target((pose[stance.pelvis].rotation.inverse() * aimed.upper).normalize()),
+    );
+    drive.claim(
+        BALANCE,
+        leg.shin,
+        BALANCE_PRIORITY,
+        1.0,
+        PartCommand::held(muscle).with_target((aimed.upper.inverse() * aimed.lower).normalize()),
+    );
+    drive.claim(
+        BALANCE,
+        leg.foot,
+        BALANCE_PRIORITY,
+        1.0,
+        PartCommand::held(muscle)
+            .with_target((aimed.lower.inverse() * carried[leg.foot]).normalize()),
+    );
+    let touched = phase > 0.6 && sense.supporting.contains(&leg.foot);
+    if phase >= 1.0 || touched {
+        true
+    } else {
+        balance.step = Some(step);
+        false
+    }
 }
