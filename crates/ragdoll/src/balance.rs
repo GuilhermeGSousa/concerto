@@ -70,6 +70,8 @@ pub struct Balance {
     pub max_steps: u32,
     /// The lean of the trunk past which the body gives up, in radians.
     pub max_lean: f32,
+    /// The share of its standing height under which a sunken pelvis means the legs have folded, and the body gives up.
+    pub min_height: f32,
     /// The seconds the body must stay balanced and slow before it has succeeded.
     pub settle_seconds: f32,
     /// The speed of the centre of mass under which the body counts as slow, in m/s.
@@ -99,6 +101,10 @@ pub struct Hindrance {
     pub strength: f32,
     /// How much of their strength the knees lose for a moment after each landing, from 0 to 1.
     pub give: f32,
+    /// The share of its strength the left leg keeps, from 0 to 1. A leg under a half is lame: its knee sags, and it is the one that steps, never the one stood on.
+    pub left_leg: f32,
+    /// The share of its strength the right leg keeps.
+    pub right_leg: f32,
 }
 
 impl Default for Hindrance {
@@ -108,11 +114,14 @@ impl Default for Hindrance {
             pace: 1.0,
             strength: 1.0,
             give: 0.0,
+            left_leg: 1.0,
+            right_leg: 1.0,
         }
     }
 }
 
 const GIVE_SECONDS: f32 = 0.25;
+const LAME_CROUCH: f32 = 0.4;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Step {
@@ -145,6 +154,7 @@ impl Default for Balance {
             step_rest: 0.15,
             max_steps: 4,
             max_lean: 0.8,
+            min_height: 0.6,
             settle_seconds: 1.0,
             settle_speed: 0.2,
             started: false,
@@ -186,9 +196,23 @@ impl Balance {
         self
     }
 
-    /// Hinders balance for the next fixed step; a behaviour that makes the body stumble calls it every step it runs, before `balance_bodies`.
+    /// Hinders balance for the next fixed step, on top of what other behaviours took this step; a behaviour that makes the body stumble calls it every step it runs, before `balance_bodies`.
     pub fn hinder(&mut self, hindrance: Hindrance) {
-        self.hindrance = hindrance;
+        let held = &mut self.hindrance;
+        held.reach *= hindrance.reach;
+        held.pace *= hindrance.pace;
+        held.strength *= hindrance.strength;
+        held.give = held.give.max(hindrance.give);
+        held.left_leg *= hindrance.left_leg;
+        held.right_leg *= hindrance.right_leg;
+    }
+
+    fn muscle(&self, kept: f32) -> PartStrength {
+        PartStrength::Powered {
+            stiffness: self.leg_stiffness * kept,
+            damping: self.leg_stiffness * kept * 0.1,
+            torque_limit: self.leg_torque * kept,
+        }
     }
 
     /// The steps taken since balance started or last stood still.
@@ -223,21 +247,27 @@ fn smooth(phase: f32) -> f32 {
     phase * phase * (3.0 - 2.0 * phase)
 }
 
-struct Reach {
-    thigh: Quat,
-    shin: Quat,
+pub(crate) struct Reach {
+    pub(crate) thigh: Quat,
+    pub(crate) shin: Quat,
 }
 
-fn reach(
-    leg: &Leg,
+pub(crate) struct Chain {
+    pub(crate) upper: usize,
+    pub(crate) lower: usize,
+    pub(crate) end: usize,
+}
+
+pub(crate) fn reach(
+    chain: &Chain,
     rest: &[BodyPose],
     carried: &[Quat],
     hip: Vec3,
     ankle: Vec3,
     forward: Vec3,
 ) -> Reach {
-    let upper = rest[leg.shin].translation - rest[leg.thigh].translation;
-    let lower = rest[leg.foot].translation - rest[leg.shin].translation;
+    let upper = rest[chain.lower].translation - rest[chain.upper].translation;
+    let lower = rest[chain.end].translation - rest[chain.lower].translation;
     let upper_length = upper.length().max(1e-3);
     let lower_length = lower.length().max(1e-3);
     let to_ankle = ankle - hip;
@@ -257,14 +287,14 @@ fn reach(
         + direction * (upper_length * cosine)
         + bend * (upper_length * (1.0 - cosine * cosine).max(0.0).sqrt());
     let foot = hip + direction * distance;
-    let upper_local = rest[leg.thigh].rotation.inverse() * upper / upper_length;
-    let lower_local = rest[leg.shin].rotation.inverse() * lower / lower_length;
+    let upper_local = rest[chain.upper].rotation.inverse() * upper / upper_length;
+    let lower_local = rest[chain.lower].rotation.inverse() * lower / lower_length;
     let thigh = (Quat::from_rotation_arc(
-        carried[leg.thigh] * upper_local,
+        carried[chain.upper] * upper_local,
         (knee - hip).try_normalize().unwrap_or(direction),
-    ) * carried[leg.thigh])
+    ) * carried[chain.upper])
         .normalize();
-    let shin_carried = thigh * (carried[leg.thigh].inverse() * carried[leg.shin]);
+    let shin_carried = thigh * (carried[chain.upper].inverse() * carried[chain.lower]);
     let shin = (Quat::from_rotation_arc(
         shin_carried * lower_local,
         (foot - knee).try_normalize().unwrap_or(direction),
@@ -295,7 +325,8 @@ pub fn balance_bodies(
     {
         let balance = &mut *balance;
         let hindrance = std::mem::take(&mut balance.hindrance);
-        let kept = hindrance.strength.clamp(0.0, 1.0);
+        let kept = hindrance.strength.clamp(0.0, 1.0)
+            * hindrance.left_leg.max(hindrance.right_leg).clamp(0.0, 1.0);
         if !balance.started {
             character.power(balance.profile);
             balance.started = true;
@@ -328,7 +359,10 @@ pub fn balance_bodies(
         };
         let off = sense.off_balance.length();
         let wants_step = !sense.supporting.is_empty() && off > balance.step_margin;
+        let standing_height = animated[pelvis].translation.y - sense.ground;
+        let sunk = pose[pelvis].translation.y - sense.ground < standing_height * balance.min_height;
         let fallen = sense.lean > balance.max_lean
+            || sunk
             || (sense.supporting.is_empty() && sense.airborne > 0.3)
             || (wants_step
                 && balance.step.is_none()
@@ -359,7 +393,6 @@ pub fn balance_bodies(
             - state.angular_velocity(bodies[pelvis]) * balance.upright_damping)
             .clamp_length_max(balance.max_upright_torque * kept);
         let pelvis_velocity = state.linear_velocity(bodies[pelvis]);
-        let standing_height = animated[pelvis].translation.y - sense.ground;
         let lift = ((sense.ground + standing_height - pose[pelvis].translation.y)
             * balance.height_stiffness
             - pelvis_velocity.y * balance.height_damping)
@@ -367,26 +400,19 @@ pub fn balance_bodies(
         let sway = Vec3::new(sense.centre.velocity.x, 0.0, sense.centre.velocity.z);
         let centring = (sense.off_balance * -balance.centring - sway * balance.sway_damping)
             .clamp_length_max(balance.max_centring * kept);
-        let muscle = PartStrength::Powered {
-            stiffness: balance.leg_stiffness * kept,
-            damping: balance.leg_stiffness * kept * 0.1,
-            torque_limit: balance.leg_torque * kept,
-        };
-        let given = kept
-            * (1.0
-                - hindrance.give.clamp(0.0, 1.0)
-                    * (1.0 - balance.since_step / GIVE_SECONDS).clamp(0.0, 1.0));
-        let knee = PartStrength::Powered {
-            stiffness: balance.leg_stiffness * given,
-            damping: balance.leg_stiffness * given * 0.1,
-            torque_limit: balance.leg_torque * given,
-        };
+        let trunk = balance.muscle(kept);
+        let given = 1.0
+            - hindrance.give.clamp(0.0, 1.0)
+                * (1.0 - balance.since_step / GIVE_SECONDS).clamp(0.0, 1.0);
+        let whole = hindrance.strength.clamp(0.0, 1.0);
+        let left_kept = whole * hindrance.left_leg.clamp(0.0, 1.0);
+        let right_kept = whole * hindrance.right_leg.clamp(0.0, 1.0);
         drive.claim(
             BALANCE,
             pelvis,
             BALANCE_PRIORITY,
             1.0,
-            PartCommand::held(muscle)
+            PartCommand::held(trunk)
                 .with_force(centring + Vec3::Y * lift)
                 .with_torque(torque),
         );
@@ -401,6 +427,7 @@ pub fn balance_bodies(
         let forward = pose[pelvis].rotation
             * rest[pelvis].rotation.inverse()
             * across.cross(Vec3::Y).normalize();
+        let sideways = pose[pelvis].rotation * rest[pelvis].rotation.inverse() * across;
         let leg_length = (rest[left.shin].translation - rest[left.thigh].translation).length()
             + (rest[left.foot].translation - rest[left.shin].translation).length();
 
@@ -418,7 +445,10 @@ pub fn balance_bodies(
             let grounded = |leg: &Leg| sense.supporting.contains(&leg.foot);
             let sideways = sense.off_balance.dot(across);
             let lengthways = sense.off_balance.dot(forward);
+            let lame = |share: f32| share < 0.5;
             let swing = match (grounded(&left), grounded(&right)) {
+                _ if lame(hindrance.left_leg) && !lame(hindrance.right_leg) => Side::Left,
+                _ if lame(hindrance.right_leg) && !lame(hindrance.left_leg) => Side::Right,
                 (true, false) => Side::Right,
                 (false, true) => Side::Left,
                 _ if sideways.abs() > lengthways.abs() * 0.5 => {
@@ -467,16 +497,53 @@ pub fn balance_bodies(
             Sided {
                 leg: &left,
                 side: Side::Left,
+                kept: left_kept,
+                share: hindrance.left_leg.clamp(0.0, 1.0),
             },
             Sided {
                 leg: &right,
                 side: Side::Right,
+                kept: right_kept,
+                share: hindrance.right_leg.clamp(0.0, 1.0),
             },
         ] {
             let leg = sided.leg;
             let side = sided.side;
+            let muscle = balance.muscle(sided.kept);
+            let knee = balance.muscle(sided.kept * given);
             let stepping = balance.step.filter(|step| step.swing == side);
             let Some(mut step) = stepping else {
+                let crouch = LAME_CROUCH * (1.0 - sided.share / 0.5).clamp(0.0, 1.0);
+                if crouch > 0.0 {
+                    let thigh =
+                        (Quat::from_axis_angle(sideways, -crouch) * carried[leg.thigh]).normalize();
+                    let shin =
+                        (Quat::from_axis_angle(sideways, crouch) * carried[leg.shin]).normalize();
+                    drive.claim(
+                        BALANCE,
+                        leg.thigh,
+                        BALANCE_PRIORITY,
+                        1.0,
+                        PartCommand::held(muscle)
+                            .with_target((pose[pelvis].rotation.inverse() * thigh).normalize()),
+                    );
+                    drive.claim(
+                        BALANCE,
+                        leg.shin,
+                        BALANCE_PRIORITY,
+                        1.0,
+                        PartCommand::held(knee).with_target((thigh.inverse() * shin).normalize()),
+                    );
+                    drive.claim(
+                        BALANCE,
+                        leg.foot,
+                        BALANCE_PRIORITY,
+                        1.0,
+                        PartCommand::held(muscle)
+                            .with_target((shin.inverse() * carried[leg.foot]).normalize()),
+                    );
+                    continue;
+                }
                 for part in [leg.thigh, leg.shin, leg.foot] {
                     drive.claim(
                         BALANCE,
@@ -500,7 +567,11 @@ pub fn balance_bodies(
                         * balance.step_height
                         * (phase.clamp(0.0, 1.0) * std::f32::consts::PI).sin());
             let aimed = reach(
-                leg,
+                &Chain {
+                    upper: leg.thigh,
+                    lower: leg.shin,
+                    end: leg.foot,
+                },
                 &rest,
                 &carried,
                 pose[leg.thigh].translation,
@@ -552,4 +623,6 @@ pub fn balance_bodies(
 struct Sided<'a> {
     leg: &'a Leg,
     side: Side,
+    kept: f32,
+    share: f32,
 }

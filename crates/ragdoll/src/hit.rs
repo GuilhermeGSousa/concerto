@@ -10,8 +10,10 @@ use concerto_reflect::{Reflect, ReflectDefault};
 use glam::Vec3;
 
 use crate::{
+    behaviour::PhysicalState,
     character::{CharacterRagdoll, RagdollBody, RagdollMode},
     generate::FLINCH,
+    shot::{ShotReaction, takes_shot},
 };
 
 /// A character's body was hit: on this part of its ragdoll, at this world point, with this impulse in N·s. It says nothing about damage or death; the game decides those and reacts to the same signal. It is triggered for every listener, with the character it is about, so the engine's flinch and a game's own listeners all hear it.
@@ -21,9 +23,40 @@ pub struct BodyHit {
     pub part: usize,
     pub point: Vec3,
     pub impulse: Vec3,
+    /// What struck it, which chooses the reaction.
+    pub kind: HitKind,
+}
+
+impl BodyHit {
+    /// A blow on `part` of `character` at the world point `point`, with `impulse` in N·s.
+    pub fn new(character: Entity, part: usize, point: Vec3, impulse: Vec3) -> Self {
+        Self {
+            character,
+            part,
+            point,
+            impulse,
+            kind: HitKind::Blow,
+        }
+    }
+
+    /// Marks the hit as a gunshot.
+    pub fn shot(mut self) -> Self {
+        self.kind = HitKind::Shot;
+        self
+    }
 }
 
 impl Signal for BodyHit {}
+
+/// What struck a body.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum HitKind {
+    /// A punch, a shove, a thrown thing: the upper body flinches over legs that follow the animation.
+    #[default]
+    Blow,
+    /// A bullet: a character with a `ShotReaction` answers with its whole body, by where it struck. Without one it flinches.
+    Shot,
+}
 
 /// Makes a character flinch when it is hit while its ragdoll follows its animation: the body is powered at `profile` and takes the impulse, the muscles at the hit give and recover, and the body settles back on the animation.
 #[derive(Component, Reflect, Clone, Debug, PartialEq)]
@@ -109,16 +142,22 @@ pub fn flinch_when_hit(
         &RagdollBody,
         Option<&HitReaction>,
         Option<&mut Flinch>,
+        Option<&ShotReaction>,
+        Option<&PhysicalState>,
     )>,
     mut state: ResMut<PhysicsState>,
     mut cmd: CommandQueue,
 ) {
     let hit = *on.signal();
     let entity = hit.character;
-    let Some((mut character, id, body, reaction, flinch)) = characters.get_entity(entity) else {
+    let Some((mut character, id, body, reaction, flinch, shot, physical)) =
+        characters.get_entity(entity)
+    else {
         return;
     };
-    if hit.part >= body.resolved().part_count() {
+    if hit.part >= body.resolved().part_count()
+        || takes_shot(&hit, &character, shot.is_some(), physical)
+    {
         return;
     }
     match (reaction, flinch) {

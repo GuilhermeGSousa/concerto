@@ -600,14 +600,14 @@ catch it or let it fall.
 
 #### A hit
 
-`BodyHit { character, part, point, impulse }` says a character's body was hit:
+`BodyHit { character, part, point, impulse, kind }` says a character's body was hit:
 on this part of its ragdoll, at this world point, with this impulse in N·s. It
 says nothing about damage or death; the game decides those. Trigger it from
 the ray that found the part:
 
 ```rust
 let hit = physics.cast_ray(muzzle, aim, QueryFilter::default().with_layers(Layers::RAGDOLL))?;
-cmd.trigger(BodyHit { character: hit.entity?, part: hit.part?, point: hit.point, impulse: aim.normalize() * 30.0 });
+cmd.trigger(BodyHit::new(hit.entity?, hit.part?, hit.point, aim.normalize() * 30.0));
 ```
 
 It is triggered for every listener, so the engine and the game both hear it. A
@@ -822,6 +822,55 @@ humanoid a 70 N·s push with severity 0.4 takes more steps than balance alone
 and ends standing; with severity 1 it ends `Falling`. Between those the
 outcome is in doubt, as it should be: do not build game logic on a stagger of
 a given severity surviving.
+
+#### Shot
+
+A flinch bends the upper body over legs that never move. A character with a
+`ShotReaction` answers a gunshot with its whole body, and differently by where
+the bullet struck. The game marks the hit:
+
+```rust
+cmd.trigger(BodyHit::new(character, part, point, impulse).shot());
+```
+
+`HitKind::Shot` on a character that has a `ShotReaction` and is `Animated` or
+`Reacting` starts a `Shot` beside it, which brings a `Balance`; the flinch
+does not run for that hit. Any other character, and a blow, flinches as
+before. While the shot runs:
+
+- **Snap.** The bullet's impulse lands on the struck part. The muscles of that
+  part and the parts joined to it are `spike` times stronger for
+  `snap_seconds`, then drop to `slack` and come back to `wounded` over
+  `recover`.
+- **Wound reach.** After `reach_delay` the nearer hand goes to the newest
+  wound by two-bone IK, the elbow turned onto its hinge, and stays. A hand
+  does not reach for the head, a hand, or with an arm that was itself shot.
+- **Look.** The head turns to the wound for `look_seconds`, then to where the
+  shot came from, never more than `max_look` from the animation.
+- **By region**, which is the `segment` of the struck part:
+  - pelvis or spine: the spine folds over the wound by `fold` and straightens
+    over `fold_seconds`; balance takes the momentum;
+  - arm or hand: that arm hangs at `hanging_arm` of its strength;
+  - thigh, shin or foot: that leg keeps `lame_leg` of its strength through
+    `Hindrance::left_leg` or `right_leg`. Balance sags the knee of a leg under
+    a half, so its foot leaves the ground, and never stands on it. With both
+    legs shot the knees fold, the pelvis sinks under `Balance::min_height` of
+    its standing height and balance gives up;
+  - head: nothing but the impulse. A game that kills on a head shot sends the
+    dying signal.
+- **Repeat hits.** Each hit adds a wound with its own snap and region effect;
+  the hand goes to the newest.
+
+It claims parts at `SHOT_PRIORITY`, above stagger. It ends when balance ends
+and triggers `BehaviourEnded` for `shot` with the same outcome: standing and
+`Animated`, or `Falling`. `Wounds` stays on the character afterwards:
+`strength_of(part)` is the share of its strength each part kept, for the game
+to turn into a limp or a guarded arm. The engine does not apply it outside the
+reaction.
+
+A body standing on one leg may take a long time to settle or never settle;
+the reaction then lasts until the game ends it by removing `Shot` and
+`Balance`, or the character dies.
 
 Ragdoll parts are in `Layers::RAGDOLL` and collide with everything but
 `Layers::CHARACTER` (`CollisionLayers::ragdoll()`, or `RagdollSettings::layers`

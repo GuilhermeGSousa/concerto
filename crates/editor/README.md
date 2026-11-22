@@ -1844,7 +1844,10 @@ through `EditWorldSignals`; no physics is called directly. A character with a
 its `FlinchRecord`: the bone, the peak displacement in metres and the seconds
 until the body was back on its animation. A character without a
 `HitReaction`, or whose ragdoll is limp or powered by something else, answers
-at once that it only took the impulse. An unknown entity, one with no
+at once that it only took the impulse. `shot: true` marks the hit as a gunshot:
+a character with a `ShotReaction` that is not limp answers at once that its
+shot reaction started, and `body_report` follows it; any other character
+flinches as for a blow. An unknown entity, one with no
 `CharacterRagdoll`, a ragdoll not built yet and an unknown bone (the reply lists
 the part bones) are errors that say what to do next.
 

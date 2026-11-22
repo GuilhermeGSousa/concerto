@@ -4,5 +4,6 @@ mod behaviour;
 mod character;
 mod common;
 mod generate;
+mod shot;
 mod stability;
 mod stagger;

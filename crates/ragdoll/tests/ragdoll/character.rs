@@ -775,12 +775,12 @@ fn a_hit_on_a_walking_character_throws_the_part_back_and_the_body_returns_to_its
         app.get_resource::<PhysicsState>()
             .unwrap()
             .ragdoll_pose(ragdoll, &mut pose);
-        app.main_mut().world_mut().trigger(BodyHit {
-            character: humanoid.skeleton,
-            part: shoulder,
-            point: pose[shoulder].translation,
-            impulse: Vec3::new(0.0, 0.0, -30.0),
-        });
+        app.main_mut().world_mut().trigger(BodyHit::new(
+            humanoid.skeleton,
+            shoulder,
+            pose[shoulder].translation,
+            Vec3::new(0.0, 0.0, -30.0),
+        ));
     };
     let character = |app: &App| {
         app.main()

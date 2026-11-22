@@ -40,8 +40,8 @@ use concerto::{
 use concerto_debug_gizmos::DebugGizmos;
 use concerto_physics_gizmos::{PhysicsGizmos, PhysicsGizmosPlugin};
 use concerto_ragdoll::{
-    Balance, BodyDrive, BodySense, CharacterRagdoll, PhysicalState, RagdollBody, RagdollMode,
-    Stagger, testing::reference_humanoid,
+    Balance, BodyDrive, BodyHit, BodySense, CharacterRagdoll, PhysicalState, RagdollBody,
+    RagdollMode, ShotReaction, Stagger, testing::reference_humanoid,
 };
 use glam::{Quat, Vec3};
 
@@ -58,6 +58,7 @@ const HUMANOID_CENTER: Vec3 = Vec3::new(1.5, 0.0, 0.0);
 const WALK_RADIUS: f32 = 1.0;
 const WALK_SPEED: f32 = 1.0;
 const PUSH: f32 = 60.0;
+const SHOT: f32 = 40.0;
 const STAGGER_SEVERITY: f32 = 0.5;
 const ARM_SWING: f32 = 0.8;
 
@@ -244,6 +245,7 @@ fn spawn_humanoid(cmd: &mut CommandQueue, assets: &AssetServer) {
         ),
         CharacterRagdoll::new(ragdoll),
         BodySense::default(),
+        ShotReaction::default(),
     ));
     let limp_after = std::env::var("RAGDOLL_TEST_LIMP_AFTER")
         .ok()
@@ -320,6 +322,22 @@ fn balance_humanoid(
     if input.is_just_pressed(PhysicalKey::Code(KeyCode::KeyJ)) {
         cmd.remove::<Balance>(humanoid.skeleton);
         cmd.remove::<Stagger>(humanoid.skeleton);
+    }
+    if input.is_just_pressed(PhysicalKey::Code(KeyCode::KeyI))
+        && let Some((body, &ragdoll)) = bodies.get_entity(humanoid.skeleton)
+        && let Some(chest) = body.resolved().landmarks().chest
+    {
+        let mut pose = Vec::new();
+        physics.ragdoll_pose(ragdoll, &mut pose);
+        cmd.trigger(
+            BodyHit::new(
+                humanoid.skeleton,
+                chest,
+                pose[chest].translation + Vec3::Z * 0.12,
+                SHOT * Vec3::NEG_Z,
+            )
+            .shot(),
+        );
     }
     let shove = input.is_just_pressed(PhysicalKey::Code(KeyCode::KeyU));
     let stagger = input.is_just_pressed(PhysicalKey::Code(KeyCode::KeyY));

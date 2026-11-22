@@ -11,6 +11,7 @@ pub mod plugin;
 pub mod resolve;
 pub mod sandbox;
 pub mod sensing;
+pub mod shot;
 pub mod stagger;
 #[cfg(feature = "test-support")]
 pub mod testing;
@@ -30,10 +31,11 @@ pub use character::{
 pub use generate::{
     BRACED, FLINCH, GenerateError, HumanoidChains, HumanoidSettings, LIMP, generate_humanoid,
 };
-pub use hit::{BodyHit, Flinch, FlinchRecord, HitReaction};
+pub use hit::{BodyHit, Flinch, FlinchRecord, HitKind, HitReaction};
 pub use overlap::PartOverlap;
 pub use plugin::RagdollPlugin;
 pub use resolve::{Landmarks, Limbs, RagdollError, ResolvedRagdoll};
 pub use sandbox::{Trial, TrialReport, run_trial};
 pub use sensing::{BodySense, Impact, MassPoint};
+pub use shot::{SHOT, SHOT_PRIORITY, Shot, ShotReaction, Wound, Wounds};
 pub use stagger::{STAGGER, STAGGER_PRIORITY, Stagger};
