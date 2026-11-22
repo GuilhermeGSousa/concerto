@@ -42,6 +42,7 @@ pub mod shadow_pipeline;
 pub mod sky_light;
 pub mod systems;
 pub mod tonemapping;
+pub mod view_phase;
 pub mod view_target;
 pub mod wgpu_wrapper;
 
