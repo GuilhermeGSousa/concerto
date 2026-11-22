@@ -24,7 +24,7 @@ use concerto_render::{
     batching::{RenderDrawStats, ViewDrawStats},
     components::{
         camera::{Camera, RenderCamera, RenderTarget},
-        light::Light,
+        light::{Light, ShadowCascades},
         material::MaterialComponent,
         render_entity::RenderEntity,
     },
@@ -223,6 +223,7 @@ fn blended_surfaces_draw_back_to_front_over_the_opaque_scene_without_hiding_it()
 
     app.main_mut().world_mut().spawn((
         Light::directional_light().with_shadows(),
+        ShadowCascades::new().with_count(1),
         Transform::from_rotation(Quat::from_rotation_x(-FRAC_PI_2)),
     ));
 
