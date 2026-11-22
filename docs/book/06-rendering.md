@@ -419,6 +419,48 @@ around a surface, and it is not blocked by a roof, only dimmed by ambient
 occlusion where a camera has it. Without a `Sky`, a surface reflects
 `CameraEnvironment::ambient`, the same from every direction.
 
+## Particles
+
+`ParticleEmitter`, from `concerto::particles`, emits soft round billboards from
+its entity's transform; `ParticlesPlugin` is part of `DefaultPlugins`. Three
+starting points cover the common cases, and every field is public:
+
+```rust
+use concerto::particles::ParticleEmitter;
+
+cmd.spawn((
+    ParticleEmitter::snow(Vec3::new(20.0, 0.5, 20.0)),
+    Transform::from_translation(Vec3::new(0.0, 8.0, 0.0)),
+));
+cmd.spawn((
+    ParticleEmitter::steam().with_rate(60.0),
+    Transform::from_translation(Vec3::new(2.0, 1.0, 0.0)),
+));
+cmd.spawn((ParticleEmitter::embers(), Transform::IDENTITY));
+```
+
+- A particle appears in a box of half-size `extent` around the emitter, with
+  `velocity` plus up to `velocity_spread` on each axis, both in the emitter's
+  space. From then on it lives in the world: `acceleration` and `drag` move
+  it, and moving the emitter leaves it behind as a trail.
+- Over its `lifetime` it goes from `start_size` to `end_size` and from
+  `start_color` to `end_color`; the colour's alpha is how opaque it is.
+- `rate` is particles a second, and `capacity` the most alive at once: emission
+  waits while it is reached. A rate of 0 lets the living ones die out.
+- `lit` particles take the ambient light and every light that reaches them,
+  without shadows, so steam glows by a stove. Unlit ones show their colour as
+  it is; with values above 1, as embers have, they glow under bloom.
+- `additive` particles add their light to what is behind them; the others
+  cover it. Both are drawn in the transparent phase, the emitter sorted by its
+  distance among the other blended surfaces.
+- It is a scene component: an emitter can be added and tuned in the inspector,
+  and it runs in the editor's scene view.
+
+The living particles are the `Particles` component on the same entity. They
+are simulated on the CPU in `Update`, with no allocation once an emitter has
+reached its capacity. Particles within one emitter are not sorted, they do not
+fade where they meet a surface, and they take no fog.
+
 ## Debug drawing
 
 `concerto-debug-gizmos` draws lines and shapes for one frame. It is not

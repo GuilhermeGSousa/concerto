@@ -106,8 +106,9 @@ impl SkeletonLayout {
 // camera (per-`RenderCamera`) or skeleton (per-mesh dynamic offset), so
 // merging them doesn't introduce the per-camera invalidation cost that
 // merging camera in as well would have.
+/// Bind-group layout for the lights uniform and the shadow maps, `@group(2)` in the default material convention.
 #[derive(Resource, Deref)]
-pub(crate) struct LightingLayout(pub(crate) wgpu::BindGroupLayout);
+pub struct LightingLayout(pub(crate) wgpu::BindGroupLayout);
 
 impl LightingLayout {
     pub fn new(device: &wgpu::Device, capabilities: &RenderCapabilities) -> Self {

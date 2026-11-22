@@ -26,6 +26,7 @@
 "crates/navigation-gizmos" = 1
 "crates/noise" = 3
 "crates/obj" = 2
+"crates/particles" = 3
 "crates/physics" = 18
 "crates/procedural-animation" = 28
 "crates/procedural-animation-gizmos" = 1

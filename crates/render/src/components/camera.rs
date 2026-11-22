@@ -291,15 +291,18 @@ impl CameraUniform {
         self.sky_lit = 1;
     }
 
-    pub(crate) fn view_proj(&self) -> Mat4 {
+    /// The matrix from world space to this camera's clip space.
+    pub fn view_proj(&self) -> Mat4 {
         self.view_proj
     }
 
-    pub(crate) fn view_position(&self) -> Vec3 {
+    /// Where the camera is in world space.
+    pub fn view_position(&self) -> Vec3 {
         self.view_pos
     }
 
-    pub(crate) fn inverse_view_proj(&self) -> Mat4 {
+    /// The matrix from this camera's clip space to world space.
+    pub fn inverse_view_proj(&self) -> Mat4 {
         self.inverse_view_proj
     }
 }
@@ -328,6 +331,11 @@ pub struct RenderCamera {
 impl RenderCamera {
     pub fn depth_texture(&self) -> &RenderTexture {
         self.view_target.depth_texture()
+    }
+
+    /// The layers this camera draws.
+    pub fn layers(&self) -> RenderLayers {
+        self.layers
     }
 
     /// The view the finished frame is written to: this camera's texture, or the window's.

@@ -940,6 +940,7 @@ dependencies = [
  "concerto-name",
  "concerto-navigation",
  "concerto-noise",
+ "concerto-particles",
  "concerto-physics",
  "concerto-procedural-animation",
  "concerto-reflect",
@@ -1532,6 +1533,23 @@ dependencies = [
  "concerto-render",
  "concerto-scene",
  "tobj",
+]
+
+[[package]]
+name = "concerto-particles"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "concerto-app",
+ "concerto-color",
+ "concerto-ecs",
+ "concerto-foundation",
+ "concerto-noise",
+ "concerto-reflect",
+ "concerto-render",
+ "concerto-window",
+ "glam 0.33.12",
+ "naga",
 ]
 
 [[package]]
