@@ -62,4 +62,4 @@ pub use sky_light::{
     SKY_RADIANCE_SCALE,
 };
 pub use tonemapping::{Exposure, Tonemapping};
-pub use view_target::ViewTarget;
+pub use view_target::{Msaa, ViewPipelines, ViewTarget};

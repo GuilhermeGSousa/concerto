@@ -41,7 +41,7 @@ use crate::{
         update_window,
     },
     tonemapping::{tonemap_cameras, Exposure, Tonemapping, TonemappingPipeline},
-    view_target::prepare_view_targets,
+    view_target::{prepare_view_targets, resolve_view_targets, Msaa},
 };
 use concerto_app::{
     edit_time::AtEditTime,
@@ -117,6 +117,7 @@ impl Plugin for RenderPlugin {
             .register_type::<CameraEnvironment>()
             .register_type::<Tonemapping>()
             .register_type::<Exposure>()
+            .register_type::<Msaa>()
             .register_type::<SyncWithRenderWorld>()
             .register_type::<NoFrustumCulling>()
             .register_type::<NotShadowCaster>()
@@ -188,6 +189,15 @@ impl Plugin for RenderPlugin {
                 .after(RenderSet::Background)
                 .after(RenderSet::Draw)
                 .after(RenderSet::Transparent),
+        )
+        .add_render_system(
+            Render,
+            resolve_view_targets
+                .after(RenderSet::Background)
+                .after(RenderSet::Draw)
+                .after(RenderSet::Transparent)
+                .before(RenderSet::PostProcess)
+                .before(RenderSet::Tonemap),
         )
         .add_render_system(Render, rebind_sky_radiance.before(RenderSet::Background))
         .add_render_system(Render, clear_draw_stats.in_set(RenderSet::Queue))
