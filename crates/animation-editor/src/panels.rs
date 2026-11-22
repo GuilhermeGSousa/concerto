@@ -78,9 +78,9 @@ struct InspectorPanel {
 
 fn toggle_root_motion(document: Entity) -> Listener<UICheckboxChanged> {
     (move |on: On<UICheckboxChanged>,
-           documents: Query<&mut ClipDocument>,
+           mut documents: Query<&mut ClipDocument>,
            mut previews: PreviewSignals| {
-        if let Some(mut state) = documents.get_entity(document) {
+        if let Some(mut state) = documents.get_entity_mut(document) {
             state.root_motion = on.signal().checked;
             previews.trigger(document, SetRootMotion(state.root_motion));
         }
@@ -90,9 +90,9 @@ fn toggle_root_motion(document: Entity) -> Listener<UICheckboxChanged> {
 
 fn toggle_skeleton(document: Entity) -> Listener<UICheckboxChanged> {
     (move |on: On<UICheckboxChanged>,
-           documents: Query<&mut ClipDocument>,
+           mut documents: Query<&mut ClipDocument>,
            mut previews: PreviewSignals| {
-        if let Some(mut state) = documents.get_entity(document) {
+        if let Some(mut state) = documents.get_entity_mut(document) {
             state.skeleton_gizmo = on.signal().checked;
             previews.trigger(document, SetSkeletonGizmo(state.skeleton_gizmo));
         }
@@ -101,8 +101,8 @@ fn toggle_skeleton(document: Entity) -> Listener<UICheckboxChanged> {
 }
 
 fn select_event(document: Entity) -> Listener<TimelineMarkerSelected> {
-    (move |on: On<TimelineMarkerSelected>, documents: Query<&mut ClipDocument>| {
-        let Some(mut state) = documents.get_entity(document) else {
+    (move |on: On<TimelineMarkerSelected>, mut documents: Query<&mut ClipDocument>| {
+        let Some(mut state) = documents.get_entity_mut(document) else {
             return;
         };
         let index = on
@@ -118,11 +118,11 @@ fn select_event(document: Entity) -> Listener<TimelineMarkerSelected> {
 
 fn move_event(document: Entity) -> Listener<TimelineMarkerMoved> {
     (move |on: On<TimelineMarkerMoved>,
-           documents: Query<(&mut EditorDocument, &mut ClipDocument)>,
+           mut documents: Query<(&mut EditorDocument, &mut ClipDocument)>,
            mut cmd: CommandQueue| {
         let index = on.signal().index;
         let time = on.signal().time;
-        let Some((mut editor, mut state)) = documents.get_entity(document) else {
+        let Some((mut editor, mut state)) = documents.get_entity_mut(document) else {
             return;
         };
         if state
@@ -141,7 +141,7 @@ fn move_event(document: Entity) -> Listener<TimelineMarkerMoved> {
 fn toggle_scene_picker(document: Entity) -> Listener<UIClick> {
     (move |on: On<UIClick>,
            documents: Query<&ClipDocument>,
-           menus: Query<(Entity, &mut AssetPickerMenu, &mut UIAnchoredPanel)>,
+           mut menus: Query<(Entity, &mut AssetPickerMenu, &mut UIAnchoredPanel)>,
            assets: Res<AssetRegistry>,
            theme: Res<UITheme>,
            mut cmd: CommandQueue| {
@@ -157,7 +157,7 @@ fn toggle_scene_picker(document: Entity) -> Listener<UIClick> {
             None,
             current,
             pick_scene(document),
-            &menus,
+            &mut menus,
             &assets,
             &theme,
             &mut cmd,
@@ -169,18 +169,18 @@ fn toggle_scene_picker(document: Entity) -> Listener<UIClick> {
 fn pick_scene(document: Entity) -> impl Fn(AssetId) -> Listener<UIClick> {
     move |id| {
         (move |on: On<UIClick>,
-               menus: Query<&mut UIAnchoredPanel, With<AssetPickerMenu>>,
-               documents: Query<(&EditorDocument, &mut ClipDocument)>,
+               mut menus: Query<&mut UIAnchoredPanel, With<AssetPickerMenu>>,
+               mut documents: Query<(&EditorDocument, &mut ClipDocument)>,
                project: Res<ProjectState>,
                assets: Res<AssetRegistry>,
                mut previews: PreviewSignals| {
             if on.signal().button != MouseButton::Left {
                 return;
             }
-            for mut panel in menus.iter() {
+            for mut panel in menus.iter_mut() {
                 panel.open = false;
             }
-            let Some((editor, mut state)) = documents.get_entity(document) else {
+            let Some((editor, mut state)) = documents.get_entity_mut(document) else {
                 return;
             };
             state.picked_scene = Some(id);
@@ -369,32 +369,39 @@ fn rate_fact(rate: f32, stored: bool) -> String {
     }
 }
 
+pub(crate) fn write_text(texts: &mut Query<&mut UIText>, entity: Entity, value: &str) {
+    if let Some(mut text) = texts.get_entity_mut(entity)
+        && text.text != value
+    {
+        text.text = value.to_owned();
+    }
+}
+
+pub(crate) fn write_line(
+    texts: &mut Query<&mut UIText>,
+    nodes: &mut Query<&mut UINode>,
+    entity: Entity,
+    value: &str,
+) {
+    write_text(texts, entity, value);
+    if let Some(mut node) = nodes.get_entity_mut(entity)
+        && node.visible == value.is_empty()
+    {
+        node.visible = !value.is_empty();
+    }
+}
+
 pub(crate) fn sync_clip_panels(
     documents: Query<(&EditorDocument, &ClipDocument, &ClipPanels)>,
-    timelines: Query<&mut Timeline>,
-    texts: Query<&mut UIText>,
-    nodes: Query<&mut UINode>,
-    checkboxes: Query<&mut UICheckbox>,
+    mut timelines: Query<&mut Timeline>,
+    mut texts: Query<&mut UIText>,
+    mut nodes: Query<&mut UINode>,
+    mut checkboxes: Query<&mut UICheckbox>,
     assets: Res<AssetRegistry>,
     theme: Res<UITheme>,
 ) {
-    let write_text = |entity: Entity, value: &str| {
-        if let Some(mut text) = texts.get_entity(entity)
-            && text.text != value
-        {
-            text.text = value.to_owned();
-        }
-    };
-    let write_line = |entity: Entity, value: &str| {
-        write_text(entity, value);
-        if let Some(mut node) = nodes.get_entity(entity)
-            && node.visible == value.is_empty()
-        {
-            node.visible = !value.is_empty();
-        }
-    };
-    let write_checked = |entity: Entity, checked: bool| {
-        if let Some(mut checkbox) = checkboxes.get_entity(entity)
+    let mut write_checked = |entity: Entity, checked: bool| {
+        if let Some(mut checkbox) = checkboxes.get_entity_mut(entity)
             && checkbox.checked != checked
         {
             checkbox.checked = checked;
@@ -405,7 +412,7 @@ pub(crate) fn sync_clip_panels(
         let left = &panels.left;
         let inspector = &panels.inspector;
 
-        if let Some(mut timeline) = timelines.get_entity(panels.timeline) {
+        if let Some(mut timeline) = timelines.get_entity_mut(panels.timeline) {
             if timeline.selection.is_some() {
                 timeline.selection = None;
             }
@@ -426,21 +433,42 @@ pub(crate) fn sync_clip_panels(
         let scene = state
             .shown_scene
             .map_or_else(|| NO_VALUE.to_owned(), |id| asset_name(&assets, id));
-        write_text(left.scene, &scene);
+        write_text(&mut texts, left.scene, &scene);
         write_checked(left.skeleton, state.skeleton_gizmo);
-        write_line(left.scene_error, state.scene_error.as_deref().unwrap_or(""));
+        write_line(
+            &mut texts,
+            &mut nodes,
+            left.scene_error,
+            state.scene_error.as_deref().unwrap_or(""),
+        );
 
         write_checked(inspector.root_motion, state.root_motion);
 
-        write_text(inspector.duration, &format!("{:.2} s", facts.duration));
+        write_text(
+            &mut texts,
+            inspector.duration,
+            &format!("{:.2} s", facts.duration),
+        );
         let frames = facts.frames.map(|frames| frames.to_string());
-        write_text(inspector.frames, frames.as_deref().unwrap_or(NO_VALUE));
+        write_text(
+            &mut texts,
+            inspector.frames,
+            frames.as_deref().unwrap_or(NO_VALUE),
+        );
         let rate = facts.rate.map(|rate| rate_fact(rate, facts.rate_is_stored));
-        write_text(inspector.rate, rate.as_deref().unwrap_or(NO_VALUE));
-        write_text(inspector.clip_bones, &facts.clip_bones.to_string());
+        write_text(
+            &mut texts,
+            inspector.rate,
+            rate.as_deref().unwrap_or(NO_VALUE),
+        );
+        write_text(
+            &mut texts,
+            inspector.clip_bones,
+            &facts.clip_bones.to_string(),
+        );
         let driven = format!("{} of {}", facts.driven, facts.skeleton_bones);
-        write_text(inspector.driven, &driven);
-        if let Some(mut text) = texts.get_entity(inspector.driven) {
+        write_text(&mut texts, inspector.driven, &driven);
+        if let Some(mut text) = texts.get_entity_mut(inspector.driven) {
             let color = if facts.driven == facts.clip_bones {
                 theme.text
             } else {
@@ -450,7 +478,7 @@ pub(crate) fn sync_clip_panels(
                 text.color = color;
             }
         }
-        write_line(inspector.status, &document.status);
+        write_line(&mut texts, &mut nodes, inspector.status, &document.status);
     }
 }
 

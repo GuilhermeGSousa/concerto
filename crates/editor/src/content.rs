@@ -423,7 +423,7 @@ fn spawn_new_rows(
 fn update_filter(
     mut changes: EventReader<UITextInputChanged>,
     filters: Query<&Filter>,
-    views: Query<&mut UIScrollArea, With<ContentView>>,
+    mut views: Query<&mut UIScrollArea, With<ContentView>>,
     mut state: ResMut<ContentState>,
 ) {
     let mut reset = false;
@@ -433,7 +433,7 @@ fn update_filter(
             reset = true;
         }
     }
-    if reset && let Some(mut area) = views.iter().next() {
+    if reset && let Some(mut area) = views.iter_mut().next() {
         area.offset = 0.0;
     }
 }
@@ -443,7 +443,7 @@ fn select_kind(
     tags: Query<&Tag>,
     project: Res<ProjectState>,
     mut state: ResMut<ContentState>,
-    views: Query<&mut UIScrollArea, With<ContentView>>,
+    mut views: Query<&mut UIScrollArea, With<ContentView>>,
 ) {
     if on.signal().button != MouseButton::Left || project.busy() {
         return;
@@ -452,7 +452,7 @@ fn select_kind(
         return;
     };
     state.kind = tag.0;
-    if let Some(mut area) = views.iter().next() {
+    if let Some(mut area) = views.iter_mut().next() {
         area.offset = 0.0;
     }
 }
@@ -525,8 +525,8 @@ fn start_from_dropdown(kind: &'static str) -> Listener<UIClick> {
            mut project: ResMut<ProjectState>,
            registry: Res<AssetRegistry>,
            mut state: ResMut<ContentState>,
-           filters: Query<&mut UITextInput, With<Filter>>,
-           menus: Query<&mut UIAnchoredPanel, NewMenus>| {
+           mut filters: Query<&mut UITextInput, With<Filter>>,
+           mut menus: Query<&mut UIAnchoredPanel, NewMenus>| {
         if on.signal().button != MouseButton::Left {
             return;
         }
@@ -537,8 +537,8 @@ fn start_from_dropdown(kind: &'static str) -> Listener<UIClick> {
             &mut project,
             &registry,
             &mut state,
-            &filters,
-            &menus,
+            &mut filters,
+            &mut menus,
         );
     })
     .into_listener()
@@ -549,8 +549,8 @@ fn start_from_menu(kind: &'static str) -> Listener<UIClick> {
            mut project: ResMut<ProjectState>,
            registry: Res<AssetRegistry>,
            mut state: ResMut<ContentState>,
-           filters: Query<&mut UITextInput, With<Filter>>,
-           menus: Query<&mut UIAnchoredPanel, NewMenus>,
+           mut filters: Query<&mut UITextInput, With<Filter>>,
+           mut menus: Query<&mut UIAnchoredPanel, NewMenus>,
            targets: Query<&ContentMenu>| {
         if on.signal().button != MouseButton::Left {
             return;
@@ -562,8 +562,8 @@ fn start_from_menu(kind: &'static str) -> Listener<UIClick> {
             &mut project,
             &registry,
             &mut state,
-            &filters,
-            &menus,
+            &mut filters,
+            &mut menus,
         );
     })
     .into_listener()
@@ -572,10 +572,10 @@ fn start_from_menu(kind: &'static str) -> Listener<UIClick> {
 fn open_folder_menu(key: String) -> Listener<UIItemContextMenu> {
     (move |on: On<UIItemContextMenu>,
            project: Res<ProjectState>,
-           menus: Query<(&mut ContentMenu, &mut UIAnchoredPanel)>| {
+           mut menus: Query<(&mut ContentMenu, &mut UIAnchoredPanel)>| {
         if let Some(open) = project.project.as_ref() {
             let folder = format!("{}/{key}", open.content_root);
-            open_content_menu(folder, on.signal().position, Some(on.entity()), &menus);
+            open_content_menu(folder, on.signal().position, Some(on.entity()), &mut menus);
         }
     })
     .into_listener()
@@ -584,14 +584,14 @@ fn open_folder_menu(key: String) -> Listener<UIItemContextMenu> {
 fn open_root_menu(
     on: On<UIClick>,
     project: Res<ProjectState>,
-    menus: Query<(&mut ContentMenu, &mut UIAnchoredPanel)>,
+    mut menus: Query<(&mut ContentMenu, &mut UIAnchoredPanel)>,
 ) {
     let click = on.signal();
     if click.button != MouseButton::Right {
         return;
     }
     if let Some(open) = project.project.as_ref() {
-        open_content_menu(open.content_root.clone(), click.position, None, &menus);
+        open_content_menu(open.content_root.clone(), click.position, None, &mut menus);
     }
 }
 
@@ -599,9 +599,9 @@ fn open_content_menu(
     folder: String,
     position: glam::Vec2,
     owner: Option<Entity>,
-    menus: &Query<(&mut ContentMenu, &mut UIAnchoredPanel)>,
+    menus: &mut Query<(&mut ContentMenu, &mut UIAnchoredPanel)>,
 ) {
-    for (mut menu, mut panel) in menus.iter() {
+    for (mut menu, mut panel) in menus.iter_mut() {
         if menu.folder != folder {
             menu.folder = folder.clone();
         }
@@ -617,10 +617,10 @@ fn start_new(
     project: &mut ResMut<ProjectState>,
     registry: &AssetRegistry,
     state: &mut ContentState,
-    filters: &Query<&mut UITextInput, With<Filter>>,
-    menus: &Query<&mut UIAnchoredPanel, NewMenus>,
+    filters: &mut Query<&mut UITextInput, With<Filter>>,
+    menus: &mut Query<&mut UIAnchoredPanel, NewMenus>,
 ) {
-    for mut panel in menus.iter() {
+    for mut panel in menus.iter_mut() {
         if panel.open {
             panel.open = false;
         }
@@ -647,7 +647,7 @@ fn start_new(
     state.reveal = state.pending.as_ref().map(PendingAsset::key);
     state.filter.clear();
     state.kind = 0;
-    for mut input in filters.iter() {
+    for mut input in filters.iter_mut() {
         if !input.value.is_empty() {
             input.value.clear();
             input.cursor = 0;
@@ -902,7 +902,7 @@ fn sync_new_items(
 fn open_item(
     on: On<UIItemActivated>,
     items: Query<(&ContentItem, Option<&UIItem>)>,
-    elements: Query<&mut UITreeElement>,
+    mut elements: Query<&mut UITreeElement>,
     trees: Query<&UITree>,
     project: Res<ProjectState>,
     mut commands: ResMut<EditorCommands>,
@@ -921,7 +921,7 @@ fn open_item(
             let filtering = placed
                 .and_then(|placed| trees.get_entity(placed.owner()))
                 .is_some_and(|tree| tree.filtering);
-            if !filtering && let Some(mut element) = elements.get_entity(entity) {
+            if !filtering && let Some(mut element) = elements.get_entity_mut(entity) {
                 element.expanded = !element.expanded;
             }
         }
@@ -1156,11 +1156,11 @@ fn reconcile_content_tree(
     project: Res<ProjectState>,
     registry: Res<AssetRegistry>,
     mut state: ResMut<ContentState>,
-    views: Query<(Entity, &mut UITree), With<ContentView>>,
-    items: Query<(&mut ContentItem, Option<&UIHidden>, Option<&UIItem>)>,
+    mut views: Query<(Entity, &mut UITree), With<ContentView>>,
+    mut items: Query<(&mut ContentItem, Option<&UIHidden>, Option<&UIItem>)>,
     parents: Query<&ChildOf>,
-    texts: Query<&mut UIText>,
-    materials: Query<&mut UIMaterial>,
+    mut texts: Query<&mut UIText>,
+    mut materials: Query<&mut UIMaterial>,
     counts: Query<Entity, With<CountLabel>>,
     theme: Res<UITheme>,
     icons: Res<AssetIcons>,
@@ -1174,7 +1174,7 @@ fn reconcile_content_tree(
     {
         return;
     }
-    let Some((view, mut tree)) = views.iter().next() else {
+    let Some((view, mut tree)) = views.iter_mut().next() else {
         return;
     };
     let filtering = !state.filter.is_empty() || state.kind != 0;
@@ -1233,17 +1233,17 @@ fn reconcile_content_tree(
                 if parents.get_entity(item).map(ChildOf::parent) != Some(parent) {
                     cmd.add_child(parent, item);
                 }
-                if let Some((mut content, hidden, _)) = items.get_entity(item) {
+                if let Some((mut content, hidden, _)) = items.get_entity_mut(item) {
                     if content.icon != entry.icon {
                         content.icon = entry.icon;
                     }
                     if let ContentKey::Pending { .. } = entry.key {
-                        if let Some(mut material) = materials.get_entity(content.label)
+                        if let Some(mut material) = materials.get_entity_mut(content.label)
                             && material.border_color != error_border
                         {
                             material.border_color = error_border;
                         }
-                    } else if let Some(mut text) = texts.get_entity(content.label)
+                    } else if let Some(mut text) = texts.get_entity_mut(content.label)
                         && text.text != entry.name
                     {
                         text.text = entry.name.to_string();
@@ -1288,7 +1288,7 @@ fn reconcile_content_tree(
             None => state.reveal = None,
             Some(item)
                 if items
-                    .get_entity(item)
+                    .get_entity_mut(item)
                     .is_some_and(|(_, _, placed)| placed.is_some()) =>
             {
                 cmd.entity(item).trigger(UIReveal);
@@ -1304,7 +1304,7 @@ fn reconcile_content_tree(
         None => format!("{} assets", matching.len()),
     };
     for label in counts.iter() {
-        if let Some(mut text) = texts.get_entity(label)
+        if let Some(mut text) = texts.get_entity_mut(label)
             && text.text != count
         {
             text.text = count.clone();
@@ -1323,7 +1323,7 @@ fn sync_content_items(
         )>,
     >,
     mut deselected: RemovedComponents<UISelected>,
-    texts: Query<&mut UIText>,
+    mut texts: Query<&mut UIText>,
     theme: Res<UITheme>,
 ) {
     let mut rows: HashSet<Entity> = deselected.read().collect();
@@ -1332,7 +1332,7 @@ fn sync_content_items(
             ContentKey::Folder(_) if element.expanded => glyph::FOLDER_OPEN,
             _ => item.icon,
         };
-        if let Some(mut text) = texts.get_entity(item.icon_node) {
+        if let Some(mut text) = texts.get_entity_mut(item.icon_node) {
             draw_row_icon(&mut text, &theme, glyph, selected.is_some());
         }
     };
@@ -1349,9 +1349,9 @@ fn sync_content_items(
 fn render_tags(
     state: Res<ContentState>,
     theme: Res<UITheme>,
-    tags: Query<(&Tag, &mut UIMaterial, &mut UIText)>,
+    mut tags: Query<(&Tag, &mut UIMaterial, &mut UIText)>,
 ) {
-    for (tag, mut material, mut text) in tags.iter() {
+    for (tag, mut material, mut text) in tags.iter_mut() {
         let colors = theme.chip_colors(tag.0 == state.kind);
         let fill = colors.fill.to_linear();
         if material.color != fill {

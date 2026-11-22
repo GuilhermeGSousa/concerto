@@ -1217,14 +1217,14 @@ fn settle(
 
 pub(crate) fn apply_graph_edit(
     on: On<EditGraph>,
-    documents: Query<(&mut EditorDocument, &mut GraphDocument, Option<&HostedApp>)>,
+    mut documents: Query<(&mut EditorDocument, &mut GraphDocument, Option<&HostedApp>)>,
     assets: Res<AssetRegistry>,
     project: Res<ProjectState>,
     mut edited: EventWriter<GraphEdited>,
     mut cmd: CommandQueue,
 ) {
     let EditGraph { document, edit } = on.signal();
-    let Some((mut editor, mut state, hosted)) = documents.get_entity(*document) else {
+    let Some((mut editor, mut state, hosted)) = documents.get_entity_mut(*document) else {
         return;
     };
     let before = Shown::of(&state);
@@ -1271,12 +1271,12 @@ pub(crate) fn apply_graph_edit(
 
 pub(crate) fn finish_state_creation(
     mut created: EventReader<AssetCreation>,
-    documents: Query<(Entity, &mut EditorDocument, &mut GraphDocument)>,
+    mut documents: Query<(Entity, &mut EditorDocument, &mut GraphDocument)>,
     mut edited: EventWriter<GraphEdited>,
     mut cmd: CommandQueue,
 ) {
     for creation in created.read() {
-        for (document, mut editor, mut state) in documents.iter() {
+        for (document, mut editor, mut state) in documents.iter_mut() {
             let Some(at) = state
                 .creating
                 .iter()
@@ -1351,7 +1351,7 @@ fn hold(
 }
 
 pub(crate) fn load_graph(
-    documents: Query<(
+    mut documents: Query<(
         Entity,
         &mut EditorDocument,
         &mut GraphDocument,
@@ -1364,7 +1364,7 @@ pub(crate) fn load_graph(
     let Some(root) = project.project.as_ref().map(|project| project.root.clone()) else {
         return;
     };
-    for (entity, mut document, mut state, hosted, failed) in documents.iter() {
+    for (entity, mut document, mut state, hosted, failed) in documents.iter_mut() {
         if hosted.is_none() && failed.is_none() {
             continue;
         }
@@ -1386,12 +1386,12 @@ pub(crate) fn load_graph(
 
 pub(crate) fn restore_discarded_graph(
     on: On<DiscardEdits>,
-    documents: Query<(&EditorDocument, &mut GraphDocument, Option<&HostedApp>)>,
+    mut documents: Query<(&EditorDocument, &mut GraphDocument, Option<&HostedApp>)>,
     project: Res<ProjectState>,
     mut cmd: CommandQueue,
 ) {
     let document = on.signal().0;
-    let Some((editor, mut state, hosted)) = documents.get_entity(document) else {
+    let Some((editor, mut state, hosted)) = documents.get_entity_mut(document) else {
         return;
     };
     let (Some(project), Some(asset)) = (&project.project, &editor.current) else {
@@ -1409,14 +1409,14 @@ pub(crate) fn restore_discarded_graph(
 
 pub(crate) fn follow_value_edits(
     mut committed: EventReader<Hosted<PropertyCommitted>>,
-    documents: Query<&mut GraphDocument>,
+    mut documents: Query<&mut GraphDocument>,
     mut cmd: CommandQueue,
 ) {
     for hosted in committed.read() {
         if hosted.event.result.is_err() || !hosted.event.address.target.saved() {
             continue;
         }
-        let Some(mut state) = documents.get_entity(hosted.document) else {
+        let Some(mut state) = documents.get_entity_mut(hosted.document) else {
             continue;
         };
         if let Some(held) = state.held_mut() {
@@ -1428,9 +1428,9 @@ pub(crate) fn follow_value_edits(
 
 pub(crate) fn clear_status_on_edit(
     on: On<Add<Unsaved>>,
-    documents: Query<(&mut EditorDocument, &GraphDocument)>,
+    mut documents: Query<(&mut EditorDocument, &GraphDocument)>,
 ) {
-    if let Some((mut document, state)) = documents.get_entity(on.signal().entity) {
+    if let Some((mut document, state)) = documents.get_entity_mut(on.signal().entity) {
         let status = state.selected_warning().unwrap_or_default();
         if document.status != status {
             document.status = status;

@@ -40,7 +40,7 @@ What each does:
 | With | Happens |
 |---|---|
 | `Sun` | Its light's color is multiplied by a `LightTint`, the light left after crossing the atmosphere: near white at noon, warmer and dimmer as the sun sets, zero below the horizon. This holds whether or not any camera has a `Sky`. |
-| `Sky` | The camera draws the sky and the sun's disk behind the scene. Its ambient light comes from the sky, as spherical harmonics, instead of `CameraEnvironment::ambient`. Its fog takes the sky's color in the direction you look instead of `Fog::color`. |
+| `Sky` | The camera draws the sky and the sun's disk behind the scene. Its ambient light comes from the sky, as spherical harmonics, instead of `CameraEnvironment::ambient`. The standard material reflects the sky from the radiance map, whose mip levels are the blur a rough surface shows. Its fog takes the sky's color in the direction you look instead of `Fog::color`. |
 | `Sky` whose `sun` is unset or names no directional `Sun` | Night: only `night_color` and `night_ambient`, with a warning. |
 | neither | The scene draws as it did before. |
 

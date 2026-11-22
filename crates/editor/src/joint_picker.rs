@@ -109,7 +109,7 @@ fn toggle_joint_menu(row: Entity) -> Listener<UIClick> {
            active: Res<ActiveEditor>,
            documents: Query<&DocumentBones>,
            values: Query<&PropertyRowValue>,
-           menus: Query<(Entity, &mut UIAnchoredPanel), With<NameMenu>>,
+           mut menus: Query<(Entity, &mut UIAnchoredPanel), With<NameMenu>>,
            theme: Res<UITheme>,
            mut cmd: CommandQueue| {
         if on.signal().button != MouseButton::Left {
@@ -124,7 +124,7 @@ fn toggle_joint_menu(row: Entity) -> Listener<UIClick> {
             bones,
             current.as_deref(),
             |name| pick_joint(row, name.into()),
-            &menus,
+            &mut menus,
             &theme,
             &mut cmd,
         );
@@ -134,14 +134,14 @@ fn toggle_joint_menu(row: Entity) -> Listener<UIClick> {
 
 fn pick_joint(row: Entity, name: JointName) -> Listener<UIClick> {
     (move |on: On<UIClick>,
-           menus: Query<&mut UIAnchoredPanel, With<NameMenu>>,
+           mut menus: Query<&mut UIAnchoredPanel, With<NameMenu>>,
            rows: Query<&PropertyRow>,
            values: Query<&PropertyRowValue>,
            mut commits: ResMut<PropertyCommits>| {
         if on.signal().button != MouseButton::Left {
             return;
         }
-        close_menu(&menus);
+        close_menu(&mut menus);
         let Some(target) = rows.get_entity(row) else {
             return;
         };
@@ -159,13 +159,13 @@ pub(crate) fn refresh_joint_rows(
     active: Res<ActiveEditor>,
     documents: Query<&DocumentBones>,
     values: Query<&PropertyRowValue>,
-    labels: Query<(&JointNameLabel, &mut UIText)>,
+    mut labels: Query<(&JointNameLabel, &mut UIText)>,
     disabled: Query<&UIDisabled>,
     theme: Res<UITheme>,
     mut cmd: CommandQueue,
 ) {
     let bones = front_bones(&active, &documents);
-    for (label, mut text) in labels.iter() {
+    for (label, mut text) in labels.iter_mut() {
         let Some(name) = joint_of(&values, label.row) else {
             continue;
         };

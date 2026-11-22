@@ -6,7 +6,7 @@ use crate::{
     component::{ComponentId, SystemTicks, bundle::ComponentBundle},
     entity::Entity,
     query::world_query::WorldQuery,
-    system::access::SystemAccess,
+    system::access::{QueryShape, SystemAccess},
     world::UnsafeWorldCell,
 };
 use typle::typle;
@@ -30,6 +30,12 @@ pub trait QueryFilter: WorldQuery {
 
     /// Registers what [`QueryFilter::filter`] reads with the scheduler's access tracker.
     fn fill_access(_access: &mut SystemAccess) {}
+
+    /// Adds the components every match of this filter has, or lacks, to `shape`.
+    fn fill_shape(_shape: &mut QueryShape) {}
+
+    /// Adds the components every entity this filter rejects has, or lacks, to `shape`.
+    fn fill_rejected_shape(_shape: &mut QueryShape) {}
 }
 
 #[allow(unused_mut)]
@@ -53,6 +59,12 @@ where
     fn fill_access(access: &mut SystemAccess) {
         for typle_index!(i) in 0..T::LEN {
             <T<{ i }>>::fill_access(access);
+        }
+    }
+
+    fn fill_shape(shape: &mut QueryShape) {
+        for typle_index!(i) in 0..T::LEN {
+            <T<{ i }>>::fill_shape(shape);
         }
     }
 }
@@ -94,6 +106,12 @@ where
     fn fill_access(access: &mut SystemAccess) {
         access.read_component::<T>();
     }
+
+    fn fill_shape(shape: &mut QueryShape) {
+        for component in T::get_component_ids() {
+            shape.require(component);
+        }
+    }
 }
 
 /// Matches entities where the given components were **added or mutated** since the system last ran.
@@ -132,6 +150,12 @@ where
     }
     fn fill_access(access: &mut SystemAccess) {
         access.read_component::<T>();
+    }
+
+    fn fill_shape(shape: &mut QueryShape) {
+        for component in T::get_component_ids() {
+            shape.require(component);
+        }
     }
 }
 
@@ -176,6 +200,18 @@ where
             None => false,
         }
     }
+
+    fn fill_shape(shape: &mut QueryShape) {
+        for component in T::get_component_ids() {
+            shape.require(component);
+        }
+    }
+
+    fn fill_rejected_shape(shape: &mut QueryShape) {
+        if let [component] = T::get_component_ids()[..] {
+            shape.exclude(component);
+        }
+    }
 }
 
 /// Inverts a [`QueryFilter`]: matches entities that do **not** satisfy `T`.
@@ -209,6 +245,14 @@ where
 
     fn fill_access(access: &mut SystemAccess) {
         T::fill_access(access);
+    }
+
+    fn fill_shape(shape: &mut QueryShape) {
+        T::fill_rejected_shape(shape);
+    }
+
+    fn fill_rejected_shape(shape: &mut QueryShape) {
+        T::fill_shape(shape);
     }
 }
 

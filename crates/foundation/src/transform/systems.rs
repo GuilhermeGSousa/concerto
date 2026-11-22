@@ -4,7 +4,7 @@ use concerto_ecs::{
         Entity,
     },
     query::{
-        filter::{Changed, Without},
+        filter::{Changed, With, Without},
         Query,
     },
 };
@@ -19,20 +19,23 @@ type SimpleEntities<'world, 'state> = Query<
     (Changed<Transform>, Without<ChildOf>, Without<Children>),
 >;
 
-pub fn update_simple_entities(roots: SimpleEntities<'_, '_>) {
-    for (local_transform, mut global_transform) in roots.iter() {
+pub fn update_simple_entities(mut roots: SimpleEntities<'_, '_>) {
+    for (local_transform, mut global_transform) in roots.iter_mut() {
         global_transform.set_if_neq(GlobalTransform::new(local_transform.compute_matrix()));
     }
 }
 
 pub fn propagate_global_transforms(
-    roots: Query<(&Children, &mut GlobalTransform, &Transform), Without<ChildOf>>,
-    transform_query: Query<(Entity, &mut GlobalTransform, &Transform, Option<&Children>)>,
+    mut roots: Query<(&Children, &mut GlobalTransform, &Transform), Without<ChildOf>>,
+    mut transform_query: Query<
+        (Entity, &mut GlobalTransform, &Transform, Option<&Children>),
+        With<ChildOf>,
+    >,
 ) {
     let mut visited = HashSet::new();
     let mut stack = Vec::new();
 
-    for (root_children, mut root_global_transform, root_local_transform) in roots.iter() {
+    for (root_children, mut root_global_transform, root_local_transform) in roots.iter_mut() {
         let root_matrix = root_local_transform.compute_matrix();
         root_global_transform.set_if_neq(GlobalTransform::new(root_matrix));
         stack.extend(
@@ -49,7 +52,7 @@ pub fn propagate_global_transforms(
             }
 
             if let Some((_, mut global_transform, local_transform, children)) =
-                transform_query.get_entity(entity)
+                transform_query.get_entity_mut(entity)
             {
                 let matrix = parent_matrix * local_transform.compute_matrix();
                 global_transform.set_if_neq(GlobalTransform::new(matrix));

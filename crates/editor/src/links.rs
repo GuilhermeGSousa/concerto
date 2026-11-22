@@ -332,7 +332,7 @@ fn fill_inspector_headers(
         Option<Res<AssetStore<Scene>>>,
     )>,
     assets: Option<Res<AssetRegistry>>,
-    headers: Query<(Entity, Ref<InspectorHeader>, &mut UINode, Option<&Children>)>,
+    mut headers: Query<(Entity, Ref<InspectorHeader>, &mut UINode, Option<&Children>)>,
     theme: Res<UITheme>,
     mut cmd: CommandQueue,
 ) {
@@ -344,7 +344,7 @@ fn fill_inspector_headers(
             .and_then(|assets| assets.get(id))
             .map_or_else(|| id.simple_hex(), |entry| entry.address.clone())
     };
-    for (header, inspected, mut layout, children) in headers.iter() {
+    for (header, inspected, mut layout, children) in headers.iter_mut() {
         let scene_entity = inspected.scene_entity;
         let link = links.get_entity(scene_entity).filter(|_| {
             scene_member_by(scene_entity, |entity| {

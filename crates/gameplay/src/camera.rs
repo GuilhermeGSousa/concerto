@@ -56,7 +56,7 @@ impl CameraPivot {
 
 /// Turns each pivot by the mouse and the `Look` stick; a pivot with a `ThirdPersonCamera` scales the sensitivity and takes its pitch limit from the rig's framing.
 pub fn move_camera_pivot(
-    pivots: Query<(&mut Transform, &mut CameraPivot, Option<&ThirdPersonCamera>)>,
+    mut pivots: Query<(&mut Transform, &mut CameraPivot, Option<&ThirdPersonCamera>)>,
     input: Res<Input>,
     actions: Res<ActionMap>,
     time: Res<Time>,
@@ -66,7 +66,7 @@ pub fn move_camera_pivot(
     let stick_turn =
         actions.axis2d(Look, &input) * settings.stick_turn_rate * time.delta().as_secs_f32();
 
-    for (mut transform, mut pivot, rig) in pivots.iter() {
+    for (mut transform, mut pivot, rig) in pivots.iter_mut() {
         let framing = rig.map(ThirdPersonCamera::current);
         let scale = framing.map_or(1.0, |framing| framing.sensitivity_scale);
         let sensitivity = settings.sensitivity * scale;
@@ -86,15 +86,21 @@ pub struct EntityFollow {
 }
 
 pub(crate) fn update_entity_follow(
-    follow: Query<(&EntityFollow, &mut Transform)>,
-    entities: Query<&mut Transform>,
+    follow: Query<(Entity, &EntityFollow)>,
+    mut entities: Query<&mut Transform>,
 ) {
-    for (to_follow, mut transform) in follow.iter() {
-        let Some(target) = entities.get_entity(to_follow.target) else {
+    for (entity, to_follow) in follow.iter() {
+        let Some(target) = entities
+            .get_entity_mut(to_follow.target)
+            .map(|target| target.translation)
+        else {
+            continue;
+        };
+        let Some(mut transform) = entities.get_entity_mut(entity) else {
             continue;
         };
 
-        transform.translation = target.translation + to_follow.offset;
+        transform.translation = target + to_follow.offset;
     }
 }
 
@@ -161,7 +167,7 @@ pub fn boom_distance(current: f32, allowed: f32, dt: f32, return_halflife: f32) 
 
 /// Pulls each boomed camera in toward its shoulder point when a body lies in the way, and eases it back out.
 pub fn update_camera_booms(
-    booms: Query<(&CameraBoom, &ChildOf, &mut Transform)>,
+    mut booms: Query<(&CameraBoom, &ChildOf, &mut Transform)>,
     pivots: Query<(&Transform, Option<&EntityFollow>), Without<CameraBoom>>,
     bodies: Query<&BodyId>,
     physics: Res<PhysicsState>,
@@ -169,7 +175,7 @@ pub fn update_camera_booms(
 ) {
     let dt = time.delta().as_secs_f32();
 
-    for (boom, child_of, mut transform) in booms.iter() {
+    for (boom, child_of, mut transform) in booms.iter_mut() {
         let Some((pivot, follow)) = pivots.get_entity(child_of.parent()) else {
             continue;
         };

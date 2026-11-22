@@ -7,7 +7,7 @@ use concerto_ecs::{
 };
 use concerto_foundation::assets::AssetId;
 use encase::{ShaderSize, UniformBuffer};
-use glam::{Mat4, Vec3};
+use glam::{Mat4, Vec2, Vec3};
 use wgpu::{
     util::DeviceExt, BindGroupDescriptor, Operations, RenderPassDepthStencilAttachment,
     RenderPassDescriptor, StoreOp, TextureView,
@@ -19,14 +19,16 @@ use crate::{
     },
     capabilities::RenderCapabilities,
     components::{
+        camera::RenderCamera,
         light::{
-            entity_order, LightType, RenderLight, RenderLights, RenderShadowsEnabled,
-            VisibleLights, POINT_SHADOW_NEAR,
+            entity_order, LightType, RenderLight, RenderLights, RenderShadowCascades,
+            RenderShadowsEnabled, ShadowCascades, VisibleLights, POINT_SHADOW_NEAR,
         },
         mesh::{RenderMeshInstanceFlags, RenderMeshInstances},
         render_entity::MainEntity,
         skeleton::{RenderSkeletonComponent, SkinUniforms},
     },
+    depth_pass::{DepthPassKind, DepthPassView, DepthPassViews},
     device::RenderDevice,
     frustum::Frustum,
     layouts::LightingLayout,
@@ -255,6 +257,7 @@ struct ShadowCandidate {
     entity: Entity,
     light_type: u32,
     enabled: bool,
+    layers: u32,
 }
 
 #[derive(Debug, PartialEq)]
@@ -268,25 +271,27 @@ fn assign_layers(
     spot_directional_limit: u32,
     point_limit: u32,
 ) -> AssignedLayers {
+    let mut casters: Vec<&ShadowCandidate> = lights.iter().filter(|light| light.enabled).collect();
+    casters.sort_by_key(|light| entity_order(&light.entity));
+
     let mut spot_directional = Vec::new();
     let mut point = Vec::new();
-    for light in lights {
-        if !light.enabled {
+    for light in casters {
+        let is_point = light.light_type == LightType::Point.index();
+        let slots = if is_point {
+            &mut point
+        } else {
+            &mut spot_directional
+        };
+        let limit = if is_point {
+            point_limit
+        } else {
+            spot_directional_limit
+        };
+        if slots.len() as u32 + light.layers > limit {
             continue;
         }
-        if light.light_type == LightType::Point.index() {
-            point.push(light.entity);
-        } else {
-            spot_directional.push(light.entity);
-        }
-    }
-
-    for (casters, limit) in [
-        (&mut spot_directional, spot_directional_limit),
-        (&mut point, point_limit),
-    ] {
-        casters.sort_by_key(entity_order);
-        casters.truncate(limit as usize);
+        slots.extend(std::iter::repeat_n(light.entity, light.layers as usize));
     }
 
     AssignedLayers {
@@ -302,19 +307,41 @@ fn layer_of(slots: &[Entity], entity: Entity) -> i32 {
         .map_or(-1, |layer| layer as i32)
 }
 
+fn cameras_in_order(cameras: &mut Query<(Entity, &mut RenderCamera)>) -> Vec<Entity> {
+    let mut entities: Vec<Entity> = cameras.iter_mut().map(|(entity, _)| entity).collect();
+    entities.sort_by_key(entity_order);
+    entities
+}
+
 pub(crate) fn assign_shadow_layers(
-    lights: Query<(Entity, &mut RenderLight, &RenderShadowsEnabled)>,
+    mut lights: Query<(Entity, &mut RenderLight, &RenderShadowsEnabled)>,
+    mut cameras: Query<(Entity, &mut RenderCamera)>,
     visible: Res<VisibleLights>,
     mut spot_directional_shadow_maps: ResMut<RenderSpotDirectionalShadowMaps>,
     mut point_shadow_maps: ResMut<RenderPointShadowMaps>,
+    queue: Res<RenderQueue>,
 ) {
+    let views = cameras_in_order(&mut cameras);
+    for (entity, mut camera) in cameras.iter_mut() {
+        let shadow_view = views.iter().position(|&view| view == entity).unwrap_or(0) as u32;
+        if camera.camera_uniform.shadow_view != shadow_view {
+            camera.camera_uniform.shadow_view = shadow_view;
+            camera.write_uniform(&queue);
+        }
+    }
+
     let candidates: Vec<ShadowCandidate> = lights
-        .iter()
+        .iter_mut()
         .filter(|(entity, _, _)| visible.contains(*entity))
         .map(|(entity, light, enabled)| ShadowCandidate {
             entity,
             light_type: light.light_type,
             enabled: enabled.0,
+            layers: if light.light_type == LightType::Directional.index() {
+                light.shadow_cascades * views.len() as u32
+            } else {
+                1
+            },
         })
         .collect();
 
@@ -326,7 +353,7 @@ pub(crate) fn assign_shadow_layers(
     spot_directional_shadow_maps.slots = assigned.spot_directional;
     point_shadow_maps.slots = assigned.point;
 
-    for (entity, mut light, _) in lights.iter() {
+    for (entity, mut light, _) in lights.iter_mut() {
         let slots = if light.light_type == LightType::Point.index() {
             &point_shadow_maps.slots
         } else {
@@ -516,10 +543,8 @@ pub(crate) fn resize_shadow_maps(
     }
 }
 
-const DIRECTIONAL_SHADOW_DISTANCE: f32 = 50.0;
-const DIRECTIONAL_SHADOW_HALF_EXTENT: f32 = 50.0;
-const DIRECTIONAL_SHADOW_NEAR: f32 = 0.1;
-const DIRECTIONAL_SHADOW_FAR: f32 = 200.0;
+const CASCADE_CASTER_DISTANCE: f32 = 200.0;
+const CASCADE_RADIUS_STEP: f32 = 0.0625;
 
 // Spot lights have no explicit range in this engine yet, so this is just a
 // generous fixed far plane rather than something derived from the light.
@@ -564,53 +589,140 @@ impl RenderShadowCasterViewProj {
     pub(crate) fn write(&self, queue: &wgpu::Queue, view_proj: Mat4) {
         queue.write_buffer(&self.buffer, 0, &view_proj_bytes(view_proj));
     }
+
+    pub(crate) fn bind_group(&self) -> &wgpu::BindGroup {
+        &self.bind_group
+    }
 }
 
 #[derive(Resource, Default)]
 pub(crate) struct RenderShadowCasterViewProjs(Vec<RenderShadowCasterViewProj>);
 
-pub(crate) fn update_shadow_view_proj(
-    lights: Query<&RenderLight>,
-    spot_directional_shadow_maps: Res<RenderSpotDirectionalShadowMaps>,
-    shadow_view_projs: Res<RenderShadowViewProjs>,
-    queue: Res<RenderQueue>,
-) {
-    for (layer, &entity) in spot_directional_shadow_maps.slots.iter().enumerate() {
-        if let Some(light) = lights.get_entity(entity) {
-            shadow_view_projs.write(&queue, layer as u32, shadow_view_proj(light));
-        }
-    }
+#[derive(Resource, Default)]
+pub(crate) struct SpotDirectionalClipFromWorld(Vec<Mat4>);
+
+struct CascadeCamera {
+    world_from_clip: Mat4,
+    position: Vec3,
 }
 
-fn shadow_view_proj(light: &RenderLight) -> Mat4 {
+pub(crate) fn update_shadow_view_proj(
+    lights: Query<(&RenderLight, &RenderShadowCascades)>,
+    cameras: Query<(Entity, &RenderCamera)>,
+    spot_directional_shadow_maps: Res<RenderSpotDirectionalShadowMaps>,
+    shadow_view_projs: Res<RenderShadowViewProjs>,
+    mut clip_from_world: ResMut<SpotDirectionalClipFromWorld>,
+    queue: Res<RenderQueue>,
+) {
+    let mut ordered: Vec<Entity> = cameras.iter().map(|(entity, _)| entity).collect();
+    ordered.sort_by_key(entity_order);
+    let views: Vec<CascadeCamera> = ordered
+        .iter()
+        .filter_map(|&entity| cameras.get_entity(entity))
+        .map(|(_, camera)| CascadeCamera {
+            world_from_clip: camera.camera_uniform.inverse_view_proj(),
+            position: camera.camera_uniform.view_position(),
+        })
+        .collect();
+
+    let slots = &spot_directional_shadow_maps.slots;
+    let mut matrices = Vec::with_capacity(slots.len());
+    for (layer, &entity) in slots.iter().enumerate() {
+        let Some((light, cascades)) = lights.get_entity(entity) else {
+            matrices.push(Mat4::IDENTITY);
+            continue;
+        };
+        if light.light_type != LightType::Directional.index() {
+            matrices.push(spot_view_proj(light));
+            continue;
+        }
+        let count = light.shadow_cascades.max(1) as usize;
+        let offset = layer - layer_of(slots, entity).max(0) as usize;
+        let matrix = views.get(offset / count).map_or(Mat4::IDENTITY, |view| {
+            cascade_view_proj(light.direction, view, &cascades.0, (offset % count) as u32)
+        });
+        matrices.push(matrix);
+    }
+
+    for (layer, matrix) in matrices.iter().enumerate() {
+        if clip_from_world.0.get(layer) != Some(matrix) {
+            shadow_view_projs.write(&queue, layer as u32, *matrix);
+        }
+    }
+    clip_from_world.0 = matrices;
+}
+
+fn spot_view_proj(light: &RenderLight) -> Mat4 {
     let direction = light.direction;
     let up = shadow_up_vector(direction);
+    let translation = light.translation;
+    let view = glam::camera::rh::view::look_at_mat4(translation, translation + direction, up);
+    let fov = 2.0 * light.cos_cone_angle.clamp(-1.0, 1.0).acos();
+    let proj =
+        glam::camera::rh::proj::directx::perspective(fov, 1.0, SPOT_SHADOW_NEAR, SPOT_SHADOW_FAR);
+    proj * view
+}
 
-    if light.light_type == LightType::Directional.index() {
-        let eye = -direction * DIRECTIONAL_SHADOW_DISTANCE;
-        let view = glam::camera::rh::view::look_at_mat4(eye, eye + direction, up);
-        let half = DIRECTIONAL_SHADOW_HALF_EXTENT;
-        let proj = glam::camera::rh::proj::directx::orthographic(
-            -half,
-            half,
-            -half,
-            half,
-            DIRECTIONAL_SHADOW_NEAR,
-            DIRECTIONAL_SHADOW_FAR,
-        );
-        proj * view
-    } else {
-        let translation = light.translation;
-        let view = glam::camera::rh::view::look_at_mat4(translation, translation + direction, up);
-        let fov = 2.0 * light.cos_cone_angle.clamp(-1.0, 1.0).acos();
-        let proj = glam::camera::rh::proj::directx::perspective(
-            fov,
-            1.0,
-            SPOT_SHADOW_NEAR,
-            SPOT_SHADOW_FAR,
-        );
-        proj * view
+const CLIP_CORNERS: [Vec2; 4] = [
+    Vec2::new(-1.0, -1.0),
+    Vec2::new(1.0, -1.0),
+    Vec2::new(-1.0, 1.0),
+    Vec2::new(1.0, 1.0),
+];
+
+fn cascade_view_proj(
+    direction: Vec3,
+    camera: &CascadeCamera,
+    cascades: &ShadowCascades,
+    index: u32,
+) -> Mat4 {
+    let near_corners =
+        CLIP_CORNERS.map(|corner| camera.world_from_clip.project_point3(corner.extend(0.0)));
+    let far_corners =
+        CLIP_CORNERS.map(|corner| camera.world_from_clip.project_point3(corner.extend(1.0)));
+    let near_centre = near_corners.iter().sum::<Vec3>() / 4.0;
+    let far_centre = far_corners.iter().sum::<Vec3>() / 4.0;
+    let forward = (far_centre - near_centre).normalize_or_zero();
+    let camera_near = (near_centre - camera.position).dot(forward);
+    let camera_far = (far_centre - camera.position).dot(forward);
+    let depth = (camera_far - camera_near).max(1e-6);
+    let along = |distance: f32| ((distance - camera_near) / depth).clamp(0.0, 1.0);
+    let start = along(cascades.near_bound(index));
+    let end = along(cascades.far_bound(index)).max(start + 1e-4);
+
+    let mut corners = [Vec3::ZERO; 8];
+    for corner in 0..4 {
+        let ray = far_corners[corner] - near_corners[corner];
+        corners[corner] = near_corners[corner] + ray * start;
+        corners[corner + 4] = near_corners[corner] + ray * end;
     }
+    let centre = corners.iter().sum::<Vec3>() / 8.0;
+    let reach = corners
+        .iter()
+        .map(|corner| corner.distance(centre))
+        .fold(0.0, f32::max);
+    let radius =
+        ((reach / CASCADE_RADIUS_STEP).ceil() * CASCADE_RADIUS_STEP).max(CASCADE_RADIUS_STEP);
+
+    let up = shadow_up_vector(direction);
+    let light_from_world = glam::camera::rh::view::look_at_mat4(Vec3::ZERO, direction, up);
+    let texel = 2.0 * radius / SHADOW_MAP_SIZE as f32;
+    let mut snapped = light_from_world.transform_point3(centre);
+    snapped.x = (snapped.x / texel).floor() * texel;
+    snapped.y = (snapped.y / texel).floor() * texel;
+    let centre = light_from_world.inverse().transform_point3(snapped);
+
+    let eye = centre - direction * (radius + CASCADE_CASTER_DISTANCE);
+    let view = glam::camera::rh::view::look_at_mat4(eye, centre, up);
+    let proj = glam::camera::rh::proj::directx::orthographic(
+        -radius,
+        radius,
+        -radius,
+        radius,
+        0.0,
+        2.0 * radius + CASCADE_CASTER_DISTANCE,
+    );
+    proj * view
 }
 
 struct CubeFace {
@@ -671,9 +783,17 @@ struct ShadowView {
 }
 
 impl ShadowView {
-    fn clip_from_world(&self, light: &RenderLight) -> Mat4 {
+    fn clip_from_world(
+        &self,
+        light: &RenderLight,
+        spot_directional: &SpotDirectionalClipFromWorld,
+    ) -> Mat4 {
         match self.pool {
-            ShadowPool::SpotDirectional => shadow_view_proj(light),
+            ShadowPool::SpotDirectional => spot_directional
+                .0
+                .get(self.layer)
+                .copied()
+                .unwrap_or(Mat4::IDENTITY),
             ShadowPool::Point => point_face_view_proj(
                 light.translation,
                 light.shadow_far,
@@ -719,6 +839,42 @@ fn shadow_views(
     spot_directional_views.chain(point_views).collect()
 }
 
+pub(crate) fn collect_shadow_depth_views(
+    spot_directional_shadow_maps: Res<RenderSpotDirectionalShadowMaps>,
+    point_shadow_maps: Res<RenderPointShadowMaps>,
+    clip_from_world: Res<SpotDirectionalClipFromWorld>,
+    pipeline: Res<ShadowPipeline>,
+    mut caster_view_projs: ResMut<RenderShadowCasterViewProjs>,
+    mut depth_pass_views: ResMut<DepthPassViews>,
+    lights: Query<&RenderLight>,
+    device: Res<RenderDevice>,
+) {
+    let views = shadow_views(&spot_directional_shadow_maps, &point_shadow_maps);
+    for (layer, view) in views.iter().enumerate() {
+        while caster_view_projs.0.len() <= layer {
+            caster_view_projs.0.push(RenderShadowCasterViewProj::new(
+                &device,
+                &pipeline.bind_group_layout,
+            ));
+        }
+        let (Some(light), Some(target)) = (
+            lights.get_entity(view.light),
+            view.target(&spot_directional_shadow_maps, &point_shadow_maps),
+        ) else {
+            continue;
+        };
+        depth_pass_views.0.push(DepthPassView {
+            kind: DepthPassKind::Shadow,
+            target: target.clone(),
+            view_proj: caster_view_projs.0[layer].bind_group().clone(),
+            frustum: Frustum::from_clip_from_world(view.clip_from_world(light, &clip_from_world)),
+            layers: None,
+            rect: None,
+            shadow_layer: Some(layer),
+        });
+    }
+}
+
 #[derive(Resource, Default)]
 pub(crate) struct ShadowViewBatches(pub(crate) Vec<ViewBatches<AssetId>>);
 
@@ -726,6 +882,7 @@ pub(crate) struct ShadowViewBatches(pub(crate) Vec<ViewBatches<AssetId>>);
 pub(crate) fn queue_shadow_meshes(
     spot_directional_shadow_maps: Res<RenderSpotDirectionalShadowMaps>,
     point_shadow_maps: Res<RenderPointShadowMaps>,
+    clip_from_world: Res<SpotDirectionalClipFromWorld>,
     lights: Query<&RenderLight>,
     render_mesh_query: Query<(&MainEntity, Option<&RenderSkeletonComponent>)>,
     render_mesh_instances: Res<RenderMeshInstances>,
@@ -753,7 +910,7 @@ pub(crate) fn queue_shadow_meshes(
             continue;
         };
 
-        let frustum = Frustum::from_clip_from_world(view.clip_from_world(light));
+        let frustum = Frustum::from_clip_from_world(view.clip_from_world(light, &clip_from_world));
         let candidates = render_mesh_query
             .iter()
             .filter_map(|(main_entity, skeleton)| {
@@ -761,7 +918,9 @@ pub(crate) fn queue_shadow_meshes(
                 if !instance
                     .flags
                     .contains(RenderMeshInstanceFlags::SHADOW_CASTER)
-                    || instance.flags.contains(RenderMeshInstanceFlags::BLENDED)
+                    || instance.flags.intersects(
+                        RenderMeshInstanceFlags::BLENDED | RenderMeshInstanceFlags::CUTOUT,
+                    )
                     || !render_meshes.contains(&instance.mesh_asset_id)
                 {
                     return None;
@@ -786,6 +945,7 @@ pub(crate) fn render_shadow_maps(
     spot_directional_shadow_maps: Res<RenderSpotDirectionalShadowMaps>,
     point_shadow_maps: Res<RenderPointShadowMaps>,
     mut caster_view_projs: ResMut<RenderShadowCasterViewProjs>,
+    clip_from_world: Res<SpotDirectionalClipFromWorld>,
     queue: Res<RenderQueue>,
     lights: Query<&RenderLight>,
     render_meshes: Res<RenderAssets<RenderMesh>>,
@@ -812,7 +972,7 @@ pub(crate) fn render_shadow_maps(
             ));
         }
         let view_proj = &caster_view_projs.0[layer];
-        view_proj.write(&queue, shadow_view.clip_from_world(light));
+        view_proj.write(&queue, shadow_view.clip_from_world(light, &clip_from_world));
 
         let encoder = device.command_encoder();
         let mut render_pass = encoder.begin_render_pass(&RenderPassDescriptor {
@@ -902,6 +1062,87 @@ mod tests {
             words(&identity_view_projs()),
             float_words(&Mat4::IDENTITY.to_cols_array()).repeat(MAX_SHADOW_CASTERS as usize)
         );
+    }
+
+    struct Fit {
+        case: &'static str,
+        position: Vec3,
+        rotation: glam::Quat,
+        sun: Vec3,
+    }
+
+    fn cascade_camera(position: Vec3, rotation: glam::Quat) -> CascadeCamera {
+        let view = Mat4::from_rotation_translation(rotation, position).inverse();
+        let projection = glam::camera::rh::proj::directx::perspective(1.0, 1.6, 0.1, 300.0);
+        CascadeCamera {
+            world_from_clip: (projection * view).inverse(),
+            position,
+        }
+    }
+
+    #[test]
+    fn a_cascade_holds_its_slice_of_the_view_and_moves_in_whole_texels() {
+        let cascades = ShadowCascades::new();
+        let cases = [
+            Fit {
+                case: "level, at the origin",
+                position: Vec3::ZERO,
+                rotation: glam::Quat::IDENTITY,
+                sun: Vec3::new(0.3, -1.0, 0.2).normalize(),
+            },
+            Fit {
+                case: "turned and tilted, far away",
+                position: Vec3::new(812.5, 40.0, -377.0),
+                rotation: glam::Quat::from_euler(glam::EulerRot::YXZ, 2.1, -0.7, 0.3),
+                sun: Vec3::new(-0.8, -0.4, 0.5).normalize(),
+            },
+            Fit {
+                case: "under a sun straight overhead",
+                position: Vec3::new(-3.0, 2.0, 9.0),
+                rotation: glam::Quat::from_rotation_y(-1.2),
+                sun: Vec3::NEG_Y,
+            },
+        ];
+        for case in &cases {
+            let camera = cascade_camera(case.position, case.rotation);
+            let nudged = cascade_camera(
+                case.position + Vec3::new(0.013, 0.007, -0.021),
+                case.rotation,
+            );
+            for index in 0..cascades.count {
+                let clip_from_world = cascade_view_proj(case.sun, &camera, &cascades, index);
+                for distance in [
+                    cascades.near_bound(index).max(0.1),
+                    cascades.far_bound(index),
+                ] {
+                    for corner in CLIP_CORNERS {
+                        let ray = camera.world_from_clip.project_point3(corner.extend(1.0))
+                            - case.position;
+                        let forward = case.rotation * Vec3::NEG_Z;
+                        let point = case.position + ray * (distance / ray.dot(forward));
+                        let clip = clip_from_world.project_point3(point);
+                        assert!(
+                            clip.x.abs() <= 1.001
+                                && clip.y.abs() <= 1.001
+                                && (0.0..=1.0).contains(&clip.z),
+                            "{}: cascade {index} leaves out {point} at {clip}",
+                            case.case
+                        );
+                    }
+                }
+
+                let moved = cascade_view_proj(case.sun, &nudged, &cascades, index);
+                let shift = (moved.project_point3(Vec3::ZERO)
+                    - clip_from_world.project_point3(Vec3::ZERO))
+                    * (SHADOW_MAP_SIZE as f32 / 2.0);
+                assert!(
+                    (shift.x - shift.x.round()).abs() < 0.02
+                        && (shift.y - shift.y.round()).abs() < 0.02,
+                    "{}: cascade {index} moved by {shift} texels",
+                    case.case
+                );
+            }
+        }
     }
 
     #[test]
@@ -1126,6 +1367,14 @@ mod tests {
             entity,
             light_type,
             enabled,
+            layers: 1,
+        }
+    }
+
+    fn cascaded(entity: Entity, layers: u32) -> ShadowCandidate {
+        ShadowCandidate {
+            layers,
+            ..caster(entity, directional(), true)
         }
     }
 
@@ -1196,6 +1445,23 @@ mod tests {
                         caster(c, spot(), true),
                     ],
                     vec![a, b],
+                )
+            },
+            assignment(
+                "a directional takes a layer for each cascade of each camera",
+                vec![caster(a, spot(), true), cascaded(b, 3)],
+                vec![a, b, b, b],
+            ),
+            Assignment {
+                spot_limit: 3,
+                ..assignment(
+                    "cascades that do not fit are left out whole",
+                    vec![
+                        caster(a, spot(), true),
+                        cascaded(b, 3),
+                        caster(c, spot(), true),
+                    ],
+                    vec![a, c],
                 )
             },
             assignment(
@@ -1346,7 +1612,10 @@ mod tests {
             .register_plugin(ShadowPipelinePlugin)
             .register_plugin(MaterialPlugin::<StandardMaterial>::default());
         app.main_mut().world_mut().register_component::<Transform>();
-        spawn(&mut app, Light::directional_light().with_shadows());
+        let sun = spawn(&mut app, Light::directional_light().with_shadows());
+        app.main_mut()
+            .world_mut()
+            .insert(ShadowCascades::new().with_count(1), sun);
         app.main_mut()
             .world_mut()
             .spawn((Camera::default(), Transform::IDENTITY));

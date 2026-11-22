@@ -51,10 +51,10 @@ pub(super) struct AddComponentMenuContents {
 
 pub(super) fn forget_scene(
     _: On<Remove<EditTarget>>,
-    menus: Query<(Entity, &AddComponentMenu, &mut UIAnchoredPanel)>,
+    mut menus: Query<(Entity, &AddComponentMenu, &mut UIAnchoredPanel)>,
     mut cmd: CommandQueue,
 ) {
-    for (entity, menu, mut panel) in menus.iter() {
+    for (entity, menu, mut panel) in menus.iter_mut() {
         if panel.open {
             panel.open = false;
         }
@@ -205,11 +205,11 @@ fn spawn_menu(cmd: &mut CommandQueue, row: Entity, theme: &UITheme) {
 /// Clears the search field while the menu is closed, so it reopens unfiltered.
 pub(super) fn clear_add_component_search(
     menus: Query<(&AddComponentMenu, &UIAnchoredPanel)>,
-    inputs: Query<&mut UITextInput>,
+    mut inputs: Query<&mut UITextInput>,
 ) {
     for (menu, panel) in menus.iter() {
         if !panel.open
-            && let Some(mut input) = inputs.get_entity(menu.search)
+            && let Some(mut input) = inputs.get_entity_mut(menu.search)
             && !input.value.is_empty()
         {
             input.value.clear();
@@ -352,14 +352,14 @@ fn spawn_entry(
 fn add_clicked_component(
     on: On<UIClick>,
     entries: Query<&AddComponentEntry>,
-    menus: Query<&mut UIAnchoredPanel, With<AddComponentMenu>>,
+    mut menus: Query<&mut UIAnchoredPanel, With<AddComponentMenu>>,
     mut edits: ResMut<ComponentEdits>,
 ) {
     if on.signal().button != MouseButton::Left {
         return;
     }
     if let Some(entry) = entries.get_entity(on.entity()) {
-        queue_add(*entry, &menus, &mut edits);
+        queue_add(*entry, &mut menus, &mut edits);
     }
 }
 
@@ -368,7 +368,7 @@ pub(super) fn add_highlighted_component(
     mut submitted: EventReader<UITextInputSubmitted>,
     searches: Query<&AddComponentSearch>,
     entries: Query<&AddComponentEntry, With<HighlightedEntry>>,
-    menus: Query<&mut UIAnchoredPanel, With<AddComponentMenu>>,
+    mut menus: Query<&mut UIAnchoredPanel, With<AddComponentMenu>>,
     mut edits: ResMut<ComponentEdits>,
 ) {
     for event in submitted.read() {
@@ -376,18 +376,18 @@ pub(super) fn add_highlighted_component(
             continue;
         }
         if let Some(entry) = entries.iter().next() {
-            queue_add(*entry, &menus, &mut edits);
+            queue_add(*entry, &mut menus, &mut edits);
         }
     }
 }
 
 fn queue_add(
     entry: AddComponentEntry,
-    menus: &Query<&mut UIAnchoredPanel, With<AddComponentMenu>>,
+    menus: &mut Query<&mut UIAnchoredPanel, With<AddComponentMenu>>,
     edits: &mut ComponentEdits,
 ) {
     let mut open = false;
-    for mut panel in menus.iter() {
+    for mut panel in menus.iter_mut() {
         open |= panel.open;
         panel.open = false;
     }

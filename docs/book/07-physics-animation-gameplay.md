@@ -304,10 +304,10 @@ cmd.spawn((
 fn walk(
     input: Res<Input>,
     actions: Res<ActionMap>,
-    players: Query<(&mut DesiredMotion, &GroundProbe), With<Player>>,
+    mut players: Query<(&mut DesiredMotion, &GroundProbe), With<Player>>,
 ) {
     let push = actions.axis2d(Move, &input);
-    for (mut desired, ground) in players.iter() {
+    for (mut desired, ground) in players.iter_mut() {
         if ground.is_grounded() {
             desired.velocity = Vec3::new(push.x, 0.0, -push.y) * 5.0;
         }
@@ -365,9 +365,9 @@ fn walk_each(
     input: Res<Input>,
     actions: Res<ActionMap>,
     joined: Res<Players>,
-    players: Query<(&PlayerIndex, &mut DesiredMotion)>,
+    mut players: Query<(&PlayerIndex, &mut DesiredMotion)>,
 ) {
-    for (index, mut desired) in players.iter() {
+    for (index, mut desired) in players.iter_mut() {
         let push = actions.player(*index, &input, &joined).axis2d(Move);
         desired.velocity = Vec3::new(push.x, 0.0, -push.y) * 5.0;
     }
@@ -544,8 +544,8 @@ fn setup_animations(
     cmd.insert(AnimationsReady, entity);
 }
 
-fn drive(players: Query<&mut AnimationPlayer>) {
-    for mut player in players.iter() {
+fn drive(mut players: Query<&mut AnimationPlayer>) {
+    for mut player in players.iter_mut() {
         player.set_vec2_param(name!("movement"), Vec2::new(0.0, 0.8));
     }
 }
@@ -1611,13 +1611,13 @@ cmd.spawn((
     CameraBoom::default(),
 ));
 
-fn aim(rigs: Query<&mut ThirdPersonCamera>, input: Res<Input>) {
+fn aim(mut rigs: Query<&mut ThirdPersonCamera>, input: Res<Input>) {
     let stance = if input.is_mouse_button_held(MouseButton::Right) {
         CameraStance::Aim
     } else {
         CameraStance::Follow
     };
-    for mut rig in rigs.iter() {
+    for mut rig in rigs.iter_mut() {
         if rig.stance != stance {
             rig.stance = stance;
         }
@@ -1769,9 +1769,9 @@ cmd.spawn((
     Transform::default(),
 ));
 
-fn on_post(mut arrived: EventReader<NavArrived>, guards: Query<&mut Guard>) {
+fn on_post(mut arrived: EventReader<NavArrived>, mut guards: Query<&mut Guard>) {
     for arrival in arrived.read() {
-        if let Some(mut guard) = guards.get_entity(arrival.agent) {
+        if let Some(mut guard) = guards.get_entity_mut(arrival.agent) {
             guard.on_duty = true;
         }
     }

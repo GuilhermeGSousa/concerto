@@ -204,7 +204,7 @@ impl Texture {
 impl LoadableAsset for Texture {}
 
 impl DerivedData for Texture {
-    const DERIVED_VERSION: u32 = 1;
+    const DERIVED_VERSION: u32 = 2;
 
     fn is_derived(&self) -> bool {
         matches!(self.kind, TextureKind::Sampled)

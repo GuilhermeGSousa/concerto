@@ -243,7 +243,7 @@ fn update_gizmo(
         Query<&LinkedNode>,
         Query<(Option<&ChildOf>, Option<&SceneRoot>)>,
     ),
-    transforms: Query<&mut Transform>,
+    mut transforms: Query<&mut Transform>,
     mut state: ResMut<GizmoState>,
     mut gizmos: DebugGizmos,
     mut edited: EventWriter<SceneEdited>,
@@ -255,7 +255,7 @@ fn update_gizmo(
     let mode = state.mode;
     let target = selection.entity().filter(|entity| {
         roots.get_entity(*entity).is_none()
-            && transforms.get_entity(*entity).is_some()
+            && transforms.contains_entity(*entity)
             && linked_in_open_scene_by(*entity, &linked, &members).is_none()
     });
     if state
@@ -269,7 +269,7 @@ fn update_gizmo(
     }
 
     let camera = cameras.iter().next().and_then(|(entity, _, camera)| {
-        let transform = transforms.get_entity(entity)?;
+        let transform = transforms.get_entity_mut(entity)?;
         Some((
             camera.build_projection_matrix(),
             transform.compute_matrix(),
@@ -299,7 +299,7 @@ fn update_gizmo(
         .get_entity(target)
         .map(|global| global.matrix().w_axis.truncate())
         .or_else(|| {
-            let transform = transforms.get_entity(target)?;
+            let transform = transforms.get_entity_mut(target)?;
             Some(parent.transform_point3(transform.translation))
         })
         .unwrap_or_default();
@@ -307,7 +307,7 @@ fn update_gizmo(
     if let Some(drag) = state.drag.as_mut() {
         let axis = drag.axis.direction();
         origin = drag.origin;
-        if let (Some(ray), Some(mut transform)) = (ray, transforms.get_entity(target)) {
+        if let (Some(ray), Some(mut transform)) = (ray, transforms.get_entity_mut(target)) {
             match drag.mode {
                 GizmoMode::Translate => {
                     if let Some(param) = axis_param(&ray, drag.origin, axis) {
@@ -364,7 +364,7 @@ fn update_gizmo(
                 GizmoMode::Translate => axis_param(&ray, origin, axis.direction()),
                 GizmoMode::Rotate => plane_angle(&ray, origin, axis.direction()),
             };
-            if let (Some(grab), Some(start)) = (grab, transforms.get_entity(target)) {
+            if let (Some(grab), Some(start)) = (grab, transforms.get_entity_mut(target)) {
                 state.captured = true;
                 state.drag = Some(Drag {
                     entity: target,

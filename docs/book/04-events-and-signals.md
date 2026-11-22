@@ -69,9 +69,9 @@ A **global listener** is a function whose first parameter is `On<S>`, followed
 by any system parameters. Add it in the recipe:
 
 ```rust
-fn explode(on: On<Explode>, targets: Query<(&Transform, &mut Health)>) {
+fn explode(on: On<Explode>, mut targets: Query<(&Transform, &mut Health)>) {
     let explosion = on.signal();
-    for (transform, mut health) in targets.iter() {
+    for (transform, mut health) in targets.iter_mut() {
         if transform.translation.distance(explosion.at) < explosion.radius {
             health.current -= 30.0;
         }
@@ -105,8 +105,8 @@ struct Damage(f32);
 impl Signal for Damage {}
 impl EntitySignal for Damage {}
 
-fn take_damage(on: On<Damage>, targets: Query<&mut Health>) {
-    if let Some(mut health) = targets.get_entity(on.entity()) {
+fn take_damage(on: On<Damage>, mut targets: Query<&mut Health>) {
+    if let Some(mut health) = targets.get_entity_mut(on.entity()) {
         health.current -= on.signal().0;
     }
 }
@@ -124,8 +124,8 @@ closure instead of reading it back from a component:
 
 ```rust
 fn damage_by(factor: f32) -> Listener<Damage> {
-    (move |on: On<Damage>, targets: Query<&mut Health>| {
-        if let Some(mut health) = targets.get_entity(on.entity()) {
+    (move |on: On<Damage>, mut targets: Query<&mut Health>| {
+        if let Some(mut health) = targets.get_entity_mut(on.entity()) {
             health.current -= on.signal().0 * factor;
         }
     })

@@ -78,7 +78,10 @@ fn save_and_report(
 }
 
 pub(crate) fn save_definitions(
-    requested: Query<(Entity, &mut EditorDocument, &mut DefinitionDocument), With<SaveRequested>>,
+    mut requested: Query<
+        (Entity, &mut EditorDocument, &mut DefinitionDocument),
+        With<SaveRequested>,
+    >,
     project: Res<ProjectState>,
     mut assets: ResMut<AssetRegistry>,
     mut saved: EventWriter<SceneSaved>,
@@ -89,7 +92,7 @@ pub(crate) fn save_definitions(
         .project
         .as_ref()
         .map(|project| project.root.as_path());
-    for (entity, mut document, mut state) in requested.iter() {
+    for (entity, mut document, mut state) in requested.iter_mut() {
         cmd.remove::<SaveRequested>(entity);
         save_and_report(
             entity,

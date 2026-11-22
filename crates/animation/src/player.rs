@@ -203,8 +203,8 @@ impl AnimationPlayer {
         inputs: &Inputs<'_, '_>,
         skeleton: &Skeleton,
         bones: &[SceneEntityRef],
-        transforms: &Query<&mut Transform>,
-        root_bones: &Query<&mut AnimationRootBone>,
+        transforms: &mut Query<&mut Transform>,
+        root_bones: &mut Query<&mut AnimationRootBone>,
         parents: &Query<&ChildOf>,
         globals: &Query<&GlobalTransform>,
     ) -> bool {
@@ -266,11 +266,11 @@ impl AnimationPlayer {
                 continue;
             };
 
-            if let Some(mut root_bone) = root_bones.get_entity(bone_entity) {
+            if let Some(mut root_bone) = root_bones.get_entity_mut(bone_entity) {
                 root_bone.root_motion = root_motion;
             }
 
-            if let Some(mut transform) = transforms.get_entity(bone_entity) {
+            if let Some(mut transform) = transforms.get_entity_mut(bone_entity) {
                 transform.translation = joint_pose.translation;
                 transform.rotation = joint_pose.rotation;
                 transform.scale = joint_pose.scale;

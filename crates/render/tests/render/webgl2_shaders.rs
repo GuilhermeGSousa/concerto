@@ -37,6 +37,50 @@ const FRAGMENT: EntryPoint = EntryPoint {
     stage: ShaderStage::Fragment,
 };
 
+const AUTO_EXPOSURE: &[EntryPoint] = &[
+    VERTEX,
+    EntryPoint {
+        name: "fs_measure",
+        stage: ShaderStage::Fragment,
+    },
+    EntryPoint {
+        name: "fs_reduce",
+        stage: ShaderStage::Fragment,
+    },
+    EntryPoint {
+        name: "fs_adapt",
+        stage: ShaderStage::Fragment,
+    },
+];
+
+const DEPTH_OF_FIELD: &[EntryPoint] = &[
+    VERTEX,
+    EntryPoint {
+        name: "fs_blur_radius",
+        stage: ShaderStage::Fragment,
+    },
+    EntryPoint {
+        name: "fs_blur",
+        stage: ShaderStage::Fragment,
+    },
+];
+
+const BLOOM: &[EntryPoint] = &[
+    VERTEX,
+    EntryPoint {
+        name: "fs_downsample_first",
+        stage: ShaderStage::Fragment,
+    },
+    EntryPoint {
+        name: "fs_downsample",
+        stage: ShaderStage::Fragment,
+    },
+    EntryPoint {
+        name: "fs_upsample",
+        stage: ShaderStage::Fragment,
+    },
+];
+
 struct Shader {
     label: &'static str,
     source: &'static str,
@@ -111,9 +155,34 @@ fn every_shader_translates_to_glsl_es_300_under_the_webgl2_defines() {
             entry_points: &[VERTEX],
         },
         Shader {
-            label: "viewport_clear.wgsl",
-            source: include_str!("../../src/shaders/viewport_clear.wgsl"),
+            label: "tonemapping.wgsl",
+            source: include_str!("../../src/shaders/tonemapping.wgsl"),
             entry_points: &[VERTEX, FRAGMENT],
+        },
+        Shader {
+            label: "ambient_occlusion.wgsl",
+            source: include_str!("../../src/shaders/ambient_occlusion.wgsl"),
+            entry_points: &[VERTEX, FRAGMENT],
+        },
+        Shader {
+            label: "ambient_occlusion_blur.wgsl",
+            source: include_str!("../../src/shaders/ambient_occlusion_blur.wgsl"),
+            entry_points: &[VERTEX, FRAGMENT],
+        },
+        Shader {
+            label: "auto_exposure.wgsl",
+            source: include_str!("../../src/shaders/auto_exposure.wgsl"),
+            entry_points: AUTO_EXPOSURE,
+        },
+        Shader {
+            label: "depth_of_field.wgsl",
+            source: include_str!("../../src/shaders/depth_of_field.wgsl"),
+            entry_points: DEPTH_OF_FIELD,
+        },
+        Shader {
+            label: "bloom.wgsl",
+            source: include_str!("../../src/shaders/bloom.wgsl"),
+            entry_points: BLOOM,
         },
     ];
     for defs in &def_sets {

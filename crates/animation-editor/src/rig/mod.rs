@@ -886,7 +886,7 @@ fn preview_edits(committed: &mut EventReader<Hosted<PropertyCommitted>>) -> Vec<
 }
 
 pub(crate) fn follow_rig(
-    documents: Query<(
+    mut documents: Query<(
         Entity,
         &mut EditorDocument,
         Ref<InspectedDocument>,
@@ -928,7 +928,7 @@ pub(crate) fn follow_rig(
         mut sent,
         mut transport,
         disabled,
-    ) in documents.iter()
+    ) in documents.iter_mut()
     {
         let edited = previewed.iter().any(|edit| edit.document == document);
         let forgot = reads.holds_any(&written);
@@ -1040,13 +1040,13 @@ pub(crate) fn follow_rig(
 }
 
 pub(crate) fn sync_rig_transport(
-    documents: Query<(Entity, &mut RigDocument, &ClipTransport)>,
+    mut documents: Query<(Entity, &mut RigDocument, &ClipTransport)>,
     mut committed: EventReader<Hosted<PropertyCommitted>>,
     mut cmd: CommandQueue,
 ) {
     let previewed = preview_edits(&mut committed);
     let mut wrote = false;
-    for (document, mut state, transport) in documents.iter() {
+    for (document, mut state, transport) in documents.iter_mut() {
         let edited = |field: &str| {
             previewed
                 .iter()

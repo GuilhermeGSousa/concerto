@@ -10,8 +10,8 @@
 "crates/color" = 3
 "crates/debug-gizmos" = 1
 "crates/director" = 4
-"crates/ecs" = 87
-"crates/editor" = 177
+"crates/ecs" = 88
+"crates/editor" = 178
 "crates/foundation" = 67
 "crates/gameplay" = 11
 "crates/gltf" = 7
@@ -26,7 +26,8 @@
 "crates/navigation-gizmos" = 1
 "crates/noise" = 3
 "crates/obj" = 2
-"crates/physics" = 21
+"crates/particles" = 3
+"crates/physics" = 22
 "crates/physics-gizmos" = 1
 "crates/procedural-animation" = 28
 "crates/procedural-animation-gizmos" = 1
@@ -34,13 +35,13 @@
 "crates/ragdoll" = 6
 "crates/ragdoll-editor" = 1
 "crates/reflect" = 16
-"crates/render" = 81
+"crates/render" = 93
 "crates/render/macros" = 1
 "crates/scene" = 12
-"crates/skybox" = 4
+"crates/skybox" = 5
 "crates/tasks" = 2
 "crates/terminal-renderer" = 2
 "crates/texture-editor" = 1
-"crates/ui" = 99
+"crates/ui" = 106
 "crates/window" = 31
 "crates/winit" = 8

@@ -1,9 +1,22 @@
-use concerto_color::{Color, LinearRgba};
+use concerto_color::{Color, LinearRgba, Srgba};
 use concerto_ecs::component::Component;
 use concerto_foundation::assets::{Asset, LoadableAsset, handle::AssetHandle};
 use concerto_render::{AsBindGroup, assets::texture::Texture, assets::vertex::VertexBufferLayout};
 
 use crate::vertex::UIVertex;
+
+/// A fill the UI shader computes per pixel in place of `color`'s RGB.
+#[derive(Clone, Copy, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub enum UIGradient {
+    #[default]
+    None,
+    /// Saturation from 0 at the left to 1 at the right, value from 1 at the top to 0 at the bottom, at `hue` degrees, in sRGB.
+    SaturationValue { hue: f32 },
+    /// Hue from 0 to 360 degrees, left to right, at full saturation and value.
+    Hue,
+    /// `color`, in sRGB, from alpha 0 at the left to 1 at the right, over a checkerboard of `cell` logical pixels.
+    Alpha { color: Srgba, cell: f32 },
+}
 
 /// Material for UI elements.
 #[derive(Component, Asset, AsBindGroup, serde::Serialize, serde::Deserialize)]
@@ -38,6 +51,14 @@ pub struct UIMaterial {
     #[sampler(5)]
     pub texture: Option<AssetHandle<Texture>>,
 
+    /// GPU-side gradient parameters — **do not set manually**.
+    #[uniform(6)]
+    pub gradient_params: [f32; 4],
+
+    /// GPU-side gradient colour — **do not set manually**.
+    #[uniform(7)]
+    pub gradient_color: [f32; 4],
+
     /// Border width in logical pixels. Set this; the engine manages `border_params` automatically.
     pub border_width: f32,
 
@@ -46,6 +67,9 @@ pub struct UIMaterial {
 
     /// Rotation of the drawn shape within its node, in radians.
     pub rotation: f32,
+
+    /// A computed fill drawn in place of [`color`](Self::color)'s RGB; its alpha still comes from `color`.
+    pub gradient: UIGradient,
 }
 
 impl LoadableAsset for UIMaterial {}
@@ -61,7 +85,10 @@ impl UIMaterial {
             border_params: [0.0; 4],
             flags: [0.0; 4],
             texture: None,
+            gradient_params: [0.0; 4],
+            gradient_color: [0.0; 4],
             rotation: 0.0,
+            gradient: UIGradient::None,
         }
     }
 
@@ -75,7 +102,10 @@ impl UIMaterial {
             border_params: [border_width, 0.0, 0.0, 0.0],
             flags: [0.0; 4],
             texture: None,
+            gradient_params: [0.0; 4],
+            gradient_color: [0.0; 4],
             rotation: 0.0,
+            gradient: UIGradient::None,
         }
     }
 }

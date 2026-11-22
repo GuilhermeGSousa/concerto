@@ -87,7 +87,13 @@ payload as it is, source included, and warns. `Auto` is BC7 for a colour texture
 opaque one, BC5 for a normal map and BC7 for data. A texture is first fitted
 within its max size, then, when compressed, rounded to a multiple of 4 on each
 side; its mips halve down to 1×1, averaging sRGB colour in linear space and
-renormalising normals. BC4 and BC5 have no sRGB form, so a texture set to
+renormalising normals. In an sRGB texture the colour of each mip is weighted
+by alpha, so fully transparent texels do not darken the edges beside them, and
+each mip's alpha is scaled so that as much of it is at or above one half as in
+the first level: a cutout fence or leaf keeps its coverage at a distance
+instead of thinning out. The scale is found for a cutoff of 0.5, the default
+of `AlphaMode::Mask`, and a mip whose coverage already matches is left as
+averaged, so a smooth gradient is not changed. BC4 and BC5 have no sRGB form, so a texture set to
 either with an sRGB colour space fails to derive and asks for Linear; an
 import whose settings for a texture would do that fails, naming the texture. The
 image importer gives its texture the `Color` role; the glTF importer gives

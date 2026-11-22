@@ -90,9 +90,9 @@ use concerto::{
     foundation::time::Time,
 };
 
-fn regenerate(time: Res<Time>, enemies: Query<&mut Health, With<Enemy>>) {
+fn regenerate(time: Res<Time>, mut enemies: Query<&mut Health, With<Enemy>>) {
     let dt = time.delta().as_secs_f32();
-    for mut health in enemies.iter() {
+    for mut health in enemies.iter_mut() {
         health.current = (health.current + 5.0 * dt).min(health.max);
     }
 }
@@ -115,13 +115,18 @@ A `Query<D, F>` has a **data** part and an optional **filter**:
 | `Changed<T>` | got or changed `T` since this system last ran |
 | `Or<(A, B)>` | match either filter |
 
-`query.iter()` visits every match; `query.get_entity(entity)` returns one
-entity's data, or `None`:
+`query.iter()` visits every match and `query.get_entity(entity)` returns one
+entity's data, or `None`. Both borrow the query shared, so they compile only
+for a query whose data is read-only. A query that names `&mut T` is taken as
+`mut` and read or written through `query.iter_mut()` and
+`query.get_entity_mut(entity)`, which borrow it exclusively, so two mutable
+items for one component cannot be alive at once. `contains_entity` works on
+either kind:
 
 ```rust
-fn hit(targets: Query<(Entity, &mut Health)>, attacks: Query<&Attack>) {
+fn hit(mut targets: Query<(Entity, &mut Health)>, attacks: Query<&Attack>) {
     for attack in attacks.iter() {
-        if let Some((_, mut health)) = targets.get_entity(attack.target) {
+        if let Some((_, mut health)) = targets.get_entity_mut(attack.target) {
             health.current -= attack.damage;
         }
     }
@@ -173,11 +178,11 @@ the `concerto::ecs::query::change_detection::DetectChanges` trait) answer it
 for a `Res`, a `ResMut` or a `Ref<T>`:
 
 ```rust
-fn show_score(score: Res<Score>, labels: Query<&mut UIText, With<ScoreLabel>>) {
+fn show_score(score: Res<Score>, mut labels: Query<&mut UIText, With<ScoreLabel>>) {
     if !score.is_changed() {
         return;
     }
-    for mut label in labels.iter() {
+    for mut label in labels.iter_mut() {
         label.text = format!("Score: {}", score.0);
     }
 }

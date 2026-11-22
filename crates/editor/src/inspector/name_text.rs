@@ -77,11 +77,11 @@ pub(crate) fn commit_name_fields(
     mut submitted: EventReader<UITextInputSubmitted>,
     mut lost: EventReader<UIFocusLost>,
     rows: Query<&PropertyRow>,
-    fields: Query<(&mut NameTextField, &mut UITextInput)>,
+    mut fields: Query<(&mut NameTextField, &mut UITextInput)>,
     mut commits: ResMut<PropertyCommits>,
 ) {
     for event in submitted.read() {
-        let Some((mut field, mut input)) = fields.get_entity(event.entity) else {
+        let Some((mut field, mut input)) = fields.get_entity_mut(event.entity) else {
             continue;
         };
         let Some(row) = rows.get_entity(field.row) else {
@@ -100,7 +100,7 @@ pub(crate) fn commit_name_fields(
         field.displayed = name;
     }
     for event in lost.read() {
-        let Some((field, mut input)) = fields.get_entity(event.0) else {
+        let Some((field, mut input)) = fields.get_entity_mut(event.0) else {
             continue;
         };
         revert(&field, &mut input);
@@ -109,11 +109,11 @@ pub(crate) fn commit_name_fields(
 
 pub(crate) fn cancel_name_fields(
     mut cancelled: EventReader<UITextInputCancelled>,
-    fields: Query<(&NameTextField, &mut UITextInput)>,
+    mut fields: Query<(&NameTextField, &mut UITextInput)>,
     mut focused: ResMut<FocusedWidget>,
 ) {
     for event in cancelled.read() {
-        let Some((field, mut input)) = fields.get_entity(event.entity) else {
+        let Some((field, mut input)) = fields.get_entity_mut(event.entity) else {
             continue;
         };
         revert(field, &mut input);
@@ -127,9 +127,9 @@ pub(crate) fn cancel_name_fields(
 pub(crate) fn refresh_name_fields(
     focused: Res<FocusedWidget>,
     rows: Query<&PropertyRowValue>,
-    fields: Query<(Entity, &mut NameTextField, &mut UITextInput)>,
+    mut fields: Query<(Entity, &mut NameTextField, &mut UITextInput)>,
 ) {
-    for (entity, mut field, mut input) in fields.iter() {
+    for (entity, mut field, mut input) in fields.iter_mut() {
         if **focused == Some(entity) {
             continue;
         }

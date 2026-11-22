@@ -235,7 +235,7 @@ pub(super) fn sync_value_cards(
         Option<&PlainRow>,
         Option<&PropertyRowValue>,
     )>,
-    views: Query<&mut UIScrollArea, With<DetailsView>>,
+    mut views: Query<&mut UIScrollArea, With<DetailsView>>,
     mut cmd: CommandQueue,
 ) {
     if !snapshots.is_changed() || edit_targets.iter().next().is_some() {
@@ -258,7 +258,7 @@ pub(super) fn sync_value_cards(
         for (card, _) in &shown {
             cmd.despawn(*card);
         }
-        if let Some(mut view) = views.iter().next()
+        if let Some(mut view) = views.iter_mut().next()
             && view.offset != 0.0
         {
             view.offset = 0.0;

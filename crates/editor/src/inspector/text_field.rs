@@ -74,11 +74,11 @@ pub(crate) fn commit_text_fields(
     mut submitted: EventReader<UITextInputSubmitted>,
     mut lost: EventReader<UIFocusLost>,
     rows: Query<&PropertyRow>,
-    fields: Query<(&mut TextFieldInput, &mut UITextInput)>,
+    mut fields: Query<(&mut TextFieldInput, &mut UITextInput)>,
     mut commits: ResMut<PropertyCommits>,
 ) {
     for event in submitted.read() {
-        let Some((mut field, mut input)) = fields.get_entity(event.entity) else {
+        let Some((mut field, mut input)) = fields.get_entity_mut(event.entity) else {
             continue;
         };
         let Some(row) = rows.get_entity(field.row) else {
@@ -97,7 +97,7 @@ pub(crate) fn commit_text_fields(
         field.displayed = text;
     }
     for event in lost.read() {
-        let Some((field, mut input)) = fields.get_entity(event.0) else {
+        let Some((field, mut input)) = fields.get_entity_mut(event.0) else {
             continue;
         };
         revert(&field, &mut input);
@@ -106,11 +106,11 @@ pub(crate) fn commit_text_fields(
 
 pub(crate) fn cancel_text_fields(
     mut cancelled: EventReader<UITextInputCancelled>,
-    fields: Query<(&TextFieldInput, &mut UITextInput)>,
+    mut fields: Query<(&TextFieldInput, &mut UITextInput)>,
     mut focused: ResMut<FocusedWidget>,
 ) {
     for event in cancelled.read() {
-        let Some((field, mut input)) = fields.get_entity(event.entity) else {
+        let Some((field, mut input)) = fields.get_entity_mut(event.entity) else {
             continue;
         };
         revert(field, &mut input);
@@ -123,9 +123,9 @@ pub(crate) fn cancel_text_fields(
 pub(crate) fn refresh_text_fields(
     focused: Res<FocusedWidget>,
     rows: Query<&PropertyRowValue>,
-    fields: Query<(Entity, &mut TextFieldInput, &mut UITextInput)>,
+    mut fields: Query<(Entity, &mut TextFieldInput, &mut UITextInput)>,
 ) {
-    for (entity, mut field, mut input) in fields.iter() {
+    for (entity, mut field, mut input) in fields.iter_mut() {
         if **focused == Some(entity) {
             continue;
         }

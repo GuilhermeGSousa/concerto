@@ -265,7 +265,7 @@ fn navigate(
     time: Res<Time>,
     mut window: ResMut<Window>,
     pointer: Res<ViewportPointer>,
-    cameras: Query<(&EditorCamera, &mut Transform)>,
+    mut cameras: Query<(&EditorCamera, &mut Transform)>,
     mut fly: ResMut<FlyCamera>,
 ) {
     if input.is_mouse_button_just_pressed(MouseButton::Right) && pointer.over {
@@ -300,7 +300,7 @@ fn navigate(
         fly.position += movement;
     }
 
-    for (_, mut transform) in cameras.iter() {
+    for (_, mut transform) in cameras.iter_mut() {
         apply_fly_transform(&fly, &mut transform);
     }
 }
@@ -351,7 +351,7 @@ pub(crate) fn subtree(root: Entity, children: &Query<&Children>) -> HashSet<Enti
 fn frame_requested_bounds(
     bounded: Query<(Entity, &Aabb, &GlobalTransform)>,
     children: Query<&Children>,
-    cameras: Query<(&EditorCamera, &mut Camera, &mut Transform)>,
+    mut cameras: Query<(&EditorCamera, &mut Camera, &mut Transform)>,
     selection: Res<Selection>,
     mut commands: ResMut<ViewportCommands>,
     mut fly: ResMut<FlyCamera>,
@@ -374,13 +374,13 @@ fn frame_requested_bounds(
     };
     let radius = bounds.extent().length().max(0.02) * 0.5;
     let fovy = cameras
-        .iter()
+        .iter_mut()
         .next()
         .map(|(_, camera, _)| camera.fovy)
         .unwrap_or(0.78);
     let distance = (radius / (fovy * 0.5).tan() * 1.25).clamp(0.02, 100_000.0);
     fly.position = bounds.center() - fly.forward() * distance;
-    for (_, mut camera, mut transform) in cameras.iter() {
+    for (_, mut camera, mut transform) in cameras.iter_mut() {
         apply_fly_transform(&fly, &mut transform);
         let far = distance + radius * 2.0;
         if camera.zfar < far {
@@ -413,7 +413,7 @@ fn scene_bounds(
 fn zoom(
     mut events: EventReader<WindowEvent>,
     pointer: Res<ViewportPointer>,
-    cameras: Query<(&EditorCamera, &mut Transform)>,
+    mut cameras: Query<(&EditorCamera, &mut Transform)>,
     mut fly: ResMut<FlyCamera>,
 ) {
     if !pointer.over {
@@ -436,7 +436,7 @@ fn zoom(
         }
     }
     if moved {
-        for (_, mut transform) in cameras.iter() {
+        for (_, mut transform) in cameras.iter_mut() {
             apply_fly_transform(&fly, &mut transform);
         }
     }
@@ -444,13 +444,13 @@ fn zoom(
 
 fn fit_camera_to_picture(
     pointer: Res<ViewportPointer>,
-    cameras: Query<(&EditorCamera, &mut Camera)>,
+    mut cameras: Query<(&EditorCamera, &mut Camera)>,
 ) {
     if pointer.size.x < 1.0 || pointer.size.y < 1.0 {
         return;
     }
     let aspect = pointer.size.x / pointer.size.y;
-    for (_, mut camera) in cameras.iter() {
+    for (_, mut camera) in cameras.iter_mut() {
         if camera.aspect != aspect {
             camera.aspect = aspect;
         }

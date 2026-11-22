@@ -8,7 +8,7 @@ use concerto_ecs::{
     events::{Event, event_reader::EventReader, event_writer::EventWriter},
     query::{
         Query,
-        filter::{Added, With},
+        filter::{Added, With, Without},
     },
     resource::{Res, ResMut},
 };
@@ -663,7 +663,7 @@ pub(crate) fn update_text_inputs(
     (input, window, pointer): (Res<Input>, Res<Window>, Res<UIInputState>),
     mut clipboard: ResMut<WindowClipboard>,
     mut measure: ResMut<UITextMeasure>,
-    fields: Query<(
+    mut fields: Query<(
         Entity,
         &mut UITextInput,
         Option<&mut UITextEditState>,
@@ -688,7 +688,7 @@ pub(crate) fn update_text_inputs(
     let keystroke = input.just_pressed_keys().next().is_some()
         || !input.typed_chars().is_empty()
         || !pastes.is_empty();
-    for (entity, mut text_input, mut existing, parts) in fields.iter() {
+    for (entity, mut text_input, mut existing, parts) in fields.iter_mut() {
         if **focused != Some(entity) {
             if let Some(state) = existing.as_mut()
                 && state.focused
@@ -884,13 +884,13 @@ pub(crate) fn setup_text_inputs(
 }
 
 fn project_quad(
-    quads: &Query<(&mut UINode, &mut UIMaterial)>,
+    quads: &mut Query<(&mut UINode, &mut UIMaterial), Without<UIText>>,
     quad: Entity,
     place: Option<(Vec2, f32)>,
     color: Color,
     shown: bool,
 ) {
-    let Some((mut node, mut material)) = quads.get_entity(quad) else {
+    let Some((mut node, mut material)) = quads.get_entity_mut(quad) else {
         return;
     };
     let color = quad_color(color, shown);
@@ -910,20 +910,20 @@ fn project_quad(
 
 /// Shows each text field's value on its label in the field's text colour, or its placeholder dimmed to half that alpha while the value is empty, and while it has focus scrolls the label in whole pixels to follow the caret once its text overflowed the viewport, placing its selection quad in the viewport and its caret quad on the field over the glyphs they mark, blinking the caret and hiding it outside the visible text only while the text overflowed on the previous frame's layout; placement waits for the viewport's first layout, and blur scrolls back to the start.
 pub(crate) fn project_text_inputs(
-    fields: Query<(
+    mut fields: Query<(
         &UITextInput,
         &UITextInputParts,
         Option<&mut UITextEditState>,
         Option<&UILayout>,
     )>,
-    labels: Query<(&mut UIText, &mut UINode)>,
+    mut labels: Query<(&mut UIText, &mut UINode)>,
     layouts: Query<&UILayout>,
-    quads: Query<(&mut UINode, &mut UIMaterial)>,
+    mut quads: Query<(&mut UINode, &mut UIMaterial), Without<UIText>>,
     theme: Res<UITheme>,
 ) {
     let now = Instant::now();
-    for (input, parts, mut state, layout) in fields.iter() {
-        let Some((mut text, mut label_node)) = labels.get_entity(parts.label) else {
+    for (input, parts, mut state, layout) in fields.iter_mut() {
+        let Some((mut text, mut label_node)) = labels.get_entity_mut(parts.label) else {
             continue;
         };
         let shown = shown_text(input);
@@ -988,13 +988,13 @@ pub(crate) fn project_text_inputs(
             label_node.inset.left = left;
         }
         project_quad(
-            &quads,
+            &mut quads,
             parts.selection,
             selection,
             theme.text_selection,
             selection.is_some(),
         );
-        project_quad(&quads, parts.caret, caret, theme.caret, blink);
+        project_quad(&mut quads, parts.caret, caret, theme.caret, blink);
     }
 }
 

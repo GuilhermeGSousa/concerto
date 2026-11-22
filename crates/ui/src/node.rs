@@ -52,7 +52,7 @@ use wgpu::{Buffer, util::DeviceExt};
 use crate::{
     anchor::{UIAnchoredPanel, UIPanelStack},
     items::UIWidgetPart,
-    material::UIMaterial,
+    material::{UIGradient, UIMaterial},
     resources::UIRenderDiagnostics,
     scroll::UIScrollArea,
     transform::UIValue,
@@ -451,11 +451,11 @@ pub(crate) struct UIIntrinsicHeight(pub(crate) f32);
 pub(crate) fn blank_culled_layouts(
     on: On<Add<UICulled>>,
     children: Query<&Children>,
-    layouts: Query<&mut UILayout>,
+    mut layouts: Query<&mut UILayout>,
 ) {
     let mut stack = vec![on.signal().entity];
     while let Some(entity) = stack.pop() {
-        if let Some(mut layout) = layouts.get_entity(entity) {
+        if let Some(mut layout) = layouts.get_entity_mut(entity) {
             layout.clip_rect = UIBox {
                 min: layout.rect.min,
                 size: Vec2::ZERO,
@@ -799,7 +799,7 @@ impl FromWorld for WatchedMaterials {
 #[derive(Component)]
 pub(crate) struct RenderUIMaterial {
     pub(crate) material_bind_group: wgpu::BindGroup,
-    signature: [u32; 19],
+    signature: [u32; 27],
 }
 
 pub(crate) fn compute_ui_nodes(
@@ -832,8 +832,8 @@ pub(crate) fn compute_ui_nodes(
         Query<&UIWidgetPart>,
         Query<Entity, Changed<UIScrollArea>>,
     ),
-    layouts: Query<&mut UILayout>,
-    panels: Query<(Entity, &mut UIAnchoredPanel)>,
+    mut layouts: Query<&mut UILayout>,
+    mut panels: Query<(Entity, &mut UIAnchoredPanel)>,
     panel_stack: Res<UIPanelStack>,
     window: Res<Window>,
     mut engine: ResMut<UILayoutEngine>,
@@ -994,7 +994,7 @@ pub(crate) fn compute_ui_nodes(
     let panels_changed = panel_stack.is_changed()
         || panel_stack.open().iter().any(|entity| {
             panels
-                .get_entity(*entity)
+                .get_entity_mut(*entity)
                 .is_some_and(|(_, panel)| panel.is_changed())
         });
     let scrolling = scrolled.iter().next().is_some();
@@ -1034,7 +1034,7 @@ pub(crate) fn compute_ui_nodes(
         let rect = UIBox { min: abs_pos, size };
         let clip_rect = node_clip(rect, area, root_node);
         write_layout(
-            &layouts,
+            &mut layouts,
             &mut cmd,
             entity,
             UILayout {
@@ -1058,7 +1058,7 @@ pub(crate) fn compute_ui_nodes(
                 root_node.visible,
                 children,
                 (&nodes, &culled, &scroll_areas, &widget_parts),
-                &layouts,
+                &mut layouts,
                 &mut cmd,
                 &mut sequence,
                 &mut anchor_rects,
@@ -1067,7 +1067,7 @@ pub(crate) fn compute_ui_nodes(
     }
 
     for panel_entity in panel_stack.open() {
-        let Some((_, mut panel)) = panels.get_entity(*panel_entity) else {
+        let Some((_, mut panel)) = panels.get_entity_mut(*panel_entity) else {
             continue;
         };
         if !engine.roots.contains(panel_entity) {
@@ -1100,7 +1100,7 @@ pub(crate) fn compute_ui_nodes(
         let clip_rect = node_clip(rect, window_clip, root_node);
         let layer = root_node.z_index;
         write_layout(
-            &layouts,
+            &mut layouts,
             &mut cmd,
             entity,
             UILayout {
@@ -1122,7 +1122,7 @@ pub(crate) fn compute_ui_nodes(
                 root_node.visible,
                 children,
                 (&nodes, &culled, &scroll_areas, &widget_parts),
-                &layouts,
+                &mut layouts,
                 &mut cmd,
                 &mut sequence,
                 &mut anchor_rects,
@@ -1285,7 +1285,7 @@ fn write_absolute_positions(
         &Query<&UIScrollArea>,
         &Query<&UIWidgetPart>,
     ),
-    layouts: &Query<&mut UILayout>,
+    layouts: &mut Query<&mut UILayout>,
     cmd: &mut CommandQueue,
     sequence: &mut i64,
     anchor_rects: &mut HashMap<Entity, UIBox>,
@@ -1369,12 +1369,12 @@ fn write_absolute_positions(
 }
 
 fn write_layout(
-    layouts: &Query<&mut UILayout>,
+    layouts: &mut Query<&mut UILayout>,
     cmd: &mut CommandQueue,
     entity: Entity,
     layout: UILayout,
 ) {
-    match layouts.get_entity(entity) {
+    match layouts.get_entity_mut(entity) {
         Some(mut current) => {
             current.set_if_neq(layout);
         }
@@ -1418,7 +1418,7 @@ pub(crate) fn extract_ui_nodes(
         Query<(&UILayout, &RenderEntity), Or<(Changed<UILayout>, Added<RenderEntity>)>>,
     >,
     all_nodes: Extracted<Query<(&UILayout, &RenderEntity)>>,
-    render_ui_nodes: Query<&mut RenderUINode>,
+    mut render_ui_nodes: Query<&mut RenderUINode>,
     device: Res<RenderDevice>,
     queue: Res<RenderQueue>,
     window: Extracted<Res<Window>>,
@@ -1439,7 +1439,7 @@ pub(crate) fn extract_ui_nodes(
             }
             return;
         }
-        if let Some(mut node) = render_ui_nodes.get_entity(**render_entity) {
+        if let Some(mut node) = render_ui_nodes.get_entity_mut(**render_entity) {
             if resized
                 || node.source_rect != computed_node.rect
                 || node.clip_rect != computed_node.clip_rect
@@ -1520,9 +1520,9 @@ fn quad_vertices(source: UIBox, draw_rect: UIBox, window: Vec2, scale: f32) -> [
 
 /// Syncs material fields into the GPU-side uniforms when a node's layout or material changes.
 pub(crate) fn sync_material_params(
-    nodes: Query<(&UILayout, &mut UIMaterial), Or<(Changed<UILayout>, Changed<UIMaterial>)>>,
+    mut nodes: Query<(&UILayout, &mut UIMaterial), Or<(Changed<UILayout>, Changed<UIMaterial>)>>,
 ) {
-    for (node, mut material) in nodes.iter() {
+    for (node, mut material) in nodes.iter_mut() {
         let params = [
             material.border_width,
             node.rect.size.x,
@@ -1539,6 +1539,21 @@ pub(crate) fn sync_material_params(
         if material.flags[0] != has_texture {
             material.flags[0] = has_texture;
         }
+        let (kind, gradient_params, gradient_color) = match material.gradient {
+            UIGradient::None => (0.0, [0.0; 4], [0.0; 4]),
+            UIGradient::SaturationValue { hue } => (1.0, [hue, 0.0, 0.0, 0.0], [0.0; 4]),
+            UIGradient::Hue => (2.0, [0.0; 4], [0.0; 4]),
+            UIGradient::Alpha { color, cell } => (3.0, [0.0, cell, 0.0, 0.0], color.to_array()),
+        };
+        if material.flags[2] != kind {
+            material.flags[2] = kind;
+        }
+        if material.gradient_params != gradient_params {
+            material.gradient_params = gradient_params;
+        }
+        if material.gradient_color != gradient_color {
+            material.gradient_color = gradient_color;
+        }
     }
 }
 
@@ -1549,8 +1564,8 @@ pub struct UIViewport {
 }
 
 /// Copies a viewport's handle into its material.
-pub(crate) fn sync_viewport_textures(viewports: Query<(&UIViewport, &mut UIMaterial)>) {
-    for (viewport, mut material) in viewports.iter() {
+pub(crate) fn sync_viewport_textures(mut viewports: Query<(&UIViewport, &mut UIMaterial)>) {
+    for (viewport, mut material) in viewports.iter_mut() {
         if material
             .texture
             .as_ref()
@@ -1584,9 +1599,9 @@ impl Default for UISharedViewport {
 }
 
 pub(crate) fn sync_shared_viewport_textures(
-    viewports: Query<(&UISharedViewport, &mut UIMaterial)>,
+    mut viewports: Query<(&UISharedViewport, &mut UIMaterial)>,
 ) {
-    for (viewport, mut material) in viewports.iter() {
+    for (viewport, mut material) in viewports.iter_mut() {
         let drawn = viewport
             .picture
             .as_ref()
@@ -1690,9 +1705,11 @@ pub(crate) fn extract_ui_materials(
 fn material_signature(
     material: &UIMaterial,
     render_textures: &RenderAssets<RenderTexture>,
-) -> [u32; 19] {
+) -> [u32; 27] {
     let color = material.color.to_array();
     let border = material.border_color.to_array();
+    let params = material.gradient_params;
+    let gradient = material.gradient_color;
     [
         color[0].to_bits(),
         color[1].to_bits(),
@@ -1712,6 +1729,14 @@ fn material_signature(
         material.flags[1].to_bits(),
         material.flags[2].to_bits(),
         material.flags[3].to_bits(),
+        params[0].to_bits(),
+        params[1].to_bits(),
+        params[2].to_bits(),
+        params[3].to_bits(),
+        gradient[0].to_bits(),
+        gradient[1].to_bits(),
+        gradient[2].to_bits(),
+        gradient[3].to_bits(),
         material.texture.as_ref().map_or(0, |handle| {
             use std::hash::{Hash, Hasher};
             let mut hasher = std::collections::hash_map::DefaultHasher::new();
@@ -2930,5 +2955,78 @@ mod tests {
         app.update();
         app.update();
         assert_eq!(text_prepares(&app), prepares + 6, "a window resize");
+    }
+
+    #[test]
+    fn sync_material_params_writes_the_gradient_kind_and_uniforms() {
+        use crate::material::{UIGradient, UIMaterial};
+        use concerto_color::Srgba;
+
+        struct Case {
+            gradient: UIGradient,
+            kind: f32,
+            params: [f32; 4],
+            color: [f32; 4],
+        }
+
+        let tint = Srgba::new(0.2, 0.4, 0.6, 0.8);
+        let cases = [
+            Case {
+                gradient: UIGradient::SaturationValue { hue: 120.0 },
+                kind: 1.0,
+                params: [120.0, 0.0, 0.0, 0.0],
+                color: [0.0; 4],
+            },
+            Case {
+                gradient: UIGradient::Hue,
+                kind: 2.0,
+                params: [0.0; 4],
+                color: [0.0; 4],
+            },
+            Case {
+                gradient: UIGradient::Alpha {
+                    color: tint,
+                    cell: 4.0,
+                },
+                kind: 3.0,
+                params: [0.0, 4.0, 0.0, 0.0],
+                color: tint.to_array(),
+            },
+            Case {
+                gradient: UIGradient::None,
+                kind: 0.0,
+                params: [0.0; 4],
+                color: [0.0; 4],
+            },
+        ];
+        let mut world = concerto_ecs::World::new();
+        let rect = UIBox {
+            min: Vec2::ZERO,
+            size: Vec2::new(200.0, 150.0),
+        };
+        let node = world.spawn((
+            UILayout {
+                rect,
+                content_rect: rect,
+                clip_rect: rect,
+                paint_order: 0,
+            },
+            UIMaterial::flat(concerto_color::Color::WHITE),
+        ));
+        let mut system = concerto_ecs::IntoSystem::into_system(sync_material_params);
+        concerto_ecs::System::initialize(&mut system, &mut world);
+        for case in cases {
+            world
+                .get_component_for_entity_mut::<UIMaterial>(node)
+                .unwrap()
+                .gradient = case.gradient;
+            concerto_ecs::System::run_and_apply(&mut system, (), &mut world);
+            world.tick();
+
+            let material = world.get_component_for_entity::<UIMaterial>(node).unwrap();
+            assert_eq!(material.flags[2], case.kind, "{:?}", case.gradient);
+            assert_eq!(material.gradient_params, case.params, "{:?}", case.gradient);
+            assert_eq!(material.gradient_color, case.color, "{:?}", case.gradient);
+        }
     }
 }

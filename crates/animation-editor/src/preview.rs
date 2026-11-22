@@ -180,7 +180,7 @@ fn pose_clip(
     posing: Res<ClipPosing>,
     stores: Option<Res<AssetStore<Skeleton>>>,
     skeletons: Query<&SkeletonComponent>,
-    transforms: Query<&mut Transform>,
+    mut transforms: Query<&mut Transform>,
     parents: Query<&ChildOf>,
     globals: Query<&GlobalTransform>,
 ) {
@@ -206,7 +206,7 @@ fn pose_clip(
             let Some(entity) = bone.entity() else {
                 continue;
             };
-            let Some(mut transform) = transforms.get_entity(entity) else {
+            let Some(mut transform) = transforms.get_entity_mut(entity) else {
                 continue;
             };
             let mut pose = rest.clone();
@@ -267,7 +267,7 @@ fn middle_of_bones(
 fn follow_root(
     skeletons: Query<(Entity, &SkeletonComponent)>,
     globals: Query<&GlobalTransform>,
-    cameras: Query<&mut OrbitCamera>,
+    mut cameras: Query<&mut OrbitCamera>,
     mut followed: SystemLocal<FollowedRoot>,
 ) {
     let skeleton = first_rooted(skeletons.iter());
@@ -278,7 +278,7 @@ fn follow_root(
     let Some((root, at)) = found else {
         return;
     };
-    for mut orbit in cameras.iter() {
+    for mut orbit in cameras.iter_mut() {
         match last {
             Some((followed_root, from)) if followed_root == root => {
                 let moved = at - from;
