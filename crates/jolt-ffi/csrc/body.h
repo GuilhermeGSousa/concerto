@@ -63,6 +63,11 @@ extern "C"
     void jolt_body_creation_settings_set_allowed_dofs(JoltBodyCreationSettings *settings,
                                                       JoltAllowedDofs allowed_dofs);
 
+    /* Scales gravity for the body: 1 by default, 0 for a body that moves only
+     * by the velocities it is given. */
+    void jolt_body_creation_settings_set_gravity_factor(JoltBodyCreationSettings *settings,
+                                                        float gravity_factor);
+
     /* Makes the body a kinematic, always active sensor on the SENSOR layer. */
     void jolt_body_creation_settings_set_is_sensor(JoltBodyCreationSettings *settings,
                                                    bool is_sensor);

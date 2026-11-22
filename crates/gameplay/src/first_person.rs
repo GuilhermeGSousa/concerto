@@ -2,7 +2,7 @@ use concerto_ecs::{CommandQueue, Component, Entity, Query, Res, ResMut, Without}
 use concerto_foundation::{time::Time, transform::Transform};
 use concerto_physics::{
     body::BodyId,
-    collider::{Collider, ColliderOffset},
+    collider::{Collider, ColliderOffset, GravityScale},
     physics_state::PhysicsState,
     query::QueryFilter,
     rigid_body::{AllowedDofs, MotionType, RigidBody},
@@ -232,6 +232,7 @@ pub fn spawn_first_person_walker(
         },
         collider,
         offset,
+        GravityScale(0.0),
         transform,
         walker,
     ))
@@ -296,9 +297,9 @@ pub fn step_first_person_walkers(
         let vertical = match ground {
             Some(rise) => {
                 let limit = rise.abs() / dt;
-                (rise * GROUND_FOLLOW_RATE).clamp(-limit, limit) + GRAVITY * dt
+                (rise * GROUND_FOLLOW_RATE).clamp(-limit, limit)
             }
-            None => physics.linear_velocity(*body).y,
+            None => physics.linear_velocity(*body).y - GRAVITY * dt,
         };
         if walker.grounded != ground.is_some() {
             walker.grounded = ground.is_some();

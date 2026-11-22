@@ -11,6 +11,7 @@ use crate::{
     physics_pipeline::PhysicsPipeline,
     physics_state::PhysicsState,
     sensor::{report_sensor_contacts, Sensor},
+    settings::PhysicsSettings,
     shape::{
         clean_shapes_for_dropped_meshes, generate_mesh_shapes, MeshCollider, PhysicsMeshShapes,
     },
@@ -28,6 +29,7 @@ impl Plugin for PhysicsPlugin {
             app.insert_resource(PhysicsPipeline::new());
         }
         app.insert_resource(PhysicsState::new())
+            .insert_resource(PhysicsSettings::default())
             .insert_resource(PhysicsMeshShapes::default())
             .add_system(LateFixedUpdate, step_simulation)
             .add_system(LateFixedUpdate, probe_ground)

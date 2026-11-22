@@ -157,10 +157,15 @@ impl PhysicsBackend for JoltBackend {
         Stepper { stepper }
     }
 
-    fn step(&mut self, stepper: &mut Stepper, delta_time: f32) {
+    fn step(&mut self, stepper: &mut Stepper, delta_time: f32, collision_steps: u32) {
         // SAFETY: both pointers are valid and exclusively borrowed.
         unsafe {
-            concerto_jolt_ffi::jolt_world_step(self.world, stepper.stepper, delta_time, 1);
+            concerto_jolt_ffi::jolt_world_step(
+                self.world,
+                stepper.stepper,
+                delta_time,
+                collision_steps.max(1) as i32,
+            );
         }
     }
 
@@ -171,6 +176,7 @@ impl PhysicsBackend for JoltBackend {
         rigid_body: Option<&RigidBody>,
         offset: Option<&ColliderOffset>,
         sensor: bool,
+        gravity_scale: f32,
     ) -> Self::BodyHandle {
         let position = transform.translation.to_array();
         let rotation = transform.rotation.to_array();
@@ -223,6 +229,10 @@ impl PhysicsBackend for JoltBackend {
                 collider.shape().0.as_ptr(),
             );
             concerto_jolt_ffi::jolt_body_creation_settings_set_is_sensor(settings, sensor);
+            concerto_jolt_ffi::jolt_body_creation_settings_set_gravity_factor(
+                settings,
+                gravity_scale,
+            );
             let id = concerto_jolt_ffi::jolt_body_create(self.world, settings);
             concerto_jolt_ffi::jolt_body_creation_settings_destroy(settings);
             id
