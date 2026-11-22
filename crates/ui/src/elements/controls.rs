@@ -3,10 +3,12 @@ use concerto_ecs::{
     component::bundle::IntoBundle,
     signal::listener::{IntoListener, Listener},
 };
+use glam::Vec2;
 
 use super::{Layout, Listening, Shape, Themed, Typography};
 use crate::{
     checkbox::{UICheckbox, UICheckboxChanged, toggle_checkbox},
+    color_picker::{UIColorChanged, UIColorPicker},
     interaction::{Interactable, UIClick, UIDrag, UIPointerDown},
     material::UIMaterial,
     node::{AlignContent, AlignItems, FlexDirection, UINode, UIRect},
@@ -33,6 +35,13 @@ pub struct Slider {
     node: UINode,
     material: UIMaterial,
     slider: UISlider,
+}
+
+/// A color picker laid out as a column; see [`UIColorPicker`].
+pub struct ColorPicker {
+    theme: UITheme,
+    node: UINode,
+    picker: UIColorPicker,
 }
 
 /// A draggable gap between two siblings, with a line while hovered or dragged; its owner decides what a drag means.
@@ -68,6 +77,18 @@ impl UITheme {
             node: UINode::default().with_height(UIValue::Px(self.control_height)),
             material: UIMaterial::flat(self.surface_raised),
             slider: UISlider::new(value, min, max),
+        }
+    }
+
+    /// A [`UIColorPicker`] showing `color`.
+    pub fn color_picker(&self, color: Color) -> ColorPicker {
+        ColorPicker {
+            theme: self.clone(),
+            node: UINode::default()
+                .with_flex_direction(FlexDirection::Column)
+                .with_align_items(AlignItems::Start)
+                .with_gap(Vec2::splat(self.spacing_sm)),
+            picker: UIColorPicker::new(color),
         }
     }
 
@@ -112,6 +133,16 @@ impl Slider {
         self,
         listener: impl IntoListener<UISliderChanged, M>,
     ) -> Listening<Self, UISliderChanged> {
+        Listening::new(self, listener)
+    }
+}
+
+impl ColorPicker {
+    /// Runs `listener` each time the user changes the color; attach it after the other modifiers.
+    pub fn on_change<M>(
+        self,
+        listener: impl IntoListener<UIColorChanged, M>,
+    ) -> Listening<Self, UIColorChanged> {
         Listening::new(self, listener)
     }
 }
@@ -170,6 +201,14 @@ impl IntoBundle for Slider {
     }
 }
 
+impl IntoBundle for ColorPicker {
+    type Bundle = (UINode, UIColorPicker);
+
+    fn into_bundle(self) -> Self::Bundle {
+        (self.node, self.picker)
+    }
+}
+
 impl IntoBundle for Splitter {
     type Bundle = (UINode, UISplitter, Interactable, Listener<UIDrag>);
 
@@ -222,6 +261,18 @@ impl Layout for Slider {
 impl Shape for Slider {
     fn material_mut(&mut self) -> &mut UIMaterial {
         &mut self.material
+    }
+}
+
+impl Themed for ColorPicker {
+    fn theme(&self) -> &UITheme {
+        &self.theme
+    }
+}
+
+impl Layout for ColorPicker {
+    fn node_mut(&mut self) -> &mut UINode {
+        &mut self.node
     }
 }
 

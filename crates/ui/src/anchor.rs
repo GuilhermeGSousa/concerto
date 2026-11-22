@@ -4,6 +4,7 @@
 use std::collections::{HashMap, HashSet};
 
 use concerto_ecs::{
+    command::CommandQueue,
     component::Component,
     entity::{Entity, hierarchy::ChildOf},
     events::{event_reader::EventReader, event_writer::EventWriter},
@@ -12,7 +13,7 @@ use concerto_ecs::{
         filter::{With, Without},
     },
     resource::{Res, ResMut, Resource},
-    signal::On,
+    signal::{EntitySignal, On, Signal},
     system::input::SystemLocal,
 };
 use concerto_window::define_action;
@@ -567,6 +568,12 @@ define_action!(
     UIDismissPanel
 );
 
+/// Sent to an anchored panel that Escape closed.
+pub struct UIPanelEscaped;
+
+impl Signal for UIPanelEscaped {}
+impl EntitySignal for UIPanelEscaped {}
+
 struct EscapeDismissal {
     dismissed: bool,
     field_focused: bool,
@@ -603,6 +610,7 @@ pub(crate) fn dismiss_panels(
     text_inputs: Query<&UITextInput>,
     mut actions: EventReader<ActionFired>,
     mut cancelled_this_frame: EventReader<UITextInputCancelled>,
+    mut cmd: CommandQueue,
 ) {
     let pressed = [
         MouseButton::Left,
@@ -653,6 +661,7 @@ pub(crate) fn dismiss_panels(
         && let Some((mut panel, _)) = panels.get_entity_mut(*top)
     {
         panel.open = false;
+        cmd.entity(*top).trigger(UIPanelEscaped);
     }
 }
 
