@@ -37,7 +37,9 @@ cargo bench -p concerto-benches --features run
 ```
 
 The `ragdoll` benchmark measures one fixed step with 1, 8 and 32 reference
-humanoids, limp, kinematic and powered.
+humanoids, limp, kinematic and powered. The `clip_sampling` benchmark samples a
+clip of 60 bones, three channels each of 300 keys, a frame at a time, with a
+fresh search and with a `KeyCursor`.
 
 Benchmarks do not run in CI, and without the `run` feature the crate builds
 without `criterion` and skips them. Run them by hand before and after a change
