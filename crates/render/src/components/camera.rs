@@ -325,6 +325,7 @@ pub struct RenderCamera {
     pub(crate) viewport: Option<Viewport>,
     pub(crate) layers: RenderLayers,
     pub(crate) ambient_occlusion: Option<wgpu::TextureView>,
+    pub(crate) adapted_exposure: Option<wgpu::TextureView>,
     pub(crate) msaa: Msaa,
 }
 
@@ -566,6 +567,7 @@ pub(crate) fn extract_cameras(
             viewport: camera.viewport,
             layers,
             ambient_occlusion: None,
+            adapted_exposure: None,
             msaa,
         };
         publish_render_target(camera, &render_cam, &mut render_textures);

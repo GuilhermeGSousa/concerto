@@ -18,6 +18,7 @@ extern crate self as concerto_render;
 
 pub mod ambient_occlusion;
 pub mod assets;
+pub mod auto_exposure;
 pub mod batching;
 pub mod bloom;
 pub mod capabilities;
@@ -54,6 +55,7 @@ pub use concerto_render_macros::AsBindGroup;
 
 pub use ambient_occlusion::{AmbientOcclusionPlugin, ScreenSpaceAmbientOcclusion};
 pub use assets::material::Material;
+pub use auto_exposure::{AutoExposure, AutoExposurePlugin};
 pub use bloom::{Bloom, BloomPlugin};
 pub use components::camera::ExclusiveCamera;
 pub use components::material::MaterialComponent;
