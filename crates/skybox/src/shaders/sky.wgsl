@@ -78,15 +78,10 @@ fn sun_disk(direction: vec3<f32>) -> vec3<f32> {
     return sun.disk_radiance.rgb * limb;
 }
 
-fn aces_tonemap(color: vec3<f32>) -> vec3<f32> {
-    let mapped = (color * (2.51 * color + 0.03)) / (color * (2.43 * color + 0.59) + 0.14);
-    return clamp(mapped, vec3<f32>(0.0), vec3<f32>(1.0));
-}
-
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let far = camera.inverse_view_proj * vec4<f32>(in.ndc, 0.5, 1.0);
     let direction = normalize(far.xyz / far.w - camera.view_pos);
     let radiance = sky_radiance(direction) + sun_disk(direction) + camera.night_color.rgb;
-    return vec4<f32>(aces_tonemap(radiance), 1.0);
+    return vec4<f32>(radiance, 1.0);
 }

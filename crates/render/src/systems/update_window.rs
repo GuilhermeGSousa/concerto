@@ -1,16 +1,13 @@
 use concerto_app::extractor::Extracted;
 use concerto_ecs::{
-    query::{change_detection::DetectChanges, Query},
+    query::change_detection::DetectChanges,
     resource::{Res, ResMut},
 };
 use concerto_window::plugin::Window;
 
 use crate::{
-    components::camera::{create_rtt, RenderCamera},
-    device::RenderDevice,
-    draw_target::DrawTarget,
-    render_asset::{render_texture::RenderTexture, render_window::RenderWindow},
-    resources::RenderContext,
+    components::camera::create_rtt, device::RenderDevice, draw_target::DrawTarget,
+    render_asset::render_window::RenderWindow, resources::RenderContext,
 };
 
 pub(crate) fn extract_window(
@@ -28,7 +25,6 @@ pub(crate) fn update_render_window(
     mut render_window: ResMut<RenderWindow>,
     mut context: ResMut<RenderContext>,
     device: Res<RenderDevice>,
-    mut render_cameras: Query<&mut RenderCamera>,
 ) {
     if !render_window.is_changed() {
         return;
@@ -46,7 +42,6 @@ pub(crate) fn update_render_window(
                 context.surface_config.width = size.0;
                 context.surface_config.height = size.1;
                 surface.configure(&device, &context.surface_config);
-                resize_window_depth(&device, &mut render_cameras, size);
             }
             if let wgpu::CurrentSurfaceTexture::Success(output)
             | wgpu::CurrentSurfaceTexture::Suboptimal(output) = surface.get_current_texture()
@@ -61,23 +56,8 @@ pub(crate) fn update_render_window(
                 let texture = create_rtt(&device, context.surface_config.format, size.0, size.1);
                 render_window.set_offscreen(texture.view.clone());
                 shared.publish(texture);
-                resize_window_depth(&device, &mut render_cameras, size);
             }
         }
         DrawTarget::None => {}
-    }
-}
-
-fn resize_window_depth(
-    device: &RenderDevice,
-    render_cameras: &mut Query<&mut RenderCamera>,
-    size: (u32, u32),
-) {
-    for mut render_camera in render_cameras.iter_mut() {
-        if render_camera.render_target.is_some() {
-            continue; // RTT camera: fixed resolution, depth stays in sync with RTT
-        }
-        render_camera.depth_texture =
-            RenderTexture::create_depth_texture(device, size.0, size.1, "depth_texture");
     }
 }

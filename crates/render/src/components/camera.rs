@@ -22,6 +22,7 @@ use wgpu::util::DeviceExt;
 use crate::components::visibility::RenderLayers;
 use crate::{
     assets::texture::Texture,
+    assets::texture::TextureRole,
     components::{
         camera_environment::{CameraEnvironment, DEFAULT_AMBIENT_INTENSITY},
         render_entity::RenderEntity,
@@ -29,9 +30,15 @@ use crate::{
     device::RenderDevice,
     layouts::CameraLayout,
     queue::RenderQueue,
-    render_asset::{render_texture::RenderTexture, RenderAssets},
+    render_asset::{
+        render_texture::{FallbackTextures, RenderTexture},
+        render_window::RenderWindow,
+        RenderAssets,
+    },
     resources::RenderContext,
     sky_light::{CameraSkyLight, SkyRadianceMap},
+    tonemapping::{Exposure, Tonemapping},
+    view_target::{Msaa, ViewTarget},
 };
 
 #[rustfmt::skip]
@@ -226,6 +233,9 @@ pub struct CameraUniform {
     pub(crate) night_color: Vec4,
     pub(crate) night_ambient: Vec4,
     pub(crate) sky_lit: u32,
+    pub(crate) exposure: f32,
+    pub(crate) tonemapping: u32,
+    pub(crate) shadow_view: u32,
 }
 
 impl CameraUniform {
@@ -241,7 +251,15 @@ impl CameraUniform {
             night_color: Vec4::ZERO,
             night_ambient: Vec4::ZERO,
             sky_lit: 0,
+            exposure: 1.0,
+            tonemapping: Tonemapping::default().shader_value(),
+            shadow_view: 0,
         }
+    }
+
+    pub(crate) fn set_display(&mut self, tonemapping: Tonemapping, exposure: Exposure) {
+        self.tonemapping = tonemapping.shader_value();
+        self.exposure = exposure.multiplier();
     }
 
     pub fn update_view_proj(
@@ -275,12 +293,19 @@ impl CameraUniform {
         self.sky_lit = 1;
     }
 
-    pub(crate) fn view_proj(&self) -> Mat4 {
+    /// The matrix from world space to this camera's clip space.
+    pub fn view_proj(&self) -> Mat4 {
         self.view_proj
     }
 
-    pub(crate) fn view_position(&self) -> Vec3 {
+    /// Where the camera is in world space.
+    pub fn view_position(&self) -> Vec3 {
         self.view_pos
+    }
+
+    /// The matrix from this camera's clip space to world space.
+    pub fn inverse_view_proj(&self) -> Mat4 {
+        self.inverse_view_proj
     }
 }
 
@@ -296,15 +321,38 @@ pub struct RenderCamera {
     pub camera_bind_group: wgpu::BindGroup,
     pub camera_uniform: CameraUniform,
     pub camera_buffer: wgpu::Buffer,
-    pub(crate) depth_texture: RenderTexture,
+    /// The HDR colour and depth textures this camera's scene is drawn into.
+    pub view_target: ViewTarget,
     pub render_target: Option<RenderTexture>,
     pub(crate) viewport: Option<Viewport>,
     pub(crate) layers: RenderLayers,
+    pub(crate) ambient_occlusion: Option<wgpu::TextureView>,
+    pub(crate) adapted_exposure: Option<wgpu::TextureView>,
+    pub(crate) msaa: Msaa,
 }
 
 impl RenderCamera {
     pub fn depth_texture(&self) -> &RenderTexture {
-        &self.depth_texture
+        self.view_target.depth_texture()
+    }
+
+    pub(crate) fn write_uniform(&self, queue: &wgpu::Queue) {
+        let mut buffer = UniformBuffer::new(Vec::new());
+        buffer.write(&self.camera_uniform).unwrap();
+        queue.write_buffer(&self.camera_buffer, 0, &buffer.into_inner());
+    }
+
+    /// The layers this camera draws.
+    pub fn layers(&self) -> RenderLayers {
+        self.layers
+    }
+
+    /// The view the finished frame is written to: this camera's texture, or the window's.
+    pub fn output_view<'a>(&'a self, window: &'a RenderWindow) -> Option<&'a wgpu::TextureView> {
+        match &self.render_target {
+            Some(target) => Some(&target.view),
+            None => window.get_view(),
+        }
     }
 
     /// The size of the target this camera draws to: its texture, or the window's surface.
@@ -323,6 +371,24 @@ impl RenderCamera {
         viewport_rect(self.viewport.as_ref(), target)
     }
 
+    pub(crate) fn rebind(
+        &mut self,
+        device: &wgpu::Device,
+        layout: &CameraLayout,
+        sky_radiance: &SkyRadianceMap,
+        fallbacks: &FallbackTextures,
+    ) {
+        self.camera_bind_group = camera_bind_group(
+            device,
+            layout,
+            &self.camera_buffer,
+            sky_radiance,
+            self.ambient_occlusion
+                .as_ref()
+                .unwrap_or(&fallbacks.for_role(TextureRole::Data).view),
+        );
+    }
+
     pub fn resize_render_target(
         &mut self,
         device: &wgpu::Device,
@@ -333,8 +399,18 @@ impl RenderCamera {
         if self.render_target.is_some() {
             self.render_target = Some(create_rtt(device, format, width, height));
         }
-        self.depth_texture =
-            RenderTexture::create_depth_texture(device, width, height, "depth_texture");
+    }
+}
+
+fn scene_clear_color(shown: Color, tonemapping: Tonemapping, exposure: Exposure) -> LinearRgba {
+    let shown = shown.to_linear();
+    let light =
+        tonemapping.scene_light(Vec3::new(shown.r, shown.g, shown.b)) / exposure.multiplier();
+    LinearRgba {
+        r: light.x,
+        g: light.y,
+        b: light.z,
+        a: shown.a,
     }
 }
 
@@ -367,6 +443,9 @@ pub(crate) fn extract_cameras(
             Option<&CameraEnvironment>,
             Option<&CameraSkyLight>,
             Option<&RenderLayers>,
+            Option<&Tonemapping>,
+            Option<&Exposure>,
+            Option<&Msaa>,
             &GlobalTransform,
             &RenderEntity,
         )>,
@@ -380,10 +459,23 @@ pub(crate) fn extract_cameras(
     mut render_textures: ResMut<RenderAssets<RenderTexture>>,
     queue: Res<RenderQueue>,
     sky_radiance: Res<SkyRadianceMap>,
+    fallbacks: Res<FallbackTextures>,
 ) {
-    for (entity, camera, environment, sky_light, layers, transform, render_entity) in cameras.iter()
+    for (
+        entity,
+        camera,
+        environment,
+        sky_light,
+        layers,
+        tonemapping,
+        exposure,
+        msaa,
+        transform,
+        render_entity,
+    ) in cameras.iter()
     {
         let layers = layers.copied().unwrap_or_default();
+        let msaa = msaa.copied().unwrap_or_default();
         if exclusive.as_ref().is_some_and(|only| only.0 != entity) {
             continue;
         }
@@ -391,12 +483,17 @@ pub(crate) fn extract_cameras(
 
         let mut camera_uniform = CameraUniform::new();
         camera_uniform.update_view_proj(camera, environment, sky_light, transform);
+        let tonemapping = tonemapping.copied().unwrap_or_default();
+        let exposure = exposure.copied().unwrap_or_default();
+        camera_uniform.set_display(tonemapping, exposure);
+        let clear_color = scene_clear_color(camera.clear_color, tonemapping, exposure);
 
         if let Some(mut render_camera) = render_cameras.get_entity_mut(render_entity) {
             render_camera.camera_uniform = camera_uniform;
-            render_camera.clear_color = camera.clear_color.to_linear();
+            render_camera.clear_color = clear_color;
             render_camera.viewport = camera.viewport;
             render_camera.layers = layers;
+            render_camera.msaa = msaa;
 
             if let RenderTarget::Texture(handle) = &camera.render_target {
                 if let Some(texture) = texture_assets.get(handle) {
@@ -419,9 +516,7 @@ pub(crate) fn extract_cameras(
             }
             publish_render_target(camera, &render_camera, &mut render_textures);
 
-            let mut buffer = UniformBuffer::new(Vec::new());
-            buffer.write(&render_camera.camera_uniform).unwrap();
-            queue.write_buffer(&render_camera.camera_buffer, 0, &buffer.into_inner());
+            render_camera.write_uniform(&queue);
 
             continue;
         }
@@ -442,8 +537,13 @@ pub(crate) fn extract_cameras(
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
-        let camera_bind_group =
-            camera_bind_group(&device, &camera_layouts, &camera_buffer, &sky_radiance);
+        let camera_bind_group = camera_bind_group(
+            &device,
+            &camera_layouts,
+            &camera_buffer,
+            &sky_radiance,
+            &fallbacks.for_role(TextureRole::Data).view,
+        );
 
         let render_target: Option<RenderTexture> = target_size.map(|size| {
             create_rtt(
@@ -454,28 +554,27 @@ pub(crate) fn extract_cameras(
             )
         });
 
-        let (depth_w, depth_h) = match &render_target {
+        let view_size = match &render_target {
             Some(rt) => {
                 let size = rt.texture.size();
-                (size.width, size.height)
+                UVec2::new(size.width, size.height)
             }
-            None => (
-                context.surface_config.width.max(1),
-                context.surface_config.height.max(1),
-            ),
+            None => UVec2::new(context.surface_config.width, context.surface_config.height),
         };
-        let depth_texture =
-            RenderTexture::create_depth_texture(&device, depth_w, depth_h, "depth_texture");
+        let view_target = ViewTarget::new(&device, &context, view_size, msaa);
 
         let render_cam = RenderCamera {
             camera_bind_group,
             camera_uniform,
             camera_buffer,
-            depth_texture,
-            clear_color: camera.clear_color.to_linear(),
+            view_target,
+            clear_color,
             render_target,
             viewport: camera.viewport,
             layers,
+            ambient_occlusion: None,
+            adapted_exposure: None,
+            msaa,
         };
         publish_render_target(camera, &render_cam, &mut render_textures);
 
@@ -488,6 +587,7 @@ fn camera_bind_group(
     layout: &CameraLayout,
     camera_buffer: &wgpu::Buffer,
     sky_radiance: &SkyRadianceMap,
+    ambient_occlusion: &wgpu::TextureView,
 ) -> wgpu::BindGroup {
     device.create_bind_group(&wgpu::BindGroupDescriptor {
         layout: &layout.camera_layout,
@@ -504,6 +604,10 @@ fn camera_bind_group(
                 binding: 2,
                 resource: wgpu::BindingResource::Sampler(&sky_radiance.sampler),
             },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: wgpu::BindingResource::TextureView(ambient_occlusion),
+            },
         ],
         label: Some("camera_bind_group"),
     })
@@ -514,17 +618,13 @@ pub(crate) fn rebind_sky_radiance(
     mut render_cameras: Query<&mut RenderCamera>,
     device: Res<RenderDevice>,
     camera_layouts: Res<CameraLayout>,
+    fallbacks: Res<FallbackTextures>,
 ) {
     if !sky_radiance.is_changed() {
         return;
     }
     for mut render_camera in render_cameras.iter_mut() {
-        render_camera.camera_bind_group = camera_bind_group(
-            &device,
-            &camera_layouts,
-            &render_camera.camera_buffer,
-            &sky_radiance,
-        );
+        render_camera.rebind(&device, &camera_layouts, &sky_radiance, &fallbacks);
     }
 }
 
@@ -552,7 +652,8 @@ pub fn create_rtt(
         format,
         usage: wgpu::TextureUsages::RENDER_ATTACHMENT
             | wgpu::TextureUsages::TEXTURE_BINDING
-            | wgpu::TextureUsages::COPY_SRC,
+            | wgpu::TextureUsages::COPY_SRC
+            | wgpu::TextureUsages::COPY_DST,
         view_formats: &[],
     });
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
@@ -629,6 +730,9 @@ mod tests {
             night_color: Vec4::new(90.0, 91.0, 92.0, 93.0),
             night_ambient: Vec4::new(94.0, 95.0, 96.0, 97.0),
             sky_lit: 1,
+            exposure: 2.0,
+            tonemapping: 3,
+            shadow_view: 4,
         };
 
         let mut expected = float_words(&[1.0, 2.0, 3.0, 0.0]);
@@ -646,7 +750,7 @@ mod tests {
         }
         expected.extend(float_words(&[90.0, 91.0, 92.0, 93.0]));
         expected.extend(float_words(&[94.0, 95.0, 96.0, 97.0]));
-        expected.extend([1, 0, 0, 0]);
+        expected.extend([1, 2.0f32.to_bits(), 3, 4]);
 
         assert_eq!(uniform_words(&uniform), expected);
         assert_eq!(uniform.size().get(), 384);

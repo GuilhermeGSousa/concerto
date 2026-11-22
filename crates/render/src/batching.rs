@@ -61,6 +61,7 @@ pub(crate) struct Batch<K> {
     pub(crate) skeleton_offset: u32,
     pub(crate) skinned: bool,
     pub(crate) instances: Range<u32>,
+    pub(crate) view_distance: f32,
 }
 
 pub(crate) struct BinCandidate<'a, K> {
@@ -93,17 +94,40 @@ impl<K> ViewBins<K> {
     where
         K: Ord + Copy,
     {
-        self.rebuild_in_order(candidates, frustum, input, |visible| {
-            visible.sort_by_key(|candidate| {
-                (
-                    candidate
-                        .instance
-                        .flags
-                        .contains(RenderMeshInstanceFlags::SKINNED),
-                    candidate.key,
-                )
-            });
-        })
+        let mut visible = Self::visible(candidates, frustum);
+        visible.candidates.sort_by_key(|candidate| {
+            (
+                candidate
+                    .instance
+                    .flags
+                    .contains(RenderMeshInstanceFlags::SKINNED),
+                candidate.key,
+            )
+        });
+        self.values.clear();
+        self.batches.clear();
+        for candidate in visible.candidates {
+            let index = self.push_value(&candidate, input);
+            let skinned = candidate
+                .instance
+                .flags
+                .contains(RenderMeshInstanceFlags::SKINNED);
+            if !skinned {
+                if let Some(batch) = self
+                    .batches
+                    .last_mut()
+                    .filter(|batch| batch.key == candidate.key && !batch.skinned)
+                {
+                    batch.instances.end = index + 1;
+                    continue;
+                }
+            }
+            self.push_batch(&candidate, index, 0.0);
+        }
+        ViewDrawStats {
+            draws: self.batches.len() as u32,
+            culled: visible.culled,
+        }
     }
 
     pub(crate) fn rebuild_back_to_front<'a>(
@@ -128,30 +152,37 @@ impl<K> ViewBins<K> {
                     },
                     |aabb| aabb.center(),
                 )
-                .distance_squared(view_position)
+                .distance(view_position)
         };
-        self.rebuild_in_order(candidates, frustum, input, |visible| {
-            visible.sort_by_cached_key(|candidate| {
-                (Reverse(distance(candidate).to_bits()), candidate.key)
-            });
-        })
-    }
-
-    fn rebuild_in_order<'a>(
-        &mut self,
-        candidates: impl IntoIterator<Item = BinCandidate<'a, K>>,
-        frustum: &Frustum,
-        input: &InstanceInputUniformBuffer<GlobalTransformRaw>,
-        order: impl FnOnce(&mut [BinCandidate<'a, K>]),
-    ) -> ViewDrawStats
-    where
-        K: Ord + Copy,
-    {
+        let visible = Self::visible(candidates, frustum);
+        let mut far_to_near: Vec<Distant<'a, K>> = visible
+            .candidates
+            .into_iter()
+            .map(|candidate| Distant {
+                distance: distance(&candidate),
+                candidate,
+            })
+            .collect();
+        far_to_near
+            .sort_by_key(|distant| (Reverse(distant.distance.to_bits()), distant.candidate.key));
         self.values.clear();
         self.batches.clear();
+        for distant in far_to_near {
+            let index = self.push_value(&distant.candidate, input);
+            self.push_batch(&distant.candidate, index, distant.distance);
+        }
+        ViewDrawStats {
+            draws: self.batches.len() as u32,
+            culled: visible.culled,
+        }
+    }
 
+    fn visible<'a>(
+        candidates: impl IntoIterator<Item = BinCandidate<'a, K>>,
+        frustum: &Frustum,
+    ) -> Visible<'a, K> {
         let mut culled = 0;
-        let mut visible: Vec<BinCandidate<'a, K>> = candidates
+        let candidates = candidates
             .into_iter()
             .filter(|candidate| {
                 let visible = candidate.instance.is_visible_in(frustum);
@@ -161,43 +192,49 @@ impl<K> ViewBins<K> {
                 visible
             })
             .collect();
-        order(&mut visible);
-
-        for candidate in visible {
-            let index = self.values.len() as u32;
-            self.values
-                .push(input.get(candidate.instance.current_uniform_index));
-            let skinned = candidate
-                .instance
-                .flags
-                .contains(RenderMeshInstanceFlags::SKINNED);
-            if !skinned {
-                if let Some(batch) = self
-                    .batches
-                    .last_mut()
-                    .filter(|batch| batch.key == candidate.key && !batch.skinned)
-                {
-                    batch.instances.end = index + 1;
-                    continue;
-                }
-            }
-            self.batches.push(Batch {
-                key: candidate.key,
-                skeleton_offset: if skinned {
-                    candidate.skeleton_offset.unwrap_or(0)
-                } else {
-                    0
-                },
-                skinned,
-                instances: index..index + 1,
-            });
-        }
-
-        ViewDrawStats {
-            draws: self.batches.len() as u32,
-            culled,
-        }
+        Visible { candidates, culled }
     }
+
+    fn push_value(
+        &mut self,
+        candidate: &BinCandidate<'_, K>,
+        input: &InstanceInputUniformBuffer<GlobalTransformRaw>,
+    ) -> u32 {
+        self.values
+            .push(input.get(candidate.instance.current_uniform_index));
+        self.values.len() as u32 - 1
+    }
+
+    fn push_batch(&mut self, candidate: &BinCandidate<'_, K>, index: u32, view_distance: f32)
+    where
+        K: Copy,
+    {
+        let skinned = candidate
+            .instance
+            .flags
+            .contains(RenderMeshInstanceFlags::SKINNED);
+        self.batches.push(Batch {
+            key: candidate.key,
+            skeleton_offset: if skinned {
+                candidate.skeleton_offset.unwrap_or(0)
+            } else {
+                0
+            },
+            skinned,
+            instances: index..index + 1,
+            view_distance,
+        });
+    }
+}
+
+struct Visible<'a, K> {
+    candidates: Vec<BinCandidate<'a, K>>,
+    culled: u32,
+}
+
+struct Distant<'a, K> {
+    candidate: BinCandidate<'a, K>,
+    distance: f32,
 }
 
 pub(crate) struct ViewInstanceBuffer {
@@ -446,17 +483,17 @@ mod tests {
     }
 
     #[test]
-    fn blended_instances_bin_farthest_first_merging_only_consecutive_keys() {
+    fn blended_instances_bin_farthest_first_one_draw_each() {
         let cases = [
             Binning {
-                case: "consecutive keys merge",
+                case: "consecutive keys stay apart, to be sorted among other phases' items",
                 candidates: vec![
                     at(1, 0.0, 0.0, -5.0),
                     at(2, 0.0, 0.0, -20.0),
                     at(2, 0.0, 0.0, -15.0),
                 ],
-                stats: stats(2, 0),
-                batches: vec![batch(2, 0..2), batch(1, 2..3)],
+                stats: stats(3, 0),
+                batches: vec![batch(2, 0..1), batch(2, 1..2), batch(1, 2..3)],
                 drawn: vec![
                     Vec3::new(0.0, 0.0, -20.0),
                     Vec3::new(0.0, 0.0, -15.0),

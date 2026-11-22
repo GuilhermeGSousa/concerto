@@ -8,7 +8,8 @@ use crate::{
 };
 
 /// Bind-group layout for the camera uniform (`@group(1) @binding(0)` in the
-/// default material convention) and the sky-radiance map (bindings 1 and 2).
+/// default material convention), the sky-radiance map (bindings 1 and 2) and
+/// the camera's ambient occlusion (binding 3), white where it has none.
 ///
 /// Exposed publicly so crates with their own render passes (e.g. debug gizmos)
 /// can build a pipeline whose camera bind-group layout is *the same object*
@@ -48,6 +49,16 @@ impl CameraLayout {
                         binding: 2,
                         visibility: wgpu::ShaderStages::FRAGMENT,
                         ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 3,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
                         count: None,
                     },
                 ],
@@ -95,8 +106,9 @@ impl SkeletonLayout {
 // camera (per-`RenderCamera`) or skeleton (per-mesh dynamic offset), so
 // merging them doesn't introduce the per-camera invalidation cost that
 // merging camera in as well would have.
+/// Bind-group layout for the lights uniform and the shadow maps, `@group(2)` in the default material convention.
 #[derive(Resource, Deref)]
-pub(crate) struct LightingLayout(pub(crate) wgpu::BindGroupLayout);
+pub struct LightingLayout(pub(crate) wgpu::BindGroupLayout);
 
 impl LightingLayout {
     pub fn new(device: &wgpu::Device, capabilities: &RenderCapabilities) -> Self {

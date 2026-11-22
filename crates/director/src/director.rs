@@ -1,9 +1,9 @@
-use concerto_ecs::{Changed, Entity, Query, Res, ResMut, Resource, With};
+use concerto_ecs::{Changed, Entity, Query, Res, ResMut, Resource, With, command::CommandQueue};
 use concerto_foundation::{
     time::Time,
     transform::{GlobalTransform, Transform},
 };
-use concerto_render::components::camera::Camera;
+use concerto_render::{DepthOfField, components::camera::Camera};
 use glam::{Mat4, Quat};
 
 use crate::{
@@ -210,21 +210,35 @@ pub fn drive_main_camera(
     mut director: ResMut<CameraDirector>,
     time: Res<Time>,
     vcams: Query<(&VirtualCamera, &GlobalTransform)>,
-    mut main_cameras: Query<(&mut Transform, &GlobalTransform, &mut Camera), With<MainCamera>>,
+    mut main_cameras: Query<
+        (
+            &mut Transform,
+            &GlobalTransform,
+            &mut Camera,
+            Option<&mut DepthOfField>,
+        ),
+        With<MainCamera>,
+    >,
+    mut cmd: CommandQueue,
 ) {
     let Some(main_camera) = director.main_camera() else {
         return;
     };
-    let Some((mut transform, global, mut camera)) = main_cameras.get_entity_mut(main_camera) else {
+    let Some((mut transform, global, mut camera, mut focus)) =
+        main_cameras.get_entity_mut(main_camera)
+    else {
         return;
     };
 
-    let current_lens = Lens::from_camera(&camera);
+    let current = Fallback {
+        lens: Lens::from_camera(&camera),
+        focus: focus.as_ref().map(|focus| ***focus),
+    };
     let delta = time.delta().as_secs_f32();
 
     let live_pose = director
         .live()
-        .and_then(|live| sample_pose(live, &vcams, current_lens));
+        .and_then(|live| sample_pose(live, &vcams, current));
 
     let mut state = std::mem::replace(&mut director.state, DirectorState::Settled);
     let mut blend_finished = false;
@@ -236,7 +250,7 @@ pub fn drive_main_camera(
             elapsed,
             duration,
             ease,
-        } => match (sample_pose(*from, &vcams, current_lens), live_pose) {
+        } => match (sample_pose(*from, &vcams, current), live_pose) {
             (Some(from_pose), Some(live_pose)) => {
                 *elapsed += delta;
                 let t = ease.apply(*elapsed / *duration);
@@ -266,20 +280,34 @@ pub fn drive_main_camera(
         transform.scale = scale;
 
         pose.lens.apply_to(&mut camera);
+        if let Some(wanted) = pose.focus {
+            match focus.as_mut() {
+                Some(current) if ***current != wanted => ***current = wanted,
+                Some(_) => {}
+                None => cmd.insert(wanted, main_camera),
+            }
+        }
     }
+}
+
+#[derive(Clone, Copy)]
+struct Fallback {
+    lens: Lens,
+    focus: Option<DepthOfField>,
 }
 
 fn sample_pose(
     vcam: Entity,
     vcams: &Query<(&VirtualCamera, &GlobalTransform)>,
-    fallback_lens: Lens,
+    fallback: Fallback,
 ) -> Option<CameraPose> {
     let (vcam, global_transform) = vcams.get_entity(vcam)?;
 
     Some(CameraPose {
         translation: global_transform.translation(),
         rotation: normalize(global_transform.rotation()),
-        lens: vcam.lens.unwrap_or(fallback_lens),
+        lens: vcam.lens.unwrap_or(fallback.lens),
+        focus: vcam.focus.or(fallback.focus),
     })
 }
 
@@ -302,7 +330,7 @@ mod tests {
     use concerto_ecs::world::World;
     use concerto_foundation::{time::Time, transform::Transform};
     use concerto_reflect::{apply_value, to_value};
-    use concerto_render::components::camera::Camera;
+    use concerto_render::{DepthOfField, components::camera::Camera};
     use glam::Vec3;
 
     use super::{CameraDirector, drive_main_camera, sync_virtual_cameras};
@@ -386,6 +414,12 @@ mod tests {
             }));
         }
 
+        fn focus(&self) -> Option<DepthOfField> {
+            self.world
+                .get_component_for_entity::<DepthOfField>(self.main_camera)
+                .copied()
+        }
+
         fn director(&mut self) -> &mut CameraDirector {
             self.world.get_resource_mut::<CameraDirector>().unwrap()
         }
@@ -452,17 +486,32 @@ mod tests {
         fixture.spawn_vcam(VirtualCamera::default(), Vec3::Y * 5.0);
         assert_eq!(fixture.step(), Vec3::Y * 5.0);
 
-        fixture.spawn_vcam(VirtualCamera::new(10), Vec3::X * 100.0);
+        let far_focus = DepthOfField::at(8.0);
+        fixture.spawn_vcam(
+            VirtualCamera::new(10).with_focus(far_focus),
+            Vec3::X * 100.0,
+        );
         let blended = fixture.step();
 
         assert!(blended.distance(Vec3::Y * 5.0) < 1.0, "{blended}");
         assert!(fixture.director().is_blending());
+        fixture.step();
+        let opening = fixture.focus().expect("the main camera takes the focus");
+        assert_eq!(opening.focus_distance, 8.0);
+        assert!(
+            opening.max_blur < far_focus.max_blur * 0.5,
+            "a focus taken from a camera without one opens its blur over the blend: {}",
+            opening.max_blur
+        );
 
         fixture
             .director()
             .set_blend(BlendIn::linear(f32::MIN_POSITIVE));
-        let top = fixture.spawn_vcam(VirtualCamera::new(20), Vec3::Z);
+        let near_focus = DepthOfField::at(2.0);
+        let top = fixture.spawn_vcam(VirtualCamera::new(20).with_focus(near_focus), Vec3::Z);
         assert_eq!(fixture.step(), Vec3::Z);
+        fixture.step();
+        assert_eq!(fixture.focus(), Some(near_focus));
         assert!(!fixture.director().is_blending());
         assert_eq!(fixture.director().live(), Some(top));
     }

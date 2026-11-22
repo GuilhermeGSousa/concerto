@@ -1,3 +1,4 @@
+mod sky_reflection;
 mod sky_render;
 mod webgl2_shaders;
 

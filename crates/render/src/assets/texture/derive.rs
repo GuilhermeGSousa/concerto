@@ -254,22 +254,71 @@ pub(crate) fn build_mips(width: u32, height: u32, texels: Texels, data: &[u8]) -
         })
         .collect();
 
+    let coverage = (texels == Texels::Srgb).then(|| alpha_coverage(data));
     let mut mips: Vec<Vec<u8>> = Vec::new();
+    let mut unscaled: Option<Vec<u8>> = None;
     let mut extent = MipExtent { width, height };
     while extent.width > 1 || extent.height > 1 {
         let next = MipExtent {
             width: (extent.width / 2).max(1),
             height: (extent.height / 2).max(1),
         };
-        let source = mips.last().map_or(data, Vec::as_slice);
+        let source = unscaled.as_deref().unwrap_or(data);
         let mut mip = downsample(source, extent, next, &decode, srgb);
         if texels == Texels::Normals {
             renormalize(&mut mip);
         }
-        mips.push(mip);
+        match coverage {
+            Some(coverage) => {
+                let mut scaled = mip.clone();
+                keep_alpha_coverage(&mut scaled, coverage);
+                mips.push(scaled);
+            }
+            None => mips.push(mip.clone()),
+        }
+        unscaled = Some(mip);
         extent = next;
     }
     mips
+}
+
+const ALPHA_COVERED: u8 = 128;
+const ALPHA_SCALE_LIMIT: f32 = 4.0;
+
+fn alpha_coverage(texels: &[u8]) -> f32 {
+    let texels = texels.as_chunks::<4>().0;
+    let covered = texels
+        .iter()
+        .filter(|texel| texel[3] >= ALPHA_COVERED)
+        .count();
+    covered as f32 / texels.len().max(1) as f32
+}
+
+fn keep_alpha_coverage(texels: &mut [u8], coverage: f32) {
+    let mut alphas: Vec<u8> = texels
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|texel| texel[3])
+        .collect();
+    let count = alphas.len();
+    let wanted = (coverage * count as f32).round() as usize;
+    let covered = alphas
+        .iter()
+        .filter(|&&alpha| alpha >= ALPHA_COVERED)
+        .count();
+    if wanted == covered || wanted == 0 || wanted == count {
+        return;
+    }
+    alphas.sort_unstable_by(|a, b| b.cmp(a));
+    let edge = (alphas[wanted - 1] as f32 + alphas[wanted] as f32) * 0.5;
+    if edge <= 0.0 {
+        return;
+    }
+    let scale = (127.5 / edge).clamp(1.0 / ALPHA_SCALE_LIMIT, ALPHA_SCALE_LIMIT);
+    for texel in texels.as_chunks_mut::<4>().0 {
+        texel[3] = (texel[3] as f32 * scale).round().clamp(0.0, 255.0) as u8;
+    }
 }
 
 fn renormalize(texels: &mut [u8]) {
@@ -301,19 +350,26 @@ fn downsample(
         for x in 0..next.width {
             let columns = footprint(x, extent.width, next.width);
             let count = (rows.len() * columns.len()) as f32;
-            for channel in 0..4 {
-                let mut sum = 0.0;
-                for row in rows.clone() {
-                    for column in columns.clone() {
-                        let byte = source[((row * extent.width + column) * 4) as usize + channel];
-                        sum += if channel == 3 {
-                            byte as f32 / 255.0
-                        } else {
-                            decode[byte as usize]
-                        };
+            let mut sums = [0.0f32; 4];
+            let mut weighted = [0.0f32; 3];
+            for row in rows.clone() {
+                for column in columns.clone() {
+                    let texel = ((row * extent.width + column) * 4) as usize;
+                    let alpha = source[texel + 3] as f32 / 255.0;
+                    for channel in 0..3 {
+                        let value = decode[source[texel + channel] as usize];
+                        sums[channel] += value;
+                        weighted[channel] += value * alpha;
                     }
+                    sums[3] += alpha;
                 }
-                let mean = sum / count;
+            }
+            for channel in 0..4 {
+                let mean = if channel < 3 && srgb && sums[3] > 0.0 {
+                    weighted[channel] / sums[3]
+                } else {
+                    sums[channel] / count
+                };
                 let encoded = if srgb && channel != 3 {
                     linear_to_srgb(mean)
                 } else {
@@ -361,7 +417,7 @@ mod tests {
     }
 
     #[test]
-    fn mips_halve_down_to_one_texel_and_average_in_linear_space() {
+    fn mips_halve_down_to_one_texel_average_in_linear_space_and_keep_a_colour_textures_coverage() {
         let cases = [
             Case {
                 width: 4,
@@ -395,7 +451,24 @@ mod tests {
                 height: 1,
                 texels: Texels::Srgb,
                 data: [[0, 0, 0, 0], [255, 255, 255, 255]].concat(),
-                mips: vec![vec![188, 188, 188, 128]],
+                mips: vec![vec![255, 255, 255, 128]],
+            },
+            Case {
+                width: 4,
+                height: 4,
+                texels: Texels::Srgb,
+                data: [
+                    [[9, 9, 9, 255], [9, 9, 9, 100], [9, 9, 9, 255], [0, 0, 0, 0]],
+                    [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]],
+                    [[0, 0, 0, 0], [9, 9, 9, 255], [0, 0, 0, 0], [0, 0, 0, 0]],
+                    [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]],
+                ]
+                .concat()
+                .concat(),
+                mips: vec![
+                    [[9, 9, 9, 148], [9, 9, 9, 107], [9, 9, 9, 107], [0, 0, 0, 0]].concat(),
+                    vec![9, 9, 9, 54],
+                ],
             },
             Case {
                 width: 2,
