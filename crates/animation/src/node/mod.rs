@@ -75,7 +75,7 @@ pub enum AnimationPlayMode {
 #[reflect(AnimationNode)]
 pub struct ResultNode {}
 
-/// Blends its inputs, each by its node weight; inputs at zero weight are left out.
+/// Blends its inputs, each by its node weight; inputs at zero weight are left out, and their poses are not written.
 #[derive(Default, Reflect)]
 #[reflect(AnimationNode)]
 pub struct BlendNode {}
@@ -153,6 +153,14 @@ impl AnimationNode for BlendNode {
     }
 
     fn reset(&self, _: &mut ()) {}
+
+    fn reads_input(&self, _: &(), _input: usize, weight: f32) -> bool {
+        weight > 0.0
+    }
+
+    fn evaluate_only_writes_output(&self) -> bool {
+        true
+    }
 }
 
 pub(crate) struct ClipClock {
@@ -415,6 +423,10 @@ impl AnimationNode for AnimationClipNode {
 
     fn is_finished(&self, state: &AnimationClipNodeState) -> bool {
         state.clock.is_finished
+    }
+
+    fn evaluate_only_writes_output(&self) -> bool {
+        true
     }
 }
 
