@@ -789,6 +789,40 @@ With the defaults the reference humanoid, 75 kg, absorbs a 12 N·s push on the
 chest without a step, catches a 70 N·s push in one or two steps, and gives up
 under 300 N·s.
 
+#### Stagger
+
+Balance recovers as well as it can, which reads as a robot. `Stagger` makes
+the same push a stumble. Add it when a character is shoved or hit, with the
+way it was sent and a severity from 0 to 1:
+
+```rust
+cmd.entity(character).insert(Stagger::new(push_direction, 0.5));
+```
+
+It requires a `Balance`, so the character gets one if it has none, and it runs
+on top of it instead of placing the feet itself:
+
+- **Legs.** Each step it calls `Balance::hinder` with a `Hindrance`: steps
+  cover less of the distance balance wants (`short_steps`), take longer
+  (`slow_steps`), the legs and balance's assists are weaker (`weak_legs`), and
+  the knees lose strength for a quarter of a second after each landing. All of
+  it scales with the severity and wears off over `seconds`. Any behaviour can
+  hinder balance the same way.
+- **Trunk.** The spine bends towards the direction, by `bend` radians at
+  severity 1, and straightens as the stagger wears off.
+- **Arms.** Both arms circle about the shoulders in the sense the trunk is
+  tipping, which slows it, as wide as the chest's angular velocity is fast
+  (`full_spin`). As the body steadies they come down. The cycle is authored,
+  not solved from the angular momentum.
+
+It claims the spine and the arms at `STAGGER_PRIORITY`, above balance and
+below nothing the engine has yet. It ends when balance ends and triggers
+`BehaviourEnded` for `stagger` with the same outcome. On the reference
+humanoid a 70 N·s push with severity 0.4 takes more steps than balance alone
+and ends standing; with severity 1 it ends `Falling`. Between those the
+outcome is in doubt, as it should be: do not build game logic on a stagger of
+a given severity surviving.
+
 Ragdoll parts are in `Layers::RAGDOLL` and collide with everything but
 `Layers::CHARACTER` (`CollisionLayers::ragdoll()`, or `RagdollSettings::layers`
 to change it). Give the character's capsule `CollisionLayers::character()`:
