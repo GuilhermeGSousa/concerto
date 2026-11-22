@@ -11,3 +11,16 @@ use crate::ActiveBackend;
 /// body is created.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Component)]
 pub struct BodyId(pub(crate) <ActiveBackend as PhysicsBackend>::BodyHandle);
+
+/// How a body is moving right now.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum BodyActivity {
+    /// The body never moves.
+    Static,
+    /// The body is moved by velocities its owner sets.
+    Kinematic,
+    /// The body is simulated.
+    Dynamic,
+    /// The body is dynamic or kinematic and has come to rest; a touch wakes it.
+    Asleep,
+}

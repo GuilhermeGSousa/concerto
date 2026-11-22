@@ -7,12 +7,12 @@ use concerto_foundation::transform::Transform;
 use glam::Vec3;
 
 use crate::backend::{PhysicsBackend, RawContactKind, SensorContactKind};
-use crate::body::BodyId;
+use crate::body::{BodyActivity, BodyId};
 use crate::collider::{Collider, ColliderOffset};
 use crate::contact::{Contact, ContactChange};
 use crate::ground::{GroundContact, GroundState};
 use crate::query::{QueryFilter, ShapeHit};
-use crate::ragdoll::{BodyPose, BuiltRagdoll, JointDrive, RagdollId};
+use crate::ragdoll::{BodyPose, BuiltRagdoll, JointDrive, RagdollId, RagdollSettings};
 use crate::ray::RayHit;
 use crate::rigid_body::{MotionType, RigidBody};
 use crate::sensor::SensorContact;
@@ -60,6 +60,7 @@ struct BodyOwner {
 
 struct RagdollRecord {
     bodies: Vec<BodyId>,
+    built: BuiltRagdoll,
 }
 
 /// Owns the physics world of the active backend, plus the engine-side
@@ -141,7 +142,13 @@ impl PhysicsState {
                 },
             );
         }
-        self.ragdolls.insert(ragdoll, RagdollRecord { bodies });
+        self.ragdolls.insert(
+            ragdoll,
+            RagdollRecord {
+                bodies,
+                built: built.clone(),
+            },
+        );
         Some(ragdoll)
     }
 
@@ -155,6 +162,23 @@ impl PhysicsState {
             self.forget_body(body);
             self.unregister_body_entity(body);
         }
+    }
+
+    /// Every ragdoll in the world.
+    pub fn ragdolls(&self) -> impl Iterator<Item = RagdollId> + '_ {
+        self.ragdolls.keys().copied()
+    }
+
+    /// The settings the ragdoll was built from.
+    pub fn ragdoll_settings(&self, ragdoll: RagdollId) -> Option<&RagdollSettings> {
+        self.ragdolls
+            .get(&ragdoll)
+            .map(|record| record.built.settings())
+    }
+
+    /// How `body` is moving right now: static, kinematic, dynamic or asleep.
+    pub fn body_activity(&self, body: BodyId) -> BodyActivity {
+        self.backend.body_activity(body.0)
     }
 
     /// The body of each part of the ragdoll, in part order; empty for a destroyed ragdoll.

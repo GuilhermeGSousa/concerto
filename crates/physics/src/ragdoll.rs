@@ -2,6 +2,7 @@ use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::sync::Arc;
 
+use concerto_ecs::Component;
 use concerto_foundation::transform::Transform;
 use glam::{Quat, Vec3};
 
@@ -260,7 +261,7 @@ impl RagdollSettings {
         }
         Ok(BuiltRagdoll {
             handle: Arc::new(ActiveBackend::build_ragdoll(self)?),
-            parts: self.parts.len(),
+            settings: Arc::new(self.clone()),
         })
     }
 }
@@ -302,15 +303,20 @@ impl Error for RagdollBuildError {}
 #[derive(Clone)]
 pub struct BuiltRagdoll {
     pub(crate) handle: Arc<<ActiveBackend as PhysicsBackend>::RagdollSettingsHandle>,
-    parts: usize,
+    settings: Arc<RagdollSettings>,
 }
 
 impl BuiltRagdoll {
     pub fn part_count(&self) -> usize {
-        self.parts
+        self.settings.parts.len()
+    }
+
+    /// The settings this was built from.
+    pub fn settings(&self) -> &RagdollSettings {
+        &self.settings
     }
 }
 
-/// A ragdoll living inside the physics simulation, owned by [`PhysicsState`](crate::physics_state::PhysicsState) until it is destroyed.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+/// A ragdoll living inside the physics simulation, owned by [`PhysicsState`](crate::physics_state::PhysicsState) until it is destroyed. As a component it marks the entity that owns the ragdoll.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Component)]
 pub struct RagdollId(pub(crate) <ActiveBackend as PhysicsBackend>::RagdollHandle);
