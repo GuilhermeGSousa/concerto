@@ -215,7 +215,7 @@ fn answer_plays(
         }
     }
     for event in failed.read() {
-        for (entity, pending, starting) in waiting.iter() {
+        for (entity, pending, starting) in waiting.iter_mut() {
             if starting.document == event.document {
                 pending
                     .reply

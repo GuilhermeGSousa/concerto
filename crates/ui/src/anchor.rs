@@ -347,7 +347,7 @@ pub fn track_panel_stack(
             );
         }
     }
-    for (entity, panel, _) in panels.iter() {
+    for (entity, panel, _) in panels.iter_mut() {
         if !panel.toggled_by_owner {
             continue;
         }
@@ -616,7 +616,7 @@ pub(crate) fn dismiss_panels(
             .open()
             .iter()
             .filter_map(|entity| {
-                let (panel, layout) = panels.get_entity(*entity)?;
+                let (panel, layout) = panels.get_entity_mut(*entity)?;
                 let layout = layout?;
                 Some(PanelRects {
                     panel: *entity,

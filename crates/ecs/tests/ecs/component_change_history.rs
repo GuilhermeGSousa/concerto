@@ -5,6 +5,10 @@ use std::any::TypeId;
 struct Value(f32);
 #[derive(Component)]
 struct Other;
+struct Seen {
+    entity: Entity,
+    value: f32,
+}
 
 #[test]
 fn changes_survive_tick_advance_and_the_read_boundary_is_inclusive() {
@@ -38,11 +42,19 @@ fn query_mutations_and_replacements_are_observed_without_touching_other_componen
     let entity = world.spawn((Value(1.0), Other));
     world.tick();
     let read_at = world.change_tick();
-    fn read(values: Query<(Entity, &mut Value)>) {
-        for (entity, value) in values.iter() {
+    fn read(mut values: Query<(Entity, &mut Value)>) {
+        let seen = values
+            .iter_mut()
+            .map(|(entity, value)| Seen {
+                entity,
+                value: value.0,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(seen.len(), 1);
+        for seen in seen {
             assert_eq!(
-                values.get_entity(entity).map(|(_, same)| same.0),
-                Some(value.0)
+                values.get_entity_mut(seen.entity).map(|(_, same)| same.0),
+                Some(seen.value)
             );
         }
     }

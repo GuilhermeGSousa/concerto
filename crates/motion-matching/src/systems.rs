@@ -97,7 +97,7 @@ pub fn apply_character_displacement(
             continue;
         };
         let Some(position) = transforms
-            .get_entity(capsule)
+            .get_entity_mut(capsule)
             .map(|capsule| capsule.translation)
         else {
             continue;

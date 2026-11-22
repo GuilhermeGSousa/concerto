@@ -428,7 +428,7 @@ pub(crate) fn refresh_entity_picker_labels(
     active: Res<ActiveEditor>,
     states: Query<&PlayState>,
 ) {
-    if labels.iter().next().is_none() {
+    if labels.iter_mut().next().is_none() {
         return;
     }
     let listed: HashSet<Entity> = listed_entities(

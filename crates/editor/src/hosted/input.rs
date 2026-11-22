@@ -357,7 +357,7 @@ pub(crate) fn route_play_input(
     let player = viewport_targets
         .iter()
         .next()
-        .filter(|document| owners.get_entity(*document).is_some());
+        .filter(|document| owners.contains_entity(*document));
     if routing.pad_target != player {
         routing.pad_target = player;
         routing.told_pads.clear();

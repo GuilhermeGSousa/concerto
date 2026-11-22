@@ -1288,7 +1288,7 @@ fn reconcile_content_tree(
             None => state.reveal = None,
             Some(item)
                 if items
-                    .get_entity(item)
+                    .get_entity_mut(item)
                     .is_some_and(|(_, _, placed)| placed.is_some()) =>
             {
                 cmd.entity(item).trigger(UIReveal);
