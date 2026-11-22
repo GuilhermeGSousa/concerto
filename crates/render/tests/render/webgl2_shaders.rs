@@ -37,6 +37,22 @@ const FRAGMENT: EntryPoint = EntryPoint {
     stage: ShaderStage::Fragment,
 };
 
+const AUTO_EXPOSURE: &[EntryPoint] = &[
+    VERTEX,
+    EntryPoint {
+        name: "fs_measure",
+        stage: ShaderStage::Fragment,
+    },
+    EntryPoint {
+        name: "fs_reduce",
+        stage: ShaderStage::Fragment,
+    },
+    EntryPoint {
+        name: "fs_adapt",
+        stage: ShaderStage::Fragment,
+    },
+];
+
 const BLOOM: &[EntryPoint] = &[
     VERTEX,
     EntryPoint {
@@ -140,6 +156,11 @@ fn every_shader_translates_to_glsl_es_300_under_the_webgl2_defines() {
             label: "ambient_occlusion_blur.wgsl",
             source: include_str!("../../src/shaders/ambient_occlusion_blur.wgsl"),
             entry_points: &[VERTEX, FRAGMENT],
+        },
+        Shader {
+            label: "auto_exposure.wgsl",
+            source: include_str!("../../src/shaders/auto_exposure.wgsl"),
+            entry_points: AUTO_EXPOSURE,
         },
         Shader {
             label: "bloom.wgsl",

@@ -86,6 +86,7 @@ impl Exposure {
 pub(crate) struct TonemappingPipeline {
     pipeline: wgpu::RenderPipeline,
     scene_layout: wgpu::BindGroupLayout,
+    unadapted: wgpu::TextureView,
 }
 
 impl TonemappingPipeline {
@@ -101,19 +102,36 @@ impl TonemappingPipeline {
             include_str!("shaders/tonemapping.wgsl"),
             &capabilities.shader_defs(),
         );
+        let texture = |binding| wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                view_dimension: wgpu::TextureViewDimension::D2,
+                multisampled: false,
+            },
+            count: None,
+        };
         let scene_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Tonemapping Scene Layout"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                    multisampled: false,
-                },
-                count: None,
-            }],
+            entries: &[texture(0), texture(1)],
         });
+        let unadapted = device
+            .create_texture(&wgpu::TextureDescriptor {
+                label: Some("Unadapted Exposure"),
+                size: wgpu::Extent3d {
+                    width: 1,
+                    height: 1,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            })
+            .create_view(&wgpu::TextureViewDescriptor::default());
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Tonemapping Pipeline Layout"),
             bind_group_layouts: &[Some(&camera_layout.camera_layout), Some(&scene_layout)],
@@ -147,6 +165,7 @@ impl TonemappingPipeline {
         Self {
             pipeline,
             scene_layout,
+            unadapted,
         }
     }
 }
@@ -169,12 +188,23 @@ pub(crate) fn tonemap_cameras(
         let scene = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Tonemapping Scene Bind Group"),
             layout: &pipeline.scene_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::TextureView(
-                    &render_camera.view_target.main_texture().view,
-                ),
-            }],
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(
+                        &render_camera.view_target.main_texture().view,
+                    ),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(
+                        render_camera
+                            .adapted_exposure
+                            .as_ref()
+                            .unwrap_or(&pipeline.unadapted),
+                    ),
+                },
+            ],
         });
         let mut pass = device
             .command_encoder()

@@ -41,7 +41,8 @@ use concerto_physics::plugin::PhysicsPlugin;
 use concerto_procedural_animation::ProceduralAnimationPlugin;
 use concerto_render::{
     assets::material::StandardMaterial, plugin::RenderPlugin,
-    shadow_pipeline::ShadowPipelinePlugin, AmbientOcclusionPlugin, BloomPlugin, MaterialPlugin,
+    shadow_pipeline::ShadowPipelinePlugin, AmbientOcclusionPlugin, AutoExposurePlugin, BloomPlugin,
+    MaterialPlugin,
 };
 use concerto_scene::plugin::ScenePlugin;
 use concerto_skybox::plugin::SkyboxPlugin;
@@ -208,6 +209,7 @@ impl Plugin for DefaultPlugins {
             .register_plugin(MaterialPlugin::<StandardMaterial>::default())
             .register_plugin(BloomPlugin)
             .register_plugin(AmbientOcclusionPlugin)
+            .register_plugin(AutoExposurePlugin)
             .register_plugin(ParticlesPlugin);
 
         app.register_plugin(PhysicsPlugin)

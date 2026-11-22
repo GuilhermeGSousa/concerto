@@ -131,6 +131,33 @@ cmd.spawn((
   `EXT_color_buffer_float`, the view target is 8-bit and scene light is clamped
   at 1 before exposure.
 
+### Eye adaptation
+
+`AutoExposure` on a camera makes its exposure follow what it sees, as an eye
+or a camera's auto-exposure does: walking from a lamp-lit room into daylight,
+the picture darkens over a moment instead of burning out. `AutoExposurePlugin`
+does it, and `DefaultPlugins` registers it.
+
+```rust
+use concerto::render::AutoExposure;
+
+cmd.spawn((Camera::default(), AutoExposure::default(), Transform::IDENTITY));
+```
+
+- Each frame the scene's average brightness is measured, as the mean of the
+  logarithm of its luminance over the camera's rect, and the exposure moves
+  toward the one that shows that average as middle grey.
+- `min_stops` and `max_stops`, -4 and 4 by default, bound how far it goes down
+  for a bright scene and up for a dark one.
+- `speed`, 2 by default, is how quickly it follows; a new camera starts
+  adapted.
+- `Exposure` still applies on top, as a compensation: `Exposure::new(-1.0)`
+  keeps the picture a stop under what the adaptation picks.
+- Under `AutoExposure`, `clear_color` is no longer exactly the colour shown,
+  since the exposure it is shown at is only known on the GPU.
+- It needs float render targets; on an adapter without them the component has
+  no effect and the plugin says so once.
+
 ### Anti-aliasing
 
 A camera draws its scene with four samples a pixel, so the edges of geometry
