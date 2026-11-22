@@ -116,11 +116,12 @@ A `Query<D, F>` has a **data** part and an optional **filter**:
 | `Or<(A, B)>` | match either filter |
 
 `query.iter()` visits every match and `query.get_entity(entity)` returns one
-entity's data, or `None`. Both borrow the query shared and give read-only
-items, `&T` even where the query says `&mut T`. To write, take the query as
-`mut` and call `query.iter_mut()` or `query.get_entity_mut(entity)`, which
-borrow it exclusively, so two mutable items for one component cannot be alive
-at once:
+entity's data, or `None`. Both borrow the query shared, so they compile only
+for a query whose data is read-only. A query that names `&mut T` is taken as
+`mut` and read or written through `query.iter_mut()` and
+`query.get_entity_mut(entity)`, which borrow it exclusively, so two mutable
+items for one component cannot be alive at once. `contains_entity` works on
+either kind:
 
 ```rust
 fn hit(mut targets: Query<(Entity, &mut Health)>, attacks: Query<&Attack>) {

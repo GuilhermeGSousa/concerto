@@ -98,9 +98,9 @@ pub(crate) struct TreeRow {
 pub(crate) fn flatten_tree(
     roots: &[Entity],
     filtering: bool,
-    node: impl Fn(Entity) -> TreeNode,
+    mut node: impl FnMut(Entity) -> TreeNode,
 ) -> Vec<TreeRow> {
-    let shown = shown_level(roots, &node);
+    let shown = shown_level(roots, &mut node);
     let mut rows = Vec::new();
     flatten_level(shown, filtering, 0, &mut Vec::new(), &mut rows);
     rows
@@ -112,12 +112,12 @@ struct ShownItem {
     children: Vec<ShownItem>,
 }
 
-fn shown_level(siblings: &[Entity], node: &impl Fn(Entity) -> TreeNode) -> Vec<ShownItem> {
+fn shown_level(siblings: &[Entity], node: &mut impl FnMut(Entity) -> TreeNode) -> Vec<ShownItem> {
     siblings
         .iter()
         .filter_map(|&entity| {
             let node_of = node(entity);
-            let children = shown_level(&node_of.children, node);
+            let children = shown_level(&node_of.children, &mut *node);
             (!node_of.hidden || !children.is_empty()).then_some(ShownItem {
                 entity,
                 expanded: node_of.expanded,
@@ -167,7 +167,10 @@ fn marked_items(children: &Children, is_item: impl Fn(Entity) -> bool) -> Vec<En
         .collect()
 }
 
-fn every_item(roots: &[Entity], marked: &impl Fn(Entity) -> Vec<Entity>) -> Vec<(Entity, usize)> {
+fn every_item(
+    roots: &[Entity],
+    marked: &mut impl FnMut(Entity) -> Vec<Entity>,
+) -> Vec<(Entity, usize)> {
     let mut every = Vec::new();
     let mut pending = roots
         .iter()
@@ -186,6 +189,17 @@ fn every_item(roots: &[Entity], marked: &impl Fn(Entity) -> Vec<Entity>) -> Vec<
     every
 }
 
+fn marked_children(
+    entity: Entity,
+    children: &Query<&Children>,
+    elements: &Query<&mut UITreeElement>,
+) -> Vec<Entity> {
+    children
+        .get_entity(entity)
+        .map(|children| marked_items(children, |child| elements.contains_entity(child)))
+        .unwrap_or_default()
+}
+
 pub(crate) fn has_shown_children(
     entity: Entity,
     elements: &Query<&mut UITreeElement>,
@@ -198,7 +212,7 @@ pub(crate) fn has_shown_children(
             .map(|children| marked_items(children, |child| elements.contains_entity(child)))
             .unwrap_or_default()
     };
-    !shown_level(&marked(entity), &|entity| TreeNode {
+    !shown_level(&marked(entity), &mut |entity| TreeNode {
         children: marked(entity),
         expanded: false,
         hidden: hidden.contains_entity(entity),
@@ -227,17 +241,12 @@ pub(crate) fn open_to(
         }
         ancestor = parents.get_entity(entity).map(ChildOf::parent);
     }
-    let marked = |entity: Entity| {
-        children
-            .get_entity(entity)
-            .map(|children| marked_items(children, |child| elements.contains_entity(child)))
-            .unwrap_or_default()
-    };
-    flatten_tree(&marked(tree), filtering, |entity| TreeNode {
-        children: marked(entity),
+    let roots = marked_children(tree, children, elements);
+    flatten_tree(&roots, filtering, |entity| TreeNode {
         expanded: elements
-            .get_entity(entity)
+            .get_entity_mut(entity)
             .is_some_and(|element| element.expanded),
+        children: marked_children(entity, children, elements),
         hidden: hidden.contains_entity(entity),
     })
     .iter()
@@ -372,10 +381,10 @@ pub(crate) fn update_trees(
                 }
             }
         }
-        let marked = |entity: Entity| {
+        let mut marked = |entity: Entity| {
             children
-                .get_entity(entity)
-                .map(|children| marked_items(children, |child| elements.contains_entity(child)))
+                .get_entity_mut(entity)
+                .map(|children| marked_items(&children, |child| elements.contains_entity(child)))
                 .unwrap_or_default()
         };
         let rows = flatten_tree(&roots, tree.filtering, |entity| TreeNode {
@@ -385,7 +394,7 @@ pub(crate) fn update_trees(
                 .is_some_and(|element| element.expanded),
             hidden: hidden.contains_entity(entity),
         });
-        let every = every_item(&roots, &marked);
+        let every = every_item(&roots, &mut marked);
         equip_items(
             every.iter().map(|(item, _)| *item),
             tree.selectable,

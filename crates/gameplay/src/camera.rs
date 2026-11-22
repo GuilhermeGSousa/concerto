@@ -87,10 +87,10 @@ pub struct EntityFollow {
 
 pub(crate) fn update_entity_follow(
     mut follow: Query<(&EntityFollow, &mut Transform)>,
-    entities: Query<&mut Transform>,
+    mut entities: Query<&mut Transform>,
 ) {
     for (to_follow, mut transform) in follow.iter_mut() {
-        let Some(target) = entities.get_entity(to_follow.target) else {
+        let Some(target) = entities.get_entity_mut(to_follow.target) else {
             continue;
         };
 

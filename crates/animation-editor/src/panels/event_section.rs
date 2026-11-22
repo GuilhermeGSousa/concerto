@@ -260,11 +260,11 @@ pub(crate) fn apply_clip_event_fields(
         }
     }
     for event in cancelled.read() {
-        for (_, _, state, panels) in documents.iter() {
+        for (_, _, state, panels) in documents.iter_mut() {
             let Some(field) = panels.inspector.events.field(event.entity) else {
                 continue;
             };
-            if let Some(value) = field_text(state, field) {
+            if let Some(value) = field_text(&state, field) {
                 write_value(&mut fields, event.entity, &value);
             }
         }
