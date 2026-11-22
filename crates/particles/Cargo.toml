@@ -20,3 +20,6 @@ bytemuck = { version = "1.22.0", features = ["derive"] }
 [dev-dependencies]
 concerto-window.workspace = true
 naga = { version = "30", features = ["glsl-out"] }
+
+[lints]
+workspace = true

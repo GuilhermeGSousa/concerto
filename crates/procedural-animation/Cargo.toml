@@ -25,3 +25,6 @@ uuid = { version = "1.18.1", features = ["v4", "js", "serde"] }
 concerto-animation = { workspace = true, features = ["test-support"] }
 bincode = "1.3"
 proptest.workspace = true
+
+[lints]
+workspace = true
