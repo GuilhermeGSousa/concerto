@@ -1,11 +1,14 @@
 use concerto_animation::{player::AnimationPlayer, pose::RootMotion, root::AnimationRootBone};
-use concerto_ecs::{Entity, Query, Res, ResMut};
+use concerto_ecs::{
+    signal::{lifecycle::Remove, On},
+    Entity, Query, Res, ResMut, Without,
+};
 use concerto_foundation::{
     time::Time,
     transform::{GlobalTransform, Transform},
 };
 use concerto_mesh::skeleton::SkeletonComponent;
-use concerto_physics::{body::BodyId, physics_state::PhysicsState};
+use concerto_physics::{body::BodyId, carried::Carried, physics_state::PhysicsState};
 
 use crate::{
     displacement::{yaw_of, CharacterDisplacement, CharacterLink, Placement},
@@ -13,9 +16,9 @@ use crate::{
     simulation::{CharacterSimulation, DesiredMotion},
 };
 
-/// Advances the springs one fixed step towards the desired motion and sets the body's horizontal velocity to the spring's, plus half of any pull, at no more than `max_pull_speed` or the spring's own speed, whichever is higher.
+/// Advances the springs one fixed step towards the desired motion and sets the body's horizontal velocity to the spring's, plus half of any pull, at no more than `max_pull_speed` or the spring's own speed, whichever is higher. A `Carried` body is left alone.
 pub fn drive_body(
-    mut query: Query<(&mut CharacterSimulation, &DesiredMotion, &BodyId)>,
+    mut query: Query<(&mut CharacterSimulation, &DesiredMotion, &BodyId), Without<Carried>>,
     mut physics: ResMut<PhysicsState>,
 ) {
     let dt = Time::fixed_delta_time().as_secs_f32();
@@ -60,6 +63,22 @@ pub fn publish_trajectory(
     }
 }
 
+/// Restarts a body's springs from the velocity and facing it was carried at, when it is let go.
+pub fn restart_released_simulation(
+    on: On<Remove<Carried>>,
+    carried: Query<&Carried>,
+    mut simulations: Query<&mut CharacterSimulation>,
+) {
+    let entity = on.signal().entity;
+    let (Some(carried), Some(mut simulation)) = (
+        carried.get_entity(entity),
+        simulations.get_entity_mut(entity),
+    ) else {
+        return;
+    };
+    simulation.restart(carried.velocity.with_y(0.0), carried.facing);
+}
+
 fn in_world_space(delta: RootMotion, space: &GlobalTransform) -> RootMotion {
     let rotation = space.rotation();
     RootMotion {
@@ -78,13 +97,14 @@ fn root_motion_of(
     Some(in_world_space(bone.root_motion, space))
 }
 
-/// Places each character by the root motion of its skeleton and its `CharacterDisplacement`, and gives a `Synchronization`'s target to the capsule.
+/// Places each character by the root motion of its skeleton and its `CharacterDisplacement`, and gives a `Synchronization`'s target to the capsule. A character whose capsule is `Carried` is put on the capsule, with no root motion.
 pub fn apply_character_displacement(
     characters: Query<(Entity, &CharacterDisplacement, &CharacterLink)>,
     skeletons: Query<(&SkeletonComponent, &GlobalTransform)>,
     root_bones: Query<&AnimationRootBone>,
     mut simulations: Query<&mut CharacterSimulation>,
     mut transforms: Query<&mut Transform>,
+    carried: Query<&Carried>,
     time: Res<Time>,
 ) {
     let dt = time.delta().as_secs_f32();
@@ -93,6 +113,18 @@ pub fn apply_character_displacement(
         let Some(capsule) = link.capsule.entity() else {
             continue;
         };
+        if let Some(carried) = carried.get_entity(capsule) {
+            let position = transforms
+                .get_entity_mut(capsule)
+                .map(|capsule| capsule.translation);
+            if let (Some(position), Some(mut character)) =
+                (position, transforms.get_entity_mut(entity))
+            {
+                character.translation = position;
+                character.rotation = carried.facing;
+            }
+            continue;
+        }
         let Some(mut simulation) = simulations.get_entity_mut(capsule) else {
             continue;
         };

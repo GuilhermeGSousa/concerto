@@ -2,7 +2,9 @@ use concerto_ecs::{CommandQueue, Component, Entity, Query, Res, ResMut, Without}
 use concerto_foundation::{time::Time, transform::Transform};
 use concerto_physics::{
     body::BodyId,
+    carried::Carried,
     collider::{Collider, ColliderOffset, GravityScale},
+    layers::CollisionLayers,
     physics_state::PhysicsState,
     query::QueryFilter,
     rigid_body::{AllowedDofs, MotionType, RigidBody},
@@ -233,6 +235,7 @@ pub fn spawn_first_person_walker(
         collider,
         offset,
         GravityScale(0.0),
+        CollisionLayers::character(),
         transform,
         walker,
     ))
@@ -276,9 +279,9 @@ pub fn read_first_person_input(
     }
 }
 
-/// Sets each walker's body velocity for the fixed step: its push along the ground, and whatever holds its feet on the ground under it.
+/// Sets each walker's body velocity for the fixed step: its push along the ground, and whatever holds its feet on the ground under it. A `Carried` walker is left alone.
 pub fn step_first_person_walkers(
-    mut walkers: Query<(&mut FirstPersonWalker, &BodyId)>,
+    mut walkers: Query<(&mut FirstPersonWalker, &BodyId), Without<Carried>>,
     mut physics: ResMut<PhysicsState>,
 ) {
     let dt = Time::fixed_delta_time().as_secs_f32();
@@ -287,9 +290,7 @@ pub fn step_first_person_walkers(
         let probe_radius = walker.radius * GROUND_PROBE_SCALE;
         let probe_from = feet + Vec3::Y * (walker.step_height + probe_radius);
         let reach = walker.step_height * 2.0;
-        let filter = QueryFilter {
-            ignore: std::slice::from_ref(body),
-        };
+        let filter = QueryFilter::ignoring(std::slice::from_ref(body));
         let ground = physics
             .cast_sphere(probe_from, probe_radius, Vec3::NEG_Y * reach, filter)
             .filter(|hit| hit.normal.y >= walker.max_slope_angle.cos())

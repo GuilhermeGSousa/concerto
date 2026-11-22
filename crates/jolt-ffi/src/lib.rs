@@ -46,11 +46,55 @@ pub struct JoltShape {
     _marker: PhantomData<(*mut u8, PhantomPinned)>,
 }
 
+/// Opaque ragdoll recipe (wraps a reference to a `JPH::RagdollSettings`). Immutable once created.
+#[repr(C)]
+pub struct JoltRagdollSettings {
+    _data: [u8; 0],
+    _marker: PhantomData<(*mut u8, PhantomPinned)>,
+}
+
+/// Opaque ragdoll in a world (wraps a `JPH::Ragdoll`).
+#[repr(C)]
+pub struct JoltRagdoll {
+    _data: [u8; 0],
+    _marker: PhantomData<(*mut u8, PhantomPinned)>,
+}
+
+/// Mirrors the `JoltPartShape` constants in `ragdoll.h`.
+pub type JoltPartShape = u32;
+pub const JOLT_PART_SHAPE_SPHERE: JoltPartShape = 0;
+pub const JOLT_PART_SHAPE_CAPSULE: JoltPartShape = 1;
+pub const JOLT_PART_SHAPE_BOX: JoltPartShape = 2;
+
+/// One body of a ragdoll and the swing-twist joint to its parent (mirrors `JoltRagdollPart` in `ragdoll.h`).
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct JoltRagdollPart {
+    pub parent: i32,
+    pub position: [f32; 3],
+    pub rotation: [f32; 4],
+    pub shape_kind: JoltPartShape,
+    pub shape_size: [f32; 3],
+    pub shape_position: [f32; 3],
+    pub shape_rotation: [f32; 4],
+    pub mass: f32,
+    pub friction: f32,
+    pub twist_axis: [f32; 3],
+    pub plane_axis: [f32; 3],
+    pub normal_half_cone: f32,
+    pub plane_half_cone: f32,
+    pub twist_min: f32,
+    pub twist_max: f32,
+    pub max_friction_torque: f32,
+    pub motor_frequency: f32,
+    pub motor_damping: f32,
+    pub motor_torque_limit: f32,
+}
+
 /// A Jolt body id (`JPH::BodyID::GetIndexAndSequenceNumber()`).
 pub type JoltBodyId = u32;
 
-/// Mirrors `JPH::EMotionType`. Static bodies live on the NON_MOVING collision
-/// layer, kinematic and dynamic bodies on MOVING.
+/// Mirrors `JPH::EMotionType`.
 pub type JoltMotionType = u32;
 pub const JOLT_MOTION_TYPE_STATIC: JoltMotionType = 0;
 pub const JOLT_MOTION_TYPE_KINEMATIC: JoltMotionType = 1;
@@ -115,6 +159,26 @@ pub struct JoltSensorContact {
     pub sensor: JoltBodyId,
     pub other: JoltBodyId,
     pub entered: u8,
+}
+
+/// Mirrors the `JoltContactKind` constants in `body.h`.
+pub type JoltContactKind = u8;
+pub const JOLT_CONTACT_START: JoltContactKind = 0;
+pub const JOLT_CONTACT_TOUCH: JoltContactKind = 1;
+pub const JOLT_CONTACT_END: JoltContactKind = 2;
+
+/// A contact between two solid bodies of which at least one reports contacts (mirrors `JoltContact` in `body.h`).
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct JoltContact {
+    pub body1: JoltBodyId,
+    pub body2: JoltBodyId,
+    pub kind: JoltContactKind,
+    pub point: [f32; 3],
+    /// Points from `body1` to `body2`.
+    pub normal: [f32; 3],
+    /// The estimated normal impulse of one collision step.
+    pub impulse: f32,
 }
 
 extern "C" {
@@ -219,6 +283,13 @@ extern "C" {
         gravity_factor: f32,
     );
 
+    /// The collision layers the body is in and the ones it collides with, each a mask of bits 0 to 13; by default in layer 0 and colliding with every layer.
+    pub fn jolt_body_creation_settings_set_layers(
+        settings: *mut JoltBodyCreationSettings,
+        memberships: u32,
+        filter: u32,
+    );
+
     /// Makes the body a kinematic, always active sensor on the sensor layer.
     pub fn jolt_body_creation_settings_set_is_sensor(
         settings: *mut JoltBodyCreationSettings,
@@ -273,6 +344,48 @@ extern "C" {
         capacity: u32,
     ) -> u32;
 
+    /// Puts the body in the layers `memberships` and makes it collide with the layers `filter`; with no memberships it collides with nothing and no query sees it.
+    pub fn jolt_body_set_layers(
+        world: *mut JoltWorld,
+        body: JoltBodyId,
+        memberships: u32,
+        filter: u32,
+    );
+
+    pub fn jolt_body_get_angular_velocity(
+        world: *const JoltWorld,
+        body: JoltBodyId,
+        out_velocity: *mut f32,
+    );
+
+    /// Sets the body's velocities so that it reaches `position` and `rotation` (xyzw) after `delta_time`.
+    pub fn jolt_body_move_kinematic(
+        world: *mut JoltWorld,
+        body: JoltBodyId,
+        position: *const f32,
+        rotation: *const f32,
+        delta_time: f32,
+    );
+
+    /// Moves the body's origin at once, keeping its rotation and velocity.
+    pub fn jolt_body_set_position(world: *mut JoltWorld, body: JoltBodyId, position: *const f32);
+
+    /// The body's current motion type; static for an id that is not in the world.
+    pub fn jolt_body_get_motion_type(world: *const JoltWorld, body: JoltBodyId) -> JoltMotionType;
+
+    /// Whether the body is being simulated: false for a static or sleeping body.
+    pub fn jolt_body_is_active(world: *const JoltWorld, body: JoltBodyId) -> bool;
+
+    /// Turns the reporting of `body`'s contacts with solid bodies on or off. Must not be called while the world steps.
+    pub fn jolt_body_set_contact_reporting(world: *mut JoltWorld, body: JoltBodyId, enabled: bool);
+
+    /// Moves up to `capacity` queued contacts, oldest first, into `out` and returns how many it wrote.
+    pub fn jolt_world_drain_contacts(
+        world: *mut JoltWorld,
+        out: *mut JoltContact,
+        capacity: u32,
+    ) -> u32;
+
     /// Collides `body`'s shape against the world (ignoring `body` itself) and
     /// reports the most upward-facing contact within `max_separation` below
     /// the shape. Contacts steeper than `max_slope_angle` (radians from
@@ -317,6 +430,7 @@ extern "C" {
         direction: *const f32,
         ignore: *const JoltBodyId,
         ignore_count: u32,
+        layers: u32,
         out_hit: *mut JoltRayHit,
     ) -> bool;
 
@@ -328,6 +442,7 @@ extern "C" {
         direction: *const f32,
         ignore: *const JoltBodyId,
         ignore_count: u32,
+        layers: u32,
         out_hit: *mut JoltShapeHit,
     ) -> bool;
 
@@ -342,6 +457,9 @@ extern "C" {
 
     pub fn jolt_body_add_force(world: *const JoltWorld, body: JoltBodyId, force: *const f32);
 
+    /// Adds a torque, in N·m about the world axes, for the next step.
+    pub fn jolt_body_add_torque(world: *mut JoltWorld, body: JoltBodyId, torque: *const f32);
+
     pub fn jolt_body_add_force_at(
         world: *const JoltWorld,
         body: JoltBodyId,
@@ -349,4 +467,83 @@ extern "C" {
         position: *const f32,
     );
 
+    /// Builds ragdoll settings from `count` parts, none of which ever moves faster than `max_linear_velocity`, or returns null when they are invalid.
+    pub fn jolt_ragdoll_settings_create(
+        parts: *const JoltRagdollPart,
+        count: u32,
+        max_linear_velocity: f32,
+        memberships: u32,
+        filter: u32,
+        velocity_steps: u32,
+        position_steps: u32,
+    ) -> *mut JoltRagdollSettings;
+
+    pub fn jolt_ragdoll_settings_destroy(settings: *mut JoltRagdollSettings);
+
+    pub fn jolt_ragdoll_settings_part_count(settings: *const JoltRagdollSettings) -> u32;
+
+    /// Creates a ragdoll at `poses` (seven floats a part: position xyz, rotation xyzw) and adds it to the world, or returns null when the world is out of bodies.
+    pub fn jolt_ragdoll_create(
+        world: *mut JoltWorld,
+        settings: *const JoltRagdollSettings,
+        collision_group: u32,
+        poses: *const f32,
+    ) -> *mut JoltRagdoll;
+
+    /// Removes the ragdoll from the world and destroys it.
+    pub fn jolt_ragdoll_destroy(world: *mut JoltWorld, ragdoll: *mut JoltRagdoll);
+
+    pub fn jolt_ragdoll_part_count(ragdoll: *const JoltRagdoll) -> u32;
+
+    pub fn jolt_ragdoll_part_body(ragdoll: *const JoltRagdoll, part: u32) -> JoltBodyId;
+
+    /// Reads every part's world pose into `out_poses`, seven floats a part.
+    pub fn jolt_ragdoll_get_pose(
+        world: *const JoltWorld,
+        ragdoll: *const JoltRagdoll,
+        out_poses: *mut f32,
+    );
+
+    /// Moves every part to its world pose in `poses` at once.
+    pub fn jolt_ragdoll_set_pose(ragdoll: *mut JoltRagdoll, poses: *const f32);
+
+    /// Sets each part's velocity so that it reaches its world pose in `poses` after `delta_time`.
+    pub fn jolt_ragdoll_drive_kinematic(
+        ragdoll: *mut JoltRagdoll,
+        poses: *const f32,
+        delta_time: f32,
+    );
+
+    /// Turns every joint's motor on and aims it at the rotation the part has relative to its parent in `poses`.
+    pub fn jolt_ragdoll_drive_motors(ragdoll: *mut JoltRagdoll, poses: *const f32);
+
+    /// Turns the motor of the joint between `part` and its parent off, or on towards `target_rotation` (xyzw, the part relative to its parent); `spring` and `damping` are a frequency in Hz and a ratio, or with `by_stiffness` N·m/rad and N·m·s/rad.
+    pub fn jolt_ragdoll_set_joint_motor(
+        ragdoll: *mut JoltRagdoll,
+        part: u32,
+        enabled: bool,
+        target_rotation: *const f32,
+        by_stiffness: bool,
+        spring: f32,
+        damping: f32,
+        torque_limit: f32,
+    );
+
+    /// Makes one part kinematic or dynamic, keeping its velocity.
+    pub fn jolt_ragdoll_set_part_motion_type(
+        world: *mut JoltWorld,
+        ragdoll: *mut JoltRagdoll,
+        part: u32,
+        motion_type: JoltMotionType,
+    );
+
+    /// Frozen makes every part static where it is; not frozen makes every part dynamic again and wakes it.
+    pub fn jolt_ragdoll_set_frozen(world: *mut JoltWorld, ragdoll: *mut JoltRagdoll, frozen: bool);
+
+    /// The angular impulse the joint's motor applied in the last collision step; zero for the root.
+    pub fn jolt_ragdoll_get_joint_motor_impulse(
+        ragdoll: *const JoltRagdoll,
+        part: u32,
+        out_impulse: *mut f32,
+    );
 }

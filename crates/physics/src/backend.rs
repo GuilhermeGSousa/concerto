@@ -17,8 +17,11 @@ use concerto_mesh::Mesh;
 use glam::Vec3;
 
 use crate::aabb::Aabb;
+use crate::body::BodyActivity;
 use crate::collider::{Collider, ColliderOffset};
-use crate::rigid_body::RigidBody;
+use crate::layers::{CollisionLayers, Layers};
+use crate::ragdoll::{BodyPose, JointDrive, RagdollBuildError, RagdollSettings};
+use crate::rigid_body::{MotionType, RigidBody};
 
 #[cfg(all(
     not(target_arch = "wasm32"),
@@ -77,6 +80,28 @@ pub struct RawSensorContact<Handle> {
     pub kind: SensorContactKind,
 }
 
+/// What a [`RawContact`] says about its pair.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum RawContactKind {
+    /// The pair began touching.
+    Start,
+    /// The pair was simulated in one collision step: `normal` points from `first` to `second`, `impulse` is that step's normal impulse.
+    Touch {
+        point: Vec3,
+        normal: Vec3,
+        impulse: f32,
+    },
+    /// The pair stopped touching.
+    End,
+}
+
+/// A contact between two solid bodies, of which at least one reports contacts, in backend terms.
+pub struct RawContact<Handle> {
+    pub first: Handle,
+    pub second: Handle,
+    pub kind: RawContactKind,
+}
+
 /// Raw simulation operations a physics backend must provide.
 ///
 /// Mutating operations take `&mut self` even where the underlying engine
@@ -91,6 +116,12 @@ pub trait PhysicsBackend: Send + Sync + Sized {
     /// [`PhysicsShape`](crate::shape::PhysicsShape). Shared behind an `Arc`
     /// by every [`Collider`] using it, hence the thread bounds.
     type ShapeHandle: Send + Sync;
+
+    /// The backend's ragdoll recipe, built once from [`RagdollSettings`] and shared by every ragdoll created from it.
+    type RagdollSettingsHandle: Send + Sync;
+
+    /// The backend's handle of a ragdoll in the world, wrapped by [`RagdollId`](crate::ragdoll::RagdollId).
+    type RagdollHandle: Copy + PartialEq + Eq + Hash + Debug + Send + Sync;
 
     /// Per-step scratch held by
     /// [`PhysicsPipeline`](crate::physics_pipeline::PhysicsPipeline),
@@ -122,6 +153,7 @@ pub trait PhysicsBackend: Send + Sync + Sized {
         offset: Option<&ColliderOffset>,
         sensor: bool,
         gravity_scale: f32,
+        layers: CollisionLayers,
     ) -> Self::BodyHandle;
 
     /// Removes `body` from the simulation and destroys it, waking any bodies
@@ -132,10 +164,30 @@ pub trait PhysicsBackend: Send + Sync + Sized {
     /// Moves the sensor pair begins and ends seen since the last drain into `out`, in order, keeping only a sensor against a dynamic or kinematic body.
     fn drain_sensor_contacts(&mut self, out: &mut Vec<RawSensorContact<Self::BodyHandle>>);
 
+    /// Turns the reporting of `body`'s contacts with solid bodies on or off.
+    fn set_contact_reporting(&mut self, body: Self::BodyHandle, enabled: bool);
+
+    /// Moves the contacts seen since the last drain into `out`, in order; call it after [`drain_sensor_contacts`](Self::drain_sensor_contacts).
+    fn drain_contacts(&mut self, out: &mut Vec<RawContact<Self::BodyHandle>>);
+
+    /// Gives the body its collision layers; in no layer it collides with nothing and no query sees it.
+    fn set_body_layers(&mut self, body: Self::BodyHandle, layers: CollisionLayers);
+
+    /// Sets the body's velocities so that it reaches `pose` after `delta_time`.
+    fn move_body_kinematic(&mut self, body: Self::BodyHandle, pose: BodyPose, delta_time: f32);
+
+    /// Moves the body's origin at once, keeping its rotation and velocity.
+    fn set_body_translation(&mut self, body: Self::BodyHandle, translation: Vec3);
+
+    /// How `body` is moving right now.
+    fn body_activity(&self, body: Self::BodyHandle) -> BodyActivity;
+
     /// A body's current world-space pose (translation and rotation).
     fn body_transform(&self, body: Self::BodyHandle) -> Transform;
 
     fn linear_velocity(&self, body: Self::BodyHandle) -> Vec3;
+
+    fn angular_velocity(&self, body: Self::BodyHandle) -> Vec3;
 
     /// Also wakes the body, so a sleeping body picks the velocity up.
     fn set_linear_velocity(&mut self, body: Self::BodyHandle, velocity: Vec3);
@@ -148,6 +200,8 @@ pub trait PhysicsBackend: Send + Sync + Sized {
 
     fn add_force_at(&mut self, body: Self::BodyHandle, force: Vec3, position: Vec3);
 
+    fn add_torque(&mut self, body: Self::BodyHandle, torque: Vec3);
+
     /// Casts a ray from `origin` along `direction` — whose length is the
     /// maximum cast distance — and returns the closest hit, if any, skipping
     /// the bodies in `ignore`.
@@ -156,6 +210,7 @@ pub trait PhysicsBackend: Send + Sync + Sized {
         origin: Vec3,
         direction: Vec3,
         ignore: &[Self::BodyHandle],
+        layers: Layers,
     ) -> Option<RawRayHit<Self::BodyHandle>>;
 
     /// Sweeps a sphere of `radius` from `origin` along `direction` and returns the first body it touches, skipping `ignore`.
@@ -165,6 +220,7 @@ pub trait PhysicsBackend: Send + Sync + Sized {
         radius: f32,
         direction: Vec3,
         ignore: &[Self::BodyHandle],
+        layers: Layers,
     ) -> Option<RawShapeHit<Self::BodyHandle>>;
 
     /// Collides `body`'s shape against the world (ignoring `body` itself)
@@ -175,6 +231,59 @@ pub trait PhysicsBackend: Send + Sync + Sized {
         body: Self::BodyHandle,
         max_separation: f32,
     ) -> Option<RawGroundHit<Self::BodyHandle>>;
+
+    /// Builds a ragdoll recipe from already validated settings.
+    fn build_ragdoll(
+        settings: &RagdollSettings,
+    ) -> Result<Self::RagdollSettingsHandle, RagdollBuildError>;
+
+    /// Creates a ragdoll with each part at its world pose in `pose` and adds it to the simulation; `None` when the backend has no ragdolls or is out of bodies.
+    fn create_ragdoll(
+        &mut self,
+        built: &Self::RagdollSettingsHandle,
+        pose: &[BodyPose],
+    ) -> Option<Self::RagdollHandle>;
+
+    /// Removes the ragdoll's bodies and joints from the simulation and destroys them.
+    fn destroy_ragdoll(&mut self, ragdoll: Self::RagdollHandle);
+
+    /// The body of each part, in part order.
+    fn ragdoll_bodies(&self, ragdoll: Self::RagdollHandle) -> Vec<Self::BodyHandle>;
+
+    /// Writes every part's world pose into `out`, in part order.
+    fn ragdoll_pose(&self, ragdoll: Self::RagdollHandle, out: &mut Vec<BodyPose>);
+
+    /// Moves every part to its world pose in `pose` at once, keeping velocities.
+    fn set_ragdoll_pose(&mut self, ragdoll: Self::RagdollHandle, pose: &[BodyPose]);
+
+    /// Sets each part's velocity so that it reaches its world pose in `pose` after `delta_time`.
+    fn drive_ragdoll_kinematic(
+        &mut self,
+        ragdoll: Self::RagdollHandle,
+        pose: &[BodyPose],
+        delta_time: f32,
+    );
+
+    /// Turns every joint's motor on, aimed at the rotation each part has relative to its parent in `pose`.
+    fn drive_ragdoll_motors(&mut self, ragdoll: Self::RagdollHandle, pose: &[BodyPose]);
+
+    fn set_ragdoll_joint_drive(
+        &mut self,
+        ragdoll: Self::RagdollHandle,
+        part: usize,
+        drive: JointDrive,
+    );
+
+    fn set_ragdoll_part_motion(
+        &mut self,
+        ragdoll: Self::RagdollHandle,
+        part: usize,
+        motion: MotionType,
+    );
+
+    fn set_ragdoll_frozen(&mut self, ragdoll: Self::RagdollHandle, frozen: bool);
+
+    fn ragdoll_joint_motor_impulse(&self, ragdoll: Self::RagdollHandle, part: usize) -> Vec3;
 
     /// The shape's axis-aligned bounds (min, max) in its own local space,
     /// before any body pose or scale. The engine no longer stores a

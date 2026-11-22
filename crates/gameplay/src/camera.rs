@@ -188,9 +188,7 @@ pub fn update_camera_booms(
         let ignored = follow
             .and_then(|follow| bodies.get_entity(follow.target))
             .copied();
-        let filter = QueryFilter {
-            ignore: ignored.as_slice(),
-        };
+        let filter = QueryFilter::ignoring(ignored.as_slice());
 
         let shoulder_point = if boom.shoulder.length_squared() < 1e-8 {
             pivot.translation

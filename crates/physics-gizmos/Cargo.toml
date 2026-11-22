@@ -1,0 +1,22 @@
+[package]
+name = "concerto-physics-gizmos"
+version.workspace = true
+edition = "2024"
+description.workspace = true
+repository.workspace = true
+license.workspace = true
+
+[dependencies]
+concerto-app.workspace = true
+concerto-color.workspace = true
+concerto-debug-gizmos.workspace = true
+concerto-ecs.workspace = true
+concerto-foundation.workspace = true
+concerto-mesh.workspace = true
+concerto-physics.workspace = true
+concerto-ragdoll.workspace = true
+concerto-render.workspace = true
+glam.workspace = true
+
+[lints]
+workspace = true

@@ -36,6 +36,12 @@ Performance guarantees, such as "an idle frame lays nothing out", are
 cargo bench -p concerto-benches --features run
 ```
 
+The `ragdoll` benchmark measures one fixed step with 1, 8 and 32 reference
+humanoids, limp, kinematic and powered. The `transform_propagation` benchmark
+measures one `propagate_global_transforms` run over 100 hierarchies of 100
+entities when nothing changed, when one leaf moved and when every entity
+moved.
+
 Benchmarks do not run in CI, and without the `run` feature the crate builds
 without `criterion` and skips them. Run them by hand before and after a change
 that could slow the code they measure. Production types carry no `#[cfg(test)]` fields,

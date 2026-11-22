@@ -8,13 +8,17 @@
 pub mod aabb;
 pub mod backend;
 pub mod body;
+pub mod carried;
 pub mod collider;
+pub mod contact;
 pub mod ground;
 pub mod interpolation;
+pub mod layers;
 pub mod physics_pipeline;
 pub mod physics_state;
 pub mod plugin;
 pub mod query;
+pub mod ragdoll;
 pub mod ray;
 pub mod rigid_body;
 pub mod sensor;

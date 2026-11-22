@@ -1094,7 +1094,7 @@ it reads, and its kind's `NAME`, and draws one entity at a time. The scene
 tools (`src/tools/component_gizmos.rs`) register the engine's in every edit and
 play `App`: `Bounds` boxes each `Aabb`, `Skeleton` joins each bone to its
 parent, `Light` shows a light's reach (`range`, or 5 m when it is 0) and
-`Camera` a camera's frustum cut at 5 m. `app.register_component_gizmo::<G>()`
+`Camera` a camera's frustum cut at 5 m. A game that lists `concerto-physics-editor` adds `Collider`, `Ragdoll` (the entity holding a `RagdollId`), `Contacts`, `Box collider`, `Mesh collider`, `Sensor` and `Body sense`, which draw the physics components; `gizmos kind=Collider always=true` draws every collider. `app.register_component_gizmo::<G>()`
 registers another in a hosted `App`; it lists the kind in that `App`'s
 `ComponentGizmos` resource, and draws it only when the `App` has
 `DebugGizmosPlugin`. Two gizmo types with one `NAME` panic. The
@@ -1621,6 +1621,13 @@ again and leave an error in the document's status. Removing the marker at
 capture means an edit made while a slow save is in flight marks the document
 again and is not lost.
 
+A save that finishes in the system that saw `SaveRequested` hands its result to
+`asset_editor::report_save`, which removes `SaveRequested`, sets the status to
+"Saved <addresses>" or "Save failed: <error>", writes `SceneSaved` or
+`SaveFailed`, and removes `Unsaved` after a success. Its result is a
+`SavedFiles { asset, written }`; an `AssetEntry` converts into one that wrote
+that file alone. The event is named `SceneSaved` for every kind of asset.
+
 A document that holds its own edits restores them on `DiscardEdits`, which the
 prompt sends when the user chooses Discard. The tab can outlive that choice, since
 the open that asked for it can fail.
@@ -1776,6 +1783,99 @@ inspected and saved, and plays the graph in view on a character in its preview,
 at the parameters set in the tab. In a game that doesn't list the crate a clip or a graph
 has no editor, so opening one opens no tab, and a rig opens in the generic
 inspector.
+
+### The ragdoll tab and generator
+
+[`concerto-ragdoll-editor`](../ragdoll-editor/src/lib.rs) generates a humanoid
+`Ragdoll` from a retarget rig and saves it as a new asset in the open project,
+and the editor works without it. Its `install` registers the `CreateRagdoll`
+signal, whose one listener reads the rig, its skeleton and its reference clip,
+calls `generate_humanoid`, checks the result with `Ragdoll::resolve`, writes
+`ragdoll.gasset` next to the rig (or at `address`) and adds it to the asset
+registry, so the Asset Browser and `list_assets` show it at once. A rig that
+has no chain a humanoid needs, or an address that is taken, answers with what
+to change and writes nothing.
+
+The `create_ragdoll` tool sends the signal: `rig` is an address or id,
+`address`, `total_mass` (75 kg) and `chains` (names for the rig's chains where
+they are not `spine`, `neck`, `arm_l`, `arm_r`, `leg_l` and `leg_r`) are
+optional. It answers the new asset's address and one line per part with its
+bone, shape and mass. No skinned mesh is read, because a mesh names no
+skeleton, so part radii follow the bones' proportions. The Create ragdoll
+button on a rig tab sends the same signal for the tab's rig; it sits in the
+tab's inspector column, which the rig tab of `concerto-animation-editor` has,
+and a rig in the generic form tab has no button. A skeleton alone has no
+action: the tool answers that a rig comes first.
+
+The same crate registers the tab of a `Ragdoll`, in place of the generic form.
+The left host is a tree of the parts, each under the part of its nearest
+ancestor bone and labelled with its bone; a row selects its part. The panel
+shows three values: `Ragdoll`, the whole asset; `Part`, the selected part, whose
+shape, offset, rotation, mass and joint the inspector's own property editors
+edit and whose edits mark the tab unsaved; and `Preview`, never saved, with the
+`drop_height`, `poke_bone`, `poke_impulse`, `seconds` and `clip` the buttons
+use. Above them are **Add part**, which lists the bones that have no part,
+**Remove part**, and the preview buttons **Drop**, **Poke**, **Play** and
+**Reset**; Drop and Poke print the headless trial's report under them. Limits
+are edited by number only.
+
+The tab's preview is built by `ragdoll_preview`, public so another tab can reuse
+it. It stands the skeleton's character in a physics world of its own: a floor
+collider, a `PhysicsPipeline` (a preview `App` has none, because
+`PhysicsPlugin` makes one only for a game), and the physics and ragdoll systems
+a game gets from `PhysicsPlugin` and `RagdollPlugin`, added again marked
+`.at_preview_time()` because the plugins' own are unmarked. A preview `App` runs
+`FixedUpdate` and `LateFixedUpdate` like a game's, so they step as the
+`MainSchedulePlugin` the recipe holds does. The character is the skeleton's
+`scene` when its folder has one, with the skinned mesh, and bare bones
+otherwise; it carries a `CharacterRagdoll` naming the ragdoll being edited, put
+into the preview's `AssetStore` as edited so far and inserted again when the
+value changes, which rebuilds the body. `concerto-physics-gizmos` draws the
+parts, coloured by whether they are kinematic, dynamic or asleep, and each
+joint's swing cone and twist range. The signals the tab sends through
+`PreviewSignals` are `ShowRagdollStage`, `SetRagdoll`, `DropRagdoll`,
+`PokeRagdoll`, `PlayRagdoll` and `ResetRagdoll`. Powered playback does not exist
+in the engine yet, so Play follows a clip kinematically.
+
+Four tools reach all of it. `ragdoll_parts` lists the parts of `asset`, or of
+the front tab, one line each under its parent part, from the open tab's value
+when there is one. `set_ragdoll_part` edits the ragdoll open in a tab by `bone`:
+`shape` (capsule, box or sphere), `radius`, `half_height`, `half_extents`,
+`mass`, `offset`, `swing_normal`, `swing_plane`, `twist_min`, `twist_max` and
+`friction`, a part added for a bone that has none, or `remove`. It sends the
+signal the buttons send, which replaces the tab's value and marks it unsaved;
+`save` writes it. `test_ragdoll` runs `run_trial` on the tab's current value,
+`action` drop (`height`) or poke (`bone`, `impulse`), for `seconds`, in a world
+of its own with no preview and no GPU, and answers whether the body came to
+rest and after how long, the peak speed, the widest joint gap, and the pairs of
+parts that overlap in the rest pose, by bone with the depth. `preview_ragdoll`
+sends the preview a drop, poke, play (`clip`) or reset, as the buttons do, and
+answers the report of a drop or a poke.
+
+`hit_character` works on the game that is playing and needs `play` first. It
+takes `entity` (the character's id as `scene_tree` shows it), `bone` (the part
+that is hit), `impulse` in N·s (`[0, 0, -30]`) and `point` in world space (the
+part's current position), and sends the `BodyHit` signal a bullet would send,
+through `EditWorldSignals`; no physics is called directly. A character with a
+`HitReaction` that follows its animation answers once its flinch is over, from
+its `FlinchRecord`: the bone, the peak displacement in metres and the seconds
+until the body was back on its animation. A character without a
+`HitReaction`, or whose ragdoll is limp or powered by something else, answers
+at once that it only took the impulse. `shot: true` marks the hit as a gunshot:
+a character with a `ShotReaction` that is not limp answers at once that its
+shot reaction started, and `body_report` follows it; any other character
+flinches as for a blow. An unknown entity, one with no
+`CharacterRagdoll`, a ragdoll not built yet and an unknown bone (the reply lists
+the part bones) are errors that say what to do next.
+
+`body_report` is read-only, works on the game that is playing and needs `play`
+first. It takes `entity` (the character's id as `scene_tree` shows it) and
+answers at once with one line for the `CharacterRagdoll` (its mode, profile and
+weight), then the body's state, the behaviours it runs with their priority and
+the part bones they claim, and what it senses, from `describe_body`. Errors are
+the same as `hit_character`'s. There is no tool to start or stop a behaviour: a
+behaviour is a reflected component on the character, and the component tools
+add, edit and remove it.
 
 ### The texture tab
 

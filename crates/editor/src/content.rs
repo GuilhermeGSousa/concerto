@@ -3,7 +3,7 @@ use concerto_app::{
     App, Plugin,
     schedule_groups::{LateUpdate, Startup},
 };
-use concerto_color::Color;
+use concerto_color::{Color, LinearRgba};
 use concerto_ecs::{
     Component, Entity, Event, IntoSystemConfig, Query, Res, ResMut, Resource, World,
     command::CommandQueue,
@@ -1152,6 +1152,143 @@ fn pending_listing(
     }
 }
 
+fn list_content<'a>(
+    project: &ProjectState,
+    registry: &'a AssetRegistry,
+    folds: &ImportFolds<'a>,
+    state: &ContentState,
+    icons: &AssetIcons,
+) -> Vec<Listed<'a>> {
+    let mut listed = Vec::new();
+    if let Some(project) = project.project.as_ref() {
+        let pending = state
+            .pending
+            .as_ref()
+            .map(|pending| pending_listing(pending, &project.content_root, icons));
+        list_folder(
+            &folder_tree(registry, folds, &project.content_root),
+            None,
+            pending.as_ref(),
+            folds,
+            icons,
+            &mut listed,
+        );
+        if let Some(pending) = pending
+            && !listed.iter().any(|entry| entry.key == pending.key)
+        {
+            listed.push(pending);
+        }
+    }
+    listed
+}
+
+struct ItemPlace {
+    item: Entity,
+    hide: bool,
+    error_border: LinearRgba,
+}
+
+fn refresh_item(
+    entry: &Listed,
+    place: &ItemPlace,
+    items: &mut Query<(&mut ContentItem, Option<&UIHidden>, Option<&UIItem>)>,
+    texts: &mut Query<&mut UIText>,
+    materials: &mut Query<&mut UIMaterial>,
+    cmd: &mut CommandQueue,
+) {
+    let ItemPlace {
+        item,
+        hide,
+        error_border,
+    } = *place;
+    let Some((mut content, hidden, _)) = items.get_entity_mut(item) else {
+        return;
+    };
+    if content.icon != entry.icon {
+        content.icon = entry.icon;
+    }
+    if let ContentKey::Pending { .. } = entry.key {
+        if let Some(mut material) = materials.get_entity_mut(content.label)
+            && material.border_color != error_border
+        {
+            material.border_color = error_border;
+        }
+    } else if let Some(mut text) = texts.get_entity_mut(content.label)
+        && text.text != entry.name
+    {
+        text.text = entry.name.to_string();
+    }
+    if hide && hidden.is_none() {
+        cmd.insert(UIHidden, item);
+    } else if !hide && hidden.is_some() {
+        cmd.remove::<UIHidden>(item);
+    }
+}
+
+fn spawn_listed_item(
+    cmd: &mut CommandQueue,
+    theme: &UITheme,
+    state: &ContentState,
+    entry: &Listed,
+    parent: Entity,
+    hide: bool,
+) -> Entity {
+    let item = match &state.pending {
+        Some(pending) if pending.key() == entry.key => {
+            spawn_pending_item(cmd, theme, entry, &pending.prefill, parent)
+        }
+        _ => spawn_item(cmd, theme, entry, parent),
+    };
+    if hide {
+        cmd.insert(UIHidden, item);
+    }
+    if matches!(entry.key, ContentKey::Asset(id) if state.selected == Some(id)) {
+        cmd.insert(UISelected, item);
+    }
+    item
+}
+
+fn reveal_requested(
+    state: &mut ContentState,
+    items: &mut Query<(&mut ContentItem, Option<&UIHidden>, Option<&UIItem>)>,
+    cmd: &mut CommandQueue,
+) {
+    if let Some(key) = state.reveal.as_ref() {
+        match state.items.get(key).copied() {
+            None => state.reveal = None,
+            Some(item)
+                if items
+                    .get_entity_mut(item)
+                    .is_some_and(|(_, _, placed)| placed.is_some()) =>
+            {
+                cmd.entity(item).trigger(UIReveal);
+                state.reveal = None;
+            }
+            Some(_) => {}
+        }
+    }
+}
+
+fn write_count(
+    state: &ContentState,
+    matching: usize,
+    counts: &Query<Entity, With<CountLabel>>,
+    texts: &mut Query<&mut UIText>,
+) {
+    let count = match &state.pending_error {
+        Some(error) => error.clone(),
+        None if matching == 0 => String::new(),
+        None => format!("{matching} assets"),
+    };
+    for label in counts.iter() {
+        if let Some(mut text) = texts.get_entity_mut(label)
+            && text.text != count
+        {
+            text.text = count.clone();
+        }
+    }
+}
+
 fn reconcile_content_tree(
     project: Res<ProjectState>,
     registry: Res<AssetRegistry>,
@@ -1186,26 +1323,7 @@ fn reconcile_content_tree(
         .iter()
         .map(|asset| asset.id)
         .collect();
-    let mut listed = Vec::new();
-    if let Some(project) = project.project.as_ref() {
-        let pending = state
-            .pending
-            .as_ref()
-            .map(|pending| pending_listing(pending, &project.content_root, &icons));
-        list_folder(
-            &folder_tree(&registry, &folds, &project.content_root),
-            None,
-            pending.as_ref(),
-            &folds,
-            &icons,
-            &mut listed,
-        );
-        if let Some(pending) = pending
-            && !listed.iter().any(|entry| entry.key == pending.key)
-        {
-            listed.push(pending);
-        }
-    }
+    let listed = list_content(&project, &registry, &folds, &state, &icons);
     let error_border = if state.pending_error.is_some() {
         theme.error
     } else {
@@ -1233,44 +1351,22 @@ fn reconcile_content_tree(
                 if parents.get_entity(item).map(ChildOf::parent) != Some(parent) {
                     cmd.add_child(parent, item);
                 }
-                if let Some((mut content, hidden, _)) = items.get_entity_mut(item) {
-                    if content.icon != entry.icon {
-                        content.icon = entry.icon;
-                    }
-                    if let ContentKey::Pending { .. } = entry.key {
-                        if let Some(mut material) = materials.get_entity_mut(content.label)
-                            && material.border_color != error_border
-                        {
-                            material.border_color = error_border;
-                        }
-                    } else if let Some(mut text) = texts.get_entity_mut(content.label)
-                        && text.text != entry.name
-                    {
-                        text.text = entry.name.to_string();
-                    }
-                    if hide && hidden.is_none() {
-                        cmd.insert(UIHidden, item);
-                    } else if !hide && hidden.is_some() {
-                        cmd.remove::<UIHidden>(item);
-                    }
-                }
-                item
-            }
-            None => {
-                let item = match &state.pending {
-                    Some(pending) if pending.key() == entry.key => {
-                        spawn_pending_item(&mut cmd, &theme, entry, &pending.prefill, parent)
-                    }
-                    _ => spawn_item(&mut cmd, &theme, entry, parent),
+                let place = ItemPlace {
+                    item,
+                    hide,
+                    error_border,
                 };
-                if hide {
-                    cmd.insert(UIHidden, item);
-                }
-                if matches!(entry.key, ContentKey::Asset(id) if state.selected == Some(id)) {
-                    cmd.insert(UISelected, item);
-                }
+                refresh_item(
+                    entry,
+                    &place,
+                    &mut items,
+                    &mut texts,
+                    &mut materials,
+                    &mut cmd,
+                );
                 item
             }
+            None => spawn_listed_item(&mut cmd, &theme, &state, entry, parent, hide),
         };
         kept.insert(entry.key.clone(), item);
         match order.iter_mut().find(|(owner, _)| *owner == parent) {
@@ -1283,33 +1379,8 @@ fn reconcile_content_tree(
     state.items = kept;
     cmd.entity(view).trigger(OrderItems(order));
 
-    if let Some(key) = state.reveal.as_ref() {
-        match state.items.get(key).copied() {
-            None => state.reveal = None,
-            Some(item)
-                if items
-                    .get_entity_mut(item)
-                    .is_some_and(|(_, _, placed)| placed.is_some()) =>
-            {
-                cmd.entity(item).trigger(UIReveal);
-                state.reveal = None;
-            }
-            Some(_) => {}
-        }
-    }
-
-    let count = match &state.pending_error {
-        Some(error) => error.clone(),
-        None if matching.is_empty() => String::new(),
-        None => format!("{} assets", matching.len()),
-    };
-    for label in counts.iter() {
-        if let Some(mut text) = texts.get_entity_mut(label)
-            && text.text != count
-        {
-            text.text = count.clone();
-        }
-    }
+    reveal_requested(&mut state, &mut items, &mut cmd);
+    write_count(&state, matching.len(), &counts, &mut texts);
 }
 
 fn sync_content_items(

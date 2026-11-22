@@ -68,7 +68,14 @@ extern "C"
     void jolt_body_creation_settings_set_gravity_factor(JoltBodyCreationSettings *settings,
                                                         float gravity_factor);
 
-    /* Makes the body a kinematic, always active sensor on the SENSOR layer. */
+    /* The collision layers the body is in and the ones it collides with, each
+     * a mask of bits 0 to 13. Two bodies collide when each is in a layer the
+     * other collides with. Defaults: in layer 0, colliding with every layer. */
+    void jolt_body_creation_settings_set_layers(JoltBodyCreationSettings *settings,
+                                                uint32_t memberships,
+                                                uint32_t filter);
+
+    /* Makes the body a kinematic, always active sensor. */
     void jolt_body_creation_settings_set_is_sensor(JoltBodyCreationSettings *settings,
                                                    bool is_sensor);
 
@@ -114,6 +121,63 @@ extern "C"
     uint32_t jolt_world_drain_sensor_contacts(JoltWorld *world,
                                               JoltSensorContact *out,
                                               uint32_t capacity);
+
+    /* The body's current motion type; JOLT_MOTION_TYPE_STATIC for an id that is not in the world. */
+    JoltMotionType jolt_body_get_motion_type(const JoltWorld *world, JoltBodyId body);
+
+    /* Whether the body is being simulated: false for a static or sleeping body. */
+    bool jolt_body_is_active(const JoltWorld *world, JoltBodyId body);
+
+    typedef uint8_t JoltContactKind;
+    enum
+    {
+        JOLT_CONTACT_START = 0,
+        JOLT_CONTACT_TOUCH = 1,
+        JOLT_CONTACT_END = 2,
+    };
+
+    /* A contact between two solid bodies of which at least one reports
+     * contacts. START and END mark a pair beginning and ceasing to touch and
+     * carry no data. TOUCH is sent in every collision step the pair is
+     * simulated: `normal` points from body1 to body2, `impulse` is the
+     * estimated normal impulse of that collision step. */
+    typedef struct JoltContact
+    {
+        JoltBodyId body1;
+        JoltBodyId body2;
+        JoltContactKind kind;
+        float point[3];
+        float normal[3];
+        float impulse;
+    } JoltContact;
+
+    /* Turns the reporting of `body`'s contacts with solid bodies on or off.
+     * Must not be called while the world steps. */
+    void jolt_body_set_contact_reporting(JoltWorld *world, JoltBodyId body, bool enabled);
+
+    uint32_t jolt_world_drain_contacts(JoltWorld *world, JoltContact *out, uint32_t capacity);
+
+    /* Puts the body in the layers `memberships` and makes it collide with the
+     * layers `filter`, as jolt_body_creation_settings_set_layers does at
+     * creation. With no memberships it collides with nothing and no query sees
+     * it. */
+    void jolt_body_set_layers(JoltWorld *world, JoltBodyId body, uint32_t memberships, uint32_t filter);
+
+    void jolt_body_get_angular_velocity(const JoltWorld *world,
+                                        JoltBodyId body,
+                                        float out_velocity[3]);
+
+    /* Sets the body's velocities so that it reaches `position` and `rotation`
+     * (xyzw) after `delta_time`. Meant for a kinematic body, which then pushes
+     * dynamic bodies out of its way. */
+    void jolt_body_move_kinematic(JoltWorld *world,
+                                  JoltBodyId body,
+                                  const float position[3],
+                                  const float rotation[4],
+                                  float delta_time);
+
+    /* Moves the body's origin at once, keeping its rotation and velocity. */
+    void jolt_body_set_position(JoltWorld *world, JoltBodyId body, const float position[3]);
 
     typedef uint32_t JoltGroundState;
     enum
@@ -172,6 +236,9 @@ extern "C"
     void jolt_body_add_force(JoltWorld *world,
                              JoltBodyId body,
                              float force[3]);
+
+    /* Adds a torque, in N·m about the world axes, for the next step. */
+    void jolt_body_add_torque(JoltWorld *world, JoltBodyId body, const float torque[3]);
 
     void jolt_body_add_force_at(JoltWorld *world,
                                 JoltBodyId body,

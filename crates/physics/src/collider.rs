@@ -9,7 +9,9 @@ use glam::Vec3;
 use log::warn;
 
 use crate::body::BodyId;
+use crate::contact::Contacts;
 use crate::interpolation::TransformInterpolation;
+use crate::layers::CollisionLayers;
 use crate::physics_state::PhysicsState;
 use crate::rigid_body::{MotionType, RigidBody};
 use crate::sensor::Sensor;
@@ -57,7 +59,8 @@ impl Collider {
         -self.shared_shape.local_aabb().min().y
     }
 
-    pub(crate) fn shape(&self) -> &PhysicsShape {
+    /// The collider's shape.
+    pub fn shape(&self) -> &PhysicsShape {
         &self.shared_shape
     }
 }
@@ -154,7 +157,9 @@ pub fn register_colliders(
             Option<&Sensor>,
             Option<&MeshCollider>,
             Option<&BoxCollider>,
+            Option<&Contacts>,
             Option<&GravityScale>,
+            Option<&CollisionLayers>,
         ),
         Without<BodyId>,
     >,
@@ -170,7 +175,9 @@ pub fn register_colliders(
         sensor,
         mesh_collider,
         box_collider,
+        contacts,
         gravity_scale,
+        layers,
     ) in colliders.iter()
     {
         let mesh_shape = mesh_collider.is_some() && box_collider.is_none();
@@ -197,8 +204,16 @@ pub fn register_colliders(
             offset,
             sensor,
             gravity_scale.map_or(1.0, |scale| scale.0),
+            layers.copied().unwrap_or(if sensor {
+                CollisionLayers::sensor()
+            } else {
+                CollisionLayers::default()
+            }),
         );
         physics_state.register_body_entity(body_id, entity);
+        if contacts.is_some() {
+            physics_state.set_contact_reporting(body_id, true);
+        }
         cmd.insert(body_id, entity);
 
         if rigid_body.is_some() {
