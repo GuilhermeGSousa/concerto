@@ -412,6 +412,13 @@ sky's color in the direction you look instead of `Fog::color`. `Sky`'s
 Earth's by default, is `Sun::atmosphere`. A scene with neither component draws
 as it did before; see `crates/skybox/README.md` for the details.
 
+The standard material also reflects the sky. A smooth metal shows the horizon
+and the sky above it, a rough one a blur of it, and every surface gains a sheen
+at grazing angles. The reflection is the sky alone: it does not show the scene
+around a surface, and it is not blocked by a roof, only dimmed by ambient
+occlusion where a camera has it. Without a `Sky`, a surface reflects
+`CameraEnvironment::ambient`, the same from every direction.
+
 ## Debug drawing
 
 `concerto-debug-gizmos` draws lines and shapes for one frame. It is not
