@@ -555,7 +555,7 @@ pub(crate) fn extract_cameras(
             }
             None => UVec2::new(context.surface_config.width, context.surface_config.height),
         };
-        let view_target = ViewTarget::new(&device, context.view_target_format, view_size, msaa);
+        let view_target = ViewTarget::new(&device, &context, view_size, msaa);
 
         let render_cam = RenderCamera {
             camera_bind_group,
@@ -646,7 +646,8 @@ pub fn create_rtt(
         format,
         usage: wgpu::TextureUsages::RENDER_ATTACHMENT
             | wgpu::TextureUsages::TEXTURE_BINDING
-            | wgpu::TextureUsages::COPY_SRC,
+            | wgpu::TextureUsages::COPY_SRC
+            | wgpu::TextureUsages::COPY_DST,
         view_formats: &[],
     });
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());

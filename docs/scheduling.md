@@ -120,6 +120,7 @@ view's draws, `Prepass` draws what a scene pass reads before the scene is drawn,
 ambient occlusion does from a depth prepass, `Background` clears each camera's view target and draws what lies behind
 the scene, such as the sky, `Transparent` draws blended surfaces over the scene back to front,
 `PostProcess` changes the finished HDR scene in the view target, as bloom does,
+with `PostProcessSet { DepthOfField, Bloom }` ordering the passes inside it that need an order,
 `Tonemap` writes each camera's HDR scene to its target, exposed and tonemapped,
 `Overlay` draws over the finished frame on that target before any pass that samples
 it, and `Present` runs in `LateRender`, after all of them.

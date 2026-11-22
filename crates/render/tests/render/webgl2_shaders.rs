@@ -53,6 +53,18 @@ const AUTO_EXPOSURE: &[EntryPoint] = &[
     },
 ];
 
+const DEPTH_OF_FIELD: &[EntryPoint] = &[
+    VERTEX,
+    EntryPoint {
+        name: "fs_blur_radius",
+        stage: ShaderStage::Fragment,
+    },
+    EntryPoint {
+        name: "fs_blur",
+        stage: ShaderStage::Fragment,
+    },
+];
+
 const BLOOM: &[EntryPoint] = &[
     VERTEX,
     EntryPoint {
@@ -161,6 +173,11 @@ fn every_shader_translates_to_glsl_es_300_under_the_webgl2_defines() {
             label: "auto_exposure.wgsl",
             source: include_str!("../../src/shaders/auto_exposure.wgsl"),
             entry_points: AUTO_EXPOSURE,
+        },
+        Shader {
+            label: "depth_of_field.wgsl",
+            source: include_str!("../../src/shaders/depth_of_field.wgsl"),
+            entry_points: DEPTH_OF_FIELD,
         },
         Shader {
             label: "bloom.wgsl",

@@ -23,6 +23,7 @@ pub mod batching;
 pub mod bloom;
 pub mod capabilities;
 pub mod components;
+pub mod depth_of_field;
 pub mod device;
 pub mod draw_target;
 pub(crate) mod frustum;
@@ -59,6 +60,7 @@ pub use auto_exposure::{AutoExposure, AutoExposurePlugin};
 pub use bloom::{Bloom, BloomPlugin};
 pub use components::camera::ExclusiveCamera;
 pub use components::material::MaterialComponent;
+pub use depth_of_field::{DepthOfField, DepthOfFieldPlugin};
 pub use material_plugin::{MaterialPipeline, MaterialPlugin, RenderMaterial};
 pub use sky_light::{
     CameraSkyLight, LightTint, RadianceSample, SkyRadianceMap, SphericalHarmonics,

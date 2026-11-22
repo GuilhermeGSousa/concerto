@@ -37,3 +37,12 @@ pub enum BackgroundSet {
     /// Drawing what lies behind the scene, such as the sky, over the cleared target.
     Draw,
 }
+
+/// The ordered steps inside [`RenderSet::PostProcess`] that need an order: `DepthOfField`, then `Bloom`.
+#[derive(SystemSet, Clone, PartialEq, Eq, Hash, Debug)]
+pub enum PostProcessSet {
+    /// Softening what is out of focus, before anything spreads light over it.
+    DepthOfField,
+    /// Spreading bright light around itself.
+    Bloom,
+}
