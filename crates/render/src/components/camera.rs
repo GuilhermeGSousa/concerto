@@ -29,9 +29,11 @@ use crate::{
     device::RenderDevice,
     layouts::CameraLayout,
     queue::RenderQueue,
-    render_asset::{render_texture::RenderTexture, RenderAssets},
+    render_asset::{render_texture::RenderTexture, render_window::RenderWindow, RenderAssets},
     resources::RenderContext,
     sky_light::{CameraSkyLight, SkyRadianceMap},
+    tonemapping::{Exposure, Tonemapping},
+    view_target::ViewTarget,
 };
 
 #[rustfmt::skip]
@@ -226,6 +228,8 @@ pub struct CameraUniform {
     pub(crate) night_color: Vec4,
     pub(crate) night_ambient: Vec4,
     pub(crate) sky_lit: u32,
+    pub(crate) exposure: f32,
+    pub(crate) tonemapping: u32,
 }
 
 impl CameraUniform {
@@ -241,7 +245,14 @@ impl CameraUniform {
             night_color: Vec4::ZERO,
             night_ambient: Vec4::ZERO,
             sky_lit: 0,
+            exposure: 1.0,
+            tonemapping: Tonemapping::default().shader_value(),
         }
+    }
+
+    pub(crate) fn set_display(&mut self, tonemapping: Tonemapping, exposure: Exposure) {
+        self.tonemapping = tonemapping.shader_value();
+        self.exposure = exposure.multiplier();
     }
 
     pub fn update_view_proj(
@@ -296,7 +307,8 @@ pub struct RenderCamera {
     pub camera_bind_group: wgpu::BindGroup,
     pub camera_uniform: CameraUniform,
     pub camera_buffer: wgpu::Buffer,
-    pub(crate) depth_texture: RenderTexture,
+    /// The HDR colour and depth textures this camera's scene is drawn into.
+    pub view_target: ViewTarget,
     pub render_target: Option<RenderTexture>,
     pub(crate) viewport: Option<Viewport>,
     pub(crate) layers: RenderLayers,
@@ -304,7 +316,15 @@ pub struct RenderCamera {
 
 impl RenderCamera {
     pub fn depth_texture(&self) -> &RenderTexture {
-        &self.depth_texture
+        self.view_target.depth_texture()
+    }
+
+    /// The view the finished frame is written to: this camera's texture, or the window's.
+    pub fn output_view<'a>(&'a self, window: &'a RenderWindow) -> Option<&'a wgpu::TextureView> {
+        match &self.render_target {
+            Some(target) => Some(&target.view),
+            None => window.get_view(),
+        }
     }
 
     /// The size of the target this camera draws to: its texture, or the window's surface.
@@ -333,8 +353,18 @@ impl RenderCamera {
         if self.render_target.is_some() {
             self.render_target = Some(create_rtt(device, format, width, height));
         }
-        self.depth_texture =
-            RenderTexture::create_depth_texture(device, width, height, "depth_texture");
+    }
+}
+
+fn scene_clear_color(shown: Color, tonemapping: Tonemapping, exposure: Exposure) -> LinearRgba {
+    let shown = shown.to_linear();
+    let light =
+        tonemapping.scene_light(Vec3::new(shown.r, shown.g, shown.b)) / exposure.multiplier();
+    LinearRgba {
+        r: light.x,
+        g: light.y,
+        b: light.z,
+        a: shown.a,
     }
 }
 
@@ -367,6 +397,8 @@ pub(crate) fn extract_cameras(
             Option<&CameraEnvironment>,
             Option<&CameraSkyLight>,
             Option<&RenderLayers>,
+            Option<&Tonemapping>,
+            Option<&Exposure>,
             &GlobalTransform,
             &RenderEntity,
         )>,
@@ -381,7 +413,17 @@ pub(crate) fn extract_cameras(
     queue: Res<RenderQueue>,
     sky_radiance: Res<SkyRadianceMap>,
 ) {
-    for (entity, camera, environment, sky_light, layers, transform, render_entity) in cameras.iter()
+    for (
+        entity,
+        camera,
+        environment,
+        sky_light,
+        layers,
+        tonemapping,
+        exposure,
+        transform,
+        render_entity,
+    ) in cameras.iter()
     {
         let layers = layers.copied().unwrap_or_default();
         if exclusive.as_ref().is_some_and(|only| only.0 != entity) {
@@ -391,10 +433,14 @@ pub(crate) fn extract_cameras(
 
         let mut camera_uniform = CameraUniform::new();
         camera_uniform.update_view_proj(camera, environment, sky_light, transform);
+        let tonemapping = tonemapping.copied().unwrap_or_default();
+        let exposure = exposure.copied().unwrap_or_default();
+        camera_uniform.set_display(tonemapping, exposure);
+        let clear_color = scene_clear_color(camera.clear_color, tonemapping, exposure);
 
         if let Some(mut render_camera) = render_cameras.get_entity(render_entity) {
             render_camera.camera_uniform = camera_uniform;
-            render_camera.clear_color = camera.clear_color.to_linear();
+            render_camera.clear_color = clear_color;
             render_camera.viewport = camera.viewport;
             render_camera.layers = layers;
 
@@ -454,25 +500,21 @@ pub(crate) fn extract_cameras(
             )
         });
 
-        let (depth_w, depth_h) = match &render_target {
+        let view_size = match &render_target {
             Some(rt) => {
                 let size = rt.texture.size();
-                (size.width, size.height)
+                UVec2::new(size.width, size.height)
             }
-            None => (
-                context.surface_config.width.max(1),
-                context.surface_config.height.max(1),
-            ),
+            None => UVec2::new(context.surface_config.width, context.surface_config.height),
         };
-        let depth_texture =
-            RenderTexture::create_depth_texture(&device, depth_w, depth_h, "depth_texture");
+        let view_target = ViewTarget::new(&device, context.view_target_format, view_size);
 
         let render_cam = RenderCamera {
             camera_bind_group,
             camera_uniform,
             camera_buffer,
-            depth_texture,
-            clear_color: camera.clear_color.to_linear(),
+            view_target,
+            clear_color,
             render_target,
             viewport: camera.viewport,
             layers,
@@ -629,6 +671,8 @@ mod tests {
             night_color: Vec4::new(90.0, 91.0, 92.0, 93.0),
             night_ambient: Vec4::new(94.0, 95.0, 96.0, 97.0),
             sky_lit: 1,
+            exposure: 2.0,
+            tonemapping: 3,
         };
 
         let mut expected = float_words(&[1.0, 2.0, 3.0, 0.0]);
@@ -646,7 +690,7 @@ mod tests {
         }
         expected.extend(float_words(&[90.0, 91.0, 92.0, 93.0]));
         expected.extend(float_words(&[94.0, 95.0, 96.0, 97.0]));
-        expected.extend([1, 0, 0, 0]);
+        expected.extend([1, 2.0f32.to_bits(), 3, 0]);
 
         assert_eq!(uniform_words(&uniform), expected);
         assert_eq!(uniform.size().get(), 384);

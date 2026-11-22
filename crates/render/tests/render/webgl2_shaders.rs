@@ -111,8 +111,8 @@ fn every_shader_translates_to_glsl_es_300_under_the_webgl2_defines() {
             entry_points: &[VERTEX],
         },
         Shader {
-            label: "viewport_clear.wgsl",
-            source: include_str!("../../src/shaders/viewport_clear.wgsl"),
+            label: "tonemapping.wgsl",
+            source: include_str!("../../src/shaders/tonemapping.wgsl"),
             entry_points: &[VERTEX, FRAGMENT],
         },
     ];

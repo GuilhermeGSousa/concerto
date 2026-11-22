@@ -40,7 +40,8 @@ use crate::{
         render::{finish_render, present_window},
         update_window,
     },
-    viewport_clear::ViewportClearPipeline,
+    tonemapping::{tonemap_cameras, Exposure, Tonemapping, TonemappingPipeline},
+    view_target::prepare_view_targets,
 };
 use concerto_app::{
     edit_time::AtEditTime,
@@ -114,6 +115,8 @@ impl Plugin for RenderPlugin {
         app.register_type::<Light>()
             .register_type::<Camera>()
             .register_type::<CameraEnvironment>()
+            .register_type::<Tonemapping>()
+            .register_type::<Exposure>()
             .register_type::<SyncWithRenderWorld>()
             .register_type::<NoFrustumCulling>()
             .register_type::<NotShadowCaster>()
@@ -138,7 +141,10 @@ impl Plugin for RenderPlugin {
         if has_window {
             app.add_system(LateUpdate, sync_camera_aspect.at_edit_time())
                 .add_render_system(Extract, update_window::extract_window)
-                .add_render_system(Render, update_window::update_render_window);
+                .add_render_system(
+                    Render,
+                    update_window::update_render_window.before(prepare_view_targets),
+                );
         }
 
         app.configure_render_sets(
@@ -150,6 +156,7 @@ impl Plugin for RenderPlugin {
                 RenderSet::Background,
                 RenderSet::Draw,
                 RenderSet::Transparent,
+                RenderSet::Tonemap,
                 RenderSet::Overlay,
             )
                 .chain(),
@@ -160,6 +167,14 @@ impl Plugin for RenderPlugin {
             clear_cameras
                 .in_set(RenderSet::Background)
                 .in_set(BackgroundSet::Clear),
+        )
+        .add_render_system(Render, prepare_view_targets.before(RenderSet::Lights))
+        .add_render_system(
+            Render,
+            tonemap_cameras
+                .in_set(RenderSet::Tonemap)
+                .after(RenderSet::Background)
+                .after(RenderSet::Draw),
         )
         .add_render_system(Render, rebind_sky_radiance.before(RenderSet::Background))
         .add_render_system(Render, clear_draw_stats.in_set(RenderSet::Queue))
@@ -242,7 +257,8 @@ impl Plugin for RenderPlugin {
         let skeleton_layout = SkeletonLayout::new(&device);
 
         let capabilities = RenderCapabilities::from_adapter(&adapter);
-        let viewport_clear = ViewportClearPipeline::new(&device, &capabilities, config.format);
+        let tonemapping =
+            TonemappingPipeline::new(&device, &capabilities, &camera_layouts, config.format);
 
         let lighting_layout = LightingLayout::new(&device, &capabilities);
 
@@ -271,6 +287,7 @@ impl Plugin for RenderPlugin {
             .insert_resource(RenderContext {
                 target,
                 surface_config: config,
+                view_target_format: capabilities.view_target_format(),
             })
             .insert_resource(RenderDevice {
                 device,
@@ -279,7 +296,7 @@ impl Plugin for RenderPlugin {
             .insert_resource(RenderQueue { queue })
             .insert_resource(capabilities)
             .insert_resource(sky_radiance)
-            .insert_resource(viewport_clear)
+            .insert_resource(tonemapping)
             .insert_resource(RenderWindow::new())
             .insert_resource(camera_layouts)
             .insert_resource(skeleton_layout)

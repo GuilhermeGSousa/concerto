@@ -31,6 +31,7 @@ use concerto_render::{
     plugin::RenderPlugin,
     readback::read_texture,
     shadow_pipeline::ShadowPipelinePlugin,
+    Tonemapping,
 };
 use concerto_window::plugin::{Window, WindowPlugin};
 use glam::{Quat, Vec2, Vec3};
@@ -109,13 +110,12 @@ fn shadow_layers(app: &App) -> Vec<ViewDrawStats> {
         .clone()
 }
 
-fn aces(color: Vec3) -> Vec3 {
-    let mapped = (color * (2.51 * color + 0.03)) / (color * (2.43 * color + 0.59) + 0.14);
-    mapped.clamp(Vec3::ZERO, Vec3::ONE)
+fn shown(light: Vec3) -> Vec3 {
+    Tonemapping::Aces.apply(light)
 }
 
 fn over(surface: &Surface, behind: Vec3) -> Vec3 {
-    aces(surface.emissive) * surface.alpha + behind * (1.0 - surface.alpha)
+    surface.emissive * surface.alpha + behind * (1.0 - surface.alpha)
 }
 
 fn assert_pixel(actual: [u8; 3], expected: Vec3, what: &str) {
@@ -200,7 +200,7 @@ fn blended_surfaces_draw_back_to_front_over_the_opaque_scene_without_hiding_it()
 
     assert_pixel(
         centre_pixel(&app, &gpu, camera),
-        over(&near, over(&far, aces(floor.emissive))),
+        shown(over(&near, over(&far, floor.emissive))),
         "the near sheet over the far sheet over the floor",
     );
     assert_eq!(
@@ -223,7 +223,7 @@ fn blended_surfaces_draw_back_to_front_over_the_opaque_scene_without_hiding_it()
 
     assert_pixel(
         centre_pixel(&app, &gpu, camera),
-        aces(near_opaque.emissive),
+        shown(near_opaque.emissive),
         "an opaque near sheet hides what is behind it",
     );
     assert_eq!(

@@ -22,7 +22,6 @@ use concerto_render::{
     device::RenderDevice,
     layouts::CameraLayout,
     queue::RenderQueue,
-    render_asset::render_window::RenderWindow,
     resources::RenderContext,
     sets::{BackgroundSet, RenderSet},
     shader::create_shader_module,
@@ -79,8 +78,7 @@ impl Plugin for SkyRenderPlugin {
         let target_format = render
             .get_resource::<RenderContext>()
             .expect("SkyRenderPlugin needs RenderPlugin, registered before it")
-            .surface_config
-            .format;
+            .view_target_format;
 
         let map = sky_radiance_map(device, capabilities);
         let sky_view = SkyViewPass::new(device, capabilities, map.format);
@@ -574,7 +572,6 @@ pub(crate) fn draw_sky(
     luts: Res<AtmosphereLuts>,
     pass: Res<SkyPass>,
     render_cameras: Query<(Entity, &RenderCamera)>,
-    render_window: Res<RenderWindow>,
     context: Res<RenderContext>,
     mut device: ResMut<RenderDevice>,
     queue: Res<RenderQueue>,
@@ -587,7 +584,6 @@ pub(crate) fn draw_sky(
         0,
         bytemuck::bytes_of(&SunUniform::new(sky.sun.as_ref(), &luts.atmosphere)),
     );
-    let swapchain_view = render_window.get_view();
     let encoder = device.command_encoder();
     for (entity, render_camera) in render_cameras.iter() {
         if !sky.cameras.contains(&entity) {
@@ -597,25 +593,14 @@ pub(crate) fn draw_sky(
         if rect.is_empty() {
             continue;
         }
-        let color_view: &wgpu::TextureView = match &render_camera.render_target {
-            Some(target) => &target.view,
-            None => match swapchain_view {
-                Some(view) => view,
-                None => continue,
-            },
-        };
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             multiview_mask: None,
             label: Some("Sky Pass"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                depth_slice: None,
-                view: color_view,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Load,
-                    store: wgpu::StoreOp::Store,
-                },
-            })],
+            color_attachments: &[Some(
+                render_camera
+                    .view_target
+                    .color_attachment(wgpu::LoadOp::Load),
+            )],
             depth_stencil_attachment: None,
             occlusion_query_set: None,
             timestamp_writes: None,

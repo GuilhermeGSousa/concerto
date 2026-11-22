@@ -50,8 +50,6 @@ struct MaterialAttr {
     cull_mode: Option<String>,
     /// `topology()` override: `"triangle_list"` or `"line_list"`.
     topology: Option<String>,
-    /// `clear_depth()` override.  Defaults to `true` in the trait.
-    clear_depth: Option<bool>,
     /// `depth_stencil()` override: `"none"`, `"default"`, or `"read_only"`.
     ///
     /// - `"none"` → returns `None` (no depth/stencil)
@@ -199,7 +197,6 @@ fn alpha_mode_field(fields: &syn::FieldsNamed) -> syn::Result<Option<&Ident>> {
 /// - `skeleton = true|false` — override `needs_skeleton()` (trait default: `false`)
 /// - `cull_mode = "back"|"front"|"none"` — override `cull_mode()`
 /// - `topology = "triangle_list"|"line_list"` — override `topology()`
-/// - `clear_depth = true|false` — override `clear_depth()` (trait default: `true`)
 /// - `depth_stencil = "none"|"default"|"read_only"` — override `depth_stencil()`
 /// - `vertex_layouts = <expr>` — override `vertex_layouts()`
 ///
@@ -214,7 +211,6 @@ fn parse_material_attr(attrs: &[syn::Attribute]) -> MaterialAttr {
         skeleton: None,
         cull_mode: None,
         topology: None,
-        clear_depth: None,
         depth_stencil: None,
         vertex_layouts: None,
         blend: None,
@@ -241,7 +237,7 @@ fn parse_material_attr(attrs: &[syn::Attribute]) -> MaterialAttr {
             } else if meta.path.is_ident("topology") {
                 result.topology = Some(parse_str_value(&meta)?);
             } else if meta.path.is_ident("clear_depth") {
-                result.clear_depth = Some(parse_bool_value(&meta)?);
+                parse_bool_value(&meta)?;
             } else if meta.path.is_ident("depth_stencil") {
                 result.depth_stencil = Some(parse_str_value(&meta)?);
             } else if meta.path.is_ident("vertex_layouts") {
@@ -548,15 +544,6 @@ fn gen_material_impl(name: &Ident, m: &MaterialAttr, alpha_mode: Option<&Ident>)
         })
         .unwrap_or_default();
 
-    let clear_depth_fn = m
-        .clear_depth
-        .map(|val| {
-            quote! {
-                fn clear_depth() -> bool { #val }
-            }
-        })
-        .unwrap_or_default();
-
     let depth_stencil_fn = m
         .depth_stencil
         .as_deref()
@@ -626,7 +613,6 @@ fn gen_material_impl(name: &Ident, m: &MaterialAttr, alpha_mode: Option<&Ident>)
             #skeleton_fn
             #cull_mode_fn
             #topology_fn
-            #clear_depth_fn
             #depth_stencil_fn
             #vertex_layouts_fn
             #blend_state_fn
@@ -659,7 +645,6 @@ fn gen_material_impl(name: &Ident, m: &MaterialAttr, alpha_mode: Option<&Ident>)
 /// | `skeleton`       | `true \| false`                           | `needs_skeleton()` (default `false`) |
 /// | `cull_mode`      | `"back" \| "front" \| "none"`            | `cull_mode()` (default `Back`) |
 /// | `topology`       | `"triangle_list" \| "line_list"`          | `topology()` |
-/// | `clear_depth`    | `true \| false`                           | `clear_depth()` (default `true`) |
 /// | `depth_stencil`  | `"none" \| "default" \| "read_only"`     | `depth_stencil()` |
 /// | `vertex_layouts` | `<expr>`                                  | `vertex_layouts()` |
 ///

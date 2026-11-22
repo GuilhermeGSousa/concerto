@@ -22,7 +22,6 @@ pub struct WorldGridUniform {
     fragment_shader = include_str!("shaders/world_grid.wgsl"),
     lighting        = true,
     cull_mode       = "none",
-    clear_depth     = false,
     blend           = "alpha",
 )]
 pub struct WorldGridMaterial {
