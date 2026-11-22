@@ -1,6 +1,6 @@
 use concerto_ecs::SystemSet;
 
-/// The ordered phases of the render world: `Lights`, `Queue`, `Shadows`, `Background`, `Draw`, `Transparent`, `Tonemap` and `Overlay` in
+/// The ordered phases of the render world: `Lights`, `Queue`, `Shadows`, `Background`, `Draw`, `Transparent`, `PostProcess`, `Tonemap` and `Overlay` in
 /// [`Render`](concerto_app::schedule_groups::Render), `Present` in
 /// [`LateRender`](concerto_app::schedule_groups::LateRender).
 #[derive(SystemSet, Clone, PartialEq, Eq, Hash, Debug)]
@@ -17,6 +17,8 @@ pub enum RenderSet {
     Draw,
     /// Drawing blended surfaces over the scene, back to front.
     Transparent,
+    /// Changing each camera's finished HDR scene in its view target, as bloom does.
+    PostProcess,
     /// Writing each camera's HDR scene to its target, exposed and tonemapped.
     Tonemap,
     /// Drawing over the finished frame on each camera's target, before any pass that samples it.

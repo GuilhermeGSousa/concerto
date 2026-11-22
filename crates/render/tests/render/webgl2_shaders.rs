@@ -37,6 +37,22 @@ const FRAGMENT: EntryPoint = EntryPoint {
     stage: ShaderStage::Fragment,
 };
 
+const BLOOM: &[EntryPoint] = &[
+    VERTEX,
+    EntryPoint {
+        name: "fs_downsample_first",
+        stage: ShaderStage::Fragment,
+    },
+    EntryPoint {
+        name: "fs_downsample",
+        stage: ShaderStage::Fragment,
+    },
+    EntryPoint {
+        name: "fs_upsample",
+        stage: ShaderStage::Fragment,
+    },
+];
+
 struct Shader {
     label: &'static str,
     source: &'static str,
@@ -114,6 +130,11 @@ fn every_shader_translates_to_glsl_es_300_under_the_webgl2_defines() {
             label: "tonemapping.wgsl",
             source: include_str!("../../src/shaders/tonemapping.wgsl"),
             entry_points: &[VERTEX, FRAGMENT],
+        },
+        Shader {
+            label: "bloom.wgsl",
+            source: include_str!("../../src/shaders/bloom.wgsl"),
+            entry_points: BLOOM,
         },
     ];
     for defs in &def_sets {
