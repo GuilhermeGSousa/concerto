@@ -38,11 +38,15 @@ impl Signal for UICheckboxChanged {}
 impl EntitySignal for UICheckboxChanged {}
 
 /// Click listener that toggles the [`UICheckbox`] it sits on.
-pub fn toggle_checkbox(on: On<UIClick>, checkboxes: Query<&mut UICheckbox>, mut cmd: CommandQueue) {
+pub fn toggle_checkbox(
+    on: On<UIClick>,
+    mut checkboxes: Query<&mut UICheckbox>,
+    mut cmd: CommandQueue,
+) {
     if on.signal().button != MouseButton::Left {
         return;
     }
-    let Some(mut checkbox) = checkboxes.get_entity(on.entity()) else {
+    let Some(mut checkbox) = checkboxes.get_entity_mut(on.entity()) else {
         return;
     };
     checkbox.checked = !checkbox.checked;
@@ -52,8 +56,8 @@ pub fn toggle_checkbox(on: On<UIClick>, checkboxes: Query<&mut UICheckbox>, mut 
 }
 
 /// Drives `UIMaterial::color` from `UICheckbox::checked` each frame.
-pub(crate) fn sync_checkbox_material(checkboxes: Query<(&UICheckbox, &mut UIMaterial)>) {
-    for (checkbox, mut material) in checkboxes.iter() {
+pub(crate) fn sync_checkbox_material(mut checkboxes: Query<(&UICheckbox, &mut UIMaterial)>) {
+    for (checkbox, mut material) in checkboxes.iter_mut() {
         let color = if checkbox.checked {
             checkbox.checked_color
         } else {

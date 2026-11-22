@@ -106,12 +106,12 @@ fn forget_routing(routing: &mut Routing) {
 
 pub(crate) fn focus_shown_app(
     on: On<Add<InViewport>>,
-    hosted: Query<&mut HostedApp>,
+    mut hosted: Query<&mut HostedApp>,
     input: Res<Input>,
     mut routing: ResMut<Routing>,
 ) {
     let document = on.signal().entity;
-    if let Some(mut app) = hosted.get_entity(document) {
+    if let Some(mut app) = hosted.get_entity_mut(document) {
         app.push(WindowEvent::Focused(true));
         if routing.pad_target == Some(document) {
             for pad in input
@@ -127,13 +127,13 @@ pub(crate) fn focus_shown_app(
 
 pub(crate) fn blur_hidden_app(
     on: On<Remove<InViewport>>,
-    hosted: Query<&mut HostedApp>,
+    mut hosted: Query<&mut HostedApp>,
     parked: Query<&ParkedEditApp>,
     mut routing: ResMut<Routing>,
     mut cmd: CommandQueue,
 ) {
     let document = on.signal().entity;
-    if let Some(mut app) = hosted.get_entity(document) {
+    if let Some(mut app) = hosted.get_entity_mut(document) {
         app.push(WindowEvent::Focused(false));
         app.step();
         if app.drop_window_commands() && parked.get_entity(document).is_some() {
@@ -146,12 +146,12 @@ pub(crate) fn blur_hidden_app(
 pub(crate) fn focus_new_target(
     on: On<Add<ViewportTarget>>,
     shown: Query<&InViewport>,
-    hosted: Query<&mut HostedApp>,
+    mut hosted: Query<&mut HostedApp>,
     mut routing: ResMut<Routing>,
 ) {
     let document = on.signal().entity;
     if shown.get_entity(document).is_some()
-        && let Some(mut app) = hosted.get_entity(document)
+        && let Some(mut app) = hosted.get_entity_mut(document)
     {
         app.push(WindowEvent::Focused(true));
     }
@@ -161,11 +161,11 @@ pub(crate) fn focus_new_target(
 pub(crate) fn blur_old_target(
     on: On<Remove<ViewportTarget>>,
     shown: Query<&InViewport>,
-    hosted: Query<&mut HostedApp>,
+    mut hosted: Query<&mut HostedApp>,
 ) {
     let document = on.signal().entity;
     if shown.get_entity(document).is_some()
-        && let Some(mut app) = hosted.get_entity(document)
+        && let Some(mut app) = hosted.get_entity_mut(document)
     {
         app.push(WindowEvent::Focused(false));
     }
@@ -266,14 +266,14 @@ fn hand_over(
 
 pub(crate) fn release_input(
     on: On<ReleaseInput>,
-    owners: Query<&mut InputOwner>,
-    hosted: Query<&mut HostedApp>,
+    mut owners: Query<&mut InputOwner>,
+    mut hosted: Query<&mut HostedApp>,
     input: Res<Input>,
 ) {
     let document = on.signal().0;
-    if let Some(mut owner) = owners.get_entity(document)
+    if let Some(mut owner) = owners.get_entity_mut(document)
         && **owner == InputOwner::Game
-        && let Some(mut app) = hosted.get_entity(document)
+        && let Some(mut app) = hosted.get_entity_mut(document)
     {
         hand_over(&mut owner, &mut app, Some(&input), &[]);
     }
@@ -347,8 +347,8 @@ pub(crate) fn route_play_input(
     viewport_targets: Query<Entity, With<ViewportTarget>>,
     shown: Res<ViewportShown>,
     mut events: EventReader<WindowEvent>,
-    hosted: Query<&mut HostedApp>,
-    owners: Query<&mut InputOwner>,
+    mut hosted: Query<&mut HostedApp>,
+    mut owners: Query<&mut InputOwner>,
     input: Res<Input>,
     mut routing: ResMut<Routing>,
     mut gate: ResMut<InputGate>,
@@ -357,7 +357,7 @@ pub(crate) fn route_play_input(
     let player = viewport_targets
         .iter()
         .next()
-        .filter(|document| owners.get_entity(*document).is_some());
+        .filter(|document| owners.contains_entity(*document));
     if routing.pad_target != player {
         routing.pad_target = player;
         routing.told_pads.clear();
@@ -367,8 +367,8 @@ pub(crate) fn route_play_input(
         .next()
         .zip(shown.0)
         .and_then(|(document, view)| {
-            let owner = owners.get_entity(document)?;
-            let app = hosted.get_entity(document)?;
+            let owner = owners.get_entity_mut(document)?;
+            let app = hosted.get_entity_mut(document)?;
             Some((document, view, owner, app))
         });
     routing.playing = target.is_some();
@@ -539,7 +539,7 @@ pub(crate) fn step_viewport_target(
     targets: Query<Entity, (With<ViewportTarget>, With<InViewport>)>,
     shown: Res<ViewportShown>,
     mut events: EventReader<WindowEvent>,
-    hosted: Query<&mut HostedApp>,
+    mut hosted: Query<&mut HostedApp>,
     parked: Query<&ParkedEditApp>,
     owners: Query<&InputOwner>,
     mut routing: ResMut<Routing>,
@@ -552,7 +552,11 @@ pub(crate) fn step_viewport_target(
         .iter()
         .next()
         .zip(shown.0)
-        .and_then(|(document, view)| hosted.get_entity(document).map(|app| (document, view, app)));
+        .and_then(|(document, view)| {
+            hosted
+                .get_entity_mut(document)
+                .map(|app| (document, view, app))
+        });
     let Some((document, view, mut app)) = target else {
         events.clear();
         if cursor.copied {

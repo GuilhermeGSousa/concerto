@@ -163,11 +163,13 @@ fn step_frame(document: Entity, frames: i32) -> Listener<UIClick> {
 }
 
 fn toggle_looping(document: Entity) -> Listener<UIClick> {
-    (move |on: On<UIClick>, transports: Query<&mut ClipTransport>, mut previews: PreviewSignals| {
+    (move |on: On<UIClick>,
+           mut transports: Query<&mut ClipTransport>,
+           mut previews: PreviewSignals| {
         if on.signal().button != MouseButton::Left {
             return;
         }
-        if let Some(mut transport) = transports.get_entity(document) {
+        if let Some(mut transport) = transports.get_entity_mut(document) {
             transport.looping = !transport.looping;
             previews.trigger(document, transport_signal(&transport));
         }
@@ -176,11 +178,13 @@ fn toggle_looping(document: Entity) -> Listener<UIClick> {
 }
 
 fn set_speed(document: Entity, speed: f32) -> Listener<UIClick> {
-    (move |on: On<UIClick>, transports: Query<&mut ClipTransport>, mut previews: PreviewSignals| {
+    (move |on: On<UIClick>,
+           mut transports: Query<&mut ClipTransport>,
+           mut previews: PreviewSignals| {
         if on.signal().button != MouseButton::Left {
             return;
         }
-        if let Some(mut transport) = transports.get_entity(document) {
+        if let Some(mut transport) = transports.get_entity_mut(document) {
             transport.speed = speed;
             previews.trigger(document, transport_signal(&transport));
         }
@@ -268,10 +272,10 @@ pub fn spawn_transport(
 
 pub(crate) fn follow_transport_progress(
     mut progress: EventReader<Hosted<ClipPreviewProgress>>,
-    transports: Query<&mut ClipTransport>,
+    mut transports: Query<&mut ClipTransport>,
 ) {
     for Hosted { document, event } in progress.read() {
-        if let Some(mut transport) = transports.get_entity(*document)
+        if let Some(mut transport) = transports.get_entity_mut(*document)
             && (transport.time != event.time || transport.playing != event.playing)
         {
             transport.time = event.time;
@@ -283,15 +287,15 @@ pub(crate) fn follow_transport_progress(
 pub(crate) fn sync_transport_rows(
     rows: Query<&TransportRow>,
     transports: Query<(&ClipTransport, Option<&TransportDisabled>)>,
-    texts: Query<&mut UIText>,
-    styles: Query<&mut UIInteractionStyle>,
+    mut texts: Query<&mut UIText>,
+    mut styles: Query<&mut UIInteractionStyle>,
     disabled: Query<&UIDisabled>,
     theme: Res<UITheme>,
     mut cmd: CommandQueue,
 ) {
-    let write_selected = |entity: Entity, selected: bool| {
+    let mut write_selected = |entity: Entity, selected: bool| {
         let wanted = theme.interaction(ButtonVariant::Ghost, selected);
-        if let Some(mut style) = styles.get_entity(entity)
+        if let Some(mut style) = styles.get_entity_mut(entity)
             && style.normal != wanted.normal
         {
             **style = wanted;
@@ -307,7 +311,7 @@ pub(crate) fn sync_transport_rows(
             glyph::PLAY
         }
         .to_string();
-        if let Some(mut text) = texts.get_entity(row.play)
+        if let Some(mut text) = texts.get_entity_mut(row.play)
             && text.text != mark
         {
             text.text = mark;
@@ -338,10 +342,10 @@ pub(crate) fn sync_transport_rows(
 }
 
 pub(crate) fn sync_transport_timelines(
-    timelines: Query<(&TransportTimeline, &mut Timeline)>,
+    mut timelines: Query<(&TransportTimeline, &mut Timeline)>,
     transports: Query<&ClipTransport>,
 ) {
-    for (follows, mut timeline) in timelines.iter() {
+    for (follows, mut timeline) in timelines.iter_mut() {
         let Some(transport) = transports.get_entity(follows.document) else {
             continue;
         };

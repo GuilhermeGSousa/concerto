@@ -94,7 +94,7 @@ fn show_saved_clip(
 }
 
 pub(crate) fn save_clip(
-    requested: Query<
+    mut requested: Query<
         (
             Entity,
             &mut EditorDocument,
@@ -114,7 +114,7 @@ pub(crate) fn save_clip(
         .project
         .as_ref()
         .map(|project| project.root.as_path());
-    for (entity, mut document, mut state, mut transport) in requested.iter() {
+    for (entity, mut document, mut state, mut transport) in requested.iter_mut() {
         cmd.remove::<SaveRequested>(entity);
         let written = root
             .context("Open a project before saving")
@@ -145,11 +145,11 @@ pub(crate) fn save_clip(
 
 pub(crate) fn restore_clip_events(
     on: On<DiscardEdits>,
-    documents: Query<(&mut EditorDocument, &mut ClipDocument)>,
+    mut documents: Query<(&mut EditorDocument, &mut ClipDocument)>,
     mut cmd: CommandQueue,
 ) {
     let document = on.signal().0;
-    let Some((mut editor, mut state)) = documents.get_entity(document) else {
+    let Some((mut editor, mut state)) = documents.get_entity_mut(document) else {
         return;
     };
     let Some(clip) = state.clip.clone() else {

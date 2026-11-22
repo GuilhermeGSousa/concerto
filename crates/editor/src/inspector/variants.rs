@@ -230,14 +230,14 @@ fn toggle_option(row: Entity) -> Listener<UICheckboxChanged> {
 fn toggle_variant_menu(row: Entity, variants: &'static [&'static str]) -> Listener<UIClick> {
     (move |on: On<UIClick>,
            values: Query<&PropertyRowValue>,
-           menus: Query<(Entity, &mut VariantMenu, &mut UIAnchoredPanel)>,
+           mut menus: Query<(Entity, &mut VariantMenu, &mut UIAnchoredPanel)>,
            theme: Res<UITheme>,
            mut cmd: CommandQueue| {
         if on.signal().button != MouseButton::Left {
             return;
         }
         let button = on.entity();
-        let mut menu = match menus.iter().next() {
+        let mut menu = match menus.iter_mut().next() {
             Some((entity, mut menu, mut panel)) => {
                 if panel.open && panel.owner == Some(button) {
                     panel.open = false;
@@ -291,13 +291,13 @@ fn toggle_variant_menu(row: Entity, variants: &'static [&'static str]) -> Listen
 /// Commits `name` to the row the open menu was opened for unless it is already active, then closes the menu.
 fn pick_variant(name: &'static str) -> Listener<UIClick> {
     (move |on: On<UIClick>,
-           menus: Query<(&VariantMenu, &mut UIAnchoredPanel)>,
+           mut menus: Query<(&VariantMenu, &mut UIAnchoredPanel)>,
            rows: Query<(&PropertyRow, &PropertyRowValue)>,
            mut commits: ResMut<PropertyCommits>| {
         if on.signal().button != MouseButton::Left {
             return;
         }
-        for (menu, mut panel) in menus.iter() {
+        for (menu, mut panel) in menus.iter_mut() {
             if let Some((row, value)) = menu
                 .row
                 .filter(|_| panel.open)
@@ -317,9 +317,9 @@ fn pick_variant(name: &'static str) -> Listener<UIClick> {
 
 pub(super) fn forget_scene(
     _: On<Remove<EditTarget>>,
-    menus: Query<(&mut VariantMenu, &mut UIAnchoredPanel)>,
+    mut menus: Query<(&mut VariantMenu, &mut UIAnchoredPanel)>,
 ) {
-    for (mut menu, mut panel) in menus.iter() {
+    for (mut menu, mut panel) in menus.iter_mut() {
         if menu.row.is_some() {
             menu.row = None;
         }
@@ -332,9 +332,9 @@ pub(super) fn forget_scene(
 /// Writes the active variant of each picker row into its button.
 pub(crate) fn refresh_variant_labels(
     values: Query<&PropertyRowValue>,
-    labels: Query<(&VariantPickerLabel, &mut UIText)>,
+    mut labels: Query<(&VariantPickerLabel, &mut UIText)>,
 ) {
-    for (label, mut text) in labels.iter() {
+    for (label, mut text) in labels.iter_mut() {
         let Some(&name) = values
             .get_entity(label.row)
             .and_then(|value| value.downcast::<&'static str>())
@@ -350,9 +350,9 @@ pub(crate) fn refresh_variant_labels(
 /// Writes whether each option row holds a value into its checkbox.
 pub(crate) fn refresh_option_fields(
     values: Query<&PropertyRowValue>,
-    fields: Query<(&OptionField, &mut UICheckbox)>,
+    mut fields: Query<(&OptionField, &mut UICheckbox)>,
 ) {
-    for (field, mut checkbox) in fields.iter() {
+    for (field, mut checkbox) in fields.iter_mut() {
         let Some(&checked) = values
             .get_entity(field.row)
             .and_then(|value| value.downcast::<bool>())

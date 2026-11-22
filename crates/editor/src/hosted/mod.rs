@@ -576,10 +576,10 @@ pub(crate) fn forward_registry(
     _: NonSendMarker,
     project: Res<ProjectState>,
     registry: Res<AssetRegistry>,
-    pending: Query<&mut PendingApp>,
-    starting: Query<&mut PendingPlayApp>,
-    hosted: Query<&mut HostedApp>,
-    parked: Query<&mut ParkedEditApp>,
+    mut pending: Query<&mut PendingApp>,
+    mut starting: Query<&mut PendingPlayApp>,
+    mut hosted: Query<&mut HostedApp>,
+    mut parked: Query<&mut ParkedEditApp>,
 ) {
     let root = project
         .project
@@ -590,19 +590,19 @@ pub(crate) fn forward_registry(
         (Some(app), _) if registry.is_changed() => app.receive_registry(&registry),
         _ => {}
     };
-    for mut app in pending.iter() {
+    for mut app in pending.iter_mut() {
         let created = app.is_added();
         deliver(app.held_mut(), created);
     }
-    for mut app in starting.iter() {
+    for mut app in starting.iter_mut() {
         let created = app.is_added();
         deliver(app.0.held_mut(), created);
     }
     if registry.is_changed() {
-        for mut app in hosted.iter() {
+        for mut app in hosted.iter_mut() {
             deliver(Some(&mut *app), false);
         }
-        for mut app in parked.iter() {
+        for mut app in parked.iter_mut() {
             deliver(Some(&mut app.0), false);
         }
     }
@@ -622,7 +622,7 @@ fn finish(
 
 pub(crate) fn finish_pending(
     _: NonSendMarker,
-    pending: Query<(Entity, &mut PendingApp)>,
+    mut pending: Query<(Entity, &mut PendingApp)>,
     parked: Query<&ParkedEditApp>,
     starting: Query<&PendingPlayApp>,
     (off_thread, registry): (
@@ -631,7 +631,7 @@ pub(crate) fn finish_pending(
     ),
     mut cmd: CommandQueue,
 ) {
-    for (document, mut pending) in pending.iter() {
+    for (document, mut pending) in pending.iter_mut() {
         if parked.get_entity(document).is_some() || starting.get_entity(document).is_some() {
             continue;
         }
@@ -733,8 +733,8 @@ pub struct PlayStopped {
 
 pub(crate) fn finish_pending_play(
     _: NonSendMarker,
-    pending: Query<(Entity, &mut PendingPlayApp)>,
-    hosted: Query<&mut HostedApp>,
+    mut pending: Query<(Entity, &mut PendingPlayApp)>,
+    mut hosted: Query<&mut HostedApp>,
     failures: Query<&PlayFailure>,
     (off_thread, registry): (
         Option<Res<FinishBuildsOffThread>>,
@@ -744,8 +744,8 @@ pub(crate) fn finish_pending_play(
     mut failed: EventWriter<PlayFailed>,
     mut cmd: CommandQueue,
 ) {
-    for (document, mut pending) in pending.iter() {
-        let Some(mut slot) = hosted.get_entity(document) else {
+    for (document, mut pending) in pending.iter_mut() {
+        let Some(mut slot) = hosted.get_entity_mut(document) else {
             continue;
         };
         if let Some(play) = finish(&mut pending.0, off_thread.is_some(), registry.as_deref()) {
@@ -781,7 +781,7 @@ pub(crate) fn finish_pending_play(
 pub(crate) fn stop_play(
     on: On<StopPlay>,
     pending: Query<&PendingPlayApp>,
-    playing: Query<(&mut HostedApp, &mut ParkedEditApp)>,
+    mut playing: Query<(&mut HostedApp, &mut ParkedEditApp)>,
     owners: Query<&input::InputOwner>,
     mut failed: EventWriter<PlayFailed>,
     mut stops: EventWriter<PlayStopped>,
@@ -798,7 +798,7 @@ pub(crate) fn stop_play(
         });
         stopped = true;
     }
-    if let Some((mut hosted, mut parked)) = playing.get_entity(document) {
+    if let Some((mut hosted, mut parked)) = playing.get_entity_mut(document) {
         std::mem::swap(&mut **hosted, &mut parked.0);
         parked.0.cancel_loads();
         cmd.remove::<ParkedEditApp>(document);

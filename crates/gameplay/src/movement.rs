@@ -7,12 +7,12 @@ use glam::{Quat, Vec3};
 use crate::player::Player;
 
 pub fn first_person_player_fly(
-    players: Query<(&mut Transform, &Children), With<Player>>,
-    cameras: Query<&mut Transform, With<VirtualCamera>>,
+    mut players: Query<(&mut Transform, &Children), With<Player>>,
+    mut cameras: Query<&mut Transform, With<VirtualCamera>>,
     input: Res<Input>,
     time: Res<Time>,
 ) {
-    let Some((mut player_transform, children)) = players.iter().next() else {
+    let Some((mut player_transform, children)) = players.iter_mut().next() else {
         return;
     };
 
@@ -21,7 +21,8 @@ pub fn first_person_player_fly(
     // query finds — it has to be the player's own child camera specifically.
     let Some(mut camera_transform) = children
         .into_iter()
-        .find_map(|child| cameras.get_entity(*child))
+        .find(|child| cameras.contains_entity(**child))
+        .and_then(|child| cameras.get_entity_mut(*child))
     else {
         return;
     };

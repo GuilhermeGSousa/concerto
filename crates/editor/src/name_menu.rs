@@ -40,11 +40,11 @@ pub fn open_name_menu(
     names: &[impl AsRef<str>],
     current: Option<&str>,
     pick: impl Fn(&str) -> Listener<UIClick>,
-    menus: &Query<(Entity, &mut UIAnchoredPanel), With<NameMenu>>,
+    menus: &mut Query<(Entity, &mut UIAnchoredPanel), With<NameMenu>>,
     theme: &UITheme,
     cmd: &mut CommandQueue,
 ) {
-    if let Some((_, mut panel)) = menus.iter().next()
+    if let Some((_, mut panel)) = menus.iter_mut().next()
         && panel.open
         && panel.owner == Some(button)
     {
@@ -59,7 +59,7 @@ pub fn open_name_menu_at(
     position: Vec2,
     names: &[impl AsRef<str>],
     pick: impl Fn(&str) -> Listener<UIClick>,
-    menus: &Query<(Entity, &mut UIAnchoredPanel), With<NameMenu>>,
+    menus: &mut Query<(Entity, &mut UIAnchoredPanel), With<NameMenu>>,
     theme: &UITheme,
     cmd: &mut CommandQueue,
 ) {
@@ -75,11 +75,11 @@ fn fill_menu(
     names: &[impl AsRef<str>],
     current: Option<&str>,
     pick: impl Fn(&str) -> Listener<UIClick>,
-    menus: &Query<(Entity, &mut UIAnchoredPanel), With<NameMenu>>,
+    menus: &mut Query<(Entity, &mut UIAnchoredPanel), With<NameMenu>>,
     theme: &UITheme,
     cmd: &mut CommandQueue,
 ) {
-    let mut menu = match menus.iter().next() {
+    let mut menu = match menus.iter_mut().next() {
         Some((entity, mut panel)) => {
             **panel = placed;
             cmd.entity(entity).despawn_children()
@@ -151,8 +151,8 @@ fn fill_menu(
 }
 
 /// Closes the name menu.
-pub fn close_menu(menus: &Query<&mut UIAnchoredPanel, With<NameMenu>>) {
-    for mut panel in menus.iter() {
+pub fn close_menu(menus: &mut Query<&mut UIAnchoredPanel, With<NameMenu>>) {
+    for mut panel in menus.iter_mut() {
         panel.open = false;
     }
 }
@@ -160,12 +160,12 @@ pub fn close_menu(menus: &Query<&mut UIAnchoredPanel, With<NameMenu>>) {
 /// Closes the name menu when another tab comes to the front.
 pub fn close_name_menu(
     active: Res<ActiveEditor>,
-    menus: Query<&mut UIAnchoredPanel, With<NameMenu>>,
+    mut menus: Query<&mut UIAnchoredPanel, With<NameMenu>>,
 ) {
     if !active.is_changed() {
         return;
     }
-    for mut panel in menus.iter() {
+    for mut panel in menus.iter_mut() {
         if panel.open {
             panel.open = false;
         }

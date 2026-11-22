@@ -693,7 +693,7 @@ fn typed(found: &[FoundParam]) -> String {
 fn graph_set_param(
     mut calls: ToolCalls<GraphSetParam>,
     active: Res<ActiveEditor>,
-    documents: Query<(&mut GraphDocument, Option<&HostedApp>)>,
+    mut documents: Query<(&mut GraphDocument, Option<&HostedApp>)>,
     assets: Res<AssetRegistry>,
     project: Res<ProjectState>,
     mut cmd: CommandQueue,
@@ -701,7 +701,7 @@ fn graph_set_param(
     for (arguments, reply) in calls.read() {
         let front = active
             .0
-            .and_then(|document| Some((document, documents.get_entity(document)?)));
+            .and_then(|document| Some((document, documents.get_entity_mut(document)?)));
         let Some((document, (mut state, hosted))) = front else {
             reply.err(no_graph_tab());
             continue;
@@ -826,7 +826,7 @@ fn live_block(state: &GraphDocument, live: LiveView) -> Option<String> {
 fn answer_param_sets(
     mut committed: EventReader<Hosted<PropertyCommitted>>,
     mut reported: EventReader<Hosted<GraphPreviewState>>,
-    waiting: Query<(Entity, &mut PendingCall, &mut SettingParam)>,
+    mut waiting: Query<(Entity, &mut PendingCall, &mut SettingParam)>,
     documents: Query<(&EditorDocument, &GraphDocument, &SentPreview)>,
     mut cmd: CommandQueue,
 ) {
@@ -835,7 +835,7 @@ fn answer_param_sets(
         .filter(|hosted| !hosted.event.address.target.saved())
         .collect();
     let reported: Vec<&Hosted<GraphPreviewState>> = reported.read().collect();
-    for (call, mut pending, mut setting) in waiting.iter() {
+    for (call, mut pending, mut setting) in waiting.iter_mut() {
         let Some((document, state, sent)) = documents.get_entity(setting.document) else {
             pending.reply.err(refused(
                 "The graph's tab closed before the parameter was set.",

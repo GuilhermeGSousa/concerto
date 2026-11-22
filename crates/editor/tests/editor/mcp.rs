@@ -219,8 +219,8 @@ fn spawn_the_counter(mut cmd: CommandQueue) {
     cmd.spawn((Name::new("Counter"), Received::default()));
 }
 
-fn count_input(input: Res<Input>, counters: Query<&mut Received>) {
-    for mut received in counters.iter() {
+fn count_input(input: Res<Input>, mut counters: Query<&mut Received>) {
+    for mut received in counters.iter_mut() {
         if input.is_just_pressed(PhysicalKey::Code(KeyCode::KeyW)) {
             received.w_presses += 1;
         }
@@ -4572,11 +4572,11 @@ impl FromWorld for TunesSeenLoading {
 }
 
 fn load_tunes(
-    documents: Query<&mut EditorDocument, With<HeldTune>>,
+    mut documents: Query<&mut EditorDocument, With<HeldTune>>,
     mut seen: SystemLocal<TunesSeenLoading>,
 ) {
     let mut loading = Vec::new();
-    for mut document in documents.iter() {
+    for mut document in documents.iter_mut() {
         let Some(asset) = document.pending.clone() else {
             continue;
         };

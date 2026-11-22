@@ -93,11 +93,11 @@ pub struct UIGridMoved {
 /// Applies a `UIGridMove` and reports the move.
 pub fn move_grid(
     on: On<UIGridMove>,
-    grids: Query<&mut UIGrid>,
+    mut grids: Query<&mut UIGrid>,
     mut moved: EventWriter<UIGridMoved>,
 ) {
     let request = on.signal();
-    if let Some(mut grid) = grids.get_entity(request.grid)
+    if let Some(mut grid) = grids.get_entity_mut(request.grid)
         && grid.step(request.step)
     {
         moved.write(UIGridMoved {
@@ -108,8 +108,8 @@ pub fn move_grid(
 }
 
 /// Colours each cell by whether its grid's cursor is on it.
-pub fn paint_grid_cells(grids: Query<&UIGrid>, cells: Query<(&UIGridCell, &mut UIMaterial)>) {
-    for (cell, mut material) in cells.iter() {
+pub fn paint_grid_cells(grids: Query<&UIGrid>, mut cells: Query<(&UIGridCell, &mut UIMaterial)>) {
+    for (cell, mut material) in cells.iter_mut() {
         let chosen = grids
             .get_entity(cell.grid)
             .is_some_and(|grid| grid.selected == cell.index);

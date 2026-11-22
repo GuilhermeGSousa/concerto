@@ -162,18 +162,18 @@ impl FromWorld for HoveredRow {
 fn light_hovered_row_icon(
     hovered: Option<Res<HoveredNode>>,
     rows: Query<(&Children, Option<&UISelected>)>,
-    icons: Query<&mut UIText, With<RowIcon>>,
+    mut icons: Query<&mut UIText, With<RowIcon>>,
     theme: Res<UITheme>,
     mut last: SystemLocal<HoveredRow>,
 ) {
     let hovered = hovered.and_then(|hovered| **hovered);
-    let tint = |row: Entity, lit: bool| {
+    let mut tint = |row: Entity, lit: bool| {
         let Some((children, selected)) = rows.get_entity(row) else {
             return;
         };
         let color = row_icon_color(&theme, lit || selected.is_some());
         for child in children.iter() {
-            if let Some(mut text) = icons.get_entity(*child)
+            if let Some(mut text) = icons.get_entity_mut(*child)
                 && text.color != color
             {
                 text.color = color;

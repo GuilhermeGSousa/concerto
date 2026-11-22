@@ -152,9 +152,9 @@ pub(super) fn spawn_swatch(row: &mut EntityCommandQueue, color: Color, theme: &U
 /// Writes each color row's value, at full alpha, into its swatch.
 pub(crate) fn refresh_color_swatches(
     rows: Query<&PropertyRowValue>,
-    swatches: Query<(&ColorSwatch, &mut UIMaterial)>,
+    mut swatches: Query<(&ColorSwatch, &mut UIMaterial)>,
 ) {
-    for (swatch, mut material) in swatches.iter() {
+    for (swatch, mut material) in swatches.iter_mut() {
         let Some(NumericSnapshot::Color(color)) = rows
             .get_entity(swatch.row)
             .and_then(|value| value.downcast::<NumericSnapshot>())

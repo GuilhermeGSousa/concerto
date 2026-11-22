@@ -174,7 +174,7 @@ fn read_inspected(
 }
 
 pub(crate) fn load_inspected_assets(
-    documents: Query<(
+    mut documents: Query<(
         Entity,
         &mut EditorDocument,
         &mut InspectedDocument,
@@ -188,7 +188,7 @@ pub(crate) fn load_inspected_assets(
         .project
         .as_ref()
         .map(|project| project.root.as_path());
-    for (entity, mut document, mut state, held_types) in documents.iter() {
+    for (entity, mut document, mut state, held_types) in documents.iter_mut() {
         if held_types.is_none()
             && let Some(registry) = &types.registry
         {
@@ -256,7 +256,10 @@ fn save_document(
 }
 
 pub(crate) fn save_inspected_assets(
-    requested: Query<(Entity, &mut EditorDocument, &mut InspectedDocument), With<SaveRequested>>,
+    mut requested: Query<
+        (Entity, &mut EditorDocument, &mut InspectedDocument),
+        With<SaveRequested>,
+    >,
     project: Res<ProjectState>,
     mut assets: ResMut<AssetRegistry>,
     mut saved: EventWriter<SceneSaved>,
@@ -267,7 +270,7 @@ pub(crate) fn save_inspected_assets(
         .project
         .as_ref()
         .map(|project| project.root.as_path());
-    for (entity, mut document, mut state) in requested.iter() {
+    for (entity, mut document, mut state) in requested.iter_mut() {
         cmd.remove::<SaveRequested>(entity);
         let written = root
             .context("Open a project before saving")
@@ -296,9 +299,9 @@ pub(crate) fn save_inspected_assets(
 
 pub(crate) fn clear_status_on_edit(
     on: On<Add<Unsaved>>,
-    documents: Query<&mut EditorDocument, With<InspectedDocument>>,
+    mut documents: Query<&mut EditorDocument, With<InspectedDocument>>,
 ) {
-    if let Some(mut document) = documents.get_entity(on.signal().entity)
+    if let Some(mut document) = documents.get_entity_mut(on.signal().entity)
         && !document.status.is_empty()
     {
         document.status.clear();
@@ -307,11 +310,11 @@ pub(crate) fn clear_status_on_edit(
 
 pub(crate) fn restore_discarded_value(
     on: On<DiscardEdits>,
-    documents: Query<&mut InspectedDocument>,
+    mut documents: Query<&mut InspectedDocument>,
     mut cmd: CommandQueue,
 ) {
     let document = on.signal().0;
-    let Some(mut state) = documents.get_entity(document) else {
+    let Some(mut state) = documents.get_entity_mut(document) else {
         return;
     };
     if state.loaded.is_empty() {
@@ -351,7 +354,7 @@ fn read_bones(root: &Path, id: AssetId, assets: &AssetRegistry) -> anyhow::Resul
 }
 
 pub(crate) fn follow_inspected_skeleton(
-    documents: Query<
+    mut documents: Query<
         (
             &mut InspectedDocument,
             &mut DocumentBones,
@@ -366,7 +369,7 @@ pub(crate) fn follow_inspected_skeleton(
     let Some(project) = project.project.as_ref() else {
         return;
     };
-    for (mut state, mut bones, held_types) in documents.iter() {
+    for (mut state, mut bones, held_types) in documents.iter_mut() {
         let registry = held_types.map(|types| &types.0).or(types.registry.as_ref());
         let named = registry.and_then(|registry| skeleton_named(state.value.as_deref()?, registry));
         if named == state.skeleton {

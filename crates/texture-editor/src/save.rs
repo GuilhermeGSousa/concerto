@@ -42,7 +42,7 @@ fn save_document(
 }
 
 pub(crate) fn save_textures(
-    requested: Query<(Entity, &mut EditorDocument, &mut TextureTab), With<SaveRequested>>,
+    mut requested: Query<(Entity, &mut EditorDocument, &mut TextureTab), With<SaveRequested>>,
     project: Res<ProjectState>,
     imports: Option<Res<ImportQueue>>,
     mut assets: ResMut<AssetRegistry>,
@@ -60,7 +60,7 @@ pub(crate) fn save_textures(
         .project
         .as_ref()
         .map(|project| project.root.as_path());
-    for (entity, mut document, mut tab) in requested.iter() {
+    for (entity, mut document, mut tab) in requested.iter_mut() {
         if tab.derive_wanted || tab.job.is_some() {
             continue;
         }

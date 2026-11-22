@@ -289,11 +289,11 @@ fn send_queued_input(
     hosted: Query<&HostedApp>,
     input: Res<Input>,
     mut routing: ResMut<Routing>,
-    sending: Query<(Entity, &PendingCall, &mut Sending)>,
+    mut sending: Query<(Entity, &PendingCall, &mut Sending)>,
     mut events: EventWriter<WindowEvent>,
     mut cmd: CommandQueue,
 ) {
-    let Some((entity, pending, mut sending)) = sending.iter().next() else {
+    let Some((entity, pending, mut sending)) = sending.iter_mut().next() else {
         return;
     };
     let document = sending.document;

@@ -451,11 +451,11 @@ pub(crate) struct UIIntrinsicHeight(pub(crate) f32);
 pub(crate) fn blank_culled_layouts(
     on: On<Add<UICulled>>,
     children: Query<&Children>,
-    layouts: Query<&mut UILayout>,
+    mut layouts: Query<&mut UILayout>,
 ) {
     let mut stack = vec![on.signal().entity];
     while let Some(entity) = stack.pop() {
-        if let Some(mut layout) = layouts.get_entity(entity) {
+        if let Some(mut layout) = layouts.get_entity_mut(entity) {
             layout.clip_rect = UIBox {
                 min: layout.rect.min,
                 size: Vec2::ZERO,
@@ -832,8 +832,8 @@ pub(crate) fn compute_ui_nodes(
         Query<&UIWidgetPart>,
         Query<Entity, Changed<UIScrollArea>>,
     ),
-    layouts: Query<&mut UILayout>,
-    panels: Query<(Entity, &mut UIAnchoredPanel)>,
+    mut layouts: Query<&mut UILayout>,
+    mut panels: Query<(Entity, &mut UIAnchoredPanel)>,
     panel_stack: Res<UIPanelStack>,
     window: Res<Window>,
     mut engine: ResMut<UILayoutEngine>,
@@ -994,7 +994,7 @@ pub(crate) fn compute_ui_nodes(
     let panels_changed = panel_stack.is_changed()
         || panel_stack.open().iter().any(|entity| {
             panels
-                .get_entity(*entity)
+                .get_entity_mut(*entity)
                 .is_some_and(|(_, panel)| panel.is_changed())
         });
     let scrolling = scrolled.iter().next().is_some();
@@ -1034,7 +1034,7 @@ pub(crate) fn compute_ui_nodes(
         let rect = UIBox { min: abs_pos, size };
         let clip_rect = node_clip(rect, area, root_node);
         write_layout(
-            &layouts,
+            &mut layouts,
             &mut cmd,
             entity,
             UILayout {
@@ -1058,7 +1058,7 @@ pub(crate) fn compute_ui_nodes(
                 root_node.visible,
                 children,
                 (&nodes, &culled, &scroll_areas, &widget_parts),
-                &layouts,
+                &mut layouts,
                 &mut cmd,
                 &mut sequence,
                 &mut anchor_rects,
@@ -1067,7 +1067,7 @@ pub(crate) fn compute_ui_nodes(
     }
 
     for panel_entity in panel_stack.open() {
-        let Some((_, mut panel)) = panels.get_entity(*panel_entity) else {
+        let Some((_, mut panel)) = panels.get_entity_mut(*panel_entity) else {
             continue;
         };
         if !engine.roots.contains(panel_entity) {
@@ -1100,7 +1100,7 @@ pub(crate) fn compute_ui_nodes(
         let clip_rect = node_clip(rect, window_clip, root_node);
         let layer = root_node.z_index;
         write_layout(
-            &layouts,
+            &mut layouts,
             &mut cmd,
             entity,
             UILayout {
@@ -1122,7 +1122,7 @@ pub(crate) fn compute_ui_nodes(
                 root_node.visible,
                 children,
                 (&nodes, &culled, &scroll_areas, &widget_parts),
-                &layouts,
+                &mut layouts,
                 &mut cmd,
                 &mut sequence,
                 &mut anchor_rects,
@@ -1285,7 +1285,7 @@ fn write_absolute_positions(
         &Query<&UIScrollArea>,
         &Query<&UIWidgetPart>,
     ),
-    layouts: &Query<&mut UILayout>,
+    layouts: &mut Query<&mut UILayout>,
     cmd: &mut CommandQueue,
     sequence: &mut i64,
     anchor_rects: &mut HashMap<Entity, UIBox>,
@@ -1369,12 +1369,12 @@ fn write_absolute_positions(
 }
 
 fn write_layout(
-    layouts: &Query<&mut UILayout>,
+    layouts: &mut Query<&mut UILayout>,
     cmd: &mut CommandQueue,
     entity: Entity,
     layout: UILayout,
 ) {
-    match layouts.get_entity(entity) {
+    match layouts.get_entity_mut(entity) {
         Some(mut current) => {
             current.set_if_neq(layout);
         }
@@ -1418,7 +1418,7 @@ pub(crate) fn extract_ui_nodes(
         Query<(&UILayout, &RenderEntity), Or<(Changed<UILayout>, Added<RenderEntity>)>>,
     >,
     all_nodes: Extracted<Query<(&UILayout, &RenderEntity)>>,
-    render_ui_nodes: Query<&mut RenderUINode>,
+    mut render_ui_nodes: Query<&mut RenderUINode>,
     device: Res<RenderDevice>,
     queue: Res<RenderQueue>,
     window: Extracted<Res<Window>>,
@@ -1439,7 +1439,7 @@ pub(crate) fn extract_ui_nodes(
             }
             return;
         }
-        if let Some(mut node) = render_ui_nodes.get_entity(**render_entity) {
+        if let Some(mut node) = render_ui_nodes.get_entity_mut(**render_entity) {
             if resized
                 || node.source_rect != computed_node.rect
                 || node.clip_rect != computed_node.clip_rect
@@ -1520,9 +1520,9 @@ fn quad_vertices(source: UIBox, draw_rect: UIBox, window: Vec2, scale: f32) -> [
 
 /// Syncs material fields into the GPU-side uniforms when a node's layout or material changes.
 pub(crate) fn sync_material_params(
-    nodes: Query<(&UILayout, &mut UIMaterial), Or<(Changed<UILayout>, Changed<UIMaterial>)>>,
+    mut nodes: Query<(&UILayout, &mut UIMaterial), Or<(Changed<UILayout>, Changed<UIMaterial>)>>,
 ) {
-    for (node, mut material) in nodes.iter() {
+    for (node, mut material) in nodes.iter_mut() {
         let params = [
             material.border_width,
             node.rect.size.x,
@@ -1549,8 +1549,8 @@ pub struct UIViewport {
 }
 
 /// Copies a viewport's handle into its material.
-pub(crate) fn sync_viewport_textures(viewports: Query<(&UIViewport, &mut UIMaterial)>) {
-    for (viewport, mut material) in viewports.iter() {
+pub(crate) fn sync_viewport_textures(mut viewports: Query<(&UIViewport, &mut UIMaterial)>) {
+    for (viewport, mut material) in viewports.iter_mut() {
         if material
             .texture
             .as_ref()
@@ -1584,9 +1584,9 @@ impl Default for UISharedViewport {
 }
 
 pub(crate) fn sync_shared_viewport_textures(
-    viewports: Query<(&UISharedViewport, &mut UIMaterial)>,
+    mut viewports: Query<(&UISharedViewport, &mut UIMaterial)>,
 ) {
-    for (viewport, mut material) in viewports.iter() {
+    for (viewport, mut material) in viewports.iter_mut() {
         let drawn = viewport
             .picture
             .as_ref()

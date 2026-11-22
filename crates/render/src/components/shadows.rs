@@ -303,13 +303,13 @@ fn layer_of(slots: &[Entity], entity: Entity) -> i32 {
 }
 
 pub(crate) fn assign_shadow_layers(
-    lights: Query<(Entity, &mut RenderLight, &RenderShadowsEnabled)>,
+    mut lights: Query<(Entity, &mut RenderLight, &RenderShadowsEnabled)>,
     visible: Res<VisibleLights>,
     mut spot_directional_shadow_maps: ResMut<RenderSpotDirectionalShadowMaps>,
     mut point_shadow_maps: ResMut<RenderPointShadowMaps>,
 ) {
     let candidates: Vec<ShadowCandidate> = lights
-        .iter()
+        .iter_mut()
         .filter(|(entity, _, _)| visible.contains(*entity))
         .map(|(entity, light, enabled)| ShadowCandidate {
             entity,
@@ -326,7 +326,7 @@ pub(crate) fn assign_shadow_layers(
     spot_directional_shadow_maps.slots = assigned.spot_directional;
     point_shadow_maps.slots = assigned.point;
 
-    for (entity, mut light, _) in lights.iter() {
+    for (entity, mut light, _) in lights.iter_mut() {
         let slots = if light.light_type == LightType::Point.index() {
             &point_shadow_maps.slots
         } else {

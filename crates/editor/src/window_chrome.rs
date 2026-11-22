@@ -294,13 +294,13 @@ fn press_control(control: Control) -> Listener<UIClick> {
     .into_listener()
 }
 
-fn sync_maximise_glyph(window: Res<Window>, glyphs: Query<(&MaximiseGlyph, &mut UIText)>) {
+fn sync_maximise_glyph(window: Res<Window>, mut glyphs: Query<(&MaximiseGlyph, &mut UIText)>) {
     let mark = if window.is_maximised() {
         glyph::CORNERS_IN
     } else {
         glyph::CORNERS_OUT
     };
-    for (_, mut text) in glyphs.iter() {
+    for (_, mut text) in glyphs.iter_mut() {
         let mark = mark.to_string();
         if text.text != mark {
             text.text = mark;

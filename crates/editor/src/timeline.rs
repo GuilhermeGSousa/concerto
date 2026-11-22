@@ -267,16 +267,16 @@ fn overlay_inset(columns: bool) -> UIInset {
     }
 }
 
-fn set_margin(nodes: &Query<&mut UINode>, entity: Entity, margin: UIRect) {
-    if let Some(mut node) = nodes.get_entity(entity)
+fn set_margin(nodes: &mut Query<&mut UINode>, entity: Entity, margin: UIRect) {
+    if let Some(mut node) = nodes.get_entity_mut(entity)
         && node.margin != margin
     {
         node.margin = margin;
     }
 }
 
-fn set_visible(nodes: &Query<&mut UINode>, entity: Entity, visible: bool) {
-    if let Some(mut node) = nodes.get_entity(entity)
+fn set_visible(nodes: &mut Query<&mut UINode>, entity: Entity, visible: bool) {
+    if let Some(mut node) = nodes.get_entity_mut(entity)
         && node.visible != visible
     {
         node.visible = visible;
@@ -529,11 +529,11 @@ fn across_the_band() -> UIInset {
 }
 
 fn setup_timeline(
-    timelines: Query<(Entity, &mut UINode), Added<Timeline>>,
+    mut timelines: Query<(Entity, &mut UINode), Added<Timeline>>,
     theme: Res<UITheme>,
     mut cmd: CommandQueue,
 ) {
-    for (timeline, mut node) in timelines.iter() {
+    for (timeline, mut node) in timelines.iter_mut() {
         node.flex_direction = FlexDirection::Column;
         node.gap = Vec2::new(0.0, theme.spacing_xs);
         node.min_width = UIValue::Px(0.0);
@@ -675,23 +675,23 @@ fn setup_timeline(
 
 fn sync_timeline_parts(
     timelines: Query<(&Timeline, &TimelineParts), Or<(Changed<Timeline>, Changed<TimelineParts>)>>,
-    nodes: Query<&mut UINode>,
-    texts: Query<&mut UIText>,
+    mut nodes: Query<&mut UINode>,
+    mut texts: Query<&mut UIText>,
 ) {
     for (timeline, parts) in timelines.iter() {
-        if let Some(mut text) = texts.get_entity(parts.readout) {
+        if let Some(mut text) = texts.get_entity_mut(parts.readout) {
             let readout = timeline.readout();
             if text.text != readout {
                 text.text = readout;
             }
         }
         let columns = !timeline.tracks.is_empty();
-        set_margin(&nodes, parts.ruler, band_margin(columns));
-        set_margin(&nodes, parts.track, band_margin(columns));
-        set_margin(&nodes, parts.lane_band, beside_the_column(columns));
-        set_visible(&nodes, parts.events_label, columns);
-        set_visible(&nodes, parts.rows, columns);
-        if let Some(mut track) = nodes.get_entity(parts.track) {
+        set_margin(&mut nodes, parts.ruler, band_margin(columns));
+        set_margin(&mut nodes, parts.track, band_margin(columns));
+        set_margin(&mut nodes, parts.lane_band, beside_the_column(columns));
+        set_visible(&mut nodes, parts.events_label, columns);
+        set_visible(&mut nodes, parts.rows, columns);
+        if let Some(mut track) = nodes.get_entity_mut(parts.track) {
             let (grow, height) = if columns {
                 (0.0, UIValue::Px(TRACK_ROW_HEIGHT))
             } else {
@@ -704,19 +704,19 @@ fn sync_timeline_parts(
                 track.height = height;
             }
         }
-        if let Some(mut overlay) = nodes.get_entity(parts.overlay) {
+        if let Some(mut overlay) = nodes.get_entity_mut(parts.overlay) {
             let inset = overlay_inset(columns);
             if overlay.inset != inset {
                 overlay.inset = inset;
             }
         }
-        if let Some(mut head) = nodes.get_entity(parts.head) {
+        if let Some(mut head) = nodes.get_entity_mut(parts.head) {
             let left = UIValue::Percent(fraction(timeline.time, timeline.duration) * 100.0);
             if head.inset.left != left {
                 head.inset.left = left;
             }
         }
-        if let Some(mut selection) = nodes.get_entity(parts.selection) {
+        if let Some(mut selection) = nodes.get_entity_mut(parts.selection) {
             let span = timeline.selection_span();
             if selection.visible != span.is_some() {
                 selection.visible = span.is_some();
@@ -736,18 +736,18 @@ fn sync_timeline_parts(
 }
 
 fn sync_timeline_markers(
-    timelines: Query<
+    mut timelines: Query<
         (Entity, &Timeline, &TimelineParts, &mut TimelineMarkersBuilt),
         Or<(Changed<Timeline>, Changed<TimelineParts>)>,
     >,
-    nodes: Query<&mut UINode>,
-    materials: Query<&mut UIMaterial>,
+    mut nodes: Query<&mut UINode>,
+    mut materials: Query<&mut UIMaterial>,
     theme: Res<UITheme>,
     mut cmd: CommandQueue,
 ) {
-    for (entity, timeline, parts, mut built) in timelines.iter() {
+    for (entity, timeline, parts, mut built) in timelines.iter_mut() {
         let rows = marker_rows(&timeline.markers);
-        if let Some(mut lane) = nodes.get_entity(parts.lane_band) {
+        if let Some(mut lane) = nodes.get_entity_mut(parts.lane_band) {
             let shown = !timeline.markers.is_empty();
             if lane.visible != shown {
                 lane.visible = shown;
@@ -810,13 +810,13 @@ fn sync_timeline_markers(
             .zip(&built.markers)
             .enumerate()
         {
-            if let Some(mut node) = nodes.get_entity(shown.node) {
+            if let Some(mut node) = nodes.get_entity_mut(shown.node) {
                 let inset = marker_inset(timeline, marker, row);
                 if node.inset != inset {
                     node.inset = inset;
                 }
             }
-            if let Some(mut material) = materials.get_entity(shown.line) {
+            if let Some(mut material) = materials.get_entity_mut(shown.line) {
                 let selected = timeline.selected_marker == Some(index);
                 let color = marker_color(marker, selected, &theme).to_linear();
                 if material.color != color {
@@ -828,12 +828,12 @@ fn sync_timeline_markers(
 }
 
 fn sync_timeline_ticks(
-    timelines: Query<(&Timeline, &TimelineParts, &mut TimelineTicks)>,
+    mut timelines: Query<(&Timeline, &TimelineParts, &mut TimelineTicks)>,
     layouts: Query<&UILayout>,
     theme: Res<UITheme>,
     mut cmd: CommandQueue,
 ) {
-    for (timeline, parts, mut built) in timelines.iter() {
+    for (timeline, parts, mut built) in timelines.iter_mut() {
         let Some(layout) = layouts.get_entity(parts.ruler) else {
             continue;
         };
@@ -887,13 +887,13 @@ fn sync_timeline_ticks(
 }
 
 fn sync_timeline_rows(
-    timelines: Query<(Ref<Timeline>, &TimelineParts, &mut TimelineRows)>,
+    mut timelines: Query<(Ref<Timeline>, &TimelineParts, &mut TimelineRows)>,
     layouts: Query<&UILayout>,
-    areas: Query<&mut UIScrollArea>,
+    mut areas: Query<&mut UIScrollArea>,
     theme: Res<UITheme>,
     mut cmd: CommandQueue,
 ) {
-    for (timeline, parts, mut built) in timelines.iter() {
+    for (timeline, parts, mut built) in timelines.iter_mut() {
         let width = layouts
             .get_entity(parts.ruler)
             .map_or(0.0, |layout| layout.rect.size.x);
@@ -953,7 +953,7 @@ fn sync_timeline_rows(
         }
         built.width = width;
         built.tracks = timeline.tracks.clone();
-        let Some(mut area) = areas.get_entity(parts.rows) else {
+        let Some(mut area) = areas.get_entity_mut(parts.rows) else {
             continue;
         };
         let extent = timeline.tracks.len() as f32 * TRACK_ROW_HEIGHT;

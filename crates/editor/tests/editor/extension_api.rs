@@ -17,7 +17,7 @@ fn pick(_: AssetId) -> Listener<UIClick> {
 }
 
 fn open_menu(
-    menus: Query<(Entity, &mut AssetPickerMenu, &mut UIAnchoredPanel)>,
+    mut menus: Query<(Entity, &mut AssetPickerMenu, &mut UIAnchoredPanel)>,
     registry: Res<AssetRegistry>,
     theme: Res<UITheme>,
     buttons: Query<Entity>,
@@ -25,7 +25,7 @@ fn open_menu(
 ) {
     let button = buttons.iter().next().unwrap();
     open_asset_menu(
-        button, "Skeleton", None, None, pick, &menus, &registry, &theme, &mut cmd,
+        button, "Skeleton", None, None, pick, &mut menus, &registry, &theme, &mut cmd,
     );
 }
 

@@ -72,18 +72,18 @@ impl EntitySignal for UITabChanged {}
 /// Click listener that expands or collapses the [`UICollapsibleSection`] it sits on.
 pub fn toggle_collapsible(
     on: On<UIClick>,
-    collapsibles: Query<&mut UICollapsibleSection>,
-    nodes: Query<&mut UINode>,
+    mut collapsibles: Query<&mut UICollapsibleSection>,
+    mut nodes: Query<&mut UINode>,
     mut cmd: CommandQueue,
 ) {
     if on.signal().button != MouseButton::Left {
         return;
     }
-    let Some(mut section) = collapsibles.get_entity(on.entity()) else {
+    let Some(mut section) = collapsibles.get_entity_mut(on.entity()) else {
         return;
     };
     section.expanded = !section.expanded;
-    if let Some(mut node) = nodes.get_entity(section.content) {
+    if let Some(mut node) = nodes.get_entity_mut(section.content) {
         node.visible = section.expanded;
     }
     cmd.entity(on.entity()).trigger(UICollapsibleChanged {
@@ -93,11 +93,11 @@ pub fn toggle_collapsible(
 
 /// Click listener for tab `index` of `strip`: selects it there and tells the strip.
 pub fn select_tab(strip: Entity, index: usize) -> Listener<UIClick> {
-    (move |on: On<UIClick>, strips: Query<&mut UITabStrip>, mut cmd: CommandQueue| {
+    (move |on: On<UIClick>, mut strips: Query<&mut UITabStrip>, mut cmd: CommandQueue| {
         if on.signal().button != MouseButton::Left {
             return;
         }
-        let Some(mut tabs) = strips.get_entity(strip) else {
+        let Some(mut tabs) = strips.get_entity_mut(strip) else {
             return;
         };
         tabs.selected = index;
@@ -107,8 +107,8 @@ pub fn select_tab(strip: Entity, index: usize) -> Listener<UIClick> {
 }
 
 /// Shows the body whose index matches its strip's selection, and hides the rest.
-pub fn sync_tab_bodies(strips: Query<&UITabStrip>, bodies: Query<(&UITabBody, &mut UINode)>) {
-    for (body, mut node) in bodies.iter() {
+pub fn sync_tab_bodies(strips: Query<&UITabStrip>, mut bodies: Query<(&UITabBody, &mut UINode)>) {
+    for (body, mut node) in bodies.iter_mut() {
         let Some(strip) = strips.get_entity(body.strip) else {
             continue;
         };
@@ -121,9 +121,9 @@ pub fn sync_tab_bodies(strips: Query<&UITabStrip>, bodies: Query<(&UITabBody, &m
 
 pub(crate) fn update_tooltips(
     hovered: Res<HoveredNode>,
-    tooltips: Query<(&UITooltip, &mut UINode)>,
+    mut tooltips: Query<(&UITooltip, &mut UINode)>,
 ) {
-    for (tooltip, mut node) in tooltips.iter() {
+    for (tooltip, mut node) in tooltips.iter_mut() {
         let visible = **hovered == Some(tooltip.target);
         if node.visible != visible {
             node.visible = visible;

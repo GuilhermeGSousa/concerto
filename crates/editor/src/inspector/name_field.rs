@@ -30,9 +30,9 @@ pub(super) fn name_field(theme: &UITheme) -> impl IntoBundle<Bundle: 'static> + 
 
 pub(super) fn forget_scene(
     _: On<Remove<EditTarget>>,
-    fields: Query<(&mut NameField, &mut UITextInput, &mut UINode)>,
+    mut fields: Query<(&mut NameField, &mut UITextInput, &mut UINode)>,
 ) {
-    for (mut field, mut input, mut node) in fields.iter() {
+    for (mut field, mut input, mut node) in fields.iter_mut() {
         if field.scene_target.is_some() {
             field.scene_target = None;
         }
@@ -54,12 +54,12 @@ pub(super) fn update_name_field(
     mut cancelled: EventReader<UITextInputCancelled>,
     data: Res<InspectorData>,
     names: EditWorld<Query<&Name>>,
-    fields: Query<(Entity, &mut NameField, &mut UITextInput, &mut UINode)>,
+    mut fields: Query<(Entity, &mut NameField, &mut UITextInput, &mut UINode)>,
     mut focused: ResMut<FocusedWidget>,
     mut focus_request: ResMut<FocusNameField>,
     mut scene: EditWorldSignals,
 ) {
-    let Some((entity, mut field, mut input, mut node)) = fields.iter().next() else {
+    let Some((entity, mut field, mut input, mut node)) = fields.iter_mut().next() else {
         return;
     };
     let finished = submitted

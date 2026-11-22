@@ -447,10 +447,10 @@ fn arrow_box(route: &LinkRoute, direction: ArrowDirection, theme: &UITheme) -> U
     }
 }
 
-fn show_preview(nodes: &Query<&mut UINode>, preview: [Entity; 3], route: Option<LinkRoute>) {
+fn show_preview(nodes: &mut Query<&mut UINode>, preview: [Entity; 3], route: Option<LinkRoute>) {
     let segments = route.map(|route| route.segments());
     for (index, entity) in preview.into_iter().enumerate() {
-        let Some(mut node) = nodes.get_entity(entity) else {
+        let Some(mut node) = nodes.get_entity_mut(entity) else {
             continue;
         };
         let wanted = match &segments {
@@ -467,16 +467,17 @@ fn show_preview(nodes: &Query<&mut UINode>, preview: [Entity; 3], route: Option<
 
 fn press_surface(canvas: Entity) -> Listener<UIPointerDown> {
     (move |on: On<UIPointerDown>,
-           canvases: Query<(&GraphCanvas, &CanvasBuilt, &mut CanvasView)>,
+           mut canvases: Query<(&GraphCanvas, &CanvasBuilt, &mut CanvasView)>,
            layouts: Query<&UILayout>,
            mut cmd: CommandQueue| {
         let signal = on.signal();
         if signal.button != MouseButton::Left {
             return;
         }
-        let (Some((graph, built, mut view)), Some(surface)) =
-            (canvases.get_entity(canvas), layouts.get_entity(on.entity()))
-        else {
+        let (Some((graph, built, mut view)), Some(surface)) = (
+            canvases.get_entity_mut(canvas),
+            layouts.get_entity(on.entity()),
+        ) else {
             return;
         };
         let pointed = built.pointed(signal.position, surface, view.offset);
@@ -506,14 +507,14 @@ fn press_surface(canvas: Entity) -> Listener<UIPointerDown> {
 
 fn drag_surface(canvas: Entity) -> Listener<UIDrag> {
     (move |on: On<UIDrag>,
-           canvases: Query<(&CanvasParts, &CanvasBuilt, &mut CanvasView)>,
+           mut canvases: Query<(&CanvasParts, &CanvasBuilt, &mut CanvasView)>,
            layouts: Query<&UILayout>,
-           nodes: Query<&mut UINode>| {
+           mut nodes: Query<&mut UINode>| {
         let signal = on.signal();
         if signal.delta == Vec2::ZERO {
             return;
         }
-        let Some((parts, built, mut view)) = canvases.get_entity(canvas) else {
+        let Some((parts, built, mut view)) = canvases.get_entity_mut(canvas) else {
             return;
         };
         match signal.button {
@@ -526,7 +527,7 @@ fn drag_surface(canvas: Entity) -> Listener<UIDrag> {
                 };
                 let pointed = built.pointed(signal.position, surface, view.offset);
                 let route = LinkRoute::between(connecting.start, pointed.point);
-                show_preview(&nodes, parts.preview, Some(route));
+                show_preview(&mut nodes, parts.preview, Some(route));
             }
             _ => {}
         }
@@ -536,22 +537,22 @@ fn drag_surface(canvas: Entity) -> Listener<UIDrag> {
 
 fn release_surface(canvas: Entity) -> Listener<UIPointerUp> {
     (move |on: On<UIPointerUp>,
-           canvases: Query<(&CanvasParts, &CanvasBuilt, &mut CanvasView)>,
+           mut canvases: Query<(&CanvasParts, &CanvasBuilt, &mut CanvasView)>,
            layouts: Query<&UILayout>,
-           nodes: Query<&mut UINode>,
+           mut nodes: Query<&mut UINode>,
            mut cmd: CommandQueue| {
         let signal = on.signal();
         if signal.button != MouseButton::Left {
             return;
         }
-        let Some((parts, built, mut view)) = canvases.get_entity(canvas) else {
+        let Some((parts, built, mut view)) = canvases.get_entity_mut(canvas) else {
             return;
         };
         let Some(connecting) = view.connecting else {
             return;
         };
         view.connecting = None;
-        show_preview(&nodes, parts.preview, None);
+        show_preview(&mut nodes, parts.preview, None);
         let Some(surface) = layouts.get_entity(on.entity()) else {
             return;
         };
@@ -633,8 +634,8 @@ fn double_click_surface(canvas: Entity) -> Listener<UIDoubleClick> {
 }
 
 fn frame_node() -> Listener<FrameCanvasNode> {
-    (|on: On<FrameCanvasNode>, views: Query<&mut CanvasView>| {
-        if let Some(mut view) = views.get_entity(on.entity()) {
+    (|on: On<FrameCanvasNode>, mut views: Query<&mut CanvasView>| {
+        if let Some(mut view) = views.get_entity_mut(on.entity()) {
             view.framing = Some(on.signal().node);
         }
     })
@@ -642,11 +643,11 @@ fn frame_node() -> Listener<FrameCanvasNode> {
 }
 
 fn setup_canvas(
-    canvases: Query<(Entity, &mut UINode), Added<GraphCanvas>>,
+    mut canvases: Query<(Entity, &mut UINode), Added<GraphCanvas>>,
     theme: Res<UITheme>,
     mut cmd: CommandQueue,
 ) {
-    for (canvas, mut node) in canvases.iter() {
+    for (canvas, mut node) in canvases.iter_mut() {
         node.min_width = UIValue::Px(0.0);
         node.min_height = UIValue::Px(0.0);
 
@@ -847,13 +848,13 @@ fn build_link(
 fn repaint(
     canvas: &GraphCanvas,
     built: &CanvasBuilt,
-    materials: &Query<&mut UIMaterial>,
-    texts: &Query<&mut UIText>,
+    materials: &mut Query<&mut UIMaterial>,
+    texts: &mut Query<&mut UIText>,
     theme: &UITheme,
 ) {
     for (node, shown) in canvas.nodes.iter().zip(&built.nodes) {
         let selected = canvas.selection == Some(CanvasTarget::Node(node.id));
-        if let Some(mut material) = materials.get_entity(shown.frame) {
+        if let Some(mut material) = materials.get_entity_mut(shown.frame) {
             let color = node_border(node, selected, theme).to_linear();
             let width = node_border_width(node, selected);
             if material.border_color != color || material.border_width != width {
@@ -861,13 +862,15 @@ fn repaint(
                 material.border_width = width;
             }
         }
-        if let Some(mut text) = texts.get_entity(shown.badge) {
+        if let Some(mut text) = texts.get_entity_mut(shown.badge) {
             let badge = node.badge.as_deref().unwrap_or_default();
             if text.text != badge {
                 text.text = badge.to_owned();
             }
         }
-        let subtitle = shown.subtitle.and_then(|entity| texts.get_entity(entity));
+        let subtitle = shown
+            .subtitle
+            .and_then(|entity| texts.get_entity_mut(entity));
         if let (Some(mut text), Some(subtitle)) = (subtitle, &node.subtitle)
             && text.text != *subtitle
         {
@@ -881,13 +884,13 @@ fn repaint(
         let selected = canvas.selection == Some(CanvasTarget::Link(shown.link));
         let color = link_color(link, selected, theme);
         for &segment in &shown.segments {
-            if let Some(mut material) = materials.get_entity(segment)
+            if let Some(mut material) = materials.get_entity_mut(segment)
                 && material.color != color.to_linear()
             {
                 material.color = color.to_linear();
             }
         }
-        if let Some(mut text) = shown.arrow.and_then(|entity| texts.get_entity(entity))
+        if let Some(mut text) = shown.arrow.and_then(|entity| texts.get_entity_mut(entity))
             && text.color != color
         {
             text.color = color;
@@ -896,26 +899,26 @@ fn repaint(
 }
 
 fn sync_canvas(
-    canvases: Query<(Ref<GraphCanvas>, &CanvasParts, &mut CanvasBuilt)>,
-    nodes: Query<&mut UINode>,
-    materials: Query<&mut UIMaterial>,
-    texts: Query<&mut UIText>,
+    mut canvases: Query<(Ref<GraphCanvas>, &CanvasParts, &mut CanvasBuilt)>,
+    mut nodes: Query<&mut UINode>,
+    mut materials: Query<&mut UIMaterial>,
+    mut texts: Query<&mut UIText>,
     theme: Res<UITheme>,
     mut cmd: CommandQueue,
 ) {
-    for (canvas, parts, mut built) in canvases.iter() {
+    for (canvas, parts, mut built) in canvases.iter_mut() {
         let Some(shown) = &built.shown else {
-            rebuild(&canvas, parts, &mut built, &nodes, &theme, &mut cmd);
+            rebuild(&canvas, parts, &mut built, &mut nodes, &theme, &mut cmd);
             continue;
         };
         if !canvas.is_changed() || *shown == *canvas {
             continue;
         }
         if same_structure(shown, &canvas) {
-            repaint(&canvas, &built, &materials, &texts, &theme);
+            repaint(&canvas, &built, &mut materials, &mut texts, &theme);
             built.shown = Some(GraphCanvas::clone(&canvas));
         } else {
-            rebuild(&canvas, parts, &mut built, &nodes, &theme, &mut cmd);
+            rebuild(&canvas, parts, &mut built, &mut nodes, &theme, &mut cmd);
         }
     }
 }
@@ -924,13 +927,13 @@ fn rebuild(
     canvas: &GraphCanvas,
     parts: &CanvasParts,
     built: &mut CanvasBuilt,
-    nodes: &Query<&mut UINode>,
+    nodes: &mut Query<&mut UINode>,
     theme: &UITheme,
     cmd: &mut CommandQueue,
 ) {
     let placed = layout::layout(&canvas.nodes, &canvas.links, canvas.mode);
     for entity in [parts.content, parts.items] {
-        if let Some(mut node) = nodes.get_entity(entity) {
+        if let Some(mut node) = nodes.get_entity_mut(entity) {
             let width = UIValue::Px(placed.size.x);
             let height = UIValue::Px(placed.size.y);
             if node.width != width || node.height != height {
@@ -990,11 +993,11 @@ fn framed(offset: f32, min: f32, size: f32, view: f32) -> f32 {
 }
 
 fn sync_canvas_view(
-    canvases: Query<(&CanvasParts, &CanvasBuilt, &mut CanvasView)>,
+    mut canvases: Query<(&CanvasParts, &CanvasBuilt, &mut CanvasView)>,
     layouts: Query<&UILayout>,
-    nodes: Query<&mut UINode>,
+    mut nodes: Query<&mut UINode>,
 ) {
-    for (parts, built, mut view) in canvases.iter() {
+    for (parts, built, mut view) in canvases.iter_mut() {
         if let (Some(id), Some(surface)) = (view.framing, layouts.get_entity(parts.surface))
             && built.shown.is_some()
         {
@@ -1010,7 +1013,7 @@ fn sync_canvas_view(
                 view.offset = offset;
             }
         }
-        if let Some(mut content) = nodes.get_entity(parts.content) {
+        if let Some(mut content) = nodes.get_entity_mut(parts.content) {
             let inset = UIInset {
                 left: UIValue::Px(view.offset.x),
                 top: UIValue::Px(view.offset.y),

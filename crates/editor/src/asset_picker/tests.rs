@@ -26,7 +26,7 @@ fn note_pick(id: AssetId) -> Listener<UIClick> {
 
 fn open_with_no_row(
     on: On<UIClick>,
-    menus: Query<(Entity, &mut AssetPickerMenu, &mut UIAnchoredPanel)>,
+    mut menus: Query<(Entity, &mut AssetPickerMenu, &mut UIAnchoredPanel)>,
     registry: Res<AssetRegistry>,
     theme: Res<UITheme>,
     mut cmd: CommandQueue,
@@ -37,7 +37,7 @@ fn open_with_no_row(
         None,
         None,
         note_pick,
-        &menus,
+        &mut menus,
         &registry,
         &theme,
         &mut cmd,

@@ -90,12 +90,12 @@ struct ParamRow {
 fn write_preview(document: Entity, path: &'static str, json: Value) -> Listener<UIClick> {
     (move |on: On<UIClick>,
            documents: Query<&GraphDocument>,
-           menus: Query<&mut UIAnchoredPanel, With<NameMenu>>,
+           mut menus: Query<&mut UIAnchoredPanel, With<NameMenu>>,
            mut cmd: CommandQueue| {
         if on.signal().button != MouseButton::Left {
             return;
         }
-        close_menu(&menus);
+        close_menu(&mut menus);
         let target = documents
             .get_entity(document)
             .and_then(GraphDocument::preview_value);
@@ -129,7 +129,7 @@ fn check_preview(document: Entity, path: &'static str) -> Listener<UICheckboxCha
 fn toggle_scene_picker(document: Entity) -> Listener<UIClick> {
     (move |on: On<UIClick>,
            documents: Query<&GraphDocument>,
-           menus: Query<(Entity, &mut AssetPickerMenu, &mut UIAnchoredPanel)>,
+           mut menus: Query<(Entity, &mut AssetPickerMenu, &mut UIAnchoredPanel)>,
            assets: Res<AssetRegistry>,
            theme: Res<UITheme>,
            mut cmd: CommandQueue| {
@@ -145,7 +145,7 @@ fn toggle_scene_picker(document: Entity) -> Listener<UIClick> {
             None,
             current,
             pick_scene(document),
-            &menus,
+            &mut menus,
             &assets,
             &theme,
             &mut cmd,
@@ -157,13 +157,13 @@ fn toggle_scene_picker(document: Entity) -> Listener<UIClick> {
 fn pick_scene(document: Entity) -> impl Fn(AssetId) -> Listener<UIClick> {
     move |id| {
         (move |on: On<UIClick>,
-               menus: Query<&mut UIAnchoredPanel, With<AssetPickerMenu>>,
+               mut menus: Query<&mut UIAnchoredPanel, With<AssetPickerMenu>>,
                documents: Query<&GraphDocument>,
                mut cmd: CommandQueue| {
             if on.signal().button != MouseButton::Left {
                 return;
             }
-            for mut panel in menus.iter() {
+            for mut panel in menus.iter_mut() {
                 panel.open = false;
             }
             let target = documents
@@ -527,12 +527,12 @@ fn open_on_canvas(document: Entity) -> Listener<CanvasActivated> {
 
 fn run_edit(document: Entity, edit: Option<GraphEdit>) -> Listener<UIClick> {
     (move |on: On<UIClick>,
-           menus: Query<&mut UIAnchoredPanel, With<NameMenu>>,
+           mut menus: Query<&mut UIAnchoredPanel, With<NameMenu>>,
            mut cmd: CommandQueue| {
         if on.signal().button != MouseButton::Left {
             return;
         }
-        close_menu(&menus);
+        close_menu(&mut menus);
         if let Some(edit) = &edit {
             cmd.trigger(EditGraph {
                 document,
@@ -545,12 +545,12 @@ fn run_edit(document: Entity, edit: Option<GraphEdit>) -> Listener<UIClick> {
 
 fn focus_field(field: Entity) -> Listener<UIClick> {
     (move |on: On<UIClick>,
-           menus: Query<&mut UIAnchoredPanel, With<NameMenu>>,
+           mut menus: Query<&mut UIAnchoredPanel, With<NameMenu>>,
            mut focused: ResMut<FocusedWidget>| {
         if on.signal().button != MouseButton::Left {
             return;
         }
-        close_menu(&menus);
+        close_menu(&mut menus);
         **focused = Some(field);
     })
     .into_listener()
@@ -601,7 +601,7 @@ fn open_type_menu(
     document: Entity,
     hosted: &HostedApp,
     edit: impl Fn(String) -> GraphEdit,
-    menus: &Query<(Entity, &mut UIAnchoredPanel), With<NameMenu>>,
+    menus: &mut Query<(Entity, &mut UIAnchoredPanel), With<NameMenu>>,
     theme: &UITheme,
     cmd: &mut CommandQueue,
 ) {
@@ -633,7 +633,7 @@ const PREVIEW_FROM: &str = "Preview from here";
 fn open_canvas_menu(document: Entity, name: Entity) -> Listener<CanvasMenuRequested> {
     (move |on: On<CanvasMenuRequested>,
            documents: Query<(&GraphDocument, &HostedApp)>,
-           menus: Query<(Entity, &mut UIAnchoredPanel), With<NameMenu>>,
+           mut menus: Query<(Entity, &mut UIAnchoredPanel), With<NameMenu>>,
            theme: Res<UITheme>,
            mut cmd: CommandQueue| {
         let Some((state, hosted)) = documents.get_entity(document) else {
@@ -646,7 +646,7 @@ fn open_canvas_menu(document: Entity, name: Entity) -> Listener<CanvasMenuReques
                 at,
                 &[PREVIEW_FROM],
                 |_| write_preview(document, "from", from.clone()),
-                &menus,
+                &mut menus,
                 &theme,
                 &mut cmd,
             );
@@ -660,7 +660,7 @@ fn open_canvas_menu(document: Entity, name: Entity) -> Listener<CanvasMenuReques
                 at,
                 &[NEW_STATE],
                 |_| focus_field(name),
-                &menus,
+                &mut menus,
                 &theme,
                 &mut cmd,
             ),
@@ -676,7 +676,7 @@ fn open_canvas_menu(document: Entity, name: Entity) -> Listener<CanvasMenuReques
                     at,
                     &[TO_SELF],
                     |_| run_edit(document, Some(edit.clone())),
-                    &menus,
+                    &mut menus,
                     &theme,
                     &mut cmd,
                 );
@@ -690,7 +690,7 @@ fn open_canvas_menu(document: Entity, name: Entity) -> Listener<CanvasMenuReques
                     parent: None,
                     slot: None,
                 },
-                &menus,
+                &mut menus,
                 &theme,
                 &mut cmd,
             ),
@@ -703,7 +703,7 @@ fn open_canvas_menu(document: Entity, name: Entity) -> Listener<CanvasMenuReques
 fn add_parent_on_drop(document: Entity) -> Listener<CanvasLinkDropped> {
     (move |on: On<CanvasLinkDropped>,
            documents: Query<(&GraphDocument, &HostedApp)>,
-           menus: Query<(Entity, &mut UIAnchoredPanel), With<NameMenu>>,
+           mut menus: Query<(Entity, &mut UIAnchoredPanel), With<NameMenu>>,
            theme: Res<UITheme>,
            mut cmd: CommandQueue| {
         let Some((state, hosted)) = documents.get_entity(document) else {
@@ -721,7 +721,7 @@ fn add_parent_on_drop(document: Entity) -> Listener<CanvasLinkDropped> {
                 type_name,
                 child: node_id(from),
             },
-            &menus,
+            &mut menus,
             &theme,
             &mut cmd,
         );
@@ -830,7 +830,7 @@ pub(crate) fn build_graph_panels(
 pub(crate) fn name_new_states(
     mut submitted: EventReader<UITextInputSubmitted>,
     documents: Query<(Entity, &GraphPanels)>,
-    fields: Query<&mut UITextInput>,
+    mut fields: Query<&mut UITextInput>,
     mut cmd: CommandQueue,
 ) {
     for event in submitted.read() {
@@ -847,7 +847,7 @@ pub(crate) fn name_new_states(
                 graph: None,
             },
         });
-        if let Some(mut field) = fields.get_entity(event.entity) {
+        if let Some(mut field) = fields.get_entity_mut(event.entity) {
             field.value.clear();
             field.cursor = 0;
             field.selection_anchor = None;
@@ -892,7 +892,7 @@ fn build_breadcrumb(
 }
 
 pub(crate) fn sync_graph_panels(
-    documents: Query<(
+    mut documents: Query<(
         Entity,
         &EditorDocument,
         &GraphDocument,
@@ -901,50 +901,50 @@ pub(crate) fn sync_graph_panels(
         &mut GraphPanels,
         Option<&HostedApp>,
     )>,
-    canvases: Query<&mut GraphCanvas>,
-    texts: Query<&mut UIText>,
-    nodes: Query<&mut UINode>,
-    checkboxes: Query<&mut UICheckbox>,
-    styles: Query<&mut UIInteractionStyle>,
+    mut canvases: Query<&mut GraphCanvas>,
+    mut texts: Query<&mut UIText>,
+    mut nodes: Query<&mut UINode>,
+    mut checkboxes: Query<&mut UICheckbox>,
+    mut styles: Query<&mut UIInteractionStyle>,
     assets: Res<AssetRegistry>,
     theme: Res<UITheme>,
     mut cmd: CommandQueue,
 ) {
-    let show = |entity: Entity, visible: bool| {
-        if let Some(mut node) = nodes.get_entity(entity)
+    let mut show = |entity: Entity, visible: bool| {
+        if let Some(mut node) = nodes.get_entity_mut(entity)
             && node.visible != visible
         {
             node.visible = visible;
         }
     };
-    let write_text = |entity: Entity, value: &str| {
-        if let Some(mut text) = texts.get_entity(entity)
+    let mut write_text = |entity: Entity, value: &str| {
+        if let Some(mut text) = texts.get_entity_mut(entity)
             && text.text != value
         {
             text.text = value.to_owned();
         }
     };
-    let write_checked = |entity: Entity, checked: bool| {
-        if let Some(mut checkbox) = checkboxes.get_entity(entity)
+    let mut write_checked = |entity: Entity, checked: bool| {
+        if let Some(mut checkbox) = checkboxes.get_entity_mut(entity)
             && checkbox.checked != checked
         {
             checkbox.checked = checked;
         }
     };
-    let write_selected = |entity: Entity, selected: bool| {
+    let mut write_selected = |entity: Entity, selected: bool| {
         let wanted = theme.interaction(ButtonVariant::Ghost, selected);
-        if let Some(mut style) = styles.get_entity(entity)
+        if let Some(mut style) = styles.get_entity_mut(entity)
             && style.normal != wanted.normal
         {
             **style = wanted;
         }
     };
-    for (document, editor, state, live, sent, mut panels, hosted) in documents.iter() {
+    for (document, editor, state, live, sent, mut panels, hosted) in documents.iter_mut() {
         let types = hosted.and_then(HostedApp::type_registry);
         let types = types.as_ref().map(|types| types.read());
         let live = LiveView::latest(live, sent);
         let wanted = shown_canvas(state, live, types.as_deref(), &assets);
-        if let Some(mut canvas) = canvases.get_entity(panels.canvas)
+        if let Some(mut canvas) = canvases.get_entity_mut(panels.canvas)
             && **canvas != wanted
         {
             **canvas = wanted;

@@ -11,7 +11,10 @@ use crate::{
 
 /// Steps the simulation and writes each simulated body's pose to its `Transform`; a static collider's `Transform` is left to whoever moves the entity.
 pub fn step_simulation(
-    query: Query<(&BodyId, &mut Transform, Option<&mut TransformInterpolation>), With<RigidBody>>,
+    mut query: Query<
+        (&BodyId, &mut Transform, Option<&mut TransformInterpolation>),
+        With<RigidBody>,
+    >,
     mut pipeline: ResMut<PhysicsPipeline>,
     mut state: ResMut<PhysicsState>,
     settings: Option<Res<PhysicsSettings>>,
@@ -24,7 +27,7 @@ pub fn step_simulation(
 
     {
         profiling::scope!("jolt::write_back_transforms");
-        for (body_id, mut transform, interpolation) in query.iter() {
+        for (body_id, mut transform, interpolation) in query.iter_mut() {
             let mut stepped_transform = state.body_transform(*body_id);
 
             stepped_transform.scale = transform.scale;

@@ -174,7 +174,7 @@ pub(crate) fn extract_text_nodes(
     all_text_nodes: Extracted<Query<(&UIText, &UILayout, &RenderEntity)>>,
     window: Extracted<Res<Window>>,
     mut font_system: ResMut<TextFontSystem>,
-    render_text_nodes: Query<&mut RenderTextComponent>,
+    mut render_text_nodes: Query<&mut RenderTextComponent>,
     diagnostics: Res<UIRenderDiagnostics>,
     mut extracted: SystemLocal<ExtractedScale>,
     mut cmd: CommandQueue,
@@ -203,7 +203,7 @@ pub(crate) fn extract_text_nodes(
         let layer = text_layer(layout);
         let shaping = shaping_signature(text_component, layout, scale);
 
-        if let Some(mut render_text) = render_text_nodes.get_entity(**render_entity)
+        if let Some(mut render_text) = render_text_nodes.get_entity_mut(**render_entity)
             && render_text.shaping == shaping
         {
             if render_text.location != location

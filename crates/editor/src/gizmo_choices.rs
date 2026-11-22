@@ -147,29 +147,29 @@ fn differs(app: &HostedApp, choices: &GizmoChoices) -> bool {
 pub(crate) fn apply_gizmo_choices(
     _: NonSendMarker,
     choices: Res<GizmoChoices>,
-    hosted: Query<&mut HostedApp>,
-    parked: Query<&mut ParkedEditApp>,
-    pending: Query<&mut PendingApp>,
-    starting: Query<&mut PendingPlayApp>,
+    mut hosted: Query<&mut HostedApp>,
+    mut parked: Query<&mut ParkedEditApp>,
+    mut pending: Query<&mut PendingApp>,
+    mut starting: Query<&mut PendingPlayApp>,
 ) {
-    for mut app in hosted.iter() {
+    for mut app in hosted.iter_mut() {
         if differs(&app, &choices) {
             apply_to(&mut app, &choices);
         }
     }
-    for mut app in parked.iter() {
+    for mut app in parked.iter_mut() {
         if differs(&app.0, &choices) {
             apply_to(&mut app.0, &choices);
         }
     }
-    for mut app in pending.iter() {
+    for mut app in pending.iter_mut() {
         if app.held().is_some_and(|held| differs(held, &choices))
             && let Some(held) = app.held_mut()
         {
             apply_to(held, &choices);
         }
     }
-    for mut app in starting.iter() {
+    for mut app in starting.iter_mut() {
         if app.0.held().is_some_and(|held| differs(held, &choices))
             && let Some(held) = app.0.held_mut()
         {
@@ -210,17 +210,17 @@ fn add_gizmos_button(on: On<Add<ViewportRegion>>, theme: Res<UITheme>, mut cmd: 
 
 fn show_gizmos_button(
     targets: Query<Entity, With<EditTarget>>,
-    buttons: Query<&mut UINode, With<GizmosButton>>,
-    menus: Query<&mut UIAnchoredPanel, With<GizmoMenu>>,
+    mut buttons: Query<&mut UINode, With<GizmosButton>>,
+    mut menus: Query<&mut UIAnchoredPanel, With<GizmoMenu>>,
 ) {
     let shown = targets.iter().next().is_some();
-    for mut node in buttons.iter() {
+    for mut node in buttons.iter_mut() {
         if node.visible != shown {
             node.visible = shown;
         }
     }
     if !shown {
-        for mut panel in menus.iter() {
+        for mut panel in menus.iter_mut() {
             if panel.open {
                 panel.open = false;
             }
@@ -231,13 +231,13 @@ fn show_gizmos_button(
 fn fill_gizmo_menu(
     kinds: EditWorld<Option<Res<ComponentGizmos>>>,
     choices: Res<GizmoChoices>,
-    menus: Query<(Entity, &mut GizmoMenu)>,
-    rows: Query<(&GizmoRow, &mut UICheckbox)>,
+    mut menus: Query<(Entity, &mut GizmoMenu)>,
+    mut rows: Query<(&GizmoRow, &mut UICheckbox)>,
     theme: Res<UITheme>,
     mut cmd: CommandQueue,
 ) {
     let names = kind_names(kinds.as_deref());
-    for (entity, mut menu) in menus.iter() {
+    for (entity, mut menu) in menus.iter_mut() {
         if menu.shown.as_ref() == Some(&names) {
             continue;
         }
@@ -255,7 +255,7 @@ fn fill_gizmo_menu(
         }
         menu.shown = Some(names.clone());
     }
-    for (row, mut checkbox) in rows.iter() {
+    for (row, mut checkbox) in rows.iter_mut() {
         let checked = choices.always(row.0);
         if checkbox.checked != checked {
             checkbox.checked = checked;

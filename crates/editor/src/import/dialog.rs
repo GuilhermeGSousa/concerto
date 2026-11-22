@@ -263,8 +263,8 @@ fn press_cancel(on: On<UIClick>, mut staging: ResMut<ImportStaging>) {
 }
 
 fn select_row(index: usize) -> Listener<UIItemSelected> {
-    (move |_: On<UIItemSelected>, panels: Query<&mut SettingsPanel>| {
-        for mut panel in panels.iter() {
+    (move |_: On<UIItemSelected>, mut panels: Query<&mut SettingsPanel>| {
+        for mut panel in panels.iter_mut() {
             if panel.row != Some(index) {
                 panel.row = Some(index);
             }
@@ -355,12 +355,12 @@ fn shown_value(row: &StagedImport, kind: SettingsKind) -> Option<Box<dyn Reflect
 fn show_settings(
     staging: Res<ImportStaging>,
     types: Res<AppTypeRegistry>,
-    panels: Query<(&mut SettingsPanel, &mut UINode)>,
-    sections: Query<(Entity, &SettingsSection, &mut UINode)>,
+    mut panels: Query<(&mut SettingsPanel, &mut UINode)>,
+    mut sections: Query<(Entity, &SettingsSection, &mut UINode)>,
     shown: Query<(Entity, &SettingsRows)>,
     mut cmd: CommandQueue,
 ) {
-    for (mut panel, mut node) in panels.iter() {
+    for (mut panel, mut node) in panels.iter_mut() {
         if !staging.visible && panel.row.is_some() {
             panel.row = None;
         }
@@ -388,7 +388,7 @@ fn show_settings(
             cmd.despawn(entity);
         }
         let mut visible = false;
-        for (section, kind, mut section_node) in sections.iter() {
+        for (section, kind, mut section_node) in sections.iter_mut() {
             let value = selected.and_then(|index| shown_value(&staging.rows[index], kind.0));
             if section_node.visible != value.is_some() {
                 section_node.visible = value.is_some();
@@ -456,8 +456,8 @@ fn press_keys(
 fn sync_dialog(
     staging: Res<ImportStaging>,
     theme: Res<UITheme>,
-    roots: Query<(&DialogRoot, &mut UINode)>,
-    views: Query<(Entity, &mut UIScrollArea, Option<&Children>), With<DialogView>>,
+    mut roots: Query<(&DialogRoot, &mut UINode)>,
+    mut views: Query<(Entity, &mut UIScrollArea, Option<&Children>), With<DialogView>>,
     rows: Query<&DialogRow>,
     fields: Query<(Entity, &DialogField, Option<&UILayout>)>,
     mut actions: ResMut<ActionMap>,
@@ -466,7 +466,7 @@ fn sync_dialog(
 ) {
     let open = staging.visible;
     let mut opened = false;
-    for (_, mut node) in roots.iter() {
+    for (_, mut node) in roots.iter_mut() {
         if node.visible != open {
             node.visible = open;
             opened = open;
@@ -485,7 +485,7 @@ fn sync_dialog(
         .is_some_and(|layout| !layout.is_shown());
     let mut respawned = false;
     let mut first_field = None;
-    for (list, mut area, children) in views.iter() {
+    for (list, mut area, children) in views.iter_mut() {
         if !open && area.offset != 0.0 {
             area.offset = 0.0;
         }
@@ -590,12 +590,12 @@ fn status_of<'a>(state: &'a RowState, theme: &UITheme) -> (&'a str, Color) {
 fn render_dialog(
     staging: Res<ImportStaging>,
     theme: Res<UITheme>,
-    fields: Query<(&DialogField, &mut UITextInput)>,
-    statuses: Query<(&DialogStatus, &mut UIText)>,
-    buttons: Query<(Entity, &ImportButton, &mut UIText, Option<&UIDisabled>)>,
+    mut fields: Query<(&DialogField, &mut UITextInput)>,
+    mut statuses: Query<(&DialogStatus, &mut UIText)>,
+    mut buttons: Query<(Entity, &ImportButton, &mut UIText, Option<&UIDisabled>)>,
     mut cmd: CommandQueue,
 ) {
-    for (field, mut input) in fields.iter() {
+    for (field, mut input) in fields.iter_mut() {
         let value = staging
             .rows
             .get(field.0)
@@ -606,7 +606,7 @@ fn render_dialog(
             input.selection_anchor = None;
         }
     }
-    for (status, mut label) in statuses.iter() {
+    for (status, mut label) in statuses.iter_mut() {
         let (value, color) = staging
             .rows
             .get(status.0)
@@ -620,7 +620,7 @@ fn render_dialog(
     }
 
     let blocked = !can_confirm(&staging);
-    for (entity, _, mut label, disabled) in buttons.iter() {
+    for (entity, _, mut label, disabled) in buttons.iter_mut() {
         let color = if blocked {
             theme.text_muted
         } else {

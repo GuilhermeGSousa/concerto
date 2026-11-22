@@ -68,24 +68,24 @@ pub(crate) fn set_up_list(
 }
 
 pub(crate) fn update_lists(
-    lists: Query<(
+    mut lists: Query<(
         Entity,
         &UIList,
         &mut UIScrollArea,
         Option<&UILayout>,
         Option<&mut Children>,
     )>,
-    nodes: Query<&mut UINode>,
+    mut nodes: Query<&mut UINode>,
     parts: Query<&UIWidgetPart>,
     hidden: Query<&UIHidden>,
-    spacers: Query<&mut UIIntrinsicHeight, With<UIRowSpacer>>,
+    mut spacers: Query<&mut UIIntrinsicHeight, With<UIRowSpacer>>,
     items: Query<&UIItem>,
     culled: Query<&UICulled>,
     materials: Query<&UIMaterial>,
     theme: Res<UITheme>,
     mut cmd: CommandQueue,
 ) {
-    for (entity, list, mut area, layout, children) in lists.iter() {
+    for (entity, list, mut area, layout, children) in lists.iter_mut() {
         let row_height = list.row_height.unwrap_or(theme.row_height);
         let mut rows = Vec::new();
         let mut parked = Vec::new();
@@ -95,7 +95,7 @@ pub(crate) fn update_lists(
             for &child in children.iter() {
                 if parts.contains_entity(child) || !nodes.contains_entity(child) {
                     if spacer.is_none() {
-                        spacer = spacers.get_entity(child);
+                        spacer = spacers.get_entity_mut(child);
                     }
                 } else if hidden.contains_entity(child) {
                     parked.push((child, 0));
@@ -127,12 +127,12 @@ pub(crate) fn update_lists(
             list.selectable,
             layout.map(|layout| layout.content_rect.size.y),
             &mut area,
-            &nodes,
+            &mut nodes,
             &items,
             &culled,
             &mut cmd,
         );
-        fit_owner(entity, spacer, area.content_extent, &nodes);
+        fit_owner(entity, spacer, area.content_extent, &mut nodes);
     }
 }
 

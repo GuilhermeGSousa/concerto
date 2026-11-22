@@ -363,14 +363,14 @@ pub(crate) fn write_visible_lights(
 
 pub(crate) fn extract_lights(
     lights: Extracted<Query<(&Light, Option<&LightTint>, &GlobalTransform, &RenderEntity)>>,
-    render_lights: Query<(&mut RenderLight, &mut RenderShadowsEnabled)>,
+    mut render_lights: Query<(&mut RenderLight, &mut RenderShadowsEnabled)>,
     mut cmd: CommandQueue,
 ) {
     for (light, tint, transform, render_entity) in lights.iter() {
         let render_entity = **render_entity;
 
         if let Some((mut render_light, mut shadows_enabled)) =
-            render_lights.get_entity(render_entity)
+            render_lights.get_entity_mut(render_entity)
         {
             let synced = render_light.synced_with(light, tint, transform);
             render_light.set_if_neq(synced);
