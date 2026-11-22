@@ -1092,10 +1092,13 @@ dependencies = [
  "concerto-color",
  "concerto-ecs",
  "concerto-foundation",
+ "concerto-physics",
+ "concerto-ragdoll",
  "concerto-render",
  "concerto-ui",
  "concerto-window",
  "criterion",
+ "glam 0.33.12",
  "serde",
 ]
 

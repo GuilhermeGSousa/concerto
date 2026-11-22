@@ -181,7 +181,8 @@ Each part has a pose in one shared reference pose, a shape with its offset
 from the part, a mass, and the joint to its parent, which sits at the part's
 origin. The first part is the root; every other part names an earlier one as
 its parent. `build` balances the masses so the joints stay stable and stops
-each part colliding with its parent.
+each part colliding with its parent. No part ever moves faster than the settings'
+`max_speed`, 50 m/s by default, however hard it is hit.
 
 `PhysicsState::create_ragdoll(&built, owner, &pose)` adds one to the world with
 each part at its world pose and returns a `RagdollId`; `destroy_ragdoll`
