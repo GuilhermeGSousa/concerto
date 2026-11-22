@@ -52,7 +52,7 @@ use wgpu::{Buffer, util::DeviceExt};
 use crate::{
     anchor::{UIAnchoredPanel, UIPanelStack},
     items::UIWidgetPart,
-    material::UIMaterial,
+    material::{UIGradient, UIMaterial},
     resources::UIRenderDiagnostics,
     scroll::UIScrollArea,
     transform::UIValue,
@@ -799,7 +799,7 @@ impl FromWorld for WatchedMaterials {
 #[derive(Component)]
 pub(crate) struct RenderUIMaterial {
     pub(crate) material_bind_group: wgpu::BindGroup,
-    signature: [u32; 19],
+    signature: [u32; 27],
 }
 
 pub(crate) fn compute_ui_nodes(
@@ -1539,6 +1539,21 @@ pub(crate) fn sync_material_params(
         if material.flags[0] != has_texture {
             material.flags[0] = has_texture;
         }
+        let (kind, gradient_params, gradient_color) = match material.gradient {
+            UIGradient::None => (0.0, [0.0; 4], [0.0; 4]),
+            UIGradient::SaturationValue { hue } => (1.0, [hue, 0.0, 0.0, 0.0], [0.0; 4]),
+            UIGradient::Hue => (2.0, [0.0; 4], [0.0; 4]),
+            UIGradient::Alpha { color, cell } => (3.0, [0.0, cell, 0.0, 0.0], color.to_array()),
+        };
+        if material.flags[2] != kind {
+            material.flags[2] = kind;
+        }
+        if material.gradient_params != gradient_params {
+            material.gradient_params = gradient_params;
+        }
+        if material.gradient_color != gradient_color {
+            material.gradient_color = gradient_color;
+        }
     }
 }
 
@@ -1690,9 +1705,11 @@ pub(crate) fn extract_ui_materials(
 fn material_signature(
     material: &UIMaterial,
     render_textures: &RenderAssets<RenderTexture>,
-) -> [u32; 19] {
+) -> [u32; 27] {
     let color = material.color.to_array();
     let border = material.border_color.to_array();
+    let params = material.gradient_params;
+    let gradient = material.gradient_color;
     [
         color[0].to_bits(),
         color[1].to_bits(),
@@ -1712,6 +1729,14 @@ fn material_signature(
         material.flags[1].to_bits(),
         material.flags[2].to_bits(),
         material.flags[3].to_bits(),
+        params[0].to_bits(),
+        params[1].to_bits(),
+        params[2].to_bits(),
+        params[3].to_bits(),
+        gradient[0].to_bits(),
+        gradient[1].to_bits(),
+        gradient[2].to_bits(),
+        gradient[3].to_bits(),
         material.texture.as_ref().map_or(0, |handle| {
             use std::hash::{Hash, Hasher};
             let mut hasher = std::collections::hash_map::DefaultHasher::new();
@@ -2930,5 +2955,78 @@ mod tests {
         app.update();
         app.update();
         assert_eq!(text_prepares(&app), prepares + 6, "a window resize");
+    }
+
+    #[test]
+    fn sync_material_params_writes_the_gradient_kind_and_uniforms() {
+        use crate::material::{UIGradient, UIMaterial};
+        use concerto_color::Srgba;
+
+        struct Case {
+            gradient: UIGradient,
+            kind: f32,
+            params: [f32; 4],
+            color: [f32; 4],
+        }
+
+        let tint = Srgba::new(0.2, 0.4, 0.6, 0.8);
+        let cases = [
+            Case {
+                gradient: UIGradient::SaturationValue { hue: 120.0 },
+                kind: 1.0,
+                params: [120.0, 0.0, 0.0, 0.0],
+                color: [0.0; 4],
+            },
+            Case {
+                gradient: UIGradient::Hue,
+                kind: 2.0,
+                params: [0.0; 4],
+                color: [0.0; 4],
+            },
+            Case {
+                gradient: UIGradient::Alpha {
+                    color: tint,
+                    cell: 4.0,
+                },
+                kind: 3.0,
+                params: [0.0, 4.0, 0.0, 0.0],
+                color: tint.to_array(),
+            },
+            Case {
+                gradient: UIGradient::None,
+                kind: 0.0,
+                params: [0.0; 4],
+                color: [0.0; 4],
+            },
+        ];
+        let mut world = concerto_ecs::World::new();
+        let rect = UIBox {
+            min: Vec2::ZERO,
+            size: Vec2::new(200.0, 150.0),
+        };
+        let node = world.spawn((
+            UILayout {
+                rect,
+                content_rect: rect,
+                clip_rect: rect,
+                paint_order: 0,
+            },
+            UIMaterial::flat(concerto_color::Color::WHITE),
+        ));
+        let mut system = concerto_ecs::IntoSystem::into_system(sync_material_params);
+        concerto_ecs::System::initialize(&mut system, &mut world);
+        for case in cases {
+            world
+                .get_component_for_entity_mut::<UIMaterial>(node)
+                .unwrap()
+                .gradient = case.gradient;
+            concerto_ecs::System::run_and_apply(&mut system, (), &mut world);
+            world.tick();
+
+            let material = world.get_component_for_entity::<UIMaterial>(node).unwrap();
+            assert_eq!(material.flags[2], case.kind, "{:?}", case.gradient);
+            assert_eq!(material.gradient_params, case.params, "{:?}", case.gradient);
+            assert_eq!(material.gradient_color, case.color, "{:?}", case.gradient);
+        }
     }
 }
