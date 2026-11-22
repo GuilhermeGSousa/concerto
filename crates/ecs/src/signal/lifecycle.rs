@@ -72,7 +72,7 @@ fn prepare<T: Component, S: Signal>(world: &mut World, listener: &mut Listener<S
 /// The caller must hold the world exclusively, as a world operation running its hooks does.
 pub(crate) unsafe fn dispatch<S: LifecycleSignal>(cell: UnsafeWorldCell, entity: Entity) {
     // SAFETY: the caller holds the world exclusively; the list is copied before any listener runs.
-    let listeners = unsafe { cell.world() }.listeners().get::<S>().to_vec();
+    let listeners = unsafe { cell.world() }.listeners().get::<S>();
     for holder in listeners {
         let mut signal = S::new(entity);
         // SAFETY: as above; each listener runs alone, and its commands wait for the flush.

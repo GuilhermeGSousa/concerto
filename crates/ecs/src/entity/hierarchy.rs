@@ -1,4 +1,4 @@
-use std::ops::Deref;
+use std::{collections::HashSet, ops::Deref};
 
 use crate::{
     command::Command,
@@ -53,6 +53,7 @@ impl Command for DespawnChildren {
 
 pub struct Children {
     children: Vec<Entity>,
+    members: HashSet<Entity>,
 }
 
 impl Children {
@@ -65,17 +66,20 @@ impl Children {
     }
 
     pub(crate) fn from_children(children: Vec<Entity>) -> Self {
-        Self { children }
+        let members = children.iter().copied().collect();
+        Self { children, members }
     }
 
     pub(crate) fn add_child(&mut self, child: Entity) {
-        if !self.children.contains(&child) {
+        if self.members.insert(child) {
             self.children.push(child);
         }
     }
 
     pub(crate) fn remove_child(&mut self, child: Entity) {
-        self.children.retain(|candidate| *candidate != child);
+        if self.members.remove(&child) {
+            self.children.retain(|candidate| *candidate != child);
+        }
     }
 
     pub(crate) fn is_empty(&self) -> bool {

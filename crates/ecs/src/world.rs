@@ -887,7 +887,7 @@ impl World {
     /// # Panics
     /// Panics if a nested trigger tries to run a listener that is already running.
     pub fn trigger<T: Signal>(&mut self, mut signal: T) {
-        let entities = self.listeners().get::<T>().to_vec();
+        let entities = self.listeners().get::<T>();
         for entity in entities {
             Listener::<T>::run(entity, &mut signal, self);
         }

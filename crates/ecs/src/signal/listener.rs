@@ -1,4 +1,4 @@
-use std::{any::TypeId, marker::PhantomData};
+use std::{any::TypeId, collections::HashMap, marker::PhantomData};
 
 use crate::{
     Component, Entity, IntoSystem, System,
@@ -282,29 +282,63 @@ where
 }
 
 #[derive(Default)]
+struct ListenerOrder {
+    slots: Vec<Option<Entity>>,
+    index: HashMap<Entity, usize>,
+}
+
+impl ListenerOrder {
+    fn insert(&mut self, entity: Entity) {
+        if !self.index.contains_key(&entity) {
+            self.index.insert(entity, self.slots.len());
+            self.slots.push(Some(entity));
+        }
+    }
+
+    fn remove(&mut self, entity: Entity) {
+        let Some(slot) = self.index.remove(&entity) else {
+            return;
+        };
+        self.slots[slot] = None;
+        if self.slots.len() > 2 * self.index.len() {
+            self.slots.retain(Option::is_some);
+            for (slot, entity) in self.slots.iter().enumerate() {
+                if let Some(entity) = entity {
+                    self.index.insert(*entity, slot);
+                }
+            }
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.index.is_empty()
+    }
+}
+
+#[derive(Default)]
 pub(crate) struct Listeners {
-    entities: TypeIdMap<Vec<Entity>>,
+    entities: TypeIdMap<ListenerOrder>,
 }
 
 impl Listeners {
-    pub(crate) fn get<S: Signal>(&self) -> &[Entity] {
+    pub(crate) fn get<S: Signal>(&self) -> Vec<Entity> {
         self.entities
             .get(&TypeId::of::<S>())
-            .map(Vec::as_slice)
+            .map(|order| order.slots.iter().flatten().copied().collect())
             .unwrap_or_default()
     }
+
     pub(crate) fn register_listener<S: Signal>(&mut self, entity: Entity) {
-        let entities = self.entities.entry(TypeId::of::<S>()).or_default();
-        // Replacement fires on_add again; keep the original registration order.
-        if !entities.contains(&entity) {
-            entities.push(entity);
-        }
+        self.entities
+            .entry(TypeId::of::<S>())
+            .or_default()
+            .insert(entity);
     }
 
     pub(crate) fn unregister_listener<S: Signal>(&mut self, entity: Entity) {
         let id = TypeId::of::<S>();
         if let Some(entities) = self.entities.get_mut(&id) {
-            entities.retain(|registered| *registered != entity);
+            entities.remove(entity);
             if entities.is_empty() {
                 self.entities.remove(&id);
             }
