@@ -131,6 +131,29 @@ cmd.spawn((
   `EXT_color_buffer_float`, the view target is 8-bit and scene light is clamped
   at 1 before exposure.
 
+### Bloom
+
+`Bloom` on a camera makes the bright parts of its scene glow: the HDR frame is
+blurred through a chain of ever smaller textures and the blur is put back over
+the frame, before exposure and tonemapping. `BloomPlugin` draws it, and
+`DefaultPlugins` registers it.
+
+```rust
+use concerto::render::Bloom;
+
+cmd.spawn((Camera::default(), Bloom::default(), Transform::IDENTITY));
+```
+
+- `intensity`, 0.15 by default, is how much of the blur is shown. At 0 the
+  pass is skipped and the frame is unchanged.
+- `threshold` is 0 by default: everything glows a little, and the blur is mixed
+  into the frame, so the frame keeps its brightness and nothing flickers as a
+  texel crosses a limit. Above 0, only light brighter than the threshold glows
+  and the glow is added on top, the stylised look.
+- What glows is what is bright in scene light: an emissive factor well above 1,
+  a strong light on a pale wall, the sun's disk. A `clear_color` near white is
+  bright too.
+
 ### Layers
 
 A camera draws a mesh when the two share a layer. `RenderLayers` goes on

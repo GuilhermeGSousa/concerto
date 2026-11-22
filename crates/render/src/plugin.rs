@@ -156,6 +156,7 @@ impl Plugin for RenderPlugin {
                 RenderSet::Background,
                 RenderSet::Draw,
                 RenderSet::Transparent,
+                RenderSet::PostProcess,
                 RenderSet::Tonemap,
                 RenderSet::Overlay,
             )
@@ -174,7 +175,8 @@ impl Plugin for RenderPlugin {
             tonemap_cameras
                 .in_set(RenderSet::Tonemap)
                 .after(RenderSet::Background)
-                .after(RenderSet::Draw),
+                .after(RenderSet::Draw)
+                .after(RenderSet::Transparent),
         )
         .add_render_system(Render, rebind_sky_radiance.before(RenderSet::Background))
         .add_render_system(Render, clear_draw_stats.in_set(RenderSet::Queue))
