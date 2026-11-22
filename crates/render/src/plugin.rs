@@ -41,6 +41,7 @@ use crate::{
         update_window,
     },
     tonemapping::{tonemap_cameras, Exposure, Tonemapping, TonemappingPipeline},
+    view_phase::{clear_view_phases, render_opaque_phase, render_transparent_phase, ViewPhases},
     view_target::{prepare_view_targets, resolve_view_targets, Msaa},
 };
 use concerto_app::{
@@ -201,6 +202,12 @@ impl Plugin for RenderPlugin {
         )
         .add_render_system(Render, rebind_sky_radiance.before(RenderSet::Background))
         .add_render_system(Render, clear_draw_stats.in_set(RenderSet::Queue))
+        .add_render_system(Render, clear_view_phases.in_set(RenderSet::Queue))
+        .add_render_system(Render, render_opaque_phase.in_set(RenderSet::Draw))
+        .add_render_system(
+            Render,
+            render_transparent_phase.in_set(RenderSet::Transparent),
+        )
         .add_render_system(Render, assign_fallback_material.before(clear_draw_stats))
         .add_render_system(
             Render,
@@ -333,6 +340,7 @@ impl Plugin for RenderPlugin {
             .insert_resource(skin_uniforms)
             .insert_resource(batched_instance_buffers)
             .insert_resource(RenderDrawStats::default())
+            .insert_resource(ViewPhases::default())
             .insert_resource(RenderMeshInstances::default());
     }
 }
