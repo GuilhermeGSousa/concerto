@@ -11,8 +11,8 @@ use glam::{Quat, Vec3};
 
 use crate::aabb::Aabb;
 use crate::backend::{
-    MeshShapeCreationError, PhysicsBackend, RawGroundHit, RawRayHit, RawSensorContact, RawShapeHit,
-    SensorContactKind,
+    MeshShapeCreationError, PhysicsBackend, RawContact, RawContactKind, RawGroundHit, RawRayHit,
+    RawSensorContact, RawShapeHit, SensorContactKind,
 };
 use crate::collider::{Collider, ColliderOffset};
 use crate::rigid_body::{AllowedDofs, MotionType, RigidBody};
@@ -27,6 +27,7 @@ const MAX_CONTACT_CONSTRAINTS: u32 = 10_240;
 // individual body's `RigidBody`. See the note on `create_sphere_shape`.
 const SHAPE_DENSITY: f32 = 1000.0; // water
 const SENSOR_CONTACT_BATCH: usize = 64;
+const CONTACT_BATCH: usize = 64;
 
 /// Owns the Jolt physics world: the body store, broad/narrow phases, and the
 /// collision-layer interfaces it was initialised with (all held together on
@@ -278,6 +279,50 @@ impl PhysicsBackend for JoltBackend {
                 },
             }));
             if count < SENSOR_CONTACT_BATCH {
+                break;
+            }
+        }
+    }
+
+    fn set_contact_reporting(&mut self, body: Self::BodyHandle, enabled: bool) {
+        // SAFETY: `body` is a body in this world, and the world is not stepping while it is exclusively borrowed.
+        unsafe {
+            concerto_jolt_ffi::jolt_body_set_contact_reporting(self.world, body, enabled);
+        }
+    }
+
+    fn drain_contacts(&mut self, out: &mut Vec<RawContact<Self::BodyHandle>>) {
+        let mut batch = [concerto_jolt_ffi::JoltContact {
+            body1: 0,
+            body2: 0,
+            kind: 0,
+            point: [0.0; 3],
+            normal: [0.0; 3],
+            impulse: 0.0,
+        }; CONTACT_BATCH];
+        loop {
+            // SAFETY: `self.world` is a valid world and `batch` holds `CONTACT_BATCH` writable contacts.
+            let count = unsafe {
+                concerto_jolt_ffi::jolt_world_drain_contacts(
+                    self.world,
+                    batch.as_mut_ptr(),
+                    CONTACT_BATCH as u32,
+                )
+            } as usize;
+            out.extend(batch[..count].iter().map(|contact| RawContact {
+                first: contact.body1,
+                second: contact.body2,
+                kind: match contact.kind {
+                    concerto_jolt_ffi::JOLT_CONTACT_START => RawContactKind::Start,
+                    concerto_jolt_ffi::JOLT_CONTACT_END => RawContactKind::End,
+                    _ => RawContactKind::Touch {
+                        point: Vec3::from(contact.point),
+                        normal: Vec3::from(contact.normal),
+                        impulse: contact.impulse,
+                    },
+                },
+            }));
+            if count < CONTACT_BATCH {
                 break;
             }
         }

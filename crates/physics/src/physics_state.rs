@@ -5,9 +5,10 @@ use concerto_ecs::resource::Resource;
 use concerto_foundation::transform::Transform;
 use glam::Vec3;
 
-use crate::backend::{PhysicsBackend, SensorContactKind};
+use crate::backend::{PhysicsBackend, RawContactKind, SensorContactKind};
 use crate::body::BodyId;
 use crate::collider::{Collider, ColliderOffset};
+use crate::contact::{Contact, ContactChange};
 use crate::ground::{GroundContact, GroundState};
 use crate::query::{QueryFilter, ShapeHit};
 use crate::ray::RayHit;
@@ -23,6 +24,32 @@ struct SensorOverlap {
     other: BodyId,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+struct BodyPair {
+    first: BodyId,
+    second: BodyId,
+}
+
+impl BodyPair {
+    fn flipped(self) -> Self {
+        Self {
+            first: self.second,
+            second: self.first,
+        }
+    }
+
+    fn holds(&self, body: BodyId) -> bool {
+        self.first == body || self.second == body
+    }
+}
+
+struct Touch {
+    point: Vec3,
+    normal: Vec3,
+    impulse: f32,
+    summed: bool,
+}
+
 /// Owns the physics world of the active backend, plus the engine-side
 /// body↔entity bookkeeping shared by every backend.
 #[derive(Resource)]
@@ -36,6 +63,9 @@ pub struct PhysicsState {
     body_to_entity: HashMap<BodyId, Entity>,
     overlaps: HashSet<SensorOverlap>,
     sensor_contacts: Vec<SensorContact>,
+    reporting: HashSet<BodyId>,
+    touching: HashMap<BodyPair, Touch>,
+    contact_changes: Vec<ContactChange>,
 }
 
 impl PhysicsState {
@@ -45,6 +75,9 @@ impl PhysicsState {
             body_to_entity: HashMap::new(),
             overlaps: HashSet::new(),
             sensor_contacts: Vec::new(),
+            reporting: HashSet::new(),
+            touching: HashMap::new(),
+            contact_changes: Vec::new(),
         }
     }
 
@@ -96,6 +129,22 @@ impl PhysicsState {
     /// `Collider::on_remove`.
     pub(crate) fn destroy_body(&mut self, body: BodyId) {
         self.backend.destroy_body(body.0);
+        self.reporting.remove(&body);
+        let ended: Vec<BodyPair> = self
+            .touching
+            .keys()
+            .filter(|pair| pair.holds(body))
+            .copied()
+            .collect();
+        for pair in ended {
+            self.touching.remove(&pair);
+            let other = if pair.first == body {
+                pair.second
+            } else {
+                pair.first
+            };
+            self.push_contact_change(other, body, false);
+        }
         let Self {
             body_to_entity,
             overlaps,
@@ -146,6 +195,117 @@ impl PhysicsState {
                 });
             }
         }
+    }
+
+    pub(crate) fn set_contact_reporting(&mut self, body: BodyId, enabled: bool) {
+        self.backend.set_contact_reporting(body.0, enabled);
+        if enabled {
+            self.reporting.insert(body);
+            return;
+        }
+        self.reporting.remove(&body);
+        let reporting = &self.reporting;
+        self.touching
+            .retain(|pair, _| reporting.contains(&pair.first) || reporting.contains(&pair.second));
+    }
+
+    fn touching_pair(&self, pair: BodyPair) -> Option<BodyPair> {
+        [pair, pair.flipped()]
+            .into_iter()
+            .find(|pair| self.touching.contains_key(pair))
+    }
+
+    fn push_contact_change(&mut self, body: BodyId, other: BodyId, started: bool) {
+        if !self.reporting.contains(&body) {
+            return;
+        }
+        if let Some(entity) = self.get_entity(body) {
+            self.contact_changes.push(ContactChange {
+                entity,
+                other: self.get_entity(other),
+                started,
+            });
+        }
+    }
+
+    pub(crate) fn gather_contacts(&mut self) {
+        let mut raw = Vec::new();
+        self.backend.drain_contacts(&mut raw);
+        for touch in self.touching.values_mut() {
+            touch.summed = false;
+        }
+        for contact in raw {
+            let pair = BodyPair {
+                first: BodyId(contact.first),
+                second: BodyId(contact.second),
+            };
+            let known = self.touching_pair(pair);
+            match contact.kind {
+                RawContactKind::Start => {
+                    if known.is_none() {
+                        self.touching.insert(
+                            pair,
+                            Touch {
+                                point: Vec3::ZERO,
+                                normal: Vec3::ZERO,
+                                impulse: 0.0,
+                                summed: true,
+                            },
+                        );
+                        self.push_contact_change(pair.first, pair.second, true);
+                        self.push_contact_change(pair.second, pair.first, true);
+                    }
+                }
+                RawContactKind::Touch {
+                    point,
+                    normal,
+                    impulse,
+                } => {
+                    let Some(known) = known else {
+                        continue;
+                    };
+                    let normal = if known == pair { normal } else { -normal };
+                    let touch = self
+                        .touching
+                        .get_mut(&known)
+                        .expect("the pair was just found");
+                    if !touch.summed {
+                        touch.impulse = 0.0;
+                        touch.summed = true;
+                    }
+                    touch.point = point;
+                    touch.normal = normal;
+                    touch.impulse += impulse;
+                }
+                RawContactKind::End => {
+                    if let Some(known) = known {
+                        self.touching.remove(&known);
+                        self.push_contact_change(pair.first, pair.second, false);
+                        self.push_contact_change(pair.second, pair.first, false);
+                    }
+                }
+            }
+        }
+    }
+
+    pub(crate) fn take_contact_changes(&mut self) -> Vec<ContactChange> {
+        std::mem::take(&mut self.contact_changes)
+    }
+
+    pub(crate) fn contacts_of(&self, body: BodyId) -> Vec<Contact> {
+        self.touching
+            .iter()
+            .filter(|(pair, _)| pair.holds(body))
+            .map(|(pair, touch)| {
+                let second = pair.second == body;
+                Contact {
+                    other: self.get_entity(if second { pair.first } else { pair.second }),
+                    point: touch.point,
+                    normal: if second { touch.normal } else { -touch.normal },
+                    impulse: touch.impulse,
+                }
+            })
+            .collect()
     }
 
     pub(crate) fn take_sensor_contacts(&mut self) -> Vec<SensorContact> {

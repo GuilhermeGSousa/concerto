@@ -115,6 +115,35 @@ extern "C"
                                               JoltSensorContact *out,
                                               uint32_t capacity);
 
+    typedef uint8_t JoltContactKind;
+    enum
+    {
+        JOLT_CONTACT_START = 0,
+        JOLT_CONTACT_TOUCH = 1,
+        JOLT_CONTACT_END = 2,
+    };
+
+    /* A contact between two solid bodies of which at least one reports
+     * contacts. START and END mark a pair beginning and ceasing to touch and
+     * carry no data. TOUCH is sent in every collision step the pair is
+     * simulated: `normal` points from body1 to body2, `impulse` is the
+     * estimated normal impulse of that collision step. */
+    typedef struct JoltContact
+    {
+        JoltBodyId body1;
+        JoltBodyId body2;
+        JoltContactKind kind;
+        float point[3];
+        float normal[3];
+        float impulse;
+    } JoltContact;
+
+    /* Turns the reporting of `body`'s contacts with solid bodies on or off.
+     * Must not be called while the world steps. */
+    void jolt_body_set_contact_reporting(JoltWorld *world, JoltBodyId body, bool enabled);
+
+    uint32_t jolt_world_drain_contacts(JoltWorld *world, JoltContact *out, uint32_t capacity);
+
     typedef uint32_t JoltGroundState;
     enum
     {

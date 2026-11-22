@@ -12,6 +12,7 @@
 #include <Jolt/Physics/Body/Body.h>
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
 #include <Jolt/Physics/Collision/ContactListener.h>
+#include <Jolt/Physics/Collision/EstimateCollisionResponse.h>
 #include <Jolt/Physics/PhysicsSystem.h>
 
 #include <algorithm>
@@ -177,13 +178,22 @@ struct SensorPairHash
 class SensorContactListener final : public JPH::ContactListener
 {
 public:
-	explicit SensorContactListener(const std::unordered_set<JPH::BodyID> &sensors) : sensors(sensors) {}
+	SensorContactListener(const std::unordered_set<JPH::BodyID> &sensors,
+						  const std::unordered_set<JPH::BodyID> &reporting)
+		: sensors(sensors), reporting(reporting)
+	{
+	}
 
 	void OnContactAdded(const JPH::Body &inBody1,
 						const JPH::Body &inBody2,
-						const JPH::ContactManifold &,
-						JPH::ContactSettings &) override
+						const JPH::ContactManifold &inManifold,
+						JPH::ContactSettings &ioSettings) override
 	{
+		if (!inBody1.IsSensor() && !inBody2.IsSensor())
+		{
+			ReportSolid(inBody1, inBody2, inManifold, ioSettings, true);
+			return;
+		}
 		if (inBody1.IsSensor() == inBody2.IsSensor())
 			return;
 		SensorPair pair = inBody1.IsSensor() ? SensorPair{inBody1.GetID(), inBody2.GetID()}
@@ -195,12 +205,40 @@ public:
 											   1});
 	}
 
+	void OnContactPersisted(const JPH::Body &inBody1,
+							const JPH::Body &inBody2,
+							const JPH::ContactManifold &inManifold,
+							JPH::ContactSettings &ioSettings) override
+	{
+		if (!inBody1.IsSensor() && !inBody2.IsSensor())
+			ReportSolid(inBody1, inBody2, inManifold, ioSettings, false);
+	}
+
 	void OnContactRemoved(const JPH::SubShapeIDPair &inSubShapePair) override
 	{
 		JPH::BodyID body1 = inSubShapePair.GetBody1ID();
 		JPH::BodyID body2 = inSubShapePair.GetBody2ID();
 		if (sensors.count(body1) == 0 && sensors.count(body2) == 0)
+		{
+			if (reporting.count(body1) == 0 && reporting.count(body2) == 0)
+				return;
+			std::lock_guard<std::mutex> lock(mutex);
+			auto found = solid_counts.find(SensorPair{body1, body2});
+			if (found == solid_counts.end())
+				found = solid_counts.find(SensorPair{body2, body1});
+			if (found == solid_counts.end())
+				return;
+			if (--found->second == 0)
+			{
+				solid_counts.erase(found);
+				JoltContact contact{};
+				contact.body1 = body1.GetIndexAndSequenceNumber();
+				contact.body2 = body2.GetIndexAndSequenceNumber();
+				contact.kind = JOLT_CONTACT_END;
+				contacts.push_back(contact);
+			}
 			return;
+		}
 		std::lock_guard<std::mutex> lock(mutex);
 		auto found = counts.find(SensorPair{body1, body2});
 		if (found == counts.end())
@@ -225,9 +263,44 @@ public:
 		return count;
 	}
 
+	uint32_t DrainContacts(JoltContact *out, uint32_t capacity)
+	{
+		std::lock_guard<std::mutex> lock(mutex);
+		uint32_t count = static_cast<uint32_t>(std::min<size_t>(capacity, contacts.size()));
+		std::copy(contacts.begin(), contacts.begin() + count, out);
+		contacts.erase(contacts.begin(), contacts.begin() + count);
+		return count;
+	}
+
+	void ForgetSolid(JPH::BodyID body)
+	{
+		std::lock_guard<std::mutex> lock(mutex);
+		for (auto it = solid_counts.begin(); it != solid_counts.end();)
+		{
+			bool other_reports = reporting.count(it->first.sensor == body ? it->first.other : it->first.sensor) != 0;
+			if ((it->first.sensor == body || it->first.other == body) && !other_reports)
+				it = solid_counts.erase(it);
+			else
+				++it;
+		}
+	}
+
 	void Forget(JPH::BodyID body)
 	{
 		std::lock_guard<std::mutex> lock(mutex);
+		for (auto it = solid_counts.begin(); it != solid_counts.end();)
+		{
+			if (it->first.sensor == body || it->first.other == body)
+				it = solid_counts.erase(it);
+			else
+				++it;
+		}
+		JoltBodyId solid_id = body.GetIndexAndSequenceNumber();
+		contacts.erase(std::remove_if(contacts.begin(),
+									  contacts.end(),
+									  [solid_id](const JoltContact &contact)
+									  { return contact.body1 == solid_id || contact.body2 == solid_id; }),
+					   contacts.end());
 		for (auto it = counts.begin(); it != counts.end();)
 		{
 			if (it->first.sensor == body || it->first.other == body)
@@ -244,10 +317,69 @@ public:
 	}
 
 private:
+	void ReportSolid(const JPH::Body &inBody1,
+					 const JPH::Body &inBody2,
+					 const JPH::ContactManifold &inManifold,
+					 const JPH::ContactSettings &inSettings,
+					 bool added)
+	{
+		if (reporting.count(inBody1.GetID()) == 0 && reporting.count(inBody2.GetID()) == 0)
+			return;
+
+		JPH::CollisionEstimationResult estimate;
+		JPH::EstimateCollisionResponse(inBody1,
+									   inBody2,
+									   inManifold,
+									   estimate,
+									   inSettings.mCombinedFriction,
+									   inSettings.mCombinedRestitution,
+									   1.0f,
+									   1);
+
+		JoltContact contact{};
+		contact.body1 = inBody1.GetID().GetIndexAndSequenceNumber();
+		contact.body2 = inBody2.GetID().GetIndexAndSequenceNumber();
+		contact.kind = JOLT_CONTACT_TOUCH;
+		JPH::RVec3 point = JPH::RVec3::sZero();
+		JPH::uint points = inManifold.mRelativeContactPointsOn1.size();
+		for (JPH::uint i = 0; i < points; ++i)
+		{
+			point += inManifold.GetWorldSpaceContactPointOn1(i);
+			contact.impulse += estimate.mImpulses[i].mContactImpulse;
+		}
+		if (points > 0)
+			point /= static_cast<float>(points);
+		contact.point[0] = static_cast<float>(point.GetX());
+		contact.point[1] = static_cast<float>(point.GetY());
+		contact.point[2] = static_cast<float>(point.GetZ());
+		contact.normal[0] = inManifold.mWorldSpaceNormal.GetX();
+		contact.normal[1] = inManifold.mWorldSpaceNormal.GetY();
+		contact.normal[2] = inManifold.mWorldSpaceNormal.GetZ();
+
+		std::lock_guard<std::mutex> lock(mutex);
+		SensorPair pair{inBody1.GetID(), inBody2.GetID()};
+		auto found = solid_counts.find(pair);
+		bool started = found == solid_counts.end();
+		if (started)
+			solid_counts[pair] = 1;
+		else if (added)
+			++found->second;
+		if (started)
+		{
+			JoltContact start = contact;
+			start.kind = JOLT_CONTACT_START;
+			contacts.push_back(start);
+		}
+		contacts.push_back(contact);
+	}
+
 	const std::unordered_set<JPH::BodyID> &sensors;
+	const std::unordered_set<JPH::BodyID> &reporting;
 	std::mutex mutex;
 	std::unordered_map<SensorPair, uint32_t, SensorPairHash> counts;
 	std::vector<JoltSensorContact> queued;
+	std::unordered_map<SensorPair, uint32_t, SensorPairHash> solid_counts;
+	std::vector<JoltContact> contacts;
 };
 
 // The layer interfaces are declared before the system: PhysicsSystem::Init
@@ -259,7 +391,8 @@ struct JoltWorld
 	ObjectVsBroadPhaseLayerFilterImpl object_vs_broad_phase_layer_filter;
 	ObjectLayerPairFilterImpl object_layer_pair_filter;
 	std::unordered_set<JPH::BodyID> sensors;
-	SensorContactListener sensor_contact_listener{sensors};
+	std::unordered_set<JPH::BodyID> reporting;
+	SensorContactListener sensor_contact_listener{sensors, reporting};
 	JPH::PhysicsSystem system;
 };
 

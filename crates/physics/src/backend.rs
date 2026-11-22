@@ -77,6 +77,28 @@ pub struct RawSensorContact<Handle> {
     pub kind: SensorContactKind,
 }
 
+/// What a [`RawContact`] says about its pair.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum RawContactKind {
+    /// The pair began touching.
+    Start,
+    /// The pair was simulated in one collision step: `normal` points from `first` to `second`, `impulse` is that step's normal impulse.
+    Touch {
+        point: Vec3,
+        normal: Vec3,
+        impulse: f32,
+    },
+    /// The pair stopped touching.
+    End,
+}
+
+/// A contact between two solid bodies, of which at least one reports contacts, in backend terms.
+pub struct RawContact<Handle> {
+    pub first: Handle,
+    pub second: Handle,
+    pub kind: RawContactKind,
+}
+
 /// Raw simulation operations a physics backend must provide.
 ///
 /// Mutating operations take `&mut self` even where the underlying engine
@@ -131,6 +153,12 @@ pub trait PhysicsBackend: Send + Sync + Sized {
 
     /// Moves the sensor pair begins and ends seen since the last drain into `out`, in order, keeping only a sensor against a dynamic or kinematic body.
     fn drain_sensor_contacts(&mut self, out: &mut Vec<RawSensorContact<Self::BodyHandle>>);
+
+    /// Turns the reporting of `body`'s contacts with solid bodies on or off.
+    fn set_contact_reporting(&mut self, body: Self::BodyHandle, enabled: bool);
+
+    /// Moves the contacts seen since the last drain into `out`, in order; call it after [`drain_sensor_contacts`](Self::drain_sensor_contacts).
+    fn drain_contacts(&mut self, out: &mut Vec<RawContact<Self::BodyHandle>>);
 
     /// A body's current world-space pose (translation and rotation).
     fn body_transform(&self, body: Self::BodyHandle) -> Transform;

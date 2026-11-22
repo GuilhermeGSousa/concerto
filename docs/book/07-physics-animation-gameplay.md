@@ -126,6 +126,33 @@ example from an `On<Add<Sensor>>` listener.
 Signals are sent once per body pair, from `LateFixedUpdate`, right after the
 physics step.
 
+
+### Contacts
+
+A `Contacts` component makes a body report what it touches. Without it a body
+reports nothing, so ordinary bodies cost nothing. After each fixed step it
+lists every solid body touching this one: the `other` entity, the world
+`point`, the `normal` pointing from the other body towards this one, and the
+`impulse` in N·s that the contact applied over that step.
+
+```rust
+use concerto::physics::contact::{ContactStart, Contacts};
+
+cmd.spawn((RigidBody::default(), Collider::sphere(0.2), Contacts::default(), transform));
+
+fn feet_down(feet: Query<&Contacts, With<Foot>>) {
+    for contacts in feet.iter() {
+        let grounded = contacts.iter().any(|contact| contact.normal.y > 0.7);
+    }
+}
+```
+
+`ContactStart` and `ContactEnd` are signals on the reporting entity, each
+carrying `other`, sent when a body begins and stops touching it, or goes away
+while touching. A body asleep on another keeps its contact listed, with the
+impulse of the last step it was simulated in. Sensors never appear here; they
+have their own signals.
+
 ### Queries and forces
 
 The `PhysicsState` resource answers questions about the simulated world and
