@@ -235,6 +235,7 @@ pub struct CameraUniform {
     pub(crate) sky_lit: u32,
     pub(crate) exposure: f32,
     pub(crate) tonemapping: u32,
+    pub(crate) shadow_view: u32,
 }
 
 impl CameraUniform {
@@ -252,6 +253,7 @@ impl CameraUniform {
             sky_lit: 0,
             exposure: 1.0,
             tonemapping: Tonemapping::default().shader_value(),
+            shadow_view: 0,
         }
     }
 
@@ -332,6 +334,12 @@ pub struct RenderCamera {
 impl RenderCamera {
     pub fn depth_texture(&self) -> &RenderTexture {
         self.view_target.depth_texture()
+    }
+
+    pub(crate) fn write_uniform(&self, queue: &wgpu::Queue) {
+        let mut buffer = UniformBuffer::new(Vec::new());
+        buffer.write(&self.camera_uniform).unwrap();
+        queue.write_buffer(&self.camera_buffer, 0, &buffer.into_inner());
     }
 
     /// The layers this camera draws.
@@ -508,9 +516,7 @@ pub(crate) fn extract_cameras(
             }
             publish_render_target(camera, &render_camera, &mut render_textures);
 
-            let mut buffer = UniformBuffer::new(Vec::new());
-            buffer.write(&render_camera.camera_uniform).unwrap();
-            queue.write_buffer(&render_camera.camera_buffer, 0, &buffer.into_inner());
+            render_camera.write_uniform(&queue);
 
             continue;
         }
@@ -726,6 +732,7 @@ mod tests {
             sky_lit: 1,
             exposure: 2.0,
             tonemapping: 3,
+            shadow_view: 4,
         };
 
         let mut expected = float_words(&[1.0, 2.0, 3.0, 0.0]);
@@ -743,7 +750,7 @@ mod tests {
         }
         expected.extend(float_words(&[90.0, 91.0, 92.0, 93.0]));
         expected.extend(float_words(&[94.0, 95.0, 96.0, 97.0]));
-        expected.extend([1, 2.0f32.to_bits(), 3, 0]);
+        expected.extend([1, 2.0f32.to_bits(), 3, 4]);
 
         assert_eq!(uniform_words(&uniform), expected);
         assert_eq!(uniform.size().get(), 384);

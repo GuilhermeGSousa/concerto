@@ -8,7 +8,8 @@ use crate::{
         camera::{extract_cameras, rebind_sky_radiance, sync_camera_aspect, Camera},
         camera_environment::CameraEnvironment,
         light::{
-            cull_lights, extract_lights, write_visible_lights, Light, RenderLights, VisibleLights,
+            cull_lights, extract_lights, write_visible_lights, Light, RenderLights, ShadowCascades,
+            VisibleLights,
         },
         material::MaterialComponent,
         mesh::{extract_meshes, RenderMeshInstances},
@@ -16,6 +17,7 @@ use crate::{
         shadows::{
             assign_shadow_layers, resize_shadow_maps, update_shadow_view_proj, RenderLighting,
             RenderPointShadowMaps, RenderShadowViewProjs, RenderSpotDirectionalShadowMaps,
+            SpotDirectionalClipFromWorld,
         },
         skeleton::{extract_skeletons, SkinUniforms},
         visibility::{NoFrustumCulling, NotShadowCaster, RenderLayers},
@@ -114,6 +116,7 @@ impl Plugin for RenderPlugin {
             .register_derived_asset::<Texture>()
             .register_asset::<Skeleton>();
         app.register_type::<Light>()
+            .register_type::<ShadowCascades>()
             .register_type::<Camera>()
             .register_type::<CameraEnvironment>()
             .register_type::<Tonemapping>()
@@ -215,14 +218,16 @@ impl Plugin for RenderPlugin {
         .add_render_system(Render, assign_fallback_material.before(clear_draw_stats))
         .add_render_system(
             Render,
-            (cull_lights, assign_shadow_layers, write_visible_lights)
+            (
+                cull_lights,
+                assign_shadow_layers,
+                write_visible_lights,
+                update_shadow_view_proj,
+            )
                 .chain()
                 .in_set(RenderSet::Lights),
         )
-        .add_render_system(
-            Render,
-            (update_shadow_view_proj, resize_shadow_maps).in_set(RenderSet::Shadows),
-        )
+        .add_render_system(Render, resize_shadow_maps.in_set(RenderSet::Shadows))
         .add_render_system(LateRender, finish_render)
         .add_render_system(
             LateRender,
@@ -341,6 +346,7 @@ impl Plugin for RenderPlugin {
             .insert_resource(render_spot_directional_shadow_maps)
             .insert_resource(render_point_shadow_maps)
             .insert_resource(render_shadow_view_projs)
+            .insert_resource(SpotDirectionalClipFromWorld::default())
             .insert_resource(render_lighting)
             .insert_resource(skin_uniforms)
             .insert_resource(batched_instance_buffers)

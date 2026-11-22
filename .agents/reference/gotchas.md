@@ -156,6 +156,11 @@ fix the entry in the same commit as the change that made it false.
   it casts shadows, a shadow map. An `App` with no camera has no visible
   light: a test that reads shadow layers or `RenderLights::written` spawns a
   camera.
+- **A directional light takes a shadow layer for each cascade of each
+  camera,** four with the defaults, so its `shadow_layer` is the first of a
+  run and a test that counts shadow layers gives the light
+  `ShadowCascades::new().with_count(1)`. The cascade matrices are computed in
+  `RenderSet::Lights`, before `queue_shadow_meshes` culls with them.
 - **`RenderPlugin::build` registers the mesh and skeleton requirement,** so
   register the plugin before anything spawns meshes, or the registration
   panics. `entity_ops.rs` keeps `SyncWithRenderWorld` on purpose: an

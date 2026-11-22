@@ -15,6 +15,7 @@ mod point_shadows;
 mod readback;
 mod required_sync;
 mod scene_component_impls;
+mod shadow_cascades;
 mod texture_derive;
 mod texture_pipeline_e2e;
 mod webgl2_shaders;

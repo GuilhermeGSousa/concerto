@@ -92,8 +92,9 @@ cmd.spawn((
   viewport too. The renderer warns once when it sees both kinds.
 - A camera that renders to a texture keeps the `aspect` you give it, with a
   viewport or without one; setting it is yours.
-- Culling is per camera, and shadow maps are per light and shared by every
-  camera.
+- Culling is per camera. A point or spot light's shadow map is shared by every
+  camera; a directional light's is fitted to each camera, see
+  [Shadow cascades](#shadow-cascades).
 - Without a `MainCamera`, the director drives no camera: virtual cameras still
   stack, but nothing follows them. Move your cameras' `Transform`s yourself,
   from your own controllers.
@@ -322,12 +323,48 @@ always seen, so give a light a range wherever it has one. With no camera, no
 light is seen. Up to 128 seen lights are drawn; the later ones in entity order
 are left out, with a warning.
 
-Up to 128 seen spot and directional lights cast shadows at once. A point light
+Spot and directional lights share 128 shadow map layers. A spot light takes
+one, and a directional light one for each of its cascades for each camera,
+eight with the default four cascades and two cameras; a light whose layers no
+longer fit, the later ones in entity order, lights without shadows. A point light
 casts into a cube map that reaches as far as its `range`, or 20 metres when
 the range is 0. Up to 42 seen point lights cast shadows at once, six layers
 each of the 256 texture array layers the renderer asks the GPU for; the
 others, the later ones in entity order, light without shadows. A browser
 without cube map arrays casts from one point light.
+
+### Shadow cascades
+
+A directional light's shadow follows each camera. The distance from the camera
+is split into ranges, and each range has its own 1024 pixel map fitted around
+that slice of the camera's view, so a shadow is sharp near the camera, still
+there far from it, and the same wherever the camera is in the world.
+`ShadowCascades` on the light's entity sets the split; without it the light
+uses the defaults.
+
+```rust
+use concerto::render::components::light::{Light, ShadowCascades};
+
+cmd.spawn((
+    Light::directional_light().with_shadows(),
+    ShadowCascades::new().with_max_distance(80.0),
+    Transform::from_rotation(Quat::from_rotation_x(-1.0)),
+));
+```
+
+- `count`, 4 by default and at most 4, is how many maps cover the distance.
+  Each one is another pass over the meshes it holds, for each camera.
+- `first_far`, 10 by default, is where the first map ends. The others end at
+  distances that grow by a constant factor up to `max_distance`: 10, 25, 61
+  and 150 with the defaults.
+- `max_distance`, 150 by default, is where shadows end, fading out. The
+  camera's `zfar` ends them sooner. A shorter distance sharpens every map.
+- A map moves in steps of one of its texels, so a shadow's edge does not crawl
+  as the camera moves, and neighbouring maps blend where they meet.
+- A mesh up to 200 units towards the light from a map still casts into it.
+- A material with its own shader that declares the `Light` struct declares
+  `shadow_cascades: u32` as its last field, and reads a directional light's
+  shadow as `cascaded_shadow_visibility` in `shader.wgsl` does.
 
 ## Meshes and materials
 

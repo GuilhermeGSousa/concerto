@@ -33,6 +33,7 @@ struct Light {
     shadow_layer: i32,
     range: f32,
     shadow_far: f32,
+    shadow_cascades: u32,
 };
 
 struct Lights {
