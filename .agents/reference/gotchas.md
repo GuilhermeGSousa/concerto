@@ -22,12 +22,19 @@ fix the entry in the same commit as the change that made it false.
   clamped. A tick kept anywhere other than a component, a resource or a
   schedule's system clamps itself in a `CheckChangeTicks` listener. Listener
   ticks are never clamped, as in Bevy.
-- **Transform propagation recomputes every hierarchy each frame, but stamps
-  only what moved.** `propagate_global_transforms` writes each
-  `GlobalTransform` with `set_if_neq`, so `Changed<GlobalTransform>` means the
-  world transform changed. `extract_meshes` relies on it to re-extract only the
+- **Transform propagation walks only the hierarchies in which something
+  changed, and stamps only what moved.** `propagate_global_transforms`
+  recomputes every root, then walks a hierarchy only when its root's
+  `GlobalTransform` moved or was written by something else, or when a
+  descendant's `Transform` or `ChildOf` changed since the system last ran. In
+  that walk it recomputes an entity only at or below the first changed one,
+  reading the unchanged parent's `GlobalTransform` as the parent matrix. Every
+  write is `set_if_neq`, so `Changed<GlobalTransform>` means the world
+  transform changed. `extract_meshes` relies on it to re-extract only the
   meshes that moved, and `extract_skeletons` to rewrite only the bone palettes
-  of skeletons whose bones moved.
+  of skeletons whose bones moved. A descendant's `GlobalTransform` written by
+  other code is therefore not put back until its `Transform`, its parent or an
+  ancestor changes; a root's is put back on the next run.
 - **A command-using system's sync point sits at its registration position,
   not after it in the run order.** The scheduler inserts the sync point next
   to the system in registration order, and orders it against other systems
