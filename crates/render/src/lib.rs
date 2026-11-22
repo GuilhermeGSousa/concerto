@@ -16,6 +16,7 @@
 // work when the derive is applied inside this crate itself.
 extern crate self as concerto_render;
 
+pub mod ambient_occlusion;
 pub mod assets;
 pub mod batching;
 pub mod bloom;
@@ -50,6 +51,7 @@ pub use wgpu;
 
 pub use concerto_render_macros::AsBindGroup;
 
+pub use ambient_occlusion::{AmbientOcclusionPlugin, ScreenSpaceAmbientOcclusion};
 pub use assets::material::Material;
 pub use bloom::{Bloom, BloomPlugin};
 pub use components::camera::ExclusiveCamera;

@@ -1,6 +1,6 @@
 use concerto_ecs::SystemSet;
 
-/// The ordered phases of the render world: `Lights`, `Queue`, `Shadows`, `Background`, `Draw`, `Transparent`, `PostProcess`, `Tonemap` and `Overlay` in
+/// The ordered phases of the render world: `Lights`, `Queue`, `Shadows`, `Prepass`, `Background`, `Draw`, `Transparent`, `PostProcess`, `Tonemap` and `Overlay` in
 /// [`Render`](concerto_app::schedule_groups::Render), `Present` in
 /// [`LateRender`](concerto_app::schedule_groups::LateRender).
 #[derive(SystemSet, Clone, PartialEq, Eq, Hash, Debug)]
@@ -11,6 +11,8 @@ pub enum RenderSet {
     Queue,
     /// Computing and rendering shadow maps.
     Shadows,
+    /// Drawing what a scene pass reads before the scene is drawn, as ambient occlusion does from a depth prepass.
+    Prepass,
     /// Clearing each camera's view target and drawing what lies behind the scene, such as the sky.
     Background,
     /// Drawing the scene.
