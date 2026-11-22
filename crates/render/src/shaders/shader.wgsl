@@ -206,6 +206,9 @@ var t_sky_radiance: texture_2d<f32>;
 @group(1) @binding(2)
 var s_sky_radiance: sampler;
 
+@group(1) @binding(3)
+var t_ambient_occlusion: texture_2d<f32>;
+
 @group(2) @binding(0)
 var<uniform> lights: Lights;
 
@@ -336,7 +339,7 @@ fn pbr_fs(in: VertexOutput) -> vec4<f32> {
     if camera.sky_lit != 0u {
         ambient_light = sky_irradiance(mapped_normal) / PI + camera.night_ambient.rgb;
     }
-    let ambient = ambient_light * base_color.rgb * occlusion;
+    let ambient = ambient_light * base_color.rgb * occlusion * screen_occlusion(in.clip_position.xy);
     var color = ambient + total_light + emissive;
 
     if camera.fog_color.a > 0.0 {
@@ -441,6 +444,11 @@ fn sample_point_shadow(direction: vec3<f32>, shadow_layer: i32, depth: f32) -> f
         depth,
     );
 #endif
+}
+
+fn screen_occlusion(position: vec2<f32>) -> f32 {
+    let last = vec2<i32>(textureDimensions(t_ambient_occlusion)) - vec2<i32>(1);
+    return textureLoad(t_ambient_occlusion, min(vec2<i32>(position), last), 0).r;
 }
 
 fn sky_irradiance(normal: vec3<f32>) -> vec3<f32> {
