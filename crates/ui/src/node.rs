@@ -481,6 +481,7 @@ pub(crate) enum LeafMeasure {
 }
 
 /// What the layout pass needs to know to measure one text node.
+#[derive(Clone)]
 pub(crate) struct TextMeasure {
     text: String,
     font_size: f32,
@@ -491,15 +492,101 @@ pub(crate) struct TextMeasure {
     wrap: bool,
 }
 
+impl PartialEq for TextMeasure {
+    fn eq(&self, other: &Self) -> bool {
+        let Self {
+            text,
+            font_size,
+            line_height,
+            family,
+            weight,
+            italic,
+            wrap,
+        } = self;
+        *text == other.text
+            && font_size.to_bits() == other.font_size.to_bits()
+            && line_height.to_bits() == other.line_height.to_bits()
+            && *family == other.family
+            && *weight == other.weight
+            && *italic == other.italic
+            && *wrap == other.wrap
+    }
+}
+
+impl Eq for TextMeasure {}
+
+impl std::hash::Hash for TextMeasure {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        let Self {
+            text,
+            font_size,
+            line_height,
+            family,
+            weight,
+            italic,
+            wrap,
+        } = self;
+        text.hash(state);
+        font_size.to_bits().hash(state);
+        line_height.to_bits().hash(state);
+        family.hash(state);
+        weight.hash(state);
+        italic.hash(state);
+        wrap.hash(state);
+    }
+}
+
+struct MeasuredWidth {
+    constraint: Option<u32>,
+    size: Vec2,
+}
+
+const MEASURE_CACHE_BYTES: usize = 1 << 20;
+
+#[derive(Default)]
+struct MeasureCache {
+    widths: HashMap<TextMeasure, Vec<MeasuredWidth>>,
+    bytes: usize,
+}
+
+impl MeasureCache {
+    fn get(&self, measure: &TextMeasure, constraint: Option<u32>) -> Option<Vec2> {
+        self.widths
+            .get(measure)?
+            .iter()
+            .find(|measured| measured.constraint == constraint)
+            .map(|measured| measured.size)
+    }
+
+    fn insert(&mut self, measure: &TextMeasure, constraint: Option<u32>, size: Vec2) {
+        if self.bytes > MEASURE_CACHE_BYTES {
+            self.widths.clear();
+            self.bytes = 0;
+        }
+        let measured = MeasuredWidth { constraint, size };
+        self.bytes += std::mem::size_of::<MeasuredWidth>();
+        if let Some(widths) = self.widths.get_mut(measure) {
+            widths.push(measured);
+            return;
+        }
+        self.bytes += std::mem::size_of::<TextMeasure>() + measure.text.len();
+        self.widths.insert(measure.clone(), vec![measured]);
+    }
+}
+
 /// Shapes text so the layout pass can size nodes to their content.
 #[derive(Resource)]
 pub(crate) struct UITextMeasure {
     font_system: glyphon::FontSystem,
+    cache: MeasureCache,
 }
 
 impl UITextMeasure {
     pub(crate) fn new(font_system: glyphon::FontSystem) -> Self {
-        Self { font_system }
+        Self {
+            font_system,
+            cache: MeasureCache::default(),
+        }
     }
 
     pub(crate) fn font_system(&mut self) -> &mut glyphon::FontSystem {
@@ -507,35 +594,49 @@ impl UITextMeasure {
     }
 
     fn measure(&mut self, measure: &TextMeasure, width: Option<f32>) -> Vec2 {
-        let mut buffer = glyphon::Buffer::new(
-            &mut self.font_system,
-            glyphon::Metrics {
-                font_size: measure.font_size,
-                line_height: measure.line_height,
-            },
-        );
-        buffer.set_size(width, None);
-        buffer.set_wrap(if measure.wrap {
-            glyphon::Wrap::Word
-        } else {
-            glyphon::Wrap::None
-        });
-        buffer.set_text(
-            &measure.text,
-            &text_attrs(measure.family.clone(), measure.weight, measure.italic),
-            glyphon::Shaping::Advanced,
-            None,
-        );
-        buffer.shape_until_scroll(&mut self.font_system, false);
-
-        let mut widest = 0.0_f32;
-        let mut lines = 0.0_f32;
-        for run in buffer.layout_runs() {
-            widest = widest.max(run.line_w);
-            lines += 1.0;
+        let constraint = width.map(f32::to_bits);
+        if let Some(size) = self.cache.get(measure, constraint) {
+            return size;
         }
-        Vec2::new(widest.ceil(), lines * measure.line_height)
+        let size = shape_text(&mut self.font_system, measure, constraint);
+        self.cache.insert(measure, constraint, size);
+        size
     }
+}
+
+fn shape_text(
+    font_system: &mut glyphon::FontSystem,
+    measure: &TextMeasure,
+    constraint: Option<u32>,
+) -> Vec2 {
+    let mut buffer = glyphon::Buffer::new(
+        font_system,
+        glyphon::Metrics {
+            font_size: measure.font_size,
+            line_height: measure.line_height,
+        },
+    );
+    buffer.set_size(constraint.map(f32::from_bits), None);
+    buffer.set_wrap(if measure.wrap {
+        glyphon::Wrap::Word
+    } else {
+        glyphon::Wrap::None
+    });
+    buffer.set_text(
+        &measure.text,
+        &text_attrs(measure.family.clone(), measure.weight, measure.italic),
+        glyphon::Shaping::Advanced,
+        None,
+    );
+    buffer.shape_until_scroll(font_system, false);
+
+    let mut widest = 0.0_f32;
+    let mut lines = 0.0_f32;
+    for run in buffer.layout_runs() {
+        widest = widest.max(run.line_w);
+        lines += 1.0;
+    }
+    Vec2::new(widest.ceil(), lines * measure.line_height)
 }
 
 /// Shared by measurement and rendering so both shape the same glyphs.
@@ -2506,6 +2607,99 @@ mod tests {
         "67 fps",
         "a label much longer than any of the others",
     ];
+
+    struct Worded {
+        world: concerto_ecs::World,
+        holder: Entity,
+        labels: [Entity; 2],
+    }
+
+    #[derive(Clone, Copy, Debug)]
+    struct Wording {
+        text: &'static str,
+        font_size: f32,
+        wrap: bool,
+        width: f32,
+    }
+
+    prop_compose! {
+        fn wording()(
+            text in prop::sample::select(TEXTS.to_vec()),
+            font_size in prop::sample::select(vec![11.0f32, 14.0, 22.0]),
+            wrap in any::<bool>(),
+            width in prop::sample::select(vec![40.0f32, 130.0, 500.0]),
+        ) -> Wording {
+            Wording { text, font_size, wrap, width }
+        }
+    }
+
+    fn bundled_measurer() -> UITextMeasure {
+        let mut fonts = crate::text::fonts::UIFonts::default();
+        fonts.add_face(include_bytes!("../fonts/DejaVuSansMono.ttf").as_slice());
+        fonts.set_sans_serif("DejaVu Sans Mono");
+        UITextMeasure::new(crate::text::fonts::build_font_system(&fonts))
+    }
+
+    fn worded_world() -> Worded {
+        let mut world = layout_world();
+        world.insert_resource(bundled_measurer());
+        let root = column(&mut world);
+        let holder = world.spawn((
+            UINode::default()
+                .with_flex_shrink(0.0)
+                .with_flex_direction(FlexDirection::Column),
+            ChildOf::new(root),
+        ));
+        let stretched = world.spawn((UINode::default(), ui_text(""), ChildOf::new(holder)));
+        let hugging = labelled(&mut world, holder, "");
+        Worded {
+            world,
+            holder,
+            labels: [stretched, hugging],
+        }
+    }
+
+    fn word(worded: &mut Worded, wording: Wording) {
+        let world = &mut worded.world;
+        world
+            .get_component_for_entity_mut::<UINode>(worded.holder)
+            .unwrap()
+            .width = UIValue::Px(wording.width);
+        for label in worded.labels {
+            let text = world
+                .get_component_for_entity_mut::<crate::text::UIText>(label)
+                .unwrap();
+            text.text = wording.text.into();
+            text.font_size = wording.font_size;
+            text.wrap = wording.wrap;
+        }
+        lay_out(world);
+    }
+
+    fn lay_out_never_having_measured(world: &mut concerto_ecs::World) {
+        let measured = world.remove_resource::<UITextMeasure>().unwrap();
+        world.insert_resource(UITextMeasure::new(measured.font_system));
+        world.insert_resource(UILayoutEngine::default());
+        world.remove_resource::<LayOut>();
+        lay_out(world);
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(48))]
+        #[test]
+        fn text_measured_before_lays_out_as_text_measured_for_the_first_time(
+            wordings in prop::collection::vec(wording(), 1..16)
+        ) {
+            let mut retained = worded_world();
+            let mut fresh = worded_world();
+            for wording in wordings {
+                word(&mut retained, wording);
+                word(&mut fresh, wording);
+                lay_out_never_having_measured(&mut fresh.world);
+                prop_assert_eq!(snapshot(&mut retained.world), snapshot(&mut fresh.world));
+            }
+        }
+    }
 
     #[derive(Clone, Copy, Debug)]
     enum Edit {
