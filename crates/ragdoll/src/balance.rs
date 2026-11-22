@@ -254,7 +254,7 @@ fn smooth(phase: f32) -> f32 {
 
 /// Each fixed step, in `BehaviourSet`: for every balancing body, pushes the pelvis towards upright and its animated height, holds the legs strong, steps the foot further from the capture point to just past it when the point has left the feet, and ends with success once the body has stood balanced and slow, or by giving up, which makes the character `Falling`.
 pub fn balance_bodies(
-    characters: Query<(
+    mut characters: Query<(
         Entity,
         &mut Balance,
         &mut CharacterRagdoll,
@@ -270,7 +270,7 @@ pub fn balance_bodies(
     let dt = Time::fixed_delta_time().as_secs_f32();
     let mut pose = Vec::new();
     for (entity, mut balance, mut character, id, body, sense, mut drive, mut physical) in
-        characters.iter()
+        characters.iter_mut()
     {
         let balance = &mut *balance;
         let hindrance = std::mem::take(&mut balance.hindrance);

@@ -16,6 +16,7 @@ use glyphon::{Cache, SwashCache, Viewport};
 use crate::{
     anchor::{UIDismissPanel, UIPanelStack, dismiss_panels, track_panel_stack},
     checkbox::sync_checkbox_material,
+    color_picker::{commit_color_picker_fields, setup_color_pickers, sync_color_picker_parts},
     focus::{
         FocusedWidget, UIFocusGained, UIFocusLost, UIFocusNext, UIFocusPrevious, sync_text_capture,
         update_focus,
@@ -144,6 +145,7 @@ impl Plugin for UIPlugin {
             LateUpdate,
             (
                 update_text_inputs,
+                commit_color_picker_fields.after(update_text_inputs),
                 dismiss_panels.after(update_text_inputs),
                 sync_tab_bodies,
                 update_tooltips,
@@ -157,6 +159,7 @@ impl Plugin for UIPlugin {
             LateUpdate,
             (
                 setup_slider_visuals,
+                setup_color_pickers,
                 setup_splitter_visuals,
                 setup_scrollbars,
                 setup_text_inputs,
@@ -167,6 +170,7 @@ impl Plugin for UIPlugin {
             LateUpdate,
             (
                 sync_slider_fill,
+                sync_color_picker_parts.before(project_text_inputs),
                 project_text_inputs,
                 sync_scroll_content,
                 sync_split_panes,
@@ -211,7 +215,12 @@ impl Plugin for UIPlugin {
             .add_system(Extract, extract_text_nodes)
             .add_system(Render, update_text_viewport)
             .add_system(Render, prepare_text_renderer)
-            .add_system(Render, ui_renderpass.after(RenderSet::Overlay));
+            .add_system(
+                Render,
+                ui_renderpass
+                    .after(RenderSet::Tonemap)
+                    .after(RenderSet::Overlay),
+            );
     }
 
     fn finish(&self, app: &mut concerto_app::App) {

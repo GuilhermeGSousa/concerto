@@ -96,13 +96,13 @@ pub fn drag_splitter(on: On<UIDrag>, splitters: Query<&UISplitter>, mut cmd: Com
 
 /// Lights each splitter's line while the splitter is hovered or dragged.
 pub(crate) fn sync_splitter_lines(
-    lines: Query<(&mut UIMaterial, &ChildOf), With<UISplitterLine>>,
+    mut lines: Query<(&mut UIMaterial, &ChildOf), With<UISplitterLine>>,
     splitters: Query<&UISplitter>,
     hovered: Res<HoveredNode>,
     input: Res<UIInputState>,
 ) {
     let dragged = input.captured(MouseButton::Left);
-    for (mut material, child_of) in lines.iter() {
+    for (mut material, child_of) in lines.iter_mut() {
         let owner = **child_of;
         let Some(splitter) = splitters.get_entity(owner) else {
             continue;

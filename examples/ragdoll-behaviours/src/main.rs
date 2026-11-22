@@ -202,9 +202,9 @@ fn spawn_humanoid(cmd: &mut CommandQueue, assets: &AssetServer, towards: Towards
     }
 }
 
-fn hold_rest_pose(stage: Res<Stage>, transforms: Query<&mut Transform>) {
+fn hold_rest_pose(stage: Res<Stage>, mut transforms: Query<&mut Transform>) {
     for (bone, rest) in stage.bones.iter().zip(&stage.rest) {
-        if let Some(mut transform) = transforms.get_entity(*bone) {
+        if let Some(mut transform) = transforms.get_entity_mut(*bone) {
             transform.translation = rest.translation;
             transform.rotation = rest.rotation;
         }
@@ -333,7 +333,7 @@ fn report(
         Option<&BodySense>,
         Option<&Settled>,
     )>,
-    texts: Query<&mut UIText, With<Report>>,
+    mut texts: Query<&mut UIText, With<Report>>,
 ) {
     let described = bodies.get_entity(stage.character).map_or_else(
         || "the body is being built".to_string(),
@@ -350,7 +350,7 @@ fn report(
         "{HELP}\n\npushes and shots travel towards its {:?}\n{described}",
         stage.towards
     );
-    for mut text in texts.iter() {
+    for mut text in texts.iter_mut() {
         if text.text != shown {
             text.text = shown.clone();
         }

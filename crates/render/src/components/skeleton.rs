@@ -140,7 +140,7 @@ impl SkinUniforms {
 pub(crate) fn extract_skeletons(
     skeletons: Extracted<Query<(Ref<SkeletonComponent>, &RenderEntity)>>,
     bone_transforms: Extracted<Query<Ref<GlobalTransform>>>,
-    render_skeletons: Query<&mut RenderSkeletonComponent>,
+    mut render_skeletons: Query<&mut RenderSkeletonComponent>,
     skeleton_assets: Extracted<Res<AssetStore<Skeleton>>>,
     skeleton_layout: Res<SkeletonLayout>,
     mut skins: ResMut<SkinUniforms>,
@@ -152,7 +152,7 @@ pub(crate) fn extract_skeletons(
         let render_entity = **render_entity;
         let skeleton_asset = skeleton_assets.get(skeleton.skeleton());
 
-        let offset = match render_skeletons.get_entity(render_entity) {
+        let offset = match render_skeletons.get_entity_mut(render_entity) {
             Some(mut render_skeleton) => {
                 let bone_moved = skeleton.bones().iter().any(|bone| {
                     bone.entity()

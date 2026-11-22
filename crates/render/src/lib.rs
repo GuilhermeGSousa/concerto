@@ -16,10 +16,15 @@
 // work when the derive is applied inside this crate itself.
 extern crate self as concerto_render;
 
+pub mod ambient_occlusion;
 pub mod assets;
+pub mod auto_exposure;
 pub mod batching;
+pub mod bloom;
 pub mod capabilities;
 pub mod components;
+pub mod depth_of_field;
+pub(crate) mod depth_pass;
 pub mod device;
 pub mod draw_target;
 pub(crate) mod frustum;
@@ -39,7 +44,9 @@ pub mod shader;
 pub mod shadow_pipeline;
 pub mod sky_light;
 pub mod systems;
-pub(crate) mod viewport_clear;
+pub mod tonemapping;
+pub mod view_phase;
+pub mod view_target;
 pub mod wgpu_wrapper;
 
 #[doc(hidden)]
@@ -48,11 +55,17 @@ pub use wgpu;
 
 pub use concerto_render_macros::AsBindGroup;
 
+pub use ambient_occlusion::{AmbientOcclusionPlugin, ScreenSpaceAmbientOcclusion};
 pub use assets::material::Material;
+pub use auto_exposure::{AutoExposure, AutoExposurePlugin};
+pub use bloom::{Bloom, BloomPlugin};
 pub use components::camera::ExclusiveCamera;
 pub use components::material::MaterialComponent;
+pub use depth_of_field::{DepthOfField, DepthOfFieldPlugin};
 pub use material_plugin::{MaterialPipeline, MaterialPlugin, RenderMaterial};
 pub use sky_light::{
     CameraSkyLight, LightTint, RadianceSample, SkyRadianceMap, SphericalHarmonics,
     SKY_RADIANCE_SCALE,
 };
+pub use tonemapping::{Exposure, Tonemapping};
+pub use view_target::{Msaa, ViewPipelines, ViewTarget};

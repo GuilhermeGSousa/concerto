@@ -28,8 +28,8 @@ use glam::{Affine3A, Quat, Vec3};
 
 const DT: f32 = 0.05;
 
-fn walk(agents: Query<(&NavSteering, &mut Transform)>) {
-    for (steering, mut transform) in agents.iter() {
+fn walk(mut agents: Query<(&NavSteering, &mut Transform)>) {
+    for (steering, mut transform) in agents.iter_mut() {
         transform.translation += steering.velocity * DT;
     }
 }

@@ -180,7 +180,7 @@ fn is_trunk(segment: Segment) -> bool {
 /// Starts a character's shot reaction, or adds a wound to the one in progress, when it is hit by a shot while it is on its feet. A character with no `ShotReaction`, or one that is limp, falling, down or dead, is left to `flinch_when_hit`.
 pub fn react_when_shot(
     on: On<BodyHit>,
-    characters: Query<(
+    mut characters: Query<(
         &CharacterRagdoll,
         &RagdollId,
         &RagdollBody,
@@ -193,7 +193,7 @@ pub fn react_when_shot(
 ) {
     let hit = *on.signal();
     let Some((character, id, body, reaction, physical, shot)) =
-        characters.get_entity(hit.character)
+        characters.get_entity_mut(hit.character)
     else {
         return;
     };
@@ -242,10 +242,10 @@ pub(crate) fn takes_shot(
 }
 
 /// When a shot character's balance ends, notes its outcome on the shot.
-pub fn note_shot_balance_ended(on: On<BehaviourEnded>, shots: Query<&mut Shot>) {
+pub fn note_shot_balance_ended(on: On<BehaviourEnded>, mut shots: Query<&mut Shot>) {
     let ended = on.signal();
     if ended.behaviour == Name::from(BALANCE)
-        && let Some(mut shot) = shots.get_entity(ended.character)
+        && let Some(mut shot) = shots.get_entity_mut(ended.character)
     {
         shot.ended = Some(ended.outcome);
     }
@@ -271,7 +271,7 @@ impl Arm {
 
 /// Each fixed step, in `BehaviourSet` before `balance_bodies`: for every shot body, gives the struck parts their impulses once they are simulated, snaps and slackens the muscles at each wound, folds the spine over a wound in the trunk, lets a shot arm hang, weakens a shot leg through balance, sends the nearer free hand to the newest wound and turns the head to it and then to where the shot came from.
 pub fn shot_bodies(
-    characters: Query<(
+    mut characters: Query<(
         &ShotReaction,
         &mut Shot,
         &mut Wounds,
@@ -284,7 +284,8 @@ pub fn shot_bodies(
 ) {
     let dt = Time::fixed_delta_time().as_secs_f32();
     let mut pose = Vec::new();
-    for (reaction, mut shot, mut wounds, mut balance, id, body, mut drive) in characters.iter() {
+    for (reaction, mut shot, mut wounds, mut balance, id, body, mut drive) in characters.iter_mut()
+    {
         let shot = &mut *shot;
         let resolved = body.resolved();
         let landmarks = resolved.landmarks();

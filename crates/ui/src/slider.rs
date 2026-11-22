@@ -72,7 +72,7 @@ pub(crate) fn setup_slider_visuals(
 /// Pointer-down listener that moves the [`UISlider`] it sits on to the pointer.
 pub fn press_slider(
     on: On<UIPointerDown>,
-    sliders: Query<(&mut UISlider, &UILayout)>,
+    mut sliders: Query<(&mut UISlider, &UILayout)>,
     mut cmd: CommandQueue,
 ) {
     let signal = on.signal();
@@ -80,7 +80,7 @@ pub fn press_slider(
         on.entity(),
         signal.button,
         signal.position,
-        &sliders,
+        &mut sliders,
         &mut cmd,
     );
 }
@@ -88,7 +88,7 @@ pub fn press_slider(
 /// Drag listener that keeps the [`UISlider`] it sits on under the pointer.
 pub fn drag_slider(
     on: On<UIDrag>,
-    sliders: Query<(&mut UISlider, &UILayout)>,
+    mut sliders: Query<(&mut UISlider, &UILayout)>,
     mut cmd: CommandQueue,
 ) {
     let signal = on.signal();
@@ -96,7 +96,7 @@ pub fn drag_slider(
         on.entity(),
         signal.button,
         signal.position,
-        &sliders,
+        &mut sliders,
         &mut cmd,
     );
 }
@@ -105,13 +105,13 @@ fn slide_to(
     entity: Entity,
     button: MouseButton,
     position: Vec2,
-    sliders: &Query<(&mut UISlider, &UILayout)>,
+    sliders: &mut Query<(&mut UISlider, &UILayout)>,
     cmd: &mut CommandQueue,
 ) {
     if button != MouseButton::Left {
         return;
     }
-    let Some((mut slider, layout)) = sliders.get_entity(entity) else {
+    let Some((mut slider, layout)) = sliders.get_entity_mut(entity) else {
         return;
     };
     let norm = ((position.x - layout.rect.min.x) / layout.rect.size.x).clamp(0.0, 1.0);
@@ -124,10 +124,10 @@ fn slide_to(
 
 /// Keeps the fill child's width in sync with the slider's current value.
 pub(crate) fn sync_slider_fill(
-    fills: Query<(&mut UINode, &ChildOf), With<UISliderFill>>,
+    mut fills: Query<(&mut UINode, &ChildOf), With<UISliderFill>>,
     sliders: Query<&UISlider>,
 ) {
-    for (mut node, child_of) in fills.iter() {
+    for (mut node, child_of) in fills.iter_mut() {
         if let Some(slider) = sliders.get_entity(**child_of) {
             let width = UIValue::Percent(slider.normalized() * 100.0);
             if node.width != width {

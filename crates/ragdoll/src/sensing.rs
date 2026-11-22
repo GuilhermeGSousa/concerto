@@ -215,12 +215,12 @@ fn predicted_impact(state: &PhysicsState, from: Vec3, velocity: Vec3) -> Option<
 
 /// After each physics step, rewrites every `BodySense` from its ragdoll: centre of mass, support, capture point, lean, time in the air, predicted impacts and rest.
 pub fn sense_bodies(
-    characters: Query<(Entity, &RagdollId, &RagdollBody, &mut BodySense), Without<Settled>>,
+    mut characters: Query<(Entity, &RagdollId, &RagdollBody, &mut BodySense), Without<Settled>>,
     mut state: ResMut<PhysicsState>,
 ) {
     let dt = Time::fixed_delta_time().as_secs_f32();
     let mut pose: Vec<BodyPose> = Vec::new();
-    for (entity, id, body, mut sense) in characters.iter() {
+    for (entity, id, body, mut sense) in characters.iter_mut() {
         let bodies = state.ragdoll_bodies(*id).to_vec();
         if sense.watching != Some(*id) {
             for part in &bodies {

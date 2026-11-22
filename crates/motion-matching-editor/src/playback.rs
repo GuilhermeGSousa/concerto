@@ -125,11 +125,13 @@ fn write_pose(
     played: &Skeleton,
     component: &SkeletonComponent,
     skeleton: &Skeleton,
-    transforms: &Query<&mut Transform>,
+    transforms: &mut Query<&mut Transform>,
 ) {
     for (bone, id) in component.bones().iter().zip(&skeleton.bone_ids) {
         let joint = played.bone_ids.iter().position(|played| played == id);
-        let target = bone.entity().and_then(|bone| transforms.get_entity(bone));
+        let target = bone
+            .entity()
+            .and_then(|bone| transforms.get_entity_mut(bone));
         if let (Some(joint), Some(mut transform)) = (joint, target) {
             transform.translation = pose[joint].translation;
             transform.rotation = pose[joint].rotation;
@@ -143,7 +145,7 @@ fn play_database(
     time: Res<Time>,
     stores: Option<Res<AssetStore<Skeleton>>>,
     skeletons: Query<&SkeletonComponent>,
-    transforms: Query<&mut Transform>,
+    mut transforms: Query<&mut Transform>,
     mut progress: EventWriter<DatabaseProgress>,
 ) {
     let playback = &mut *playback;
@@ -172,7 +174,7 @@ fn play_database(
                 continue;
             }
             if let Some(skeleton) = stores.get(component.skeleton()) {
-                write_pose(&pose, &shown.skeleton, component, skeleton, &transforms);
+                write_pose(&pose, &shown.skeleton, component, skeleton, &mut transforms);
             }
         }
     }
@@ -298,9 +300,9 @@ pub(crate) fn baked_entry(state: &DefinitionDocument) -> Option<usize> {
 
 pub(crate) fn scrub_entry(document: Entity) -> Listener<TimelineScrubbed> {
     (move |on: On<TimelineScrubbed>,
-           documents: Query<&mut DefinitionDocument>,
+           mut documents: Query<&mut DefinitionDocument>,
            mut previews: PreviewSignals| {
-        let Some(mut state) = documents.get_entity(document) else {
+        let Some(mut state) = documents.get_entity_mut(document) else {
             return;
         };
         let time = on.signal().time;
@@ -346,7 +348,7 @@ fn picked_channel(
 }
 
 pub(crate) fn follow_playback(
-    documents: Query<(
+    mut documents: Query<(
         Entity,
         &mut DefinitionDocument,
         Option<&InspectedValues>,
@@ -359,7 +361,7 @@ pub(crate) fn follow_playback(
     let Some(project) = project.project.as_ref() else {
         return;
     };
-    for (document, mut state, values, shown) in documents.iter() {
+    for (document, mut state, values, shown) in documents.iter_mut() {
         let skeleton = state.skeleton.id();
         if state
             .playback
@@ -411,17 +413,17 @@ pub(crate) fn follow_playback(
 pub(crate) fn follow_preview_time(
     mut clips: HostedAppEvents<ClipPreviewProgress>,
     mut baked: HostedAppEvents<DatabaseProgress>,
-    documents: Query<&mut DefinitionDocument>,
+    mut documents: Query<&mut DefinitionDocument>,
 ) {
     for (document, progress) in clips.read() {
-        if let Some(mut state) = documents.get_entity(document)
+        if let Some(mut state) = documents.get_entity_mut(document)
             && state.playback.is_none()
         {
             state.time = progress.time;
         }
     }
     for (document, progress) in baked.read() {
-        if let Some(mut state) = documents.get_entity(document)
+        if let Some(mut state) = documents.get_entity_mut(document)
             && baked_entry(&state) == Some(progress.entry)
         {
             state.time = progress.time;

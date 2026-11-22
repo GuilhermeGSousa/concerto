@@ -269,7 +269,7 @@ fn animate_humanoid(
     time: Res<Time>,
     humanoid: Option<ResMut<Humanoid>>,
     characters: Query<&CharacterRagdoll>,
-    transforms: Query<&mut Transform>,
+    mut transforms: Query<&mut Transform>,
 ) {
     let Some(mut humanoid) = humanoid else {
         return;
@@ -280,7 +280,7 @@ fn animate_humanoid(
         .get_entity(humanoid.skeleton)
         .is_some_and(|character| character.mode != RagdollMode::FollowsAnimation);
     for (index, &bone) in humanoid.bones.iter().enumerate() {
-        if let Some(mut transform) = transforms.get_entity(bone) {
+        if let Some(mut transform) = transforms.get_entity_mut(bone) {
             let rest = &humanoid.rest[index];
             transform.translation = rest.translation;
             transform.rotation = rest.rotation;
@@ -292,12 +292,12 @@ fn animate_humanoid(
     humanoid.walked += delta;
     let swing = ARM_SWING * (humanoid.elapsed * 2.0).sin();
     for (bone, sign) in [(humanoid.left_arm, 1.0), (humanoid.right_arm, -1.0)] {
-        if let Some(mut transform) = transforms.get_entity(humanoid.bones[bone]) {
+        if let Some(mut transform) = transforms.get_entity_mut(humanoid.bones[bone]) {
             transform.rotation = Quat::from_rotation_z(sign * swing);
         }
     }
     let angle = humanoid.walked * WALK_SPEED / WALK_RADIUS;
-    if let Some(mut transform) = transforms.get_entity(humanoid.skeleton) {
+    if let Some(mut transform) = transforms.get_entity_mut(humanoid.skeleton) {
         transform.translation =
             HUMANOID_CENTER + WALK_RADIUS * Vec3::new(angle.cos(), 0.0, angle.sin());
         transform.rotation = Quat::from_rotation_y((-angle.sin()).atan2(angle.cos()));
@@ -365,12 +365,12 @@ fn balance_humanoid(
 fn control_humanoid(
     input: Res<Input>,
     humanoid: Option<Res<Humanoid>>,
-    characters: Query<&mut CharacterRagdoll>,
+    mut characters: Query<&mut CharacterRagdoll>,
 ) {
     let Some(humanoid) = humanoid else {
         return;
     };
-    let Some(mut character) = characters.get_entity(humanoid.skeleton) else {
+    let Some(mut character) = characters.get_entity_mut(humanoid.skeleton) else {
         return;
     };
     let timed = humanoid
@@ -421,10 +421,10 @@ fn draw_skeleton(
 fn sync_visuals(
     state: Res<PhysicsState>,
     chains: Query<&ChainRagdoll>,
-    visuals: Query<(&RagdollVisual, &mut Transform)>,
+    mut visuals: Query<(&RagdollVisual, &mut Transform)>,
 ) {
     let mut pose = Vec::new();
-    for (visual, mut transform) in visuals.iter() {
+    for (visual, mut transform) in visuals.iter_mut() {
         let Some(chain) = chains.get_entity(visual.owner) else {
             continue;
         };

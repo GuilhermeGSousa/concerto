@@ -208,9 +208,9 @@ pub(crate) fn install_listeners(world: &mut World) {
 
 fn forget_discarded_edits(
     on: On<DiscardEdits>,
-    documents: Query<&mut HostedApp, With<SceneEditorState>>,
+    mut documents: Query<&mut HostedApp, With<SceneEditorState>>,
 ) {
-    if let Some(mut hosted) = documents.get_entity(on.signal().0) {
+    if let Some(mut hosted) = documents.get_entity_mut(on.signal().0) {
         hosted.mark_saved();
     }
 }
@@ -246,10 +246,10 @@ fn has_unsaved_edits(world: &World, document: Entity) -> bool {
 
 pub(crate) fn show_status(
     mut statuses: EventReader<Hosted<SceneStatus>>,
-    documents: Query<&mut EditorDocument>,
+    mut documents: Query<&mut EditorDocument>,
 ) {
     for Hosted { document, event } in statuses.read() {
-        if let Some(mut document) = documents.get_entity(*document) {
+        if let Some(mut document) = documents.get_entity_mut(*document) {
             document.status = event.0.clone();
         }
     }
@@ -526,7 +526,7 @@ fn begin_play(world: &World, document: Entity) -> anyhow::Result<PendingApp> {
 pub(crate) fn scene_actions(
     mut fired: EventReader<ActionFired>,
     active: Res<ActiveEditor>,
-    documents: Query<(&mut EditorDocument, &PlayState)>,
+    mut documents: Query<(&mut EditorDocument, &PlayState)>,
     mut cmd: CommandQueue,
 ) {
     let (toggle, save) = fired.read().fold((false, false), |(toggle, save), action| {
@@ -541,7 +541,7 @@ pub(crate) fn scene_actions(
     let Some(document) = active.0 else {
         return;
     };
-    let Some((mut doc, state)) = documents.get_entity(document) else {
+    let Some((mut doc, state)) = documents.get_entity_mut(document) else {
         return;
     };
     if save && state.is_on() {
@@ -553,9 +553,9 @@ pub(crate) fn scene_actions(
 }
 
 pub(crate) fn show_play_failures(
-    failures: Query<(&PlayFailure, &mut EditorDocument), Changed<PlayFailure>>,
+    mut failures: Query<(&PlayFailure, &mut EditorDocument), Changed<PlayFailure>>,
 ) {
-    for (failure, mut document) in failures.iter() {
+    for (failure, mut document) in failures.iter_mut() {
         document.status = failure.status();
     }
 }
@@ -588,7 +588,7 @@ fn finish_scene_request(
 }
 
 pub(crate) fn refuse_edited_replacements(
-    building: Query<(
+    mut building: Query<(
         Entity,
         &mut EditorDocument,
         &mut SceneEditorState,
@@ -602,7 +602,7 @@ pub(crate) fn refuse_edited_replacements(
     mut outcomes: OpenOutcomes,
 ) {
     let queued = !commits.0.is_empty() || !edits.0.is_empty();
-    for (editor, mut doc, mut state, mut pending) in building.iter() {
+    for (editor, mut doc, mut state, mut pending) in building.iter_mut() {
         let Some(request) = state.building.clone() else {
             continue;
         };
@@ -626,7 +626,7 @@ pub(crate) fn refuse_edited_replacements(
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn update_scenes(
     _: NonSendMarker,
-    editors: Query<(Entity, &mut EditorDocument, &mut SceneEditorState)>,
+    mut editors: Query<(Entity, &mut EditorDocument, &mut SceneEditorState)>,
     unsaved: Query<&Unsaved>,
     pending: Query<&PendingApp>,
     hosted_apps: Query<&HostedApp>,
@@ -639,7 +639,7 @@ pub(crate) fn update_scenes(
     mut outcomes: OpenOutcomes,
 ) {
     let mut present = false;
-    for (editor, mut doc, mut state) in editors.iter() {
+    for (editor, mut doc, mut state) in editors.iter_mut() {
         present = true;
         if summary.document != Some(editor) {
             summary.document = Some(editor);

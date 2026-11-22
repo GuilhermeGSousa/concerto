@@ -95,7 +95,7 @@ pub(crate) struct ContactChange {
 
 /// Rewrites every `Contacts` from the last fixed step and triggers `ContactStart` and `ContactEnd` in the order they happened.
 pub fn report_contacts(
-    reporting: Query<(&BodyId, &mut Contacts)>,
+    mut reporting: Query<(&BodyId, &mut Contacts)>,
     mut state: ResMut<PhysicsState>,
     mut cmd: CommandQueue,
 ) {
@@ -111,7 +111,7 @@ pub fn report_contacts(
             });
         }
     }
-    for (body, mut contacts) in reporting.iter() {
+    for (body, mut contacts) in reporting.iter_mut() {
         let touching = state.contacts_of(*body);
         if contacts.contacts != touching {
             contacts.contacts = touching;

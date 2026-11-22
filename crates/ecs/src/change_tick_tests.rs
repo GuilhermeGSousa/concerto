@@ -75,11 +75,15 @@ fn a_command_applied_after_the_reader_is_seen_on_its_next_run() {
     );
 }
 
-fn write_once(mut write: ResMut<WriteNow>, mut level: ResMut<Level>, values: Query<&mut Value>) {
+fn write_once(
+    mut write: ResMut<WriteNow>,
+    mut level: ResMut<Level>,
+    mut values: Query<&mut Value>,
+) {
     if write.0 {
         write.0 = false;
         level.0 += 1;
-        for mut value in values.iter() {
+        for mut value in values.iter_mut() {
             value.0 += 1;
         }
     }
@@ -225,8 +229,8 @@ fn gated_reader(_: Gate, values: Query<Entity, Changed<Value>>, mut seen: ResMut
     seen.0.push(values.iter().count());
 }
 
-fn bump_values(values: Query<&mut Value>) {
-    for mut value in values.iter() {
+fn bump_values(mut values: Query<&mut Value>) {
+    for mut value in values.iter_mut() {
         value.0 += 1;
     }
 }
@@ -573,8 +577,8 @@ struct SetIfNeq {
 #[derive(Resource, Default)]
 struct Wrote(Vec<SetIfNeq>);
 
-fn set_both(values: Query<&mut Value>, mut level: ResMut<Level>, mut wrote: ResMut<Wrote>) {
-    for mut value in values.iter() {
+fn set_both(mut values: Query<&mut Value>, mut level: ResMut<Level>, mut wrote: ResMut<Wrote>) {
+    for mut value in values.iter_mut() {
         let written = value.set_if_neq(Value(5));
         wrote.0.push(SetIfNeq {
             wrote: written,

@@ -7,11 +7,16 @@ use concerto::{
         App,
         schedule_groups::{Startup, Update},
     },
+    color::Color,
     ecs::{
         CommandQueue, Component, Query, Res, ResMut, Resource, With,
         command::EntityCommandQueue,
+        entity::Entity,
         entity::hierarchy::Children,
-        signal::{On, listener::IntoListener},
+        signal::{
+            On,
+            listener::{IntoListener, Listener},
+        },
     },
     foundation::time::Time,
     ui::{
@@ -19,9 +24,10 @@ use concerto::{
         anchor::{
             UIAnchorSide, UIAnchorTarget, UIAnchoredPanel, UIPanelStack, toggle_owned_panels,
         },
+        color_picker::{UIColorChanged, restore_on_escape},
         elements::{Label, Pressable, Text, prelude::*},
         focus::FocusedWidget,
-        interaction::{Interactable, UIInputState, UIInteractionStyle},
+        interaction::{Interactable, UIClick, UIInputState, UIInteractionStyle},
         items::{UIItem, UIItemContextMenu},
         list::UIList,
         node::{
@@ -76,6 +82,9 @@ struct StressTicker {
 struct DiagnosticsTimer {
     elapsed: f32,
 }
+
+#[derive(Resource)]
+struct PickedColor(Color);
 
 fn menu_row(theme: &UITheme, name: &str) -> (Pressable, Text) {
     (
@@ -231,19 +240,28 @@ fn spawn_showcase(mut cmd: CommandQueue, theme: Res<UITheme>, mut window: ResMut
         )
         .add_child(section_title(theme, "ANCHORED PANELS"));
 
-    let menu_trigger = layout
-        .spawn_child(
-            theme
-                .row()
-                .height(UIValue::Px(theme.control_height))
-                .fixed(),
-        )
+    let mut anchored = layout.spawn_child(
+        theme
+            .row()
+            .height(UIValue::Px(theme.control_height))
+            .fixed()
+            .gap(theme.spacing_sm),
+    );
+    let menu_trigger = anchored
         .spawn_child(
             theme
                 .button("MENU  \u{25be}")
                 .width(UIValue::Px(120.0))
                 .font_size(12.0)
                 .on_click(toggle_owned_panels),
+        )
+        .entity();
+    let color_trigger = anchored
+        .spawn_child(
+            theme
+                .button("COLOR  \u{25be}")
+                .width(UIValue::Px(120.0))
+                .font_size(12.0),
         )
         .entity();
 
@@ -536,6 +554,16 @@ fn spawn_showcase(mut cmd: CommandQueue, theme: Res<UITheme>, mut window: ResMut
         theme.text("").font_size(12.0),
     ));
 
+    let color_menu = cmd
+        .spawn(
+            theme
+                .dropdown(color_trigger)
+                .width(UIValue::Px(260.0))
+                .padding(theme.spacing_sm),
+        )
+        .entity();
+    cmd.insert(toggle_color_menu(color_menu), color_trigger);
+
     let mut view_menu = cmd.spawn(
         theme
             .dropdown(view_trigger)
@@ -656,11 +684,11 @@ fn tree_items(parent: &mut EntityCommandQueue, theme: &UITheme, specs: &[TreeSpe
 
 fn open_context_menu(
     on: On<UIItemContextMenu>,
-    context_menus: Query<(&ContextMenu, &mut UIAnchoredPanel, &mut UIText)>,
+    mut context_menus: Query<(&ContextMenu, &mut UIAnchoredPanel, &mut UIText)>,
     items: Query<&UIItem>,
 ) {
     let index = items.get_entity(on.entity()).map(|item| item.index());
-    for (_, mut panel, mut text) in context_menus.iter() {
+    for (_, mut panel, mut text) in context_menus.iter_mut() {
         panel.target = UIAnchorTarget::Point {
             position: on.signal().position,
         };
@@ -673,17 +701,47 @@ fn open_context_menu(
     }
 }
 
+fn toggle_color_menu(menu: Entity) -> Listener<UIClick> {
+    (move |on: On<UIClick>,
+           theme: Res<UITheme>,
+           picked: Res<PickedColor>,
+           mut panels: Query<&mut UIAnchoredPanel>,
+           mut cmd: CommandQueue| {
+        if on.signal().button != MouseButton::Left {
+            return;
+        }
+        let Some(mut panel) = panels.get_entity_mut(menu) else {
+            return;
+        };
+        panel.open = !panel.open;
+        if !panel.open {
+            return;
+        }
+        let mut popup = cmd.entity(menu).despawn_children();
+        let picker = popup
+            .spawn_child(theme.color_picker(picked.0).on_change(pick_color))
+            .entity();
+        popup.insert(restore_on_escape(picker));
+    })
+    .into_listener()
+}
+
+fn pick_color(on: On<UIColorChanged>, mut picked: ResMut<PickedColor>) {
+    println!("color picked: {:?}", on.signal().color);
+    picked.0 = on.signal().color;
+}
+
 fn restyle_tabs(
     on: On<UITabChanged>,
     theme: Res<UITheme>,
     strips: Query<&Children>,
-    styles: Query<&mut UIInteractionStyle>,
+    mut styles: Query<&mut UIInteractionStyle>,
 ) {
     let Some(tabs) = strips.get_entity(on.entity()) else {
         return;
     };
     for (index, &tab) in tabs.iter().enumerate() {
-        let Some(mut style) = styles.get_entity(tab) else {
+        let Some(mut style) = styles.get_entity_mut(tab) else {
             continue;
         };
         let wanted = theme.interaction(ButtonVariant::Tab, index == on.signal().selected);
@@ -697,7 +755,7 @@ fn tick_stress_labels(
     time: Res<Time>,
     mut ticker: ResMut<StressTicker>,
     strips: Query<&UITabStrip, With<ShowcaseTabs>>,
-    labels: Query<(&StressLabel, &mut UIText)>,
+    mut labels: Query<(&StressLabel, &mut UIText)>,
 ) {
     if !strips.iter().any(|strip| strip.selected == STRESS_TAB) {
         return;
@@ -708,7 +766,7 @@ fn tick_stress_labels(
     }
     ticker.elapsed = 0.0;
     ticker.tick += 1;
-    for (label, mut text) in labels.iter() {
+    for (label, mut text) in labels.iter_mut() {
         text.text = format!("{:04}", (ticker.tick + label.0) % 10_000);
     }
 }
@@ -716,7 +774,7 @@ fn tick_stress_labels(
 fn update_diagnostics(
     window: Res<Window>,
     diagnostics: Res<UILayoutDiagnostics>,
-    text: Query<&mut UIText, With<Diagnostics>>,
+    mut text: Query<&mut UIText, With<Diagnostics>>,
     input: Res<UIInputState>,
     focus: Res<FocusedWidget>,
     render_diagnostics: Res<UIRenderDiagnostics>,
@@ -759,7 +817,7 @@ fn update_diagnostics(
             .and_then(|entity| panels.get_entity(*entity))
             .map(|(panel, _)| panel.resolved_side()),
     );
-    for mut text in text.iter() {
+    for mut text in text.iter_mut() {
         if text.text != value {
             text.text = value.clone();
         }
@@ -802,9 +860,9 @@ fn gamepad_readout(input: &Input) -> String {
     }
 }
 
-fn update_gamepads(input: Res<Input>, text: Query<&mut UIText, With<GamepadReadout>>) {
+fn update_gamepads(input: Res<Input>, mut text: Query<&mut UIText, With<GamepadReadout>>) {
     let value = gamepad_readout(&input);
-    for mut text in text.iter() {
+    for mut text in text.iter_mut() {
         if text.text != value {
             text.text = value.clone();
         }
@@ -815,6 +873,7 @@ fn game(app: &mut App) {
     app.register_plugin(DefaultPlugins)
         .insert_resource(StressTicker::default())
         .insert_resource(DiagnosticsTimer::default())
+        .insert_resource(PickedColor(Color::rgba(2.0, 1.0, 0.25, 1.0)))
         .add_system(Startup, spawn_showcase)
         .add_system(
             Update,

@@ -19,7 +19,7 @@ use concerto_foundation::assets::registry::{AssetEntry, AssetRegistry};
 
 use crate::inspected_asset::InspectedAssetEditor;
 use crate::project::AssetsWritten;
-use crate::scene::SceneSaved;
+use crate::scene::{SaveFailed, SceneSaved};
 
 /// Installs an editor's components when its document is created.
 pub trait AssetEditor: Send + Sync + 'static {
@@ -266,6 +266,57 @@ pub(crate) fn request_save(
             .is_some_and(|document| document.pending.is_none())
     {
         commands.insert(SaveRequested, entity);
+    }
+}
+
+/// What a save wrote: `asset` is what the document now shows, and `written` every file written.
+pub struct SavedFiles {
+    pub asset: AssetEntry,
+    pub written: Vec<AssetEntry>,
+}
+
+impl From<AssetEntry> for SavedFiles {
+    fn from(asset: AssetEntry) -> Self {
+        Self {
+            written: vec![asset.clone()],
+            asset,
+        }
+    }
+}
+
+/// Ends a requested save of `entity`: removes `SaveRequested`, sets the status, writes `SceneSaved` or `SaveFailed`, and on success removes `Unsaved`.
+pub fn report_save(
+    entity: Entity,
+    document: &mut EditorDocument,
+    outcome: Result<SavedFiles>,
+    saved: &mut EventWriter<SceneSaved>,
+    failed: &mut EventWriter<SaveFailed>,
+    cmd: &mut CommandQueue,
+) {
+    cmd.remove::<SaveRequested>(entity);
+    match outcome {
+        Ok(files) => {
+            let addresses: Vec<&str> = files
+                .written
+                .iter()
+                .map(|asset| asset.address.as_str())
+                .collect();
+            document.status = format!("Saved {}", addresses.join(", "));
+            saved.write(SceneSaved {
+                document: entity,
+                asset: files.asset,
+                written: files.written,
+            });
+            cmd.remove::<Unsaved>(entity);
+        }
+        Err(error) => {
+            let message = format!("Save failed: {error:#}");
+            document.status = message.clone();
+            failed.write(SaveFailed {
+                document: entity,
+                message,
+            });
+        }
     }
 }
 

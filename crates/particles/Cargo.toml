@@ -1,0 +1,25 @@
+[package]
+name = "concerto-particles"
+version.workspace = true
+edition = "2021"
+description.workspace = true
+repository.workspace = true
+license.workspace = true
+
+[dependencies]
+concerto-app.workspace = true
+concerto-color.workspace = true
+concerto-ecs.workspace = true
+concerto-foundation.workspace = true
+concerto-noise.workspace = true
+concerto-reflect.workspace = true
+concerto-render.workspace = true
+glam.workspace = true
+bytemuck = { version = "1.22.0", features = ["derive"] }
+
+[dev-dependencies]
+concerto-window.workspace = true
+naga = { version = "30", features = ["glsl-out"] }
+
+[lints]
+workspace = true

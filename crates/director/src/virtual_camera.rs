@@ -1,7 +1,7 @@
 use concerto_ecs::component::{Component, ComponentLifecycleCallback};
 use concerto_ecs::reflect::{ReflectComponent, ReflectSceneComponent};
 use concerto_reflect::{Reflect, ReflectDefault};
-use concerto_render::components::camera::Camera;
+use concerto_render::{DepthOfField, components::camera::Camera};
 use glam::{Quat, Vec3};
 
 use crate::director::CameraDirector;
@@ -34,6 +34,8 @@ pub struct VirtualCamera {
     /// `None` keeps whatever lens the main camera currently has. Free to edit —
     /// the director reads it every frame. Absent from a stored scene is `None`.
     pub lens: Option<Lens>,
+    /// `None` keeps whatever focus the main camera currently has, or none. A camera that takes over from one without a focus opens its blur over the blend.
+    pub focus: Option<DepthOfField>,
 }
 
 /// Joining and leaving the director's stack is driven by the component's own
@@ -77,7 +79,14 @@ impl VirtualCamera {
             priority,
             enabled: true,
             lens: None,
+            focus: None,
         }
+    }
+
+    /// Gives the camera a focus, which the main camera takes while this one is live.
+    pub fn with_focus(mut self, focus: DepthOfField) -> Self {
+        self.focus = Some(focus);
+        self
     }
 
     pub fn with_lens(mut self, lens: Lens) -> Self {
@@ -215,6 +224,7 @@ pub struct CameraPose {
     pub translation: Vec3,
     pub rotation: Quat,
     pub lens: Lens,
+    pub focus: Option<DepthOfField>,
 }
 
 impl CameraPose {
@@ -223,6 +233,12 @@ impl CameraPose {
             translation: self.translation.lerp(other.translation, t),
             rotation: self.rotation.slerp(other.rotation, t),
             lens: self.lens.lerp(other.lens, t),
+            focus: match (self.focus, other.focus) {
+                (Some(from), Some(to)) => Some(from.lerp(to, t)),
+                (None, Some(to)) => Some(to.faded(t)),
+                (Some(from), None) => Some(from.faded(1.0 - t)),
+                (None, None) => None,
+            },
         }
     }
 }

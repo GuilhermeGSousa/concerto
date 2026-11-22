@@ -24,6 +24,7 @@ game adds itself when it needs them.
 | | `mesh` | mesh data, mesh primitives, bounds, ray tests, `MeshComponent`, skeleton assets and `JointPose` | `mesh` |
 | | `skybox` | `Sun` and `Sky`: a physically based sky that follows the sun, lights the scene and colors its fog | `skybox` |
 | | `world-grid` | the ground grid | `world_grid` |
+| | `particles` | particle emitters, simulated on the CPU and drawn as billboards | `particles` |
 | | `debug-gizmos` | immediate-mode debug lines and shapes, and `ComponentGizmo` with the engine's component gizmos for bounds, skeletons, lights and cameras | add `concerto-debug-gizmos` |
 | | `motion-matching-gizmos` | `MotionMatchingGizmos`, which draws a running character's motion matching, and the drawing the database preview shares | add `concerto-motion-matching-gizmos` |
 | | `navigation-gizmos` | `NavigationGizmosPlugin`, which draws the nav graph's points and links, in the game and the editor's scene view, and each agent's route and each loaded navmesh's polygons in the game; and `NavMeshGizmo`, the navmesh's gizmo in the editor | add `concerto-navigation-gizmos` |

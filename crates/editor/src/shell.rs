@@ -144,7 +144,7 @@ fn refresh_chrome(
     registry: Option<Res<AssetRegistry>>,
     scenes: Res<SceneState>,
     theme: Res<UITheme>,
-    labels: Query<(&Label, &mut UIText)>,
+    mut labels: Query<(&Label, &mut UIText)>,
     added: Query<Entity, Added<Label>>,
     mut seen: SystemLocal<RegistrySeen>,
 ) {
@@ -168,7 +168,7 @@ fn refresh_chrome(
     } else {
         format!("{line} · {}", scenes.status)
     };
-    for (label, mut component) in labels.iter() {
+    for (label, mut component) in labels.iter_mut() {
         let value = match label {
             Label::Chatter => chatter.clone(),
             Label::ChatterGlyph => {

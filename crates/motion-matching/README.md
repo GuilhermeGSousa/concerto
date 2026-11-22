@@ -452,7 +452,7 @@ commands.spawn((
 ));
 
 fn walk(mut players: Query<&mut DesiredMotion, With<Player>>) {
-    for mut desired in players.iter() {
+    for mut desired in players.iter_mut() {
         desired.velocity = Vec3::new(0.0, 0.0, -5.0);
     }
 }

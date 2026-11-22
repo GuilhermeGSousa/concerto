@@ -7,7 +7,7 @@ use concerto_ecs::{
     signal::On,
 };
 use concerto_editor::{
-    asset_editor::{EditorDocument, SaveRequested, Unsaved},
+    asset_editor::{EditorDocument, SaveRequested, Unsaved, report_save},
     guard::DiscardEdits,
     preview::PreviewSignals,
     project::ProjectState,
@@ -94,7 +94,7 @@ fn show_saved_clip(
 }
 
 pub(crate) fn save_clip(
-    requested: Query<
+    mut requested: Query<
         (
             Entity,
             &mut EditorDocument,
@@ -114,42 +114,32 @@ pub(crate) fn save_clip(
         .project
         .as_ref()
         .map(|project| project.root.as_path());
-    for (entity, mut document, mut state, mut transport) in requested.iter() {
-        cmd.remove::<SaveRequested>(entity);
+    for (entity, mut document, mut state, mut transport) in requested.iter_mut() {
         let written = root
             .context("Open a project before saving")
             .and_then(|root| save_clip_document(&mut document, &mut state, root, &mut assets));
-        match written {
-            Ok(asset) => {
-                document.status = format!("Saved {}", asset.address);
-                measure_transport(&mut transport, &state.facts);
-                show_saved_clip(entity, &state, &transport, &mut previews);
-                saved.write(SceneSaved {
-                    document: entity,
-                    written: vec![asset.clone()],
-                    asset,
-                });
-                cmd.remove::<Unsaved>(entity);
-            }
-            Err(error) => {
-                let message = format!("Save failed: {error:#}");
-                document.status = message.clone();
-                failed.write(SaveFailed {
-                    document: entity,
-                    message,
-                });
-            }
+        if written.is_ok() {
+            measure_transport(&mut transport, &state.facts);
+            show_saved_clip(entity, &state, &transport, &mut previews);
         }
+        report_save(
+            entity,
+            &mut document,
+            written.map(Into::into),
+            &mut saved,
+            &mut failed,
+            &mut cmd,
+        );
     }
 }
 
 pub(crate) fn restore_clip_events(
     on: On<DiscardEdits>,
-    documents: Query<(&mut EditorDocument, &mut ClipDocument)>,
+    mut documents: Query<(&mut EditorDocument, &mut ClipDocument)>,
     mut cmd: CommandQueue,
 ) {
     let document = on.signal().0;
-    let Some((mut editor, mut state)) = documents.get_entity(document) else {
+    let Some((mut editor, mut state)) = documents.get_entity_mut(document) else {
         return;
     };
     let Some(clip) = state.clip.clone() else {

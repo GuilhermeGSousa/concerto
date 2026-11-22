@@ -197,7 +197,7 @@ fn horizontal(vector: Vec3) -> Vec3 {
 
 /// Each fixed step, in `BehaviourSet`: for every falling body with a `Fall`, sends each hand towards where the chest will land, or to a wall about to be hit, lets an arm buckle once its hand is down, holds the head away from the way the body travels, curls the spine and folds the legs; once the trunk is down and slow the character is `Down`, the strength drains, and the body ends limp.
 pub fn fall_bodies(
-    characters: Query<(
+    mut characters: Query<(
         Entity,
         &mut Fall,
         &mut CharacterRagdoll,
@@ -213,7 +213,7 @@ pub fn fall_bodies(
     let dt = Time::fixed_delta_time().as_secs_f32();
     let mut pose = Vec::new();
     for (entity, mut fall, mut character, id, body, sense, mut drive, mut physical) in
-        characters.iter()
+        characters.iter_mut()
     {
         let fall = &mut *fall;
         let ended = |cmd: &mut CommandQueue| {

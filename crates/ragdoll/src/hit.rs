@@ -137,7 +137,7 @@ fn dip(scales: &mut [f32], body: &RagdollBody, reaction: &HitReaction, part: usi
 /// Starts or restarts a character's flinch when it is hit. A character without a `HitReaction`, or whose ragdoll is limp or powered by something else, only takes the impulse.
 pub fn flinch_when_hit(
     on: On<BodyHit>,
-    characters: Query<
+    mut characters: Query<
         (
             &mut CharacterRagdoll,
             &RagdollId,
@@ -155,7 +155,7 @@ pub fn flinch_when_hit(
     let hit = *on.signal();
     let entity = hit.character;
     let Some((mut character, id, body, reaction, flinch, shot, physical)) =
-        characters.get_entity(entity)
+        characters.get_entity_mut(entity)
     else {
         return;
     };
@@ -198,7 +198,7 @@ pub fn flinch_when_hit(
 
 /// Each fixed step, after the ragdolls are driven and before physics steps: gives every flinching body the impulses of its hits, lets its dipped strength recover, and once it has held long enough returns the drawn body to the animation and the parts to kinematic.
 pub fn update_flinches(
-    characters: Query<(
+    mut characters: Query<(
         Entity,
         &mut CharacterRagdoll,
         &RagdollId,
@@ -211,7 +211,7 @@ pub fn update_flinches(
 ) {
     let dt = Time::fixed_delta_time().as_secs_f32();
     let mut pose = Vec::new();
-    for (entity, mut character, id, body, reaction, mut flinch) in characters.iter() {
+    for (entity, mut character, id, body, reaction, mut flinch) in characters.iter_mut() {
         let flinch = &mut *flinch;
         flinch.pending.retain(|hit| {
             if character.mode != RagdollMode::Powered {

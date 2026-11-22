@@ -184,9 +184,9 @@ fn double_click_item(on: On<UIDoubleClick>, items: Query<&UIItem>, mut cmd: Comm
 fn reveal_item(
     on: On<UIReveal>,
     items: Query<&UIItem>,
-    owners: Query<(&mut UIScrollArea, Option<&UILayout>)>,
+    mut owners: Query<(&mut UIScrollArea, Option<&UILayout>)>,
     trees: Query<&UITree>,
-    elements: Query<&mut UITreeElement>,
+    mut elements: Query<&mut UITreeElement>,
     hidden: Query<&UIHidden>,
     children: Query<&Children>,
     parents: Query<&ChildOf>,
@@ -200,7 +200,7 @@ fn reveal_item(
             item.owner,
             tree.filtering,
             entity,
-            &elements,
+            &mut elements,
             &hidden,
             &children,
             &parents,
@@ -211,7 +211,7 @@ fn reveal_item(
     let Some(index) = index else {
         return;
     };
-    let Some((mut area, layout)) = owners.get_entity(item.owner) else {
+    let Some((mut area, layout)) = owners.get_entity_mut(item.owner) else {
         return;
     };
     let top = index as f32 * item.row_height;
@@ -279,7 +279,7 @@ pub(crate) fn navigate_items(
     mut focused: ResMut<FocusedWidget>,
     items: Query<(Entity, &UIItem)>,
     selected: Query<&UISelected>,
-    (elements, trees, hidden): (Query<&mut UITreeElement>, Query<&UITree>, Query<&UIHidden>),
+    (mut elements, trees, hidden): (Query<&mut UITreeElement>, Query<&UITree>, Query<&UIHidden>),
     children: Query<&Children>,
     parents: Query<&ChildOf>,
     mut lost: EventWriter<UIFocusLost>,
@@ -317,7 +317,7 @@ pub(crate) fn navigate_items(
         } else if fired.is(UIListLast) {
             rows.max_by_key(|(_, other)| other.index)
         } else if fired.is(UITreeExpand) {
-            if expand_or_descend(current, filtering, &elements, &hidden, &children) {
+            if expand_or_descend(current, filtering, &mut elements, &hidden, &children) {
                 rows.find(|(_, other)| {
                     other.index == item.index + 1 && other.depth == item.depth + 1
                 })
@@ -325,8 +325,15 @@ pub(crate) fn navigate_items(
                 None
             }
         } else if fired.is(UITreeCollapse) {
-            collapse_or_ascend(current, filtering, &elements, &hidden, &children, &parents)
-                .and_then(|parent| rows.find(|(entity, _)| *entity == parent))
+            collapse_or_ascend(
+                current,
+                filtering,
+                &mut elements,
+                &hidden,
+                &children,
+                &parents,
+            )
+            .and_then(|parent| rows.find(|(entity, _)| *entity == parent))
         } else {
             None
         };
@@ -347,14 +354,14 @@ pub(crate) fn navigate_items(
 fn expand_or_descend(
     entity: Entity,
     filtering: bool,
-    elements: &Query<&mut UITreeElement>,
+    elements: &mut Query<&mut UITreeElement>,
     hidden: &Query<&UIHidden>,
     children: &Query<&Children>,
 ) -> bool {
     if !has_shown_children(entity, elements, hidden, children) {
         return false;
     }
-    let Some(mut element) = elements.get_entity(entity) else {
+    let Some(mut element) = elements.get_entity_mut(entity) else {
         return false;
     };
     if filtering || element.expanded {
@@ -367,13 +374,13 @@ fn expand_or_descend(
 fn collapse_or_ascend(
     entity: Entity,
     filtering: bool,
-    elements: &Query<&mut UITreeElement>,
+    elements: &mut Query<&mut UITreeElement>,
     hidden: &Query<&UIHidden>,
     children: &Query<&Children>,
     parents: &Query<&ChildOf>,
 ) -> Option<Entity> {
     let has_children = has_shown_children(entity, elements, hidden, children);
-    let mut element = elements.get_entity(entity)?;
+    let mut element = elements.get_entity_mut(entity)?;
     if !filtering && element.expanded && has_children {
         element.expanded = false;
         return None;
@@ -382,14 +389,14 @@ fn collapse_or_ascend(
 }
 
 pub(crate) fn paint_items(
-    items: Query<(Entity, &UIItem, &mut UIMaterial, Option<&UISelected>)>,
+    mut items: Query<(Entity, &UIItem, &mut UIMaterial, Option<&UISelected>)>,
     carets: Query<&ChildOf, With<UITreeCaret>>,
     hovered: Res<HoveredNode>,
     theme: Res<UITheme>,
 ) {
     let hovered =
         (**hovered).map(|entity| carets.get_entity(entity).map_or(entity, ChildOf::parent));
-    for (entity, item, mut material, selected) in items.iter() {
+    for (entity, item, mut material, selected) in items.iter_mut() {
         let colour = if !item.selectable {
             Color::TRANSPARENT
         } else if selected.is_some() {
@@ -569,7 +576,7 @@ pub(crate) fn place_rows(
     selectable: bool,
     viewport: Option<f32>,
     area: &mut Mut<UIScrollArea>,
-    nodes: &Query<&mut UINode>,
+    nodes: &mut Query<&mut UINode>,
     items: &Query<&UIItem>,
     culled: &Query<&UICulled>,
     cmd: &mut CommandQueue,
@@ -612,7 +619,7 @@ pub(crate) fn place_rows(
             Some(parent) => (index - parent) as f32 * row_height,
             None => index as f32 * row_height,
         };
-        if let Some(mut node) = nodes.get_entity(row) {
+        if let Some(mut node) = nodes.get_entity_mut(row) {
             place_row(&mut node, top, row_height);
         }
     }
@@ -638,9 +645,9 @@ pub(crate) fn fit_owner(
     owner: Entity,
     spacer: Option<Mut<UIIntrinsicHeight>>,
     extent: f32,
-    nodes: &Query<&mut UINode>,
+    nodes: &mut Query<&mut UINode>,
 ) {
-    if let Some(mut node) = nodes.get_entity(owner) {
+    if let Some(mut node) = nodes.get_entity_mut(owner) {
         if node.overflow_x != Overflow::Hidden {
             node.overflow_x = Overflow::Hidden;
         }

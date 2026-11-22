@@ -19,7 +19,7 @@ use crate::{
         world_query::WorldQuery,
     },
     system::{
-        access::SystemAccess,
+        access::{QueryShape, SystemAccess},
         input::{ReadOnlySystemInput, SystemInput, ValidationError},
         meta::SystemMetadata,
     },
@@ -35,8 +35,8 @@ use crate::{
 /// Obtain a `Query` in a system by adding it as a parameter:
 ///
 /// ```ignore
-/// fn move_system(query: Query<(&mut Transform, &Velocity)>) {
-///     for (transform, velocity) in query.iter() {
+/// fn move_system(mut query: Query<(&mut Transform, &Velocity)>) {
+///     for (mut transform, velocity) in query.iter_mut() {
 ///         transform.translation += velocity.linear;
 ///     }
 /// }
@@ -55,6 +55,9 @@ pub trait QueryData: WorldQuery {
     /// The item type produced for each matched entity.
     type Item<'a>;
 
+    /// Whether fetching this data writes nothing, so it may be fetched through a shared borrow of the query.
+    const IS_READ_ONLY: bool;
+
     /// Returns the [`ComponentId`]s that must be present on an entity for it to match.
     fn component_ids() -> Vec<ComponentId>;
 
@@ -72,6 +75,7 @@ pub trait QueryData: WorldQuery {
     fn fill_access(meta: &mut SystemMetadata, access: &mut SystemAccess);
 }
 
+/// A [`QueryData`] that only reads, so its items may be fetched through a shared borrow.
 pub trait ReadOnlyQueryData: QueryData {}
 
 impl<'world, 'state, T: QueryData, F: QueryFilter> Query<'world, 'state, T, F> {
@@ -93,8 +97,7 @@ impl<'world, 'state, T: QueryData, F: QueryFilter> Query<'world, 'state, T, F> {
         }
     }
 
-    /// Returns an iterator over all matching entities.
-    pub fn iter(&self) -> QueryIter<'world, 'state, T, F> {
+    pub(crate) fn into_iter_exclusive(self) -> QueryIter<'world, 'state, T, F> {
         QueryIter {
             world: self.world,
             matched_archetypes: self.state.matched_archetypes(),
@@ -107,8 +110,78 @@ impl<'world, 'state, T: QueryData, F: QueryFilter> Query<'world, 'state, T, F> {
         }
     }
 
-    /// Fetches the query data for a specific entity, returning `None` if it doesn't match.
-    pub fn get_entity(&self, entity: Entity) -> Option<T::Item<'world>> {
+    /// Returns an iterator over all matching entities; only a query whose data is read-only has it.
+    pub fn iter(&self) -> QueryIter<'_, 'state, T, F>
+    where
+        T: ReadOnlyQueryData,
+    {
+        const {
+            assert!(
+                T::IS_READ_ONLY,
+                "Query::iter needs read-only data; use iter_mut on a query that writes"
+            )
+        };
+        QueryIter {
+            world: self.world,
+            matched_archetypes: self.state.matched_archetypes(),
+            current_entities: &[],
+            current_row: 0,
+            current_len: 0,
+            ticks: self.ticks,
+            _marker_data: PhantomData,
+            _marker_filter: PhantomData,
+        }
+    }
+
+    /// Returns an iterator over a read-only query whose items live as long as the world borrow.
+    pub fn iter_inner(&self) -> QueryIter<'world, 'state, T, F>
+    where
+        T: ReadOnlyQueryData,
+    {
+        QueryIter {
+            world: self.world,
+            matched_archetypes: self.state.matched_archetypes(),
+            current_entities: &[],
+            current_row: 0,
+            current_len: 0,
+            ticks: self.ticks,
+            _marker_data: PhantomData,
+            _marker_filter: PhantomData,
+        }
+    }
+
+    /// Returns an iterator over all matching entities, with write access to what `T` writes.
+    pub fn iter_mut(&mut self) -> QueryIter<'_, 'state, T, F> {
+        QueryIter {
+            world: self.world,
+            matched_archetypes: self.state.matched_archetypes(),
+            current_entities: &[],
+            current_row: 0,
+            current_len: 0,
+            ticks: self.ticks,
+            _marker_data: PhantomData,
+            _marker_filter: PhantomData,
+        }
+    }
+
+    /// Fetches the query data for a specific entity, returning `None` if it doesn't match; only a query whose data is read-only has it.
+    pub fn get_entity(&self, entity: Entity) -> Option<T::Item<'_>>
+    where
+        T: ReadOnlyQueryData,
+    {
+        const {
+            assert!(
+                T::IS_READ_ONLY,
+                "Query::get_entity needs read-only data; use get_entity_mut on a query that writes"
+            )
+        };
+        // SAFETY: the data is read-only, so its items may share the query's borrow.
+        unsafe { self.fetch(entity) }
+    }
+
+    /// # Safety
+    /// No item this query fetched for `entity` through a shared borrow may be alive if `T` writes.
+    unsafe fn fetch(&self, entity: Entity) -> Option<T::Item<'_>> {
         // SAFETY: the query's system declared the access of `T` and `F`, and holds it while
         // the query lives.
         if !unsafe { F::filter(self.world, entity, self.ticks) } {
@@ -122,9 +195,17 @@ impl<'world, 'state, T: QueryData, F: QueryFilter> Query<'world, 'state, T, F> {
         unsafe { T::fetch(self.world, entity, self.ticks) }
     }
 
+    /// Fetches the query data for a specific entity, with write access to what `T` writes.
+    pub fn get_entity_mut(&mut self, entity: Entity) -> Option<T::Item<'_>> {
+        // SAFETY: the exclusive borrow of the query leaves no other item alive.
+        unsafe { self.fetch(entity) }
+    }
+
     /// Returns `true` if `entity` matches this query.
     pub fn contains_entity(&self, entity: Entity) -> bool {
-        self.get_entity(entity).is_some()
+        // SAFETY: the item is dropped at once; a shared borrow of the query cannot coexist with
+        // an item that writes.
+        unsafe { self.fetch(entity) }.is_some()
     }
 }
 
@@ -199,8 +280,16 @@ where
     }
 
     fn fill_access(meta: &mut SystemMetadata, access: &mut crate::system::access::SystemAccess) {
-        T::fill_access(meta, access);
-        F::fill_access(access);
+        let mut data = SystemAccess::default();
+        T::fill_access(meta, &mut data);
+        let mut filter = SystemAccess::default();
+        F::fill_access(&mut filter);
+        let mut shape = QueryShape::default();
+        for component in T::component_ids() {
+            shape.require(component);
+        }
+        F::fill_shape(&mut shape);
+        access.add_query(data, filter, shape);
     }
 }
 
@@ -216,6 +305,7 @@ where
     T: Component,
 {
     type Item<'w> = &'w T;
+    const IS_READ_ONLY: bool = true;
 
     fn component_ids() -> Vec<ComponentId> {
         vec![TypeId::of::<T>()]
@@ -246,6 +336,7 @@ where
     T: Component,
 {
     type Item<'w> = Mut<'w, T>;
+    const IS_READ_ONLY: bool = false;
 
     fn component_ids() -> Vec<ComponentId> {
         vec![TypeId::of::<T>()]
@@ -286,6 +377,7 @@ where
     T: Component,
 {
     type Item<'w> = Ref<'w, T>;
+    const IS_READ_ONLY: bool = true;
 
     fn component_ids() -> Vec<ComponentId> {
         vec![TypeId::of::<T>()]
@@ -314,6 +406,7 @@ impl<T: Component> ReadOnlyQueryData for Ref<'_, T> {}
 
 impl QueryData for Entity {
     type Item<'a> = Entity;
+    const IS_READ_ONLY: bool = true;
 
     fn component_ids() -> Vec<ComponentId> {
         vec![]
@@ -337,6 +430,7 @@ where
     T: Component,
 {
     type Item<'w> = Option<&'w T>;
+    const IS_READ_ONLY: bool = true;
 
     fn component_ids() -> Vec<ComponentId> {
         vec![]
@@ -367,6 +461,7 @@ where
     T: Component,
 {
     type Item<'w> = Option<Mut<'w, T>>;
+    const IS_READ_ONLY: bool = false;
 
     fn component_ids() -> Vec<ComponentId> {
         vec![]
@@ -408,6 +503,7 @@ where
     T<_>: QueryData,
 {
     type Item<'w> = typle_for!(i in .. => T<{i}>::Item<'w>);
+    const IS_READ_ONLY: bool = typle_all!(i in .. => <T<{i}>>::IS_READ_ONLY);
 
     #[allow(clippy::let_and_return)]
     fn component_ids() -> Vec<ComponentId> {
@@ -435,7 +531,14 @@ where
 
     fn fill_access(meta: &mut SystemMetadata, access: &mut SystemAccess) {
         for typle_index!(i) in 0..T::LEN {
-            <T<{ i }>>::fill_access(meta, access);
+            let mut element = SystemAccess::default();
+            <T<{ i }>>::fill_access(meta, &mut element);
+            if let Some(component) = access.data_conflict(&element) {
+                access.report_conflict(format!(
+                    "one query both writes the component `{component}` and accesses it again"
+                ));
+            }
+            access.combine(element);
         }
     }
 }

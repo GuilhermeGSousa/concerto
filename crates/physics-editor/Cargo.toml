@@ -10,3 +10,6 @@ license.workspace = true
 concerto-app.workspace = true
 concerto-editor.workspace = true
 concerto-physics-gizmos.workspace = true
+
+[lints]
+workspace = true

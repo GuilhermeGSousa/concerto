@@ -228,11 +228,11 @@ pub(crate) fn hit_character(
 }
 
 pub(crate) fn answer_hits(
-    waiting: Query<(Entity, &PendingCall, &mut HitWait)>,
+    mut waiting: Query<(Entity, &PendingCall, &mut HitWait)>,
     scene: EditWorld<Records>,
     mut cmd: CommandQueue,
 ) {
-    for (entity, pending, mut wait) in waiting.iter() {
+    for (entity, pending, mut wait) in waiting.iter_mut() {
         let Some((flinch, record, body)) = scene.get_entity(wait.scene_entity) else {
             pending.reply.err(ToolError::new(
                 "unknown_entity",

@@ -138,7 +138,7 @@ fn kill(
 /// Starts a character dying when the game says so; with zero seconds it is limp and `Dead` at once. A character that is already dying dies no slower.
 pub fn die_when_told(
     on: On<Die>,
-    characters: Query<(
+    mut characters: Query<(
         &mut CharacterRagdoll,
         Option<&mut PhysicalState>,
         Option<&mut Dying>,
@@ -147,7 +147,8 @@ pub fn die_when_told(
     mut cmd: CommandQueue,
 ) {
     let die = *on.signal();
-    let Some((mut character, mut physical, dying)) = characters.get_entity(die.character) else {
+    let Some((mut character, mut physical, dying)) = characters.get_entity_mut(die.character)
+    else {
         return;
     };
     if physical
@@ -176,7 +177,7 @@ pub fn die_when_told(
 
 /// Each fixed step, in `BehaviourSet`: drains every dying character, whose parts the drive weakens by `Dying::left`, and when nothing is left makes it limp and `Dead` and ends the behaviours still on it.
 pub fn drain_dying(
-    characters: Query<(
+    mut characters: Query<(
         Entity,
         &mut Dying,
         &mut CharacterRagdoll,
@@ -186,7 +187,7 @@ pub fn drain_dying(
     mut cmd: CommandQueue,
 ) {
     let dt = Time::fixed_delta_time().as_secs_f32();
-    for (entity, mut dying, mut character, mut physical) in characters.iter() {
+    for (entity, mut dying, mut character, mut physical) in characters.iter_mut() {
         if character.mode == RagdollMode::FollowsAnimation {
             character.mode = RagdollMode::Powered;
             character.weight = 1.0;
@@ -224,12 +225,12 @@ pub fn settle_dead_bodies(
 /// Wakes a settled body that is hit hard enough: its parts are simulated again, the struck part takes the impulse, and it settles once it is at rest again.
 pub fn wake_when_hit(
     on: On<BodyHit>,
-    characters: Query<(&Settled, &RagdollId, &RagdollBody, &mut BodySense)>,
+    mut characters: Query<(&Settled, &RagdollId, &RagdollBody, &mut BodySense)>,
     mut state: ResMut<PhysicsState>,
     mut cmd: CommandQueue,
 ) {
     let hit = *on.signal();
-    let Some((settled, id, body, mut sense)) = characters.get_entity(hit.character) else {
+    let Some((settled, id, body, mut sense)) = characters.get_entity_mut(hit.character) else {
         return;
     };
     if hit.impulse.length() < settled.wake_impulse || hit.part >= body.resolved().part_count() {

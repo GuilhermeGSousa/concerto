@@ -125,6 +125,78 @@ impl Light {
     }
 }
 
+/// How a directional light's shadow is split into maps by distance from each camera.
+#[derive(Component, Reflect, Clone, Copy, Debug, PartialEq)]
+#[reflect(Component, Default, SceneComponent)]
+pub struct ShadowCascades {
+    /// How many maps cover the distance, from one to [`ShadowCascades::MAX_COUNT`].
+    pub count: u32,
+    /// Where the first, sharpest map ends, in world units from the camera.
+    pub first_far: f32,
+    /// Where shadows end, in world units from the camera.
+    pub max_distance: f32,
+}
+
+impl Default for ShadowCascades {
+    fn default() -> Self {
+        Self {
+            count: 4,
+            first_far: 10.0,
+            max_distance: 150.0,
+        }
+    }
+}
+
+impl ShadowCascades {
+    /// The most maps one light can have for one camera.
+    pub const MAX_COUNT: u32 = 4;
+
+    /// Four maps reaching 150 units, the first ending at 10.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_count(mut self, count: u32) -> Self {
+        self.count = count;
+        self
+    }
+
+    pub fn with_first_far(mut self, first_far: f32) -> Self {
+        self.first_far = first_far;
+        self
+    }
+
+    pub fn with_max_distance(mut self, max_distance: f32) -> Self {
+        self.max_distance = max_distance;
+        self
+    }
+
+    pub(crate) fn clamped_count(&self) -> u32 {
+        self.count.clamp(1, Self::MAX_COUNT)
+    }
+
+    /// Where the map at `index` ends, in world units from the camera.
+    pub fn far_bound(&self, index: u32) -> f32 {
+        let count = self.clamped_count();
+        let max_distance = self.max_distance.max(1e-3);
+        if count == 1 || index + 1 >= count {
+            return max_distance;
+        }
+        let first_far = self.first_far.clamp(1e-3, max_distance);
+        let step = index as f32 / (count - 1) as f32;
+        first_far * (max_distance / first_far).powf(step)
+    }
+
+    /// Where the map at `index` starts, in world units from the camera.
+    pub fn near_bound(&self, index: u32) -> f32 {
+        if index == 0 {
+            0.0
+        } else {
+            self.far_bound(index - 1)
+        }
+    }
+}
+
 fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
     let t = ((x - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
     t * t * (3.0 - 2.0 * t)
@@ -170,6 +242,9 @@ pub(crate) struct LightsUniform {
 #[derive(Component)]
 pub(crate) struct RenderShadowsEnabled(pub(crate) bool);
 
+#[derive(Component, Clone, Copy, PartialEq, Default)]
+pub(crate) struct RenderShadowCascades(pub(crate) ShadowCascades);
+
 #[derive(Component, ShaderType, Clone, Copy, PartialEq)]
 pub struct RenderLight {
     pub(crate) translation: Vec3,
@@ -183,6 +258,7 @@ pub struct RenderLight {
     pub(crate) shadow_layer: i32,
     pub(crate) range: f32,
     pub(crate) shadow_far: f32,
+    pub(crate) shadow_cascades: u32,
 }
 
 impl RenderLight {
@@ -190,6 +266,7 @@ impl RenderLight {
         mut self,
         light: &Light,
         tint: Option<&LightTint>,
+        cascades: Option<&ShadowCascades>,
         transform: &GlobalTransform,
     ) -> Self {
         self.direction = -(transform.rotation() * Vec3::Z);
@@ -213,6 +290,10 @@ impl RenderLight {
             LightType::Point => point_shadow_far(light.range),
             _ => 0.0,
         };
+        self.shadow_cascades = match light.light_type {
+            LightType::Directional => cascades.copied().unwrap_or_default().clamped_count(),
+            _ => 0,
+        };
         self
     }
 
@@ -227,6 +308,7 @@ impl RenderLight {
             shadow_layer: -1,
             range: 0.0,
             shadow_far: 0.0,
+            shadow_cascades: 0,
         }
     }
 }
@@ -362,28 +444,46 @@ pub(crate) fn write_visible_lights(
 }
 
 pub(crate) fn extract_lights(
-    lights: Extracted<Query<(&Light, Option<&LightTint>, &GlobalTransform, &RenderEntity)>>,
-    render_lights: Query<(&mut RenderLight, &mut RenderShadowsEnabled)>,
+    lights: Extracted<
+        Query<(
+            &Light,
+            Option<&LightTint>,
+            Option<&ShadowCascades>,
+            &GlobalTransform,
+            &RenderEntity,
+        )>,
+    >,
+    mut render_lights: Query<(
+        &mut RenderLight,
+        &mut RenderShadowsEnabled,
+        &mut RenderShadowCascades,
+    )>,
     mut cmd: CommandQueue,
 ) {
-    for (light, tint, transform, render_entity) in lights.iter() {
+    for (light, tint, cascades, transform, render_entity) in lights.iter() {
         let render_entity = **render_entity;
+        let render_cascades = RenderShadowCascades(cascades.copied().unwrap_or_default());
 
-        if let Some((mut render_light, mut shadows_enabled)) =
-            render_lights.get_entity(render_entity)
+        if let Some((mut render_light, mut shadows_enabled, mut current_cascades)) =
+            render_lights.get_entity_mut(render_entity)
         {
-            let synced = render_light.synced_with(light, tint, transform);
+            let synced = render_light.synced_with(light, tint, cascades, transform);
             render_light.set_if_neq(synced);
             if shadows_enabled.0 != light.shadowmaps_enabled {
                 shadows_enabled.0 = light.shadowmaps_enabled;
             }
+            current_cascades.set_if_neq(render_cascades);
             continue;
         }
 
-        let render_light = RenderLight::zeroed().synced_with(light, tint, transform);
+        let render_light = RenderLight::zeroed().synced_with(light, tint, cascades, transform);
 
         cmd.insert(
-            (render_light, RenderShadowsEnabled(light.shadowmaps_enabled)),
+            (
+                render_light,
+                RenderShadowsEnabled(light.shadowmaps_enabled),
+                render_cascades,
+            ),
             render_entity,
         );
     }
@@ -412,6 +512,7 @@ mod tests {
             shadow_layer: -2,
             range: 14.0,
             shadow_far: 15.0,
+            shadow_cascades: 16,
         };
 
         let mut expected = float_words(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0]);
@@ -420,10 +521,11 @@ mod tests {
         expected.push((-2i32) as u32);
         expected.push(14.0f32.to_bits());
         expected.push(15.0f32.to_bits());
+        expected.push(16);
 
-        assert_eq!(uniform_words(&light)[..16], expected);
-        assert_eq!(RenderLight::SHADER_SIZE.get(), 64);
-        assert_eq!(light.size().get(), 64);
+        assert_eq!(uniform_words(&light)[..17], expected);
+        assert_eq!(RenderLight::SHADER_SIZE.get(), 80);
+        assert_eq!(light.size().get(), 80);
     }
 
     #[test]
@@ -432,10 +534,10 @@ mod tests {
 
         let words = words(&lights_uniform_bytes(&listed));
 
-        assert_eq!(words.len(), 2052);
-        assert_eq!(words[2048], 3);
+        assert_eq!(words.len(), 2564);
+        assert_eq!(words[2560], 3);
         assert_eq!(words[13], (-1i32) as u32);
-        assert_eq!(words[16 * 127 + 13], (-1i32) as u32);
+        assert_eq!(words[20 * 127 + 13], (-1i32) as u32);
     }
 
     struct Reach {

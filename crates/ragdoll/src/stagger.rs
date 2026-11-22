@@ -144,7 +144,7 @@ struct SidedArm {
 
 /// Each fixed step, in `BehaviourSet` before `balance_bodies`: for every staggering body, hinders its balance by what is left of the stumble, bends the spine towards the stagger's direction, and circles both arms in the sense the trunk is turning, as wide as it turns fast.
 pub fn stagger_bodies(
-    characters: Query<(
+    mut characters: Query<(
         &mut Stagger,
         &mut Balance,
         &RagdollId,
@@ -156,7 +156,7 @@ pub fn stagger_bodies(
 ) {
     let dt = Time::fixed_delta_time().as_secs_f32();
     let mut pose = Vec::new();
-    for (mut stagger, mut balance, id, body, sense, mut drive) in characters.iter() {
+    for (mut stagger, mut balance, id, body, sense, mut drive) in characters.iter_mut() {
         let stagger = &mut *stagger;
         let resolved = body.resolved();
         let landmarks = resolved.landmarks();
@@ -275,10 +275,10 @@ pub fn stagger_bodies(
 }
 
 /// When a staggering character's balance ends, notes its outcome on the stagger.
-pub fn note_balance_ended(on: On<BehaviourEnded>, staggers: Query<&mut Stagger>) {
+pub fn note_balance_ended(on: On<BehaviourEnded>, mut staggers: Query<&mut Stagger>) {
     let ended = on.signal();
     if ended.behaviour == Name::from(BALANCE)
-        && let Some(mut stagger) = staggers.get_entity(ended.character)
+        && let Some(mut stagger) = staggers.get_entity_mut(ended.character)
     {
         stagger.ended = Some(ended.outcome);
     }

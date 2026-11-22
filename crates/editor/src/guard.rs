@@ -327,12 +327,12 @@ fn dismiss_prompt(mut fired: EventReader<ActionFired>, mut guard: ResMut<Unsaved
 fn sync_prompt(
     guard: Res<UnsavedGuard>,
     documents: Query<&EditorDocument>,
-    prompts: Query<(&Prompt, &mut UINode)>,
-    messages: Query<(&PromptMessage, &mut UIText)>,
+    mut prompts: Query<(&Prompt, &mut UINode)>,
+    mut messages: Query<(&PromptMessage, &mut UIText)>,
     mut actions: ResMut<ActionMap>,
 ) {
     let asking = guard.asking();
-    for (_, mut node) in prompts.iter() {
+    for (_, mut node) in prompts.iter_mut() {
         if node.visible != asking {
             node.visible = asking;
         }
@@ -354,7 +354,7 @@ fn sync_prompt(
             .filter_map(|&entity| documents.get_entity(entity))
             .map(|document| document.title.as_str()),
     );
-    for (_, mut text) in messages.iter() {
+    for (_, mut text) in messages.iter_mut() {
         if text.text != message {
             text.text = message.clone();
         }

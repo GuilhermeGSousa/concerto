@@ -84,7 +84,7 @@ cmd.spawn((
 
 - A window camera's aspect follows its viewport, so each half stays
   undistorted.
-- Each camera clears only its own rect, to its `clear_color`. The window
+- Each camera shows its `clear_color` only in its own rect. The window
   outside every viewport is black.
 - Window cameras must not overlap: where two do, which one shows is undefined.
   A camera without a viewport covers the whole window and overlaps every other
@@ -92,11 +92,183 @@ cmd.spawn((
   viewport too. The renderer warns once when it sees both kinds.
 - A camera that renders to a texture keeps the `aspect` you give it, with a
   viewport or without one; setting it is yours.
-- Culling is per camera, and shadow maps are per light and shared by every
-  camera.
+- Culling is per camera. A point or spot light's shadow map is shared by every
+  camera; a directional light's is fitted to each camera, see
+  [Shadow cascades](#shadow-cascades).
 - Without a `MainCamera`, the director drives no camera: virtual cameras still
   stack, but nothing follows them. Move your cameras' `Transform`s yourself,
   from your own controllers.
+
+### HDR, exposure and tonemapping
+
+A camera draws its scene into its own HDR texture, its *view target*, in linear
+light with no upper limit, so a lamp can be many times brighter than a white
+wall. After the blended surfaces are drawn, the frame is multiplied by the
+camera's exposure, mapped to the displayable range by its tonemapping curve and
+written to the camera's target: the window, or its texture. Debug gizmos and
+the UI draw on the target afterwards, so neither is exposed or tonemapped.
+
+Both settings are components on the camera's entity, and both are optional:
+
+```rust
+use concerto::render::{Exposure, Tonemapping};
+
+cmd.spawn((
+    Camera::default(),
+    Tonemapping::Aces,
+    Exposure::new(-1.0),
+    Transform::IDENTITY,
+));
+```
+
+- `Tonemapping` is `Aces`, the default, or `None`, which clamps the light at 1
+  and shows it as it is.
+- `Exposure` is in photographic stops: `Exposure::new(1.0)` doubles the scene's
+  brightness before the curve and `-1.0` halves it. A camera without one shows
+  the scene unscaled.
+- `clear_color` is the colour shown, whatever the curve and exposure: the view
+  target is cleared to the scene light they display as that colour.
+- Where the adapter can't render to a float texture, as WebGL2 without
+  `EXT_color_buffer_float`, the view target is 8-bit and scene light is clamped
+  at 1 before exposure.
+
+### Eye adaptation
+
+`AutoExposure` on a camera makes its exposure follow what it sees, as an eye
+or a camera's auto-exposure does: walking from a lamp-lit room into daylight,
+the picture darkens over a moment instead of burning out. `AutoExposurePlugin`
+does it, and `DefaultPlugins` registers it.
+
+```rust
+use concerto::render::AutoExposure;
+
+cmd.spawn((Camera::default(), AutoExposure::default(), Transform::IDENTITY));
+```
+
+- Each frame the scene's average brightness is measured, as the mean of the
+  logarithm of its luminance over the camera's rect, and the exposure moves
+  toward the one that shows that average as middle grey.
+- `min_stops` and `max_stops`, -4 and 4 by default, bound how far it goes down
+  for a bright scene and up for a dark one.
+- `speed`, 2 by default, is how quickly it follows; a new camera starts
+  adapted.
+- `Exposure` still applies on top, as a compensation: `Exposure::new(-1.0)`
+  keeps the picture a stop under what the adaptation picks.
+- Under `AutoExposure`, `clear_color` is no longer exactly the colour shown,
+  since the exposure it is shown at is only known on the GPU.
+- It needs float render targets; on an adapter without them the component has
+  no effect and the plugin says so once.
+
+### Anti-aliasing
+
+A camera draws its scene with four samples a pixel, so the edges of geometry
+are smoothed. `Msaa` on the camera's entity sets it: `Msaa::Sample4`, the
+default, or `Msaa::Off`.
+
+```rust
+use concerto::render::Msaa;
+
+cmd.spawn((Camera::default(), Msaa::Off, Transform::IDENTITY));
+```
+
+- The view target's colour and depth are multisampled, and the colour is
+  resolved into the single-sampled HDR texture after the blended surfaces,
+  before bloom and tonemapping.
+- It smooths the edges of triangles, and the cutout edge of a
+  `StandardMaterial` in `AlphaMode::Mask`, which is drawn with alpha to
+  coverage on a multisampled camera: each sample is kept or dropped by how far
+  the alpha is past the cutoff. A specular highlight and a line of debug
+  gizmos, which are drawn after the resolve, stay as they were.
+- Shadow maps and the ambient occlusion prepass are single-sampled.
+- A pass of your own that draws into a view target needs a pipeline for each
+  sample count; `ViewPipelines` builds and picks them.
+
+### Depth of field
+
+`DepthOfField` on a camera keeps what is at one distance sharp and softens what
+is nearer and farther, as a lens does. `DepthOfFieldPlugin` draws it, before
+bloom, and `DefaultPlugins` registers it.
+
+```rust
+use concerto::render::DepthOfField;
+
+cmd.spawn((
+    Camera::default(),
+    DepthOfField::at(3.0).with_f_stop(1.4),
+    Transform::IDENTITY,
+));
+```
+
+- `focus_distance` is the distance in focus, in world units.
+- `f_stop` is the aperture: a lower number blurs more and narrows the range in
+  focus. The blur follows a real lens of that aperture on a 24 mm tall sensor
+  with the camera's field of view, so a long lens blurs more than a wide one.
+- `max_blur`, 0.015 by default, caps the blur as a fraction of the picture's
+  height; at 0 the pass is skipped.
+- A virtual camera carries one in `VirtualCamera::focus`. While it is live the
+  main camera takes it, and the director blends it with the rest of the pose:
+  between two focuses, or opening the blur from nothing when the outgoing
+  camera has none. `None` keeps whatever focus the main camera has.
+- A sharp surface in front of a blurred one keeps its edge. A blurred surface
+  in front of a sharp one does not yet spread over it.
+- It needs float render targets, and on GL it needs `Msaa::Off` on the camera,
+  where multisampled depth can't be read; the plugin says so once.
+
+### Bloom
+
+`Bloom` on a camera makes the bright parts of its scene glow: the HDR frame is
+blurred through a chain of ever smaller textures and the blur is put back over
+the frame, before exposure and tonemapping. `BloomPlugin` draws it, and
+`DefaultPlugins` registers it.
+
+```rust
+use concerto::render::Bloom;
+
+cmd.spawn((Camera::default(), Bloom::default(), Transform::IDENTITY));
+```
+
+- `intensity`, 0.15 by default, is how much of the blur is shown. At 0 the
+  pass is skipped and the frame is unchanged.
+- `threshold` is 0 by default: everything glows a little, and the blur is mixed
+  into the frame, so the frame keeps its brightness and nothing flickers as a
+  texel crosses a limit. Above 0, only light brighter than the threshold glows
+  and the glow is added on top, the stylised look.
+- What glows is what is bright in scene light: an emissive factor well above 1,
+  a strong light on a pale wall, the sun's disk. A `clear_color` near white is
+  bright too.
+
+### Ambient occlusion
+
+`ScreenSpaceAmbientOcclusion` on a camera darkens the standard material's
+ambient light where nearby surfaces block it: room corners, the foot of a wall,
+the ground under a character's feet. Light from lamps and the sun is not
+touched. `AmbientOcclusionPlugin` draws it, and `DefaultPlugins` registers it.
+
+```rust
+use concerto::render::ScreenSpaceAmbientOcclusion;
+
+cmd.spawn((
+    Camera::default(),
+    ScreenSpaceAmbientOcclusion::default(),
+    Transform::IDENTITY,
+));
+```
+
+- `radius`, 0.5 by default, is how far a surface looks for what blocks it, in
+  world units. `intensity`, 1 by default, scales the result; at 0 the passes
+  are skipped and the frame is unchanged.
+- It is computed from a depth prepass of the camera's view, drawn only for
+  cameras that have the component: every mesh that casts a shadow and is not
+  blended is drawn once more, depth only. A mesh with `NotShadowCaster` neither
+  occludes nor is drawn there.
+- A `Mask` surface occludes as the shape its cutout leaves, as it casts its
+  shadow. A material that moves vertices in its own shader occludes from where
+  the mesh was.
+- A custom material reads the result from `@group(1) @binding(3)`, a
+  `texture_2d<f32>` the size of the camera's target, white where the camera has
+  no occlusion; `screen_occlusion` in the standard shader shows how.
+- It needs float render targets; on an adapter without them the component has
+  no effect and the plugin says so once.
 
 ### Layers
 
@@ -153,12 +325,48 @@ always seen, so give a light a range wherever it has one. With no camera, no
 light is seen. Up to 128 seen lights are drawn; the later ones in entity order
 are left out, with a warning.
 
-Up to 128 seen spot and directional lights cast shadows at once. A point light
+Spot and directional lights share 128 shadow map layers. A spot light takes
+one, and a directional light one for each of its cascades for each camera,
+eight with the default four cascades and two cameras; a light whose layers no
+longer fit, the later ones in entity order, lights without shadows. A point light
 casts into a cube map that reaches as far as its `range`, or 20 metres when
 the range is 0. Up to 42 seen point lights cast shadows at once, six layers
 each of the 256 texture array layers the renderer asks the GPU for; the
 others, the later ones in entity order, light without shadows. A browser
 without cube map arrays casts from one point light.
+
+### Shadow cascades
+
+A directional light's shadow follows each camera. The distance from the camera
+is split into ranges, and each range has its own 1024 pixel map fitted around
+that slice of the camera's view, so a shadow is sharp near the camera, still
+there far from it, and the same wherever the camera is in the world.
+`ShadowCascades` on the light's entity sets the split; without it the light
+uses the defaults.
+
+```rust
+use concerto::render::components::light::{Light, ShadowCascades};
+
+cmd.spawn((
+    Light::directional_light().with_shadows(),
+    ShadowCascades::new().with_max_distance(80.0),
+    Transform::from_rotation(Quat::from_rotation_x(-1.0)),
+));
+```
+
+- `count`, 4 by default and at most 4, is how many maps cover the distance.
+  Each one is another pass over the meshes it holds, for each camera.
+- `first_far`, 10 by default, is where the first map ends. The others end at
+  distances that grow by a constant factor up to `max_distance`: 10, 25, 61
+  and 150 with the defaults.
+- `max_distance`, 150 by default, is where shadows end, fading out. The
+  camera's `zfar` ends them sooner. A shorter distance sharpens every map.
+- A map moves in steps of one of its texels, so a shadow's edge does not crawl
+  as the camera moves, and neighbouring maps blend where they meet.
+- A mesh up to 200 units towards the light from a map still casts into it.
+- A material with its own shader that declares the `Light` struct declares
+  `shadow_cascades: u32` as its last field, and reads a directional light's
+  shadow as `cascaded_shadow_visibility` in `shader.wgsl` does.
 
 ## Meshes and materials
 
@@ -209,7 +417,8 @@ the base color's alpha does:
 
 - `Opaque`, the default, ignores it: the surface hides what is behind it;
 - `Mask { cutoff }` discards the fragments whose alpha is below `cutoff` and
-  draws the rest opaque, for leaves and fences;
+  draws the rest opaque, for leaves and fences. Its shadow and its ambient
+  occlusion are cut to the same shape, and under MSAA its edge is smoothed;
 - `Blend` blends the surface over what is behind it by its alpha, for glass and
   decals.
 
@@ -301,6 +510,55 @@ sky's color in the direction you look instead of `Fog::color`. `Sky`'s
 Earth's by default, is `Sun::atmosphere`. A scene with neither component draws
 as it did before; see `crates/skybox/README.md` for the details.
 
+The standard material also reflects the sky. A smooth metal shows the horizon
+and the sky above it, a rough one a blur of it, and every surface gains a sheen
+at grazing angles. The reflection is the sky alone: it does not show the scene
+around a surface, and it is not blocked by a roof, only dimmed by ambient
+occlusion where a camera has it. Without a `Sky`, a surface reflects
+`CameraEnvironment::ambient`, the same from every direction.
+
+## Particles
+
+`ParticleEmitter`, from `concerto::particles`, emits soft round billboards from
+its entity's transform; `ParticlesPlugin` is part of `DefaultPlugins`. Three
+starting points cover the common cases, and every field is public:
+
+```rust
+use concerto::particles::ParticleEmitter;
+
+cmd.spawn((
+    ParticleEmitter::snow(Vec3::new(20.0, 0.5, 20.0)),
+    Transform::from_translation(Vec3::new(0.0, 8.0, 0.0)),
+));
+cmd.spawn((
+    ParticleEmitter::steam().with_rate(60.0),
+    Transform::from_translation(Vec3::new(2.0, 1.0, 0.0)),
+));
+cmd.spawn((ParticleEmitter::embers(), Transform::IDENTITY));
+```
+
+- A particle appears in a box of half-size `extent` around the emitter, with
+  `velocity` plus up to `velocity_spread` on each axis, both in the emitter's
+  space. From then on it lives in the world: `acceleration` and `drag` move
+  it, and moving the emitter leaves it behind as a trail.
+- Over its `lifetime` it goes from `start_size` to `end_size` and from
+  `start_color` to `end_color`; the colour's alpha is how opaque it is.
+- `rate` is particles a second, and `capacity` the most alive at once: emission
+  waits while it is reached. A rate of 0 lets the living ones die out.
+- `lit` particles take the ambient light and every light that reaches them,
+  without shadows, so steam glows by a stove. Unlit ones show their colour as
+  it is; with values above 1, as embers have, they glow under bloom.
+- `additive` particles add their light to what is behind them; the others
+  cover it. Both are drawn in the transparent phase, the emitter sorted by its
+  distance among the other blended surfaces.
+- It is a scene component: an emitter can be added and tuned in the inspector,
+  and it runs in the editor's scene view.
+
+The living particles are the `Particles` component on the same entity. They
+are simulated on the CPU in `Update`, with no allocation once an emitter has
+reached its capacity. Particles within one emitter are not sorted, they do not
+fade where they meet a surface, and they take no fog.
+
 ## Debug drawing
 
 `concerto-debug-gizmos` draws lines and shapes for one frame. It is not
@@ -388,15 +646,18 @@ app.register_plugin(MaterialPlugin::<Glow>::new());
 Entities then use `MaterialComponent::<Glow>`. The material's own bindings
 are in bind group 0; the camera, lighting and skeleton groups (1, 2 and 3) are
 added when the material asks for them. The comments at the top of
-`crates/render/src/material_plugin.rs` describe the convention.
+`crates/render/src/material_plugin.rs` describe the convention. The fragment
+shader returns linear scene light, which may exceed 1; the camera exposes and
+tonemaps it afterwards, so a shader must not tonemap or gamma-encode its
+result.
 
 Two settings blend a material. `blend = "alpha"` in `#[material(...)]` blends
 every asset of the type in the type's one pass, unsorted and writing depth
 unless `depth_stencil` says otherwise, as the world grid does. Marking one field
 `#[alpha_mode]` lets each asset choose: the derive reads
 `Material::alpha_mode()` from that field, and an asset whose mode is `Blend` is
-drawn after the opaque surfaces of its type, back to front, without writing
-depth. The field is an `AlphaMode`, or any type `AlphaMode` converts from by
+drawn after every opaque surface, without writing depth, in one pass with the
+blended assets of every other material type, the farthest first. The field is an `AlphaMode`, or any type `AlphaMode` converts from by
 reference, as `StandardMaterial`'s uniform is. Only one field may carry it;
 without one, every asset is `Opaque`.
 
@@ -410,5 +671,72 @@ struct Tint {
     alpha_mode: AlphaMode,
 }
 ```
+
+A masked asset of a material of your own casts the shadow of its whole mesh
+until the material has a cutout shader: a fragment shader the shadow maps and
+the depth prepass run for its `Mask` assets, with the material's bind group at
+group 2 and the mesh's UV at location 0. It discards what the cutout removes
+and returns nothing.
+
+```rust
+#[material(
+    fragment_shader = include_str!("tint.wgsl"),
+    cutout_shader = include_str!("tint_cutout.wgsl"),
+)]
+```
+
+```wgsl
+@group(2) @binding(0)
+var<uniform> color: vec4<f32>;
+
+@fragment
+fn fs_cutout(@location(0) tex_coords: vec2<f32>) {
+    if color.a < 0.5 {
+        discard;
+    }
+}
+```
+
+The edge of a masked asset of your own material is smoothed under MSAA when
+the material says `alpha_to_coverage = true` in `#[material(...)]`. Its `Mask`
+assets are then drawn on a multisampled camera by a pipeline with alpha to
+coverage on, from the fragment shader compiled with `ALPHA_TO_COVERAGE`
+defined; under that def the shader returns in its alpha how much of the pixel
+the surface covers instead of discarding, as `shader.wgsl` does:
+
+```wgsl
+#ifdef ALPHA_TO_COVERAGE
+    let coverage = clamp((alpha - cutoff) / max(fwidth(alpha), 0.0001) + 0.5, 0.0, 1.0);
+#else
+    if alpha < cutoff {
+        discard;
+    }
+#endif
+```
+
+### Drawing without a material plugin
+
+A material plugin draws nothing itself. Each frame it queues its meshes in the
+camera's `ViewPhase`, and the renderer draws each camera's phases in one pass
+each: `opaque` in `RenderSet::Draw`, in the order queued, and `transparent` in
+`RenderSet::Transparent`, sorted farthest first whoever queued the items. A
+plugin of your own that draws into a camera's scene, as the particles do,
+queues `PhaseItem`s the same way, from a render system in `RenderSet::Queue`
+ordered `.after(clear_view_phases)`:
+
+```rust
+use concerto::render::view_phase::{PhaseItem, ViewPhases};
+
+fn queue_trails(mut phases: ResMut<ViewPhases>, cameras: Query<(Entity, &RenderCamera)>) {
+    for (camera, render_camera) in cameras.iter() {
+        phases.view_mut(camera).transparent.push(PhaseItem { /* … */ });
+    }
+}
+```
+
+An item holds everything its draw needs: a pipeline for the view target's
+format, sample count and depth, its bind group for group 0, which of the
+camera, lighting and skeleton groups it takes, a mesh, and a range of an
+instance buffer bound at vertex slot 1.
 
 Next: [Physics, animation and gameplay](07-physics-animation-gameplay.md).

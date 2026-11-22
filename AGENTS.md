@@ -89,9 +89,10 @@ of these pass, in this order. They are the CI jobs, with CI's flags.
 ```sh
 cargo fmt --all -- --check
 python3 .github/scripts/test_budget.py
-cargo deny check bans
-CARGO_BUILD_WARNINGS=deny cargo clippy --locked --workspace --all-targets -- -A clippy::type_complexity -A clippy::too_many_arguments -D warnings
-CARGO_BUILD_WARNINGS=deny cargo clippy --locked -p concerto-physics --no-default-features --features force-rapier -- -A clippy::type_complexity -A clippy::too_many_arguments -D warnings
+cargo deny check bans advisories
+CARGO_BUILD_WARNINGS=deny cargo clippy --locked --workspace --all-targets -- -D warnings
+cargo clippy --locked --workspace -- -A clippy::all -D clippy::cognitive_complexity
+CARGO_BUILD_WARNINGS=deny cargo clippy --locked -p concerto-physics --no-default-features --features force-rapier -- -D warnings
 cargo test --locked --workspace
 cargo test --locked -p concerto-physics --no-default-features --features force-rapier
 cargo build --locked --target wasm32-unknown-unknown
@@ -104,10 +105,27 @@ code that CI's clippy rejects.
 `CARGO_BUILD_WARNINGS=deny` makes cargo's own warnings fail clippy, among them
 a dependency that no target of its crate uses: remove it, or make it optional
 behind the feature that enables the targets using it, as `concerto-benches`
-does with `run`. `cargo deny check bans` fails when the lockfile holds two
+does with `run`.
+
+The cognitive complexity line fails on a function in production code that
+scores above `cognitive-complexity-threshold` in `clippy.toml`; tests are not
+checked. Split the function. The threshold is a ceiling set at the highest
+score in the workspace, lowered as those functions are split and never raised.
+
+`clippy.toml` also holds the two lints the workspace ignores, `too_many_arguments`
+and `type_complexity`, as thresholds set too high to reach; the clippy lines
+carry no `-A` flags for them.
+
+`cargo deny check bans` fails when the lockfile holds two
 versions of one crate. When an upstream crate brings the second version, add
 it to `skip` in `deny.toml` with a `reason` naming that crate; delete the entry
 once cargo-deny reports it unmatched.
+
+`cargo deny check advisories` fails when a dependency in the lockfile has a
+RustSec advisory: a vulnerability, or a crate marked unmaintained or unsound.
+Update the dependency (`cargo update -p <crate>`). When no fixed version
+exists, add the advisory's id to `ignore` under `[advisories]` in `deny.toml`
+with a `reason`, and open an issue for getting off the crate.
 
 A test that needs a GPU skips with a `SKIPPED` line on stderr when there is no adapter or the adapter gives no device; the line says which, with the device error and the adapters wgpu enumerated. The test harness captures it, so it shows only for a failing test or under `--nocapture`. `CONCERTO_REQUIRE_GPU=1` turns the skip into a failure with the same reason. Neither CI runner, Ubuntu or Windows, has an adapter, so GPU tests skip in CI; run them locally on a machine with a GPU.
 
@@ -178,7 +196,12 @@ when a component appears or disappears, listen for its lifecycle signals,
 `On<Add<T>>`, `On<Replace<T>>`, `On<Remove<T>>` and `On<Despawn<T>>`. A system
 whose `Res<T>` or `ResMut<T>` names a missing resource is skipped with a warning
 on every run until the resource exists; take `Option<Res<T>>` or
-`Option<ResMut<T>>` when absence is normal.
+`Option<ResMut<T>>` when absence is normal. A system whose own parameters alias
+panics when it is initialized, naming itself and the conflict: two parameters
+on one resource where one is `ResMut`, one query that writes a component and
+names it again, or two queries on one component where one writes it (a
+`Changed<T>` or `Added<T>` filter reads `T`). Two such queries are accepted
+when one requires a component the other excludes with `Without`.
 
 **Listeners carry their own data.** What a listener needs to know about the
 widget it sits on is captured by its closure, not put in a component that the
@@ -202,8 +225,10 @@ Something to be done is a signal. If change detection cannot express the case,
 say so in the spec and propose the fix to change detection; do not work around
 it with a counter.
 
-**Warnings are errors.** `[lints.rust] warnings = "deny"` is set, so an unused
-import fails the build.
+**Warnings are errors.** `[workspace.lints.rust] warnings = "deny"` is set and
+every package inherits it with `[lints] workspace = true`, so an unused import
+fails the build of any crate. A new crate's `Cargo.toml` carries those two
+lines.
 
 **Match the code around you.** Naming, module layout, error handling, and test
 style follow the file you are in.

@@ -244,14 +244,14 @@ pub fn spawn_first_person_walker(
 
 /// Steers and turns each walker from its player's `Move` and `Look` actions and, for the player who holds it, the mouse.
 pub fn read_first_person_input(
-    walkers: Query<(&PlayerIndex, &mut FirstPersonWalker)>,
+    mut walkers: Query<(&PlayerIndex, &mut FirstPersonWalker)>,
     input: Res<Input>,
     actions: Res<ActionMap>,
     players: Res<Players>,
     time: Res<Time>,
 ) {
     let dt = time.delta().as_secs_f32();
-    for (player, mut walker) in walkers.iter() {
+    for (player, mut walker) in walkers.iter_mut() {
         if !walker.controlled {
             if walker.push != Vec2::ZERO {
                 walker.steer(Vec2::ZERO);
@@ -281,11 +281,11 @@ pub fn read_first_person_input(
 
 /// Sets each walker's body velocity for the fixed step: its push along the ground, and whatever holds its feet on the ground under it. A `Carried` walker is left alone.
 pub fn step_first_person_walkers(
-    walkers: Query<(&mut FirstPersonWalker, &BodyId), Without<Carried>>,
+    mut walkers: Query<(&mut FirstPersonWalker, &BodyId), Without<Carried>>,
     mut physics: ResMut<PhysicsState>,
 ) {
     let dt = Time::fixed_delta_time().as_secs_f32();
-    for (mut walker, body) in walkers.iter() {
+    for (mut walker, body) in walkers.iter_mut() {
         let feet = physics.body_transform(*body).translation;
         let probe_radius = walker.radius * GROUND_PROBE_SCALE;
         let probe_from = feet + Vec3::Y * (walker.step_height + probe_radius);
@@ -311,10 +311,10 @@ pub fn step_first_person_walkers(
 
 /// Moves each `FirstPersonView` to its walker's eyes and turns it the way the walker looks.
 pub fn place_first_person_views(
-    views: Query<(&FirstPersonView, &mut Transform)>,
+    mut views: Query<(&FirstPersonView, &mut Transform)>,
     walkers: Query<(&FirstPersonWalker, &Transform), Without<FirstPersonView>>,
 ) {
-    for (view, mut transform) in views.iter() {
+    for (view, mut transform) in views.iter_mut() {
         let Some((walker, body)) = walkers.get_entity(view.walker) else {
             continue;
         };

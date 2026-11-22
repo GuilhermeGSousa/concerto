@@ -30,8 +30,8 @@ fn muscle() -> PartStrength {
     PartStrength::powered(500.0, 120.0)
 }
 
-fn raise_arms(characters: Query<(&RaiseArms, &RagdollBody, &mut BodyDrive)>) {
-    for (_, body, mut drive) in characters.iter() {
+fn raise_arms(mut characters: Query<(&RaiseArms, &RagdollBody, &mut BodyDrive)>) {
+    for (_, body, mut drive) in characters.iter_mut() {
         let landmarks = body.resolved().landmarks();
         for raised in [
             Raised {
@@ -70,8 +70,8 @@ struct Raised {
     turn: f32,
 }
 
-fn lower_left_arm(characters: Query<(&LowerLeftArm, &RagdollBody, &mut BodyDrive)>) {
-    for (_, body, mut drive) in characters.iter() {
+fn lower_left_arm(mut characters: Query<(&LowerLeftArm, &RagdollBody, &mut BodyDrive)>) {
+    for (_, body, mut drive) in characters.iter_mut() {
         if let Some(arm) = body.resolved().landmarks().left.upper_arm {
             drive.claim(
                 "lower_left_arm",

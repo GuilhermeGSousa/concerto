@@ -211,7 +211,7 @@ const LYING: f32 = 1.0;
 
 /// Each fixed step, after the body is sensed, moves every character's `PhysicalState` where the body is: `Animated` while its ragdoll follows its animation and nothing claims a part, `Reacting` otherwise, `Down` once a falling or limp body lies at rest. Triggers `BodyStateChanged` for every change, whoever made it.
 pub fn update_physical_states(
-    characters: Query<(
+    mut characters: Query<(
         Entity,
         &mut CharacterRagdoll,
         &mut PhysicalState,
@@ -220,7 +220,7 @@ pub fn update_physical_states(
     )>,
     mut cmd: CommandQueue,
 ) {
-    for (entity, mut character, mut physical, drive, sense) in characters.iter() {
+    for (entity, mut character, mut physical, drive, sense) in characters.iter_mut() {
         let driven = drive.is_some_and(|drive| !drive.running().is_empty());
         let following = character.mode == RagdollMode::FollowsAnimation && !driven;
         let lying = sense.is_some_and(|sense| sense.at_rest && sense.lean > LYING);

@@ -491,18 +491,26 @@ impl AssetServer {
             .map(Some)
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) async fn skipped_uncooked(
         &self,
         id: AssetId,
     ) -> anyhow::Result<Option<UncookedBytes>> {
         let (root, registry) = self.content_source();
         match root {
-            #[cfg(not(target_arch = "wasm32"))]
             ContentAssetRoot::Directory(_) if registry.get(id).is_some() => {
                 self.uncooked_section(id).await
             }
             _ => Ok(None),
         }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) async fn skipped_uncooked(
+        &self,
+        _id: AssetId,
+    ) -> anyhow::Result<Option<UncookedBytes>> {
+        Ok(None)
     }
 
     async fn uncooked_section(&self, id: AssetId) -> anyhow::Result<Option<UncookedBytes>> {

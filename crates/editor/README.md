@@ -1382,6 +1382,16 @@ is stored as 90°. The swatch always shows the color at full alpha, and an HDR
 color clips at full brightness. An editor registered for `Color` with
 `register_property_editor::<Color, _>` still takes precedence.
 
+A left click on the swatch opens a `UIColorPicker` below it: a
+saturation/value square, a hue strip, an alpha strip and a hex field, and for
+a linear color an intensity field holding its largest channel, so an HDR color
+keeps its brightness while you pick its hue. A second click closes it, and a
+click on another row's swatch moves it there. Each change is committed to the
+scene as you drag or type, in the color's own space. Escape closes the popup
+and commits the value it opened with; a click outside it closes it and keeps
+the color. The popup also closes when the selection changes or the scene
+closes.
+
 ### Names
 
 A `concerto_name::Name` field is a text field holding its text, with nothing
@@ -1610,6 +1620,13 @@ the asset, and remove `SaveRequested`. If the write fails, insert `Unsaved`
 again and leave an error in the document's status. Removing the marker at
 capture means an edit made while a slow save is in flight marks the document
 again and is not lost.
+
+A save that finishes in the system that saw `SaveRequested` hands its result to
+`asset_editor::report_save`, which removes `SaveRequested`, sets the status to
+"Saved <addresses>" or "Save failed: <error>", writes `SceneSaved` or
+`SaveFailed`, and removes `Unsaved` after a success. Its result is a
+`SavedFiles { asset, written }`; an `AssetEntry` converts into one that wrote
+that file alone. The event is named `SceneSaved` for every kind of asset.
 
 A document that holds its own edits restores them on `DiscardEdits`, which the
 prompt sends when the user chooses Discard. The tab can outlive that choice, since

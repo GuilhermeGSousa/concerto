@@ -4,12 +4,16 @@
 use std::collections::{HashMap, HashSet};
 
 use concerto_ecs::{
+    command::CommandQueue,
     component::Component,
     entity::{Entity, hierarchy::ChildOf},
     events::{event_reader::EventReader, event_writer::EventWriter},
-    query::{Query, filter::Without},
+    query::{
+        Query,
+        filter::{With, Without},
+    },
     resource::{Res, ResMut, Resource},
-    signal::On,
+    signal::{EntitySignal, On, Signal},
     system::input::SystemLocal,
 };
 use concerto_window::define_action;
@@ -319,10 +323,10 @@ struct PanelInfo {
 
 /// Rebuilds the stack, closes stale chains, and projects `open` onto the node's visibility and layer.
 pub fn track_panel_stack(
-    panels: Query<(Entity, &mut UIAnchoredPanel, &mut UINode)>,
-    nodes: Query<&UINode>,
+    mut panels: Query<(Entity, &mut UIAnchoredPanel, &mut UINode)>,
+    nodes: Query<&UINode, Without<UIAnchoredPanel>>,
     parents: Query<&ChildOf>,
-    parented_panels: Query<(Entity, &UIAnchoredPanel, &ChildOf)>,
+    parented_panels: Query<Entity, (With<UIAnchoredPanel>, With<ChildOf>)>,
     nodeless_panels: Query<(Entity, &UIAnchoredPanel), Without<UINode>>,
     interactables: Query<&Interactable>,
     mut warned: SystemLocal<MisusedPanels>,
@@ -331,7 +335,7 @@ pub fn track_panel_stack(
     mut focus_lost: EventWriter<UIFocusLost>,
     mut focus_gained: EventWriter<UIFocusGained>,
 ) {
-    for (entity, _, _) in parented_panels.iter() {
+    for entity in parented_panels.iter() {
         if warned.insert(entity) {
             warn!(
                 "UIAnchoredPanel on {entity:?} has a ChildOf: a panel must be a UI root, or it \
@@ -347,13 +351,25 @@ pub fn track_panel_stack(
             );
         }
     }
-    for (entity, panel, _) in panels.iter() {
+    let mut infos: Vec<PanelInfo> = panels
+        .iter_mut()
+        .map(|(entity, panel, _)| PanelInfo {
+            entity,
+            owner: panel.owner,
+            target: panel.target,
+            open: panel.open,
+        })
+        .collect();
+    let panel_entities: Vec<Entity> = infos.iter().map(|info| info.entity).collect();
+
+    for (entity, panel, _) in panels.iter_mut() {
         if !panel.toggled_by_owner {
             continue;
         }
         let clickable = match panel.owner {
             Some(owner) => {
-                nodes.get_entity(owner).is_none() || interactables.get_entity(owner).is_some()
+                !(panel_entities.contains(&owner) || nodes.get_entity(owner).is_some())
+                    || interactables.get_entity(owner).is_some()
             }
             None => false,
         };
@@ -364,17 +380,6 @@ pub fn track_panel_stack(
             );
         }
     }
-
-    let mut infos: Vec<PanelInfo> = panels
-        .iter()
-        .map(|(entity, panel, _)| PanelInfo {
-            entity,
-            owner: panel.owner,
-            target: panel.target,
-            open: panel.open,
-        })
-        .collect();
-    let panel_entities: Vec<Entity> = infos.iter().map(|info| info.entity).collect();
 
     for info in infos.iter_mut() {
         if !info.open {
@@ -436,7 +441,7 @@ pub fn track_panel_stack(
     };
 
     let mut focus_target = None;
-    for (entity, mut panel, mut node) in panels.iter() {
+    for (entity, mut panel, mut node) in panels.iter_mut() {
         let is_panel_open = stack.open.contains(&entity);
         if is_panel_open && !previously_open.contains(&entity) {
             focus_target = panel.focus_on_open.or(focus_target);
@@ -480,7 +485,7 @@ pub fn track_panel_stack(
 
 fn on_screen(
     entity: Entity,
-    nodes: &Query<&UINode>,
+    nodes: &Query<&UINode, Without<UIAnchoredPanel>>,
     parents: &Query<&ChildOf>,
     panel_entities: &[Entity],
 ) -> bool {
@@ -563,6 +568,12 @@ define_action!(
     UIDismissPanel
 );
 
+/// Sent to an anchored panel that Escape closed.
+pub struct UIPanelEscaped;
+
+impl Signal for UIPanelEscaped {}
+impl EntitySignal for UIPanelEscaped {}
+
 struct EscapeDismissal {
     dismissed: bool,
     field_focused: bool,
@@ -578,11 +589,11 @@ fn should_dismiss_on_escape(inputs: EscapeDismissal) -> bool {
 }
 
 /// Click listener for a panel owner: opens or closes the panels it toggles.
-pub fn toggle_owned_panels(on: On<UIClick>, panels: Query<&mut UIAnchoredPanel>) {
+pub fn toggle_owned_panels(on: On<UIClick>, mut panels: Query<&mut UIAnchoredPanel>) {
     if on.signal().button != MouseButton::Left {
         return;
     }
-    for mut panel in panels.iter() {
+    for mut panel in panels.iter_mut() {
         if panel.toggled_by_owner && panel.owner == Some(on.entity()) {
             panel.open = !panel.open;
         }
@@ -591,7 +602,7 @@ pub fn toggle_owned_panels(on: On<UIClick>, panels: Query<&mut UIAnchoredPanel>)
 
 pub(crate) fn dismiss_panels(
     stack: Res<UIPanelStack>,
-    panels: Query<(&mut UIAnchoredPanel, Option<&UILayout>)>,
+    mut panels: Query<(&mut UIAnchoredPanel, Option<&UILayout>)>,
     layouts: Query<&UILayout>,
     input: Res<Input>,
     window: Res<Window>,
@@ -599,6 +610,7 @@ pub(crate) fn dismiss_panels(
     text_inputs: Query<&UITextInput>,
     mut actions: EventReader<ActionFired>,
     mut cancelled_this_frame: EventReader<UITextInputCancelled>,
+    mut cmd: CommandQueue,
 ) {
     let pressed = [
         MouseButton::Left,
@@ -616,7 +628,7 @@ pub(crate) fn dismiss_panels(
             .open()
             .iter()
             .filter_map(|entity| {
-                let (panel, layout) = panels.get_entity(*entity)?;
+                let (panel, layout) = panels.get_entity_mut(*entity)?;
                 let layout = layout?;
                 Some(PanelRects {
                     panel: *entity,
@@ -629,7 +641,7 @@ pub(crate) fn dismiss_panels(
             })
             .collect::<Vec<_>>();
         for closing in panels_to_close(&rects, cursor) {
-            if let Some((mut panel, _)) = panels.get_entity(closing.panel) {
+            if let Some((mut panel, _)) = panels.get_entity_mut(closing.panel) {
                 panel.open = false;
             }
         }
@@ -646,9 +658,10 @@ pub(crate) fn dismiss_panels(
     });
     if should_dismiss
         && let Some(top) = stack.open().last()
-        && let Some((mut panel, _)) = panels.get_entity(*top)
+        && let Some((mut panel, _)) = panels.get_entity_mut(*top)
     {
         panel.open = false;
+        cmd.entity(*top).trigger(UIPanelEscaped);
     }
 }
 

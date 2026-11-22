@@ -461,7 +461,7 @@ fn wanted_strengths(
 
 /// Each fixed step, before physics steps, holds every ragdoll's parts to the animated pose as its mode and strength profile ask: a kinematic part is driven to its bone, a powered part's motor is aimed at its bone's rotation under its parent's, leading it by the animation's own speed, and a limp part's motor is off. A change of strength takes hold over the character's `blend`. Triggers `PoseLost` when the root part has been too far from its animated place for too long.
 pub fn drive_character_ragdolls(
-    characters: Query<
+    mut characters: Query<
         (
             Entity,
             &CharacterRagdoll,
@@ -479,7 +479,7 @@ pub fn drive_character_ragdolls(
 ) {
     let dt = Time::fixed_delta_time().as_secs_f32();
     let mut simulated = Vec::new();
-    for (entity, character, id, mut body, flinch, drive, dying) in characters.iter() {
+    for (entity, character, id, mut body, flinch, drive, dying) in characters.iter_mut() {
         let animated = body.animated.clone();
         let claims = drive.map(|mut drive| drive.take()).unwrap_or_default();
         let mut wanted = wanted_strengths(character, &body, ragdolls.get(&character.ragdoll));
@@ -649,14 +649,14 @@ fn yaw(rotation: Quat) -> Quat {
 
 /// Each fixed step, before physics steps, while a character's root part has any weight: its capsule is `Carried`, is in no collision layer, and is put on the ground under the ragdoll's root part. When the weight is back at 0 the capsule is let go where it stands.
 pub fn carry_capsules(
-    characters: Query<(&CharacterRagdoll, &RagdollId, &mut RagdollBody), Without<Settled>>,
+    mut characters: Query<(&CharacterRagdoll, &RagdollId, &mut RagdollBody), Without<Settled>>,
     bodies: Query<(&BodyId, Option<&CollisionLayers>)>,
-    carried: Query<&mut Carried>,
+    mut carried: Query<&mut Carried>,
     mut state: ResMut<PhysicsState>,
     mut cmd: CommandQueue,
 ) {
     let mut pose = Vec::new();
-    for (character, id, mut body) in characters.iter() {
+    for (character, id, mut body) in characters.iter_mut() {
         let physical = body
             .bone_name(0)
             .is_some_and(|bone| character.weight_of(&bone) > 0.0);
@@ -713,7 +713,7 @@ pub fn carry_capsules(
             velocity: state.linear_velocity(root_body),
             facing: yaw(root.rotation * rest.inverse()),
         };
-        match carried.get_entity(carrying.capsule) {
+        match carried.get_entity_mut(carrying.capsule) {
             Some(mut carried) => **carried = update,
             None => cmd.insert(update, carrying.capsule),
         }
@@ -722,11 +722,11 @@ pub fn carry_capsules(
 
 /// After each physics step, keeps every ragdoll's last two poses, which the drawn pose is interpolated between.
 pub fn record_ragdoll_poses(
-    characters: Query<(&RagdollId, &mut RagdollBody)>,
+    mut characters: Query<(&RagdollId, &mut RagdollBody)>,
     state: Res<PhysicsState>,
 ) {
     let mut pose = Vec::new();
-    for (id, mut body) in characters.iter() {
+    for (id, mut body) in characters.iter_mut() {
         state.ragdoll_pose(*id, &mut pose);
         if pose.len() != body.current.len() {
             continue;
@@ -748,14 +748,14 @@ fn blend(animated: Mat4, simulated: BodyPose, weight: f32) -> Mat4 {
 
 /// Each frame, after the animation has written the bones and before transforms propagate, notes the animated pose of every part and writes onto the bones the ragdoll's pose, interpolated between the last two fixed steps, by each part's weight. A bone with no part keeps its animated pose under its parent, so fingers and a face still animate on a limp body.
 pub fn write_ragdoll_poses(
-    characters: Query<(&CharacterRagdoll, &mut RagdollBody, &SkeletonComponent)>,
+    mut characters: Query<(&CharacterRagdoll, &mut RagdollBody, &SkeletonComponent)>,
     skeletons: Res<AssetStore<Skeleton>>,
     globals: Query<&GlobalTransform>,
-    locals: Query<&mut Transform>,
+    mut locals: Query<&mut Transform>,
     time: Res<Time>,
 ) {
     let alpha = time.fixed_alpha();
-    for (character, mut body, skeleton_component) in characters.iter() {
+    for (character, mut body, skeleton_component) in characters.iter_mut() {
         let Some(skeleton) = skeletons.get(skeleton_component.skeleton()) else {
             continue;
         };
@@ -773,7 +773,7 @@ pub fn write_ragdoll_poses(
         let mut world: Vec<Mat4> = Vec::with_capacity(body.skeleton_bones.len());
         let mut model: Vec<Mat4> = Vec::with_capacity(body.skeleton_bones.len());
         for (bone, entity) in body.skeleton_bones.clone().into_iter().enumerate() {
-            let Some(mut local) = locals.get_entity(entity) else {
+            let Some(mut local) = locals.get_entity_mut(entity) else {
                 world.push(Mat4::IDENTITY);
                 model.push(Mat4::IDENTITY);
                 continue;
@@ -818,10 +818,10 @@ pub fn write_ragdoll_poses(
 
 /// Each frame, after transforms have propagated, places every part's animated pose in the world: the pose the animation asked for, whatever was drawn.
 pub fn record_animated_poses(
-    characters: Query<&mut RagdollBody>,
+    mut characters: Query<&mut RagdollBody>,
     globals: Query<&GlobalTransform>,
 ) {
-    for mut body in characters.iter() {
+    for mut body in characters.iter_mut() {
         let body = &mut *body;
         for part in 0..body.animated.len() {
             let root = body.part_roots[part];

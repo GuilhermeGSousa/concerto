@@ -419,7 +419,7 @@ pub(super) fn size_label_columns(
     cards: Query<(&LabelColumn, &UILayout)>,
     children: Query<&Children>,
     labels: Query<&RowLabel>,
-    nodes: Query<&mut UINode>,
+    mut nodes: Query<&mut UINode>,
 ) {
     for (card, layout) in cards.iter() {
         let width = UIValue::Px(label_column(layout.rect.size.x));
@@ -428,7 +428,7 @@ pub(super) fn size_label_columns(
             let cells = children.get_entity(row);
             for &cell in cells.into_iter().flat_map(|cells| cells.iter()) {
                 if labels.get_entity(cell).is_some()
-                    && let Some(mut node) = nodes.get_entity(cell)
+                    && let Some(mut node) = nodes.get_entity_mut(cell)
                     && node.width != width
                 {
                     node.width = width;

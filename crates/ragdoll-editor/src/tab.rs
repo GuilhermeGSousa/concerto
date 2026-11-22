@@ -264,11 +264,11 @@ impl Signal for StoreRagdoll {}
 
 pub(crate) fn store_ragdoll(
     on: On<StoreRagdoll>,
-    documents: Query<&mut InspectedDocument>,
+    mut documents: Query<&mut InspectedDocument>,
     mut cmd: CommandQueue,
 ) {
     let StoreRagdoll { document, ragdoll } = on.signal();
-    let Some(mut held) = documents.get_entity(*document) else {
+    let Some(mut held) = documents.get_entity_mut(*document) else {
         return;
     };
     held.value = Some(Box::new(ragdoll.clone()));
@@ -286,11 +286,11 @@ impl Signal for EditRagdollPart {}
 
 fn edit_ragdoll_part(
     on: On<EditRagdollPart>,
-    documents: Query<(&InspectedDocument, &mut RagdollDocument)>,
+    mut documents: Query<(&InspectedDocument, &mut RagdollDocument)>,
     mut cmd: CommandQueue,
 ) {
     let signal = on.signal();
-    let Some((inspected, mut state)) = documents.get_entity(signal.document) else {
+    let Some((inspected, mut state)) = documents.get_entity_mut(signal.document) else {
         return;
     };
     let (Some(mut ragdoll), Some(skeleton)) = (
@@ -333,11 +333,11 @@ impl Signal for SelectRagdollPart {}
 
 fn select_ragdoll_part(
     on: On<SelectRagdollPart>,
-    documents: Query<&mut RagdollDocument>,
+    mut documents: Query<&mut RagdollDocument>,
     mut cmd: CommandQueue,
 ) {
     let signal = on.signal();
-    if let Some(mut state) = documents.get_entity(signal.document)
+    if let Some(mut state) = documents.get_entity_mut(signal.document)
         && state.selected != Some(signal.bone)
     {
         state.selected = Some(signal.bone);
@@ -445,14 +445,14 @@ impl Signal for RunPreviewAction {}
 
 fn run_preview_action(
     on: On<RunPreviewAction>,
-    documents: Query<(&InspectedDocument, &mut RagdollDocument)>,
+    mut documents: Query<(&InspectedDocument, &mut RagdollDocument)>,
     project: Res<ProjectState>,
     assets: Res<AssetRegistry>,
     mut previews: PreviewSignals,
 ) {
     let signal = on.signal();
     let (Some((inspected, mut state)), Some(root)) = (
-        documents.get_entity(signal.document),
+        documents.get_entity_mut(signal.document),
         project.project.as_ref().map(|open| open.root.as_path()),
     ) else {
         return;
@@ -525,7 +525,7 @@ fn preview_button(document: Entity, kind: ButtonKind) -> Listener<UIClick> {
 fn add_part_menu(document: Entity) -> Listener<UIClick> {
     (move |on: On<UIClick>,
            documents: Query<(&InspectedDocument, &RagdollDocument)>,
-           menus: Query<(Entity, &mut UIAnchoredPanel), With<NameMenu>>,
+           mut menus: Query<(Entity, &mut UIAnchoredPanel), With<NameMenu>>,
            theme: Res<UITheme>,
            mut cmd: CommandQueue| {
         if on.signal().button != MouseButton::Left {
@@ -552,7 +552,7 @@ fn add_part_menu(document: Entity) -> Listener<UIClick> {
             &bones,
             None,
             |bone| add_part(document, bone.to_owned()),
-            &menus,
+            &mut menus,
             &theme,
             &mut cmd,
         );
@@ -562,12 +562,12 @@ fn add_part_menu(document: Entity) -> Listener<UIClick> {
 
 fn add_part(document: Entity, bone: String) -> Listener<UIClick> {
     (move |on: On<UIClick>,
-           menus: Query<&mut UIAnchoredPanel, With<NameMenu>>,
+           mut menus: Query<&mut UIAnchoredPanel, With<NameMenu>>,
            mut cmd: CommandQueue| {
         if on.signal().button != MouseButton::Left {
             return;
         }
-        close_menu(&menus);
+        close_menu(&mut menus);
         cmd.trigger(EditRagdollPart {
             document,
             bone: bone.clone(),
@@ -680,7 +680,7 @@ fn read_scene(reads: &mut Reads, skeleton: AssetId, from: &ReadFrom) -> Option<(
 }
 
 fn follow_ragdoll(
-    documents: Query<(
+    mut documents: Query<(
         Entity,
         &EditorDocument,
         Ref<InspectedDocument>,
@@ -707,7 +707,7 @@ fn follow_ragdoll(
         root,
         assets: &assets,
     };
-    for (document, editor, inspected, mut state) in documents.iter() {
+    for (document, editor, inspected, mut state) in documents.iter_mut() {
         let Some(ragdoll) = inspected
             .value
             .as_deref()
@@ -995,19 +995,19 @@ fn spawn_part_rows(
 }
 
 fn sync_panels(
-    documents: Query<(
+    mut documents: Query<(
         Entity,
         Ref<InspectedDocument>,
         &RagdollDocument,
         &mut RagdollPanels,
     )>,
-    tags: Query<(Entity, &mut PartRowTag, Option<&UISelected>)>,
-    texts: Query<&mut UIText>,
-    nodes: Query<&mut UINode>,
+    mut tags: Query<(Entity, &mut PartRowTag, Option<&UISelected>)>,
+    mut texts: Query<&mut UIText>,
+    mut nodes: Query<&mut UINode>,
     theme: Res<UITheme>,
     mut cmd: CommandQueue,
 ) {
-    for (document, inspected, state, mut panels) in documents.iter() {
+    for (document, inspected, state, mut panels) in documents.iter_mut() {
         let ragdoll = inspected
             .value
             .as_deref()
@@ -1026,16 +1026,16 @@ fn sync_panels(
             panels.rows = spawn_part_rows(&mut cmd, &theme, document, panels.tree, &roots, ragdoll);
             panels.shown = rows;
         }
-        let set = |entity: Entity, value: &str| {
-            if let Some(mut text) = texts.get_entity(entity)
+        let mut set = |entity: Entity, value: &str| {
+            if let Some(mut text) = texts.get_entity_mut(entity)
                 && text.text != value
             {
                 text.text = value.to_owned();
             }
         };
-        let line = |entity: Entity, value: &str| {
+        let mut line = |entity: Entity, value: &str| {
             set(entity, value);
-            if let Some(mut node) = nodes.get_entity(entity)
+            if let Some(mut node) = nodes.get_entity_mut(entity)
                 && node.visible == value.is_empty()
             {
                 node.visible = !value.is_empty();
@@ -1051,7 +1051,7 @@ fn sync_panels(
         );
         line(panels.problem, state.problem.as_deref().unwrap_or(""));
         set(panels.report, &state.report);
-        for (entity, mut row, selected) in tags.iter() {
+        for (entity, mut row, selected) in tags.iter_mut() {
             if !panels.rows.contains(&entity) {
                 continue;
             }

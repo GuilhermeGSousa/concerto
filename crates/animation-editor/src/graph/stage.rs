@@ -239,10 +239,10 @@ impl<'a> LiveView<'a> {
 
 pub(crate) fn follow_graph_state(
     mut states: EventReader<Hosted<GraphPreviewState>>,
-    lives: Query<&mut GraphLive>,
+    mut lives: Query<&mut GraphLive>,
 ) {
     for Hosted { document, event } in states.read() {
-        if let Some(mut live) = lives.get_entity(*document)
+        if let Some(mut live) = lives.get_entity_mut(*document)
             && live.state.as_ref() != Some(event)
         {
             live.state = Some(event.clone());
@@ -298,7 +298,7 @@ fn wanted_params(state: &GraphDocument) -> Vec<SetGraphParam> {
 }
 
 pub(crate) fn sync_graph_preview(
-    documents: Query<
+    mut documents: Query<
         (
             Entity,
             &mut EditorDocument,
@@ -320,7 +320,7 @@ pub(crate) fn sync_graph_preview(
     else {
         return;
     };
-    for (document, mut editor, mut state, mut sent, mut live, hosted) in documents.iter() {
+    for (document, mut editor, mut state, mut sent, mut live, hosted) in documents.iter_mut() {
         if state.shown_asset().is_none() {
             continue;
         }

@@ -264,10 +264,10 @@ fn pose_at_rest(
     stage: &RagdollStage,
     skeleton: &Skeleton,
     components: &Query<&SkeletonComponent>,
-    transforms: &Query<&mut Transform>,
+    transforms: &mut Query<&mut Transform>,
 ) {
     if let Some(root) = stage.root
-        && let Some(mut transform) = transforms.get_entity(root)
+        && let Some(mut transform) = transforms.get_entity_mut(root)
     {
         **transform = Transform::IDENTITY;
     }
@@ -278,7 +278,10 @@ fn pose_at_rest(
         return;
     };
     for (bone, rest) in component.bones().iter().zip(skeleton.rest_pose.iter()) {
-        if let Some(mut transform) = bone.entity().and_then(|bone| transforms.get_entity(bone)) {
+        if let Some(mut transform) = bone
+            .entity()
+            .and_then(|bone| transforms.get_entity_mut(bone))
+        {
             transform.translation = rest.translation;
             transform.rotation = rest.rotation;
             transform.scale = rest.scale;
@@ -290,13 +293,13 @@ fn reset_ragdoll(
     _: On<ResetRagdoll>,
     mut stage: ResMut<RagdollStage>,
     components: Query<&SkeletonComponent>,
-    transforms: Query<&mut Transform>,
+    mut transforms: Query<&mut Transform>,
     mut cmd: CommandQueue,
 ) {
     let Some(skeleton) = stage.skeleton.clone() else {
         return;
     };
-    pose_at_rest(&stage, &skeleton, &components, &transforms);
+    pose_at_rest(&stage, &skeleton, &components, &mut transforms);
     stage.lift = Lift::None;
     stage.poke = None;
     cmd.trigger(ClearClip);
@@ -312,13 +315,13 @@ fn play_ragdoll(
     on: On<PlayRagdoll>,
     mut stage: ResMut<RagdollStage>,
     components: Query<&SkeletonComponent>,
-    transforms: Query<&mut Transform>,
+    mut transforms: Query<&mut Transform>,
     mut cmd: CommandQueue,
 ) {
     let Some(skeleton) = stage.skeleton.clone() else {
         return;
     };
-    pose_at_rest(&stage, &skeleton, &components, &transforms);
+    pose_at_rest(&stage, &skeleton, &components, &mut transforms);
     stage.lift = Lift::None;
     stage.poke = None;
     if let (Some(character), Some(body)) = (
@@ -339,13 +342,13 @@ fn drop_ragdoll(
     on: On<DropRagdoll>,
     mut stage: ResMut<RagdollStage>,
     components: Query<&SkeletonComponent>,
-    transforms: Query<&mut Transform>,
+    mut transforms: Query<&mut Transform>,
     mut cmd: CommandQueue,
 ) {
     let Some(skeleton) = stage.skeleton.clone() else {
         return;
     };
-    pose_at_rest(&stage, &skeleton, &components, &transforms);
+    pose_at_rest(&stage, &skeleton, &components, &mut transforms);
     stage.poke = None;
     cmd.trigger(ClearClip);
     if let Some(character) = stage.character {
@@ -360,7 +363,7 @@ fn lift_character(
     mut stage: ResMut<RagdollStage>,
     components: Query<&SkeletonComponent>,
     globals: Query<&GlobalTransform>,
-    transforms: Query<&mut Transform>,
+    mut transforms: Query<&mut Transform>,
     mut cmd: CommandQueue,
 ) {
     match stage.lift {
@@ -379,7 +382,7 @@ fn lift_character(
                 .map(|global| global.translation().y)
                 .fold(0.0, f32::min);
             if let Some(root) = stage.root
-                && let Some(mut transform) = transforms.get_entity(root)
+                && let Some(mut transform) = transforms.get_entity_mut(root)
             {
                 transform.translation = Vec3::Y * (height - lowest);
             }
@@ -400,7 +403,7 @@ fn frame_character(
     mut stage: ResMut<RagdollStage>,
     components: Query<&SkeletonComponent>,
     globals: Query<&GlobalTransform>,
-    cameras: Query<&mut OrbitCamera>,
+    mut cameras: Query<&mut OrbitCamera>,
 ) {
     if stage.framed {
         return;
@@ -426,7 +429,7 @@ fn frame_character(
     if joints.is_empty() || size.max_element() < 0.1 {
         return;
     }
-    for mut orbit in cameras.iter() {
+    for mut orbit in cameras.iter_mut() {
         orbit.target = (lowest + highest) / 2.0;
         orbit.distance = size.max_element() * 2.2;
     }

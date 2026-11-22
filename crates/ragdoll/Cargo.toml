@@ -30,3 +30,6 @@ concerto-motion-matching.workspace = true
 concerto-ragdoll = { path = ".", features = ["test-support"] }
 proptest.workspace = true
 uuid = { version = "1.18.1", features = ["v4"] }
+
+[lints]
+workspace = true

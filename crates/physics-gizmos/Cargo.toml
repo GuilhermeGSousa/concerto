@@ -17,3 +17,6 @@ concerto-physics.workspace = true
 concerto-ragdoll.workspace = true
 concerto-render.workspace = true
 glam.workspace = true
+
+[lints]
+workspace = true

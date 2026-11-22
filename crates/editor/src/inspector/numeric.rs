@@ -448,7 +448,7 @@ pub(crate) fn commit_numeric_fields(
     mut submitted: EventReader<UITextInputSubmitted>,
     mut lost: EventReader<UIFocusLost>,
     rows: Query<(&PropertyRow, &PropertyRowValue)>,
-    fields: Query<(&mut NumericSlot, &mut UITextInput)>,
+    mut fields: Query<(&mut NumericSlot, &mut UITextInput)>,
     mut commits: ResMut<PropertyCommits>,
 ) {
     let finished: Vec<Entity> = submitted
@@ -457,7 +457,7 @@ pub(crate) fn commit_numeric_fields(
         .chain(lost.read().map(|event| event.0))
         .collect();
     for entity in finished {
-        let Some((mut slot, mut input)) = fields.get_entity(entity) else {
+        let Some((mut slot, mut input)) = fields.get_entity_mut(entity) else {
             continue;
         };
         let Some((row, current)) = rows.get_entity(slot.row) else {
@@ -482,11 +482,11 @@ pub(crate) fn commit_numeric_fields(
 
 pub(crate) fn cancel_numeric_fields(
     mut cancelled: EventReader<UITextInputCancelled>,
-    fields: Query<(&NumericSlot, &mut UITextInput)>,
+    mut fields: Query<(&NumericSlot, &mut UITextInput)>,
     mut focused: ResMut<FocusedWidget>,
 ) {
     for event in cancelled.read() {
-        let Some((slot, mut input)) = fields.get_entity(event.entity) else {
+        let Some((slot, mut input)) = fields.get_entity_mut(event.entity) else {
             continue;
         };
         revert(slot, &mut input);
@@ -500,9 +500,9 @@ pub(crate) fn cancel_numeric_fields(
 pub(crate) fn refresh_numeric_fields(
     focused: Res<FocusedWidget>,
     rows: Query<&PropertyRowValue>,
-    fields: Query<(Entity, &mut NumericSlot, &mut UITextInput)>,
+    mut fields: Query<(Entity, &mut NumericSlot, &mut UITextInput)>,
 ) {
-    for (entity, mut slot, mut input) in fields.iter() {
+    for (entity, mut slot, mut input) in fields.iter_mut() {
         if **focused == Some(entity) {
             continue;
         }
@@ -527,9 +527,9 @@ pub(crate) fn refresh_numeric_fields(
 /// Writes the letter of each labelled field from its row's value.
 pub(crate) fn refresh_numeric_labels(
     rows: Query<&PropertyRowValue>,
-    labels: Query<(&NumericSlotLabel, &mut UIText)>,
+    mut labels: Query<(&NumericSlotLabel, &mut UIText)>,
 ) {
-    for (label, mut text) in labels.iter() {
+    for (label, mut text) in labels.iter_mut() {
         let Some(letter) = rows
             .get_entity(label.row)
             .and_then(|value| value.downcast::<NumericSnapshot>())
