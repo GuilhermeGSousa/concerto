@@ -25,3 +25,6 @@ serde = { version = "1", features = ["derive"] }
 
 [dev-dependencies]
 pollster = "0.4.0"
+
+[lints]
+workspace = true

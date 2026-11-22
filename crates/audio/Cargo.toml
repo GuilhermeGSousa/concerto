@@ -23,3 +23,6 @@ concerto-window.workspace = true
 [dev-dependencies]
 bincode = "1.3"
 tempfile = "3"
+
+[lints]
+workspace = true
