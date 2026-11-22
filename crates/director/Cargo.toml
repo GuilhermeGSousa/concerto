@@ -17,3 +17,6 @@ log = "0.4.27"
 
 [dev-dependencies]
 concerto-scene.workspace = true
+
+[lints]
+workspace = true

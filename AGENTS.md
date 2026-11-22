@@ -89,7 +89,7 @@ of these pass, in this order. They are the CI jobs, with CI's flags.
 ```sh
 cargo fmt --all -- --check
 python3 .github/scripts/test_budget.py
-cargo deny check bans
+cargo deny check bans advisories
 CARGO_BUILD_WARNINGS=deny cargo clippy --locked --workspace --all-targets -- -D warnings
 cargo clippy --locked --workspace -- -A clippy::all -D clippy::cognitive_complexity
 CARGO_BUILD_WARNINGS=deny cargo clippy --locked -p concerto-physics --no-default-features --features force-rapier -- -D warnings
@@ -120,6 +120,12 @@ carry no `-A` flags for them.
 versions of one crate. When an upstream crate brings the second version, add
 it to `skip` in `deny.toml` with a `reason` naming that crate; delete the entry
 once cargo-deny reports it unmatched.
+
+`cargo deny check advisories` fails when a dependency in the lockfile has a
+RustSec advisory: a vulnerability, or a crate marked unmaintained or unsound.
+Update the dependency (`cargo update -p <crate>`). When no fixed version
+exists, add the advisory's id to `ignore` under `[advisories]` in `deny.toml`
+with a `reason`, and open an issue for getting off the crate.
 
 A test that needs a GPU skips with a `SKIPPED` line on stderr when there is no adapter or the adapter gives no device; the line says which, with the device error and the adapters wgpu enumerated. The test harness captures it, so it shows only for a failing test or under `--nocapture`. `CONCERTO_REQUIRE_GPU=1` turns the skip into a failure with the same reason. Neither CI runner, Ubuntu or Windows, has an adapter, so GPU tests skip in CI; run them locally on a machine with a GPU.
 
@@ -219,8 +225,10 @@ Something to be done is a signal. If change detection cannot express the case,
 say so in the spec and propose the fix to change detection; do not work around
 it with a counter.
 
-**Warnings are errors.** `[lints.rust] warnings = "deny"` is set, so an unused
-import fails the build.
+**Warnings are errors.** `[workspace.lints.rust] warnings = "deny"` is set and
+every package inherits it with `[lints] workspace = true`, so an unused import
+fails the build of any crate. A new crate's `Cargo.toml` carries those two
+lines.
 
 **Match the code around you.** Naming, module layout, error handling, and test
 style follow the file you are in.

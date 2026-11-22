@@ -46,3 +46,6 @@ required-features = ["run"]
 name = "ui"
 harness = false
 required-features = ["run"]
+
+[lints]
+workspace = true
