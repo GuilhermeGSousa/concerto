@@ -29,3 +29,6 @@ wgpu = { version = "30.0.2", default-features = false, features = [
 concerto-mesh.workspace = true
 concerto-window.workspace = true
 naga = { version = "30", features = ["glsl-out"] }
+
+[lints]
+workspace = true

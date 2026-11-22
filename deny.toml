@@ -25,3 +25,8 @@ skip = [
     { crate = "x11rb@0.13.2", reason = "arboard uses x11rb 0.13; winit uses 0.14" },
     { crate = "x11rb-protocol@0.13.2", reason = "arboard uses x11rb 0.13; winit uses 0.14" },
 ]
+
+[advisories]
+ignore = [
+    { id = "RUSTSEC-2025-0141", reason = "bincode 1 is the persisted encoding of .gasset files; moving off it is tracked as its own issue" },
+]

@@ -30,3 +30,6 @@ windows-sys = { version = "0.61", features = [
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen-futures = "0.4"
+
+[lints]
+workspace = true

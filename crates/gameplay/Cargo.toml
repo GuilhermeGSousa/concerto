@@ -17,3 +17,6 @@ concerto-motion-matching.workspace = true
 concerto-navigation.workspace = true
 concerto-reflect.workspace = true
 glam.workspace = true
+
+[lints]
+workspace = true

@@ -21,3 +21,6 @@ pollster = "0.4.0"
 ratatui = "0.30.0"
 derive_more = { version = "2", features = ["deref", "deref_mut", "from"] }
 profiling = "1"
+
+[lints]
+workspace = true

@@ -57,3 +57,6 @@ required-features = ["run"]
 name = "ragdoll"
 harness = false
 required-features = ["run"]
+
+[lints]
+workspace = true
