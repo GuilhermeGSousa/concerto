@@ -31,6 +31,9 @@ use crate::{
         render_entity::{MainEntity, RenderEntity},
         skeleton::RenderSkeletonComponent,
     },
+    depth_pass::{
+        queue_cutout_meshes, render_cutout_meshes, CutoutBatches, CutoutPipelines, DepthPassLayout,
+    },
     device::RenderDevice,
     frustum::Frustum,
     layouts::{CameraLayout, LightingLayout, SkeletonLayout},
@@ -42,7 +45,7 @@ use crate::{
         AssetPreparationError, RenderAsset, RenderAssetPlugin, RenderAssets,
     },
     resources::RenderContext,
-    sets::RenderSet,
+    sets::{PrepassSet, RenderSet},
     shader::create_shader_module,
     view_phase::{
         clear_view_phases, PhaseBindings, PhaseInstances, PhaseItem, PhaseMesh, ViewPhases,
@@ -332,7 +335,7 @@ pub(crate) fn assign_fallback_material(
     }
 }
 
-pub(crate) fn flag_blended_instances<M: Material>(
+pub(crate) fn flag_alpha_instances<M: Material>(
     render_mesh_query: Query<(&MainEntity, &RenderMaterialComponent<M>)>,
     render_materials: Res<RenderAssets<RenderMaterial<M>>>,
     mut render_mesh_instances: ResMut<RenderMeshInstances>,
@@ -347,6 +350,11 @@ pub(crate) fn flag_blended_instances<M: Material>(
         instance.flags.set(
             RenderMeshInstanceFlags::BLENDED,
             render_material.alpha_mode == AlphaMode::Blend,
+        );
+        instance.flags.set(
+            RenderMeshInstanceFlags::CUTOUT,
+            M::cutout_shader().is_some()
+                && matches!(render_material.alpha_mode, AlphaMode::Mask { .. }),
         );
     }
 }
@@ -622,7 +630,7 @@ impl<M: Material> Plugin for MaterialPlugin<M> {
         app.register_plugin(RenderAssetPlugin::<RenderMaterial<M>>::new());
 
         app.add_render_system(Extract, extract_materials::<M>)
-            .add_render_system(Render, flag_blended_instances::<M>.before(clear_draw_stats))
+            .add_render_system(Render, flag_alpha_instances::<M>.before(clear_draw_stats))
             .add_render_system(
                 Render,
                 queue_material_meshes::<M>
@@ -630,6 +638,15 @@ impl<M: Material> Plugin for MaterialPlugin<M> {
                     .after(clear_draw_stats)
                     .after(clear_view_phases),
             );
+        if M::cutout_shader().is_some() {
+            app.add_render_system(Render, queue_cutout_meshes::<M>.in_set(RenderSet::Shadows))
+                .add_render_system(
+                    Render,
+                    render_cutout_meshes::<M>
+                        .in_set(RenderSet::Prepass)
+                        .in_set(PrepassSet::Cutout),
+                );
+        }
     }
 
     fn finish(&self, app: &mut concerto_app::App) {
@@ -792,6 +809,28 @@ impl<M: Material> Plugin for MaterialPlugin<M> {
         if !self.pipeline_only {
             app.render_mut()
                 .insert_resource(MaterialViewBatches::<M>::default());
+            let render = app.render();
+            let cutout = CutoutPipelines::<M>::new(
+                render.get_resource::<RenderDevice>().unwrap(),
+                render
+                    .get_resource::<RenderCapabilities>()
+                    .expect("RenderCapabilities not found"),
+                render
+                    .get_resource::<DepthPassLayout>()
+                    .expect("DepthPassLayout not found"),
+                render
+                    .get_resource::<SkeletonLayout>()
+                    .expect("SkeletonLayout not found"),
+                &render
+                    .get_resource::<MaterialPipeline<M>>()
+                    .unwrap()
+                    .bind_group_layout,
+            );
+            if let Some(cutout) = cutout {
+                app.render_mut()
+                    .insert_resource(cutout)
+                    .insert_resource(CutoutBatches::<M>::default());
+            }
         }
     }
 }

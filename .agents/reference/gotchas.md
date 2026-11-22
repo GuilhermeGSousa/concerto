@@ -149,7 +149,9 @@ fix the entry in the same commit as the change that made it false.
   camera bind group goes through `rebind`, or the occlusion is lost.
 - **`Prepass` and `PostProcess` are ordered by their own edges, not in the
   `RenderSet` chain.** Each is empty without its plugin, and a chained set with
-  no systems breaks the chain around it (#867).
+  no systems breaks the chain around it (#867). `Shadows` is empty without
+  `ShadowPipelinePlugin` or a material with a cutout shader, so `Background`
+  is also ordered after `Queue` by an edge of its own.
 - **A light no camera sees is not sent to the GPU.** A point or spot light is
   culled by the sphere of its `range` against every camera's frustum. A
   `range` of 0 is unbounded, so that light is never culled and always takes one of the 128 light slots and, when
@@ -225,9 +227,18 @@ fix the entry in the same commit as the change that made it false.
   and nothing checks it against the Rust layout in `camera.rs`. A change to
   `CameraUniform` changes the render crate's `shader.wgsl` and `sky.wgsl`
   together.
+- **Masked instances are drawn into depth by their material, not by the
+  shadow pass.** `queue_shadow_meshes` and the ambient occlusion prepass skip
+  `CUTOUT` instances; `collect_shadow_depth_views` and
+  `queue_ambient_occlusion_meshes` list each depth target in
+  `DepthPassViews`, and `queue_cutout_meshes<M>` and `render_cutout_meshes<M>`
+  draw the masked instances of `M` into every one of them with `M`'s cutout
+  shader, in `PrepassSet::Cutout`, loading the depth the uncut pass left. A
+  new depth-only pass pushes a `DepthPassView` to get cutouts.
 - **Blended instances cast no shadow, and blended assets of different
-  material types do not interleave.** `flag_blended_instances<M>` sets
-  `RenderMeshInstanceFlags::BLENDED` every frame from the prepared material's
+  material types do not interleave.** `flag_alpha_instances<M>` sets
+  `RenderMeshInstanceFlags::BLENDED`, and `CUTOUT` for a `Mask` asset of a
+  material with a cutout shader, every frame from the prepared material's
   alpha mode, because `extract_mesh` overwrites the flags whenever it
   extracts the mesh again, and `queue_shadow_meshes` skips the flag. Each
   `MaterialPlugin<M>` sorts and draws only its own blended instances in

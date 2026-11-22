@@ -3,9 +3,9 @@ use concerto_ecs::{IntoSystemConfig, Resource};
 use concerto_foundation::transform::GlobalTransformRaw;
 use concerto_mesh::Vertex;
 use wgpu::{
-    BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingType, DepthBiasState,
-    DepthStencilState, MultisampleState, PipelineCompilationOptions, PipelineLayoutDescriptor,
-    PrimitiveState, RenderPipelineDescriptor, ShaderStages, StencilState, TextureFormat,
+    DepthBiasState, DepthStencilState, MultisampleState, PipelineCompilationOptions,
+    PipelineLayoutDescriptor, PrimitiveState, RenderPipelineDescriptor, StencilState,
+    TextureFormat,
 };
 
 use crate::{
@@ -13,9 +13,10 @@ use crate::{
     batching::clear_draw_stats,
     capabilities::RenderCapabilities,
     components::shadows::{
-        queue_shadow_meshes, render_shadow_maps, resize_shadow_maps, update_shadow_view_proj,
-        RenderShadowCasterViewProjs, ShadowViewBatches,
+        collect_shadow_depth_views, queue_shadow_meshes, render_shadow_maps, resize_shadow_maps,
+        update_shadow_view_proj, RenderShadowCasterViewProjs, ShadowViewBatches,
     },
+    depth_pass::DepthPassLayout,
     device::RenderDevice,
     layouts::SkeletonLayout,
     sets::RenderSet,
@@ -39,6 +40,7 @@ pub struct ShadowPipelinePlugin;
 impl Plugin for ShadowPipelinePlugin {
     fn build(&self, app: &mut concerto_app::App) {
         app.render_mut()
+            .add_system(Render, collect_shadow_depth_views.in_set(RenderSet::Queue))
             .add_system(
                 Render,
                 queue_shadow_meshes
@@ -72,20 +74,12 @@ impl Plugin for ShadowPipelinePlugin {
             &capabilities.shader_defs(),
         );
 
-        let light_view_bind_group_layout =
-            device.create_bind_group_layout(&BindGroupLayoutDescriptor {
-                label: Some("Shadow Bind Group Layout"),
-                entries: &[BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: ShaderStages::VERTEX,
-                    ty: BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                }],
-            });
+        let light_view_bind_group_layout = app
+            .render()
+            .get_resource::<DepthPassLayout>()
+            .expect("DepthPassLayout not found: make sure the RenderPlugin is registered.")
+            .0
+            .clone();
 
         let skeleton_layout = app
             .render()

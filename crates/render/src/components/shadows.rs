@@ -28,6 +28,7 @@ use crate::{
         render_entity::MainEntity,
         skeleton::{RenderSkeletonComponent, SkinUniforms},
     },
+    depth_pass::{DepthPassKind, DepthPassView, DepthPassViews},
     device::RenderDevice,
     frustum::Frustum,
     layouts::LightingLayout,
@@ -838,6 +839,42 @@ fn shadow_views(
     spot_directional_views.chain(point_views).collect()
 }
 
+pub(crate) fn collect_shadow_depth_views(
+    spot_directional_shadow_maps: Res<RenderSpotDirectionalShadowMaps>,
+    point_shadow_maps: Res<RenderPointShadowMaps>,
+    clip_from_world: Res<SpotDirectionalClipFromWorld>,
+    pipeline: Res<ShadowPipeline>,
+    mut caster_view_projs: ResMut<RenderShadowCasterViewProjs>,
+    mut depth_pass_views: ResMut<DepthPassViews>,
+    lights: Query<&RenderLight>,
+    device: Res<RenderDevice>,
+) {
+    let views = shadow_views(&spot_directional_shadow_maps, &point_shadow_maps);
+    for (layer, view) in views.iter().enumerate() {
+        while caster_view_projs.0.len() <= layer {
+            caster_view_projs.0.push(RenderShadowCasterViewProj::new(
+                &device,
+                &pipeline.bind_group_layout,
+            ));
+        }
+        let (Some(light), Some(target)) = (
+            lights.get_entity(view.light),
+            view.target(&spot_directional_shadow_maps, &point_shadow_maps),
+        ) else {
+            continue;
+        };
+        depth_pass_views.0.push(DepthPassView {
+            kind: DepthPassKind::Shadow,
+            target: target.clone(),
+            view_proj: caster_view_projs.0[layer].bind_group().clone(),
+            frustum: Frustum::from_clip_from_world(view.clip_from_world(light, &clip_from_world)),
+            layers: None,
+            rect: None,
+            shadow_layer: Some(layer),
+        });
+    }
+}
+
 #[derive(Resource, Default)]
 pub(crate) struct ShadowViewBatches(pub(crate) Vec<ViewBatches<AssetId>>);
 
@@ -881,7 +918,9 @@ pub(crate) fn queue_shadow_meshes(
                 if !instance
                     .flags
                     .contains(RenderMeshInstanceFlags::SHADOW_CASTER)
-                    || instance.flags.contains(RenderMeshInstanceFlags::BLENDED)
+                    || instance.flags.intersects(
+                        RenderMeshInstanceFlags::BLENDED | RenderMeshInstanceFlags::CUTOUT,
+                    )
                     || !render_meshes.contains(&instance.mesh_asset_id)
                 {
                     return None;

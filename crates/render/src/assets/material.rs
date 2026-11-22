@@ -131,6 +131,7 @@ impl From<&AlphaMode> for AlphaMode {
 #[material(
     vertex_shader = include_str!("../shaders/shader.wgsl"),
     fragment_shader = include_str!("../shaders/shader.wgsl"),
+    cutout_shader = include_str!("../shaders/standard_cutout.wgsl"),
     lighting = true,
     skeleton = true,
 )]
@@ -611,6 +612,14 @@ pub trait Material: AsBindGroup + LoadableAsset + Send + Sync + 'static {
         Self: Sized,
     {
         Some(wgpu::BlendState::REPLACE)
+    }
+
+    /// The fragment shader that discards what an `AlphaMode::Mask` asset cuts away, for shadow maps and depth prepasses; `None` draws the whole mesh there.
+    fn cutout_shader() -> Option<ShaderRef>
+    where
+        Self: Sized,
+    {
+        None
     }
 
     /// How this asset's alpha is treated. `Blend` draws it in the transparent pass. Defaults to `Opaque`.

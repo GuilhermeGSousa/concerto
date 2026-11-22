@@ -5,6 +5,7 @@ mod camera_environment_edit;
 mod camera_render_target;
 mod camera_viewport;
 mod compressed_textures;
+mod cutout_shadows;
 mod depth_of_field;
 mod exclusive_camera;
 mod hdr;

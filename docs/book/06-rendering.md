@@ -259,9 +259,9 @@ cmd.spawn((
   cameras that have the component: every mesh that casts a shadow and is not
   blended is drawn once more, depth only. A mesh with `NotShadowCaster` neither
   occludes nor is drawn there.
-- The prepass ignores materials, as the shadow pass does: an alpha-cutout
-  surface occludes as its whole mesh, and a material that moves vertices in its
-  own shader occludes from where the mesh was.
+- A `Mask` surface occludes as the shape its cutout leaves, as it casts its
+  shadow. A material that moves vertices in its own shader occludes from where
+  the mesh was.
 - A custom material reads the result from `@group(1) @binding(3)`, a
   `texture_2d<f32>` the size of the camera's target, white where the camera has
   no occlusion; `screen_occlusion` in the standard shader shows how.
@@ -415,7 +415,8 @@ the base color's alpha does:
 
 - `Opaque`, the default, ignores it: the surface hides what is behind it;
 - `Mask { cutoff }` discards the fragments whose alpha is below `cutoff` and
-  draws the rest opaque, for leaves and fences;
+  draws the rest opaque, for leaves and fences. Its shadow and its ambient
+  occlusion are cut to the same shape;
 - `Blend` blends the surface over what is behind it by its alpha, for glass and
   decals.
 
@@ -666,6 +667,31 @@ struct Tint {
     color: [f32; 4],
     #[alpha_mode]
     alpha_mode: AlphaMode,
+}
+```
+
+A masked asset of a material of your own casts the shadow of its whole mesh
+until the material has a cutout shader: a fragment shader the shadow maps and
+the depth prepass run for its `Mask` assets, with the material's bind group at
+group 2 and the mesh's UV at location 0. It discards what the cutout removes
+and returns nothing.
+
+```rust
+#[material(
+    fragment_shader = include_str!("tint.wgsl"),
+    cutout_shader = include_str!("tint_cutout.wgsl"),
+)]
+```
+
+```wgsl
+@group(2) @binding(0)
+var<uniform> color: vec4<f32>;
+
+@fragment
+fn fs_cutout(@location(0) tex_coords: vec2<f32>) {
+    if color.a < 0.5 {
+        discard;
+    }
 }
 ```
 

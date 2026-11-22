@@ -22,6 +22,7 @@ use crate::{
         skeleton::{extract_skeletons, SkinUniforms},
         visibility::{NoFrustumCulling, NotShadowCaster, RenderLayers},
     },
+    depth_pass::{clear_depth_pass_views, DepthPassLayout, DepthPassViews},
     device::RenderDevice,
     draw_target::DrawTarget,
     gpu::Gpu,
@@ -36,7 +37,7 @@ use crate::{
         RenderAssetPlugin,
     },
     resources::RenderContext,
-    sets::{BackgroundSet, PostProcessSet, RenderSet},
+    sets::{BackgroundSet, PostProcessSet, PrepassSet, RenderSet},
     sky_light::SkyRadianceMap,
     systems::{
         render::{finish_render, present_window},
@@ -172,6 +173,9 @@ impl Plugin for RenderPlugin {
                 .after(RenderSet::Shadows)
                 .before(RenderSet::Background),
         )
+        .configure_render_sets(Render, RenderSet::Background.after(RenderSet::Queue))
+        .configure_render_sets(Render, PrepassSet::Depth.before(PrepassSet::Cutout))
+        .configure_render_sets(Render, PrepassSet::Cutout.before(PrepassSet::Read))
         .configure_render_sets(
             Render,
             PostProcessSet::DepthOfField.before(PostProcessSet::Bloom),
@@ -223,11 +227,12 @@ impl Plugin for RenderPlugin {
                 assign_shadow_layers,
                 write_visible_lights,
                 update_shadow_view_proj,
+                resize_shadow_maps,
             )
                 .chain()
                 .in_set(RenderSet::Lights),
         )
-        .add_render_system(Render, resize_shadow_maps.in_set(RenderSet::Shadows))
+        .add_render_system(Render, clear_depth_pass_views.before(RenderSet::Queue))
         .add_render_system(LateRender, finish_render)
         .add_render_system(
             LateRender,
@@ -300,6 +305,7 @@ impl Plugin for RenderPlugin {
             TonemappingPipeline::new(&device, &capabilities, &camera_layouts, config.format);
 
         let lighting_layout = LightingLayout::new(&device, &capabilities);
+        let depth_pass_layout = DepthPassLayout::new(&device);
 
         let render_lights = RenderLights::new(&device);
         let render_spot_directional_shadow_maps =
@@ -347,6 +353,8 @@ impl Plugin for RenderPlugin {
             .insert_resource(render_point_shadow_maps)
             .insert_resource(render_shadow_view_projs)
             .insert_resource(SpotDirectionalClipFromWorld::default())
+            .insert_resource(depth_pass_layout)
+            .insert_resource(DepthPassViews::default())
             .insert_resource(render_lighting)
             .insert_resource(skin_uniforms)
             .insert_resource(batched_instance_buffers)
