@@ -9,6 +9,7 @@ mod exclusive_camera;
 mod hdr;
 mod hosted_target;
 mod material_serialization;
+mod msaa;
 mod point_shadows;
 mod readback;
 mod required_sync;

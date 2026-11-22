@@ -16,7 +16,7 @@ use concerto_ecs::{
     world::{FromWorld, World},
 };
 use concerto_render::{
-    LightTint, SkyRadianceMap,
+    LightTint, SkyRadianceMap, ViewPipelines,
     capabilities::RenderCapabilities,
     components::{camera::RenderCamera, render_entity::RenderEntity},
     device::RenderDevice,
@@ -286,6 +286,7 @@ fn fullscreen_pipeline(
     module: &wgpu::ShaderModule,
     bind_group_layouts: &[Option<&wgpu::BindGroupLayout>],
     format: wgpu::TextureFormat,
+    samples: u32,
 ) -> wgpu::RenderPipeline {
     let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some(label),
@@ -313,7 +314,10 @@ fn fullscreen_pipeline(
         }),
         primitive: wgpu::PrimitiveState::default(),
         depth_stencil: None,
-        multisample: wgpu::MultisampleState::default(),
+        multisample: wgpu::MultisampleState {
+            count: samples,
+            ..Default::default()
+        },
         multiview_mask: None,
         cache: None,
     })
@@ -403,6 +407,7 @@ impl SkyViewPass {
                 &module,
                 &[Some(&layout)],
                 format,
+                1,
             ),
             bind_group,
             uniform,
@@ -414,7 +419,7 @@ impl SkyViewPass {
 
 #[derive(Resource)]
 pub(crate) struct SkyPass {
-    pipeline: wgpu::RenderPipeline,
+    pipelines: ViewPipelines,
     bind_group: wgpu::BindGroup,
     uniform: wgpu::Buffer,
 }
@@ -446,13 +451,16 @@ impl SkyPass {
             &capabilities.shader_defs(),
         );
         Self {
-            pipeline: fullscreen_pipeline(
-                device,
-                "Sky Pipeline",
-                &module,
-                &[Some(&camera_layout.camera_layout), Some(&layout)],
-                format,
-            ),
+            pipelines: ViewPipelines::new(|samples| {
+                fullscreen_pipeline(
+                    device,
+                    "Sky Pipeline",
+                    &module,
+                    &[Some(&camera_layout.camera_layout), Some(&layout)],
+                    format,
+                    samples,
+                )
+            }),
             bind_group,
             uniform,
         }
@@ -606,7 +614,7 @@ pub(crate) fn draw_sky(
             timestamp_writes: None,
         });
         rect.apply(&mut render_pass);
-        render_pass.set_pipeline(&pass.pipeline);
+        render_pass.set_pipeline(pass.pipelines.get(render_camera.view_target.sample_count()));
         render_pass.set_bind_group(0, &render_camera.camera_bind_group, &[]);
         render_pass.set_bind_group(1, &pass.bind_group, &[]);
         render_pass.draw(0..3, 0..1);
