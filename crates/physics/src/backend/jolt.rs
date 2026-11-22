@@ -388,6 +388,21 @@ impl PhysicsBackend for JoltBackend {
         }
     }
 
+    fn set_body_ghost(&mut self, body: Self::BodyHandle, ghost: bool) {
+        // SAFETY: `body` is a body in this world.
+        unsafe {
+            concerto_jolt_ffi::jolt_body_set_ghost(self.world, body, ghost);
+        }
+    }
+
+    fn set_body_translation(&mut self, body: Self::BodyHandle, translation: Vec3) {
+        let translation = translation.to_array();
+        // SAFETY: `body` is a body in this world and `translation` is a valid xyz triple.
+        unsafe {
+            concerto_jolt_ffi::jolt_body_set_position(self.world, body, translation.as_ptr());
+        }
+    }
+
     fn body_activity(&self, body: Self::BodyHandle) -> BodyActivity {
         // SAFETY: `self.world` is a valid world; the shim answers static and inactive for an id it does not hold.
         let (motion_type, active) = unsafe {

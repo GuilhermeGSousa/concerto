@@ -14,7 +14,7 @@ use concerto_physics::step_simulation;
 use crate::{
     asset::Ragdoll,
     character::{
-        CharacterRagdoll, create_character_ragdolls, drive_character_ragdolls,
+        CharacterRagdoll, carry_capsules, create_character_ragdolls, drive_character_ragdolls,
         drop_removed_ragdoll, drop_replaced_ragdoll, record_ragdoll_poses, write_ragdoll_poses,
     },
 };
@@ -37,6 +37,12 @@ impl Plugin for RagdollPlugin {
             .add_system(
                 LateFixedUpdate,
                 drive_character_ragdolls.before(step_simulation),
+            )
+            .add_system(
+                LateFixedUpdate,
+                carry_capsules
+                    .after(drive_character_ragdolls)
+                    .before(step_simulation),
             )
             .add_system(LateFixedUpdate, record_ragdoll_poses.after(step_simulation))
             .add_system(

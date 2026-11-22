@@ -159,6 +159,14 @@ extern "C"
 
     uint32_t jolt_world_drain_contacts(JoltWorld *world, JoltContact *out, uint32_t capacity);
 
+    /* Makes a dynamic or kinematic body collide with nothing and be skipped by
+     * every query, or puts it back among the moving bodies. Static bodies,
+     * sensors and ragdoll parts are left alone. */
+    void jolt_body_set_ghost(JoltWorld *world, JoltBodyId body, bool ghost);
+
+    /* Moves the body's origin at once, keeping its rotation and velocity. */
+    void jolt_body_set_position(JoltWorld *world, JoltBodyId body, const float position[3]);
+
     typedef uint32_t JoltGroundState;
     enum
     {

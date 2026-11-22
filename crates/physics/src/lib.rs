@@ -8,6 +8,7 @@
 pub mod aabb;
 pub mod backend;
 pub mod body;
+pub mod carried;
 pub mod collider;
 pub mod contact;
 pub mod ground;

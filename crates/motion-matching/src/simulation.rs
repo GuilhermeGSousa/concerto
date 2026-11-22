@@ -81,6 +81,16 @@ impl Default for CharacterSimulation {
 }
 
 impl CharacterSimulation {
+    /// Restarts the springs moving at `velocity` and facing `facing`, with nothing left to pull.
+    pub fn restart(&mut self, velocity: Vec3, facing: Quat) {
+        self.velocity.value = velocity;
+        self.velocity.velocity = Default::default();
+        self.facing.value = facing;
+        self.facing.velocity = Default::default();
+        self.previous_facing = facing;
+        self.pull = Vec3::ZERO;
+    }
+
     fn springs(&self) -> (Spring<Vec3>, Spring<Quat>) {
         (
             Spring {

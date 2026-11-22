@@ -16,13 +16,15 @@ use concerto_mesh::{JointName, Skeleton, SkeletonComponent};
 use concerto_name::Name;
 use concerto_physics::{
     body::BodyId,
+    carried::Carried,
     physics_pipeline::PhysicsPipeline,
     physics_state::PhysicsState,
+    query::QueryFilter,
     ragdoll::{BodyPose, JointDrive, RagdollId},
     rigid_body::MotionType,
 };
 use concerto_reflect::{Reflect, ReflectDefault};
-use glam::Mat4;
+use glam::{Mat4, Quat, Vec3};
 use log::warn;
 
 use crate::{asset::Ragdoll, resolve::ResolvedRagdoll};
@@ -120,6 +122,14 @@ pub struct RagdollBody {
     previous: Vec<BodyPose>,
     current: Vec<BodyPose>,
     drawn_roots: Vec<Option<Mat4>>,
+    carrying: Option<Carrying>,
+}
+
+#[derive(Clone, Copy)]
+struct Carrying {
+    capsule: Entity,
+    body: BodyId,
+    height: f32,
 }
 
 impl RagdollBody {
@@ -241,6 +251,7 @@ pub fn create_character_ragdolls(
                     motion: MotionType::Kinematic,
                     previous: pose.clone(),
                     current: pose,
+                    carrying: None,
                 },
             ),
             entity,
@@ -286,6 +297,99 @@ pub fn drive_character_ragdolls(
             && let Some(pose) = part_poses(&body.bones, &transforms)
         {
             state.drive_ragdoll_kinematic(*id, &pose);
+        }
+    }
+}
+
+const GROUND_REACH: f32 = 3.0;
+
+fn ground_under(state: &PhysicsState, point: Vec3) -> Option<f32> {
+    state
+        .cast_ray(
+            point + Vec3::Y * 0.5,
+            Vec3::NEG_Y * (GROUND_REACH + 0.5),
+            QueryFilter::default(),
+        )
+        .map(|hit| hit.point.y)
+}
+
+fn yaw(rotation: Quat) -> Quat {
+    let twist = Quat::from_xyzw(0.0, rotation.y, 0.0, rotation.w);
+    if twist.length_squared() < 1e-8 {
+        Quat::IDENTITY
+    } else {
+        twist.normalize()
+    }
+}
+
+/// Each fixed step, before physics steps, while a character's root part has any weight: its capsule is `Carried`, collides with nothing, and is put on the ground under the ragdoll's root part. When the weight is back at 0 the capsule is let go where it stands.
+pub fn carry_capsules(
+    characters: Query<(&CharacterRagdoll, &RagdollId, &mut RagdollBody)>,
+    bodies: Query<&BodyId>,
+    carried: Query<&mut Carried>,
+    mut state: ResMut<PhysicsState>,
+    mut cmd: CommandQueue,
+) {
+    let mut pose = Vec::new();
+    for (character, id, mut body) in characters.iter() {
+        let physical = body
+            .bone_name(0)
+            .is_some_and(|bone| character.weight_of(&bone) > 0.0);
+        let capsule = character.capsule.entity().and_then(|capsule| {
+            bodies.get_entity(capsule).map(|body| Carrying {
+                capsule,
+                body: *body,
+                height: 0.0,
+            })
+        });
+        let wanted = capsule.filter(|_| physical);
+        if let Some(carrying) = body.carrying
+            && wanted.is_none_or(|wanted| wanted.body != carrying.body)
+        {
+            state.set_body_ghost(carrying.body, false);
+            cmd.remove::<Carried>(carrying.capsule);
+            body.carrying = None;
+        }
+        let Some(wanted) = wanted else {
+            continue;
+        };
+        state.ragdoll_pose(*id, &mut pose);
+        let (Some(root), Some(root_body)) = (
+            pose.first().copied(),
+            state.ragdoll_bodies(*id).first().copied(),
+        ) else {
+            continue;
+        };
+        let carrying = match body.carrying {
+            Some(carrying) => carrying,
+            None => {
+                let stands = state.body_transform(wanted.body).translation;
+                state.set_body_ghost(wanted.body, true);
+                let carrying = Carrying {
+                    height: ground_under(&state, stands).map_or(0.0, |ground| stands.y - ground),
+                    ..wanted
+                };
+                body.carrying = Some(carrying);
+                carrying
+            }
+        };
+        let stands = state.body_transform(carrying.body).translation;
+        let ground = ground_under(&state, root.translation);
+        let target = Vec3::new(
+            root.translation.x,
+            ground.map_or(stands.y, |ground| ground + carrying.height),
+            root.translation.z,
+        );
+        state.set_body_translation(carrying.body, target);
+        state.set_linear_velocity(carrying.body, Vec3::ZERO);
+        let rest = body.resolved.settings().parts[0].pose.rotation;
+        let update = Carried {
+            velocity: state.linear_velocity(root_body),
+            facing: yaw(root.rotation * rest.inverse()),
+        };
+        match carried.get_entity(carrying.capsule) {
+            Some(mut carried) => **carried = update,
+            None => cmd.insert(update, carrying.capsule),
         }
     }
 }
@@ -380,18 +484,37 @@ pub fn write_ragdoll_poses(
     }
 }
 
-fn drop_body(entity: Entity, cmd: &mut CommandQueue) {
+fn drop_body(
+    entity: Entity,
+    bodies: &Query<&RagdollBody>,
+    state: &mut PhysicsState,
+    cmd: &mut CommandQueue,
+) {
+    if let Some(carrying) = bodies.get_entity(entity).and_then(|body| body.carrying) {
+        state.set_body_ghost(carrying.body, false);
+        cmd.remove::<Carried>(carrying.capsule);
+    }
     cmd.remove::<RagdollId>(entity);
     cmd.remove::<RagdollBody>(entity);
     cmd.remove::<RagdollRefused>(entity);
 }
 
 /// Destroys a character's ragdoll when its `CharacterRagdoll` is removed.
-pub fn drop_removed_ragdoll(on: On<Remove<CharacterRagdoll>>, mut cmd: CommandQueue) {
-    drop_body(on.signal().entity, &mut cmd);
+pub fn drop_removed_ragdoll(
+    on: On<Remove<CharacterRagdoll>>,
+    bodies: Query<&RagdollBody>,
+    mut state: ResMut<PhysicsState>,
+    mut cmd: CommandQueue,
+) {
+    drop_body(on.signal().entity, &bodies, &mut state, &mut cmd);
 }
 
 /// Destroys a character's ragdoll when its `CharacterRagdoll` is inserted again, so it is rebuilt from the new one.
-pub fn drop_replaced_ragdoll(on: On<Replace<CharacterRagdoll>>, mut cmd: CommandQueue) {
-    drop_body(on.signal().entity, &mut cmd);
+pub fn drop_replaced_ragdoll(
+    on: On<Replace<CharacterRagdoll>>,
+    bodies: Query<&RagdollBody>,
+    mut state: ResMut<PhysicsState>,
+    mut cmd: CommandQueue,
+) {
+    drop_body(on.signal().entity, &bodies, &mut state, &mut cmd);
 }

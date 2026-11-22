@@ -10,9 +10,16 @@ use concerto::{
         schedule_groups::{Startup, Update},
     },
     color::Color,
-    ecs::{CommandQueue, Component, Entity, Query, Res, ResMut},
-    foundation::{assets::asset_server::AssetServer, transform::Transform},
-    mesh::{MeshComponent, primitives},
+    ecs::{
+        CommandQueue, Component, Entity, Query, Res, ResMut, Resource,
+        component::scene::SceneEntityRef, entity::hierarchy::ChildOf,
+    },
+    foundation::{
+        assets::asset_server::AssetServer,
+        time::Time,
+        transform::{GlobalTransform, Transform},
+    },
+    mesh::{JointPose, MeshComponent, SkeletonComponent, primitives},
     physics::{
         collider::Collider,
         contact::Contacts,
@@ -30,7 +37,9 @@ use concerto::{
     },
     window::input::{Input, KeyCode, PhysicalKey},
 };
+use concerto_debug_gizmos::DebugGizmos;
 use concerto_physics_gizmos::{PhysicsGizmos, PhysicsGizmosPlugin};
+use concerto_ragdoll::{CharacterRagdoll, RagdollMode, testing::reference_humanoid};
 use glam::{Quat, Vec3};
 
 const LINK: f32 = 0.5;
@@ -41,6 +50,24 @@ const DROP_HEIGHT: f32 = 2.5;
 const POKE: Vec3 = Vec3::new(0.0, 6.0, 3.0);
 const HOLD_BEND: f32 = -0.4;
 const HOLD_HEIGHT: f32 = 2.0;
+const CHAIN_X: f32 = -3.0;
+const HUMANOID_CENTER: Vec3 = Vec3::new(1.5, 0.0, 0.0);
+const WALK_RADIUS: f32 = 1.0;
+const WALK_SPEED: f32 = 1.0;
+const ARM_SWING: f32 = 0.8;
+
+#[derive(Resource)]
+struct Humanoid {
+    skeleton: Entity,
+    bones: Vec<Entity>,
+    parents: Vec<Option<u16>>,
+    rest: Vec<JointPose>,
+    left_arm: usize,
+    right_arm: usize,
+    elapsed: f32,
+    walked: f32,
+    limp_after: Option<f32>,
+}
 
 #[derive(Component)]
 struct ChainRagdoll {
@@ -132,8 +159,8 @@ fn spawn_scene(mut cmd: CommandQueue, mut state: ResMut<PhysicsState>, assets: R
     cmd.spawn((
         concerto::director::MainCamera,
         Transform::from_translation_rotation(
-            Vec3::new(0.0, 2.0, 6.0),
-            Quat::from_rotation_x(-0.25),
+            Vec3::new(-0.5, 1.5, 6.4),
+            Quat::from_rotation_x(-0.08),
         ),
     ));
     cmd.spawn((
@@ -162,10 +189,159 @@ fn spawn_scene(mut cmd: CommandQueue, mut state: ResMut<PhysicsState>, assets: R
     ));
 
     let root = BodyPose::new(
-        Vec3::new(0.0, DROP_HEIGHT, 0.0),
+        Vec3::new(CHAIN_X, DROP_HEIGHT, 0.0),
         Quat::from_rotation_z(FRAC_PI_3),
     );
     spawn_chain(&mut cmd, &mut state, &assets, root);
+    spawn_humanoid(&mut cmd, &assets);
+}
+
+fn spawn_humanoid(cmd: &mut CommandQueue, assets: &AssetServer) {
+    let reference = reference_humanoid();
+    let parents = reference.skeleton.parents.to_vec();
+    let rest = reference.skeleton.rest_pose.to_vec();
+    let index_of = |name: &str| {
+        reference
+            .skeleton
+            .names
+            .iter()
+            .position(|bone| bone == name)
+            .expect("the reference humanoid has the arm bones")
+    };
+    let left_arm = index_of("upperarm_l");
+    let right_arm = index_of("upperarm_r");
+    let skeleton = assets.add(reference.skeleton);
+    let mut ragdoll = reference.ragdoll;
+    ragdoll.skeleton = skeleton.clone();
+    let ragdoll = assets.add(ragdoll);
+
+    let root = cmd
+        .spawn(Transform::from_translation(
+            HUMANOID_CENTER + Vec3::X * WALK_RADIUS,
+        ))
+        .entity();
+    let mut bones: Vec<Entity> = Vec::with_capacity(rest.len());
+    for (index, local) in rest.iter().enumerate() {
+        let parent = parents[index].map_or(root, |parent| bones[parent as usize]);
+        bones.push(
+            cmd.spawn((
+                Transform::from_translation_rotation(local.translation, local.rotation),
+                ChildOf::new(parent),
+            ))
+            .entity(),
+        );
+    }
+    cmd.entity(root).insert((
+        SkeletonComponent::new(
+            skeleton,
+            bones.iter().copied().map(SceneEntityRef::Entity).collect(),
+            bones.first().copied().map(SceneEntityRef::Entity),
+        ),
+        CharacterRagdoll::new(ragdoll),
+    ));
+    let limp_after = std::env::var("RAGDOLL_TEST_LIMP_AFTER")
+        .ok()
+        .and_then(|seconds| seconds.parse().ok());
+    cmd.insert_resource(Humanoid {
+        skeleton: root,
+        bones,
+        parents,
+        rest,
+        left_arm,
+        right_arm,
+        elapsed: 0.0,
+        walked: 0.0,
+        limp_after,
+    });
+}
+
+fn animate_humanoid(
+    time: Res<Time>,
+    humanoid: Option<ResMut<Humanoid>>,
+    characters: Query<&CharacterRagdoll>,
+    transforms: Query<&mut Transform>,
+) {
+    let Some(mut humanoid) = humanoid else {
+        return;
+    };
+    let delta = time.delta().as_secs_f32();
+    humanoid.elapsed += delta;
+    let limp = characters
+        .get_entity(humanoid.skeleton)
+        .is_some_and(|character| character.mode == RagdollMode::Limp);
+    for (index, &bone) in humanoid.bones.iter().enumerate() {
+        if let Some(mut transform) = transforms.get_entity(bone) {
+            let rest = &humanoid.rest[index];
+            transform.translation = rest.translation;
+            transform.rotation = rest.rotation;
+        }
+    }
+    if limp {
+        return;
+    }
+    humanoid.walked += delta;
+    let swing = ARM_SWING * (humanoid.elapsed * 2.0).sin();
+    for (bone, sign) in [(humanoid.left_arm, 1.0), (humanoid.right_arm, -1.0)] {
+        if let Some(mut transform) = transforms.get_entity(humanoid.bones[bone]) {
+            transform.rotation = Quat::from_rotation_z(sign * swing);
+        }
+    }
+    let angle = humanoid.walked * WALK_SPEED / WALK_RADIUS;
+    if let Some(mut transform) = transforms.get_entity(humanoid.skeleton) {
+        transform.translation =
+            HUMANOID_CENTER + WALK_RADIUS * Vec3::new(angle.cos(), 0.0, angle.sin());
+        transform.rotation = Quat::from_rotation_y((-angle.sin()).atan2(angle.cos()));
+    }
+}
+
+fn control_humanoid(
+    input: Res<Input>,
+    humanoid: Option<Res<Humanoid>>,
+    characters: Query<&mut CharacterRagdoll>,
+) {
+    let Some(humanoid) = humanoid else {
+        return;
+    };
+    let Some(mut character) = characters.get_entity(humanoid.skeleton) else {
+        return;
+    };
+    let timed = humanoid
+        .limp_after
+        .is_some_and(|after| humanoid.elapsed >= after && humanoid.elapsed - after < 1.0)
+        && character.mode != RagdollMode::Limp;
+    if input.is_just_pressed(PhysicalKey::Code(KeyCode::KeyH)) || timed {
+        character.go_limp();
+    }
+    if input.is_just_pressed(PhysicalKey::Code(KeyCode::KeyJ)) {
+        character.mode = RagdollMode::FollowsAnimation;
+        character.weight = 0.0;
+    }
+    if input.is_just_pressed(PhysicalKey::Code(KeyCode::KeyB)) {
+        character.weight = 0.5;
+    }
+}
+
+fn draw_skeleton(
+    humanoid: Option<Res<Humanoid>>,
+    globals: Query<&GlobalTransform>,
+    mut gizmos: DebugGizmos,
+) {
+    let Some(humanoid) = humanoid else {
+        return;
+    };
+    let white = Color::rgba(1.0, 1.0, 1.0, 1.0);
+    let position = |bone: Entity| globals.get_entity(bone).map(|global| global.translation());
+    for (index, &bone) in humanoid.bones.iter().enumerate() {
+        let Some(at) = position(bone) else {
+            continue;
+        };
+        gizmos.cross(at, 0.02, white);
+        if let Some(parent) = humanoid.parents[index]
+            && let Some(parent_at) = position(humanoid.bones[parent as usize])
+        {
+            gizmos.line(at, parent_at, white);
+        }
+    }
 }
 
 fn sync_visuals(
@@ -205,7 +381,7 @@ fn control_chains(
             state.add_impulse(body, POKE);
         }
         if hold {
-            let root = BodyPose::from_translation(Vec3::new(0.0, HOLD_HEIGHT, 0.0));
+            let root = BodyPose::from_translation(Vec3::new(CHAIN_X, HOLD_HEIGHT, 0.0));
             let hanging: Vec<BodyPose> = chain
                 .settings
                 .parts
@@ -253,7 +429,17 @@ fn game(app: &mut App) {
     app.register_plugin(DefaultPlugins)
         .register_plugin(PhysicsGizmosPlugin)
         .add_system(Startup, (spawn_scene, show_gizmos))
-        .add_system(Update, (control_chains, sync_visuals, toggle_gizmos));
+        .add_system(
+            Update,
+            (
+                control_chains,
+                sync_visuals,
+                toggle_gizmos,
+                animate_humanoid,
+                control_humanoid,
+                draw_skeleton,
+            ),
+        );
 }
 
 fn main() {

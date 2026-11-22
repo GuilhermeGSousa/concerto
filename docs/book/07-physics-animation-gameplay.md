@@ -511,6 +511,24 @@ own entity is. Changing a weight over time is how animation and physics are
 blended. While a character whose parts have weight is itself moving, the drawn
 body trails it by one frame's motion.
 
+While the character's root part, its pelvis, has any weight, the character is
+a body and not a walker, and its `capsule` follows the body instead of driving
+it:
+
+- the capsule gets a `Carried` component, and whatever drives it leaves it
+  alone: the motion-matching springs, and so nav steering and root motion, and
+  the first-person walker. Held input moves nothing;
+- each fixed step it is put on the ground under the ragdoll's pelvis, so when
+  the character returns to animation it is already there and nothing teleports;
+- it collides with nothing and no query sees it while it is carried
+  (`PhysicsState::set_body_ghost`);
+- when every weight at the pelvis is back at 0 it is let go where it stands,
+  and the springs restart from the body's velocity and facing, which `Carried`
+  holds, so the first animated frame does not snap.
+
+The capsule is not checked for a clear standing spot when it is let go; a body
+that came to rest inside a wall's reach is pushed out by the solver.
+
 Ragdoll parts are on a collision layer of their own:
 
 - they never collide with the character's own `capsule`;

@@ -1639,6 +1639,7 @@ dependencies = [
  "concerto-ecs",
  "concerto-foundation",
  "concerto-mesh",
+ "concerto-motion-matching",
  "concerto-name",
  "concerto-physics",
  "concerto-ragdoll",
@@ -5316,7 +5317,9 @@ name = "ragdoll-test"
 version = "0.1.0"
 dependencies = [
  "concerto",
+ "concerto-debug-gizmos",
  "concerto-physics-gizmos",
+ "concerto-ragdoll",
  "env_logger",
  "glam 0.33.12",
 ]
