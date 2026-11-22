@@ -1621,6 +1621,13 @@ again and leave an error in the document's status. Removing the marker at
 capture means an edit made while a slow save is in flight marks the document
 again and is not lost.
 
+A save that finishes in the system that saw `SaveRequested` hands its result to
+`asset_editor::report_save`, which removes `SaveRequested`, sets the status to
+"Saved <addresses>" or "Save failed: <error>", writes `SceneSaved` or
+`SaveFailed`, and removes `Unsaved` after a success. Its result is a
+`SavedFiles { asset, written }`; an `AssetEntry` converts into one that wrote
+that file alone. The event is named `SceneSaved` for every kind of asset.
+
 A document that holds its own edits restores them on `DiscardEdits`, which the
 prompt sends when the user chooses Discard. The tab can outlive that choice, since
 the open that asked for it can fail.

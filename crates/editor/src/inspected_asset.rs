@@ -21,7 +21,7 @@ use concerto_reflect::Reflect;
 use crate::{
     asset_editor::{
         AssetEditor, AssetEditorRegistry, EditorDocument, SaveRequested, Unsaved,
-        finish_asset_request,
+        finish_asset_request, report_save,
     },
     guard::DiscardEdits,
     hosted::{HostRole, Hosted, HostedApp},
@@ -271,29 +271,17 @@ pub(crate) fn save_inspected_assets(
         .as_ref()
         .map(|project| project.root.as_path());
     for (entity, mut document, mut state) in requested.iter_mut() {
-        cmd.remove::<SaveRequested>(entity);
         let written = root
             .context("Open a project before saving")
             .and_then(|root| save_document(&mut document, &mut state, root, &mut assets));
-        match written {
-            Ok(asset) => {
-                document.status = format!("Saved {}", asset.address);
-                saved.write(SceneSaved {
-                    document: entity,
-                    written: vec![asset.clone()],
-                    asset,
-                });
-                cmd.remove::<Unsaved>(entity);
-            }
-            Err(error) => {
-                let message = format!("Save failed: {error:#}");
-                document.status = message.clone();
-                failed.write(SaveFailed {
-                    document: entity,
-                    message,
-                });
-            }
-        }
+        report_save(
+            entity,
+            &mut document,
+            written.map(Into::into),
+            &mut saved,
+            &mut failed,
+            &mut cmd,
+        );
     }
 }
 
