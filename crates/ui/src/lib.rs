@@ -17,6 +17,7 @@
 
 pub mod anchor;
 pub mod checkbox;
+pub mod color_picker;
 pub mod elements;
 pub mod focus;
 pub mod frame_stats_overlay;
