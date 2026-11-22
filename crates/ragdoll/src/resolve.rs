@@ -219,7 +219,12 @@ impl Ragdoll {
             });
             let mut built = PartSettings::new(pose, shape(part.shape))
                 .with_shape_offset(BodyPose::new(part.offset, part.rotation.normalize()))
-                .with_mass(part.mass);
+                .with_mass(part.mass)
+                .with_friction(if part.segment == Segment::Foot {
+                    SOLE_FRICTION
+                } else {
+                    BODY_FRICTION
+                });
             if let Some(parent) = parent {
                 built = built.with_parent(parent, joint);
             }
@@ -261,6 +266,9 @@ impl Ragdoll {
         })
     }
 }
+
+const SOLE_FRICTION: f32 = 4.0;
+const BODY_FRICTION: f32 = 0.5;
 
 struct Source<'a> {
     bone: usize,

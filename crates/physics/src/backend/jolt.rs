@@ -683,6 +683,7 @@ impl PhysicsBackend for JoltBackend {
                     shape_position: part.shape_offset.translation.to_array(),
                     shape_rotation: part.shape_offset.rotation.to_array(),
                     mass: part.mass,
+                    friction: part.friction,
                     twist_axis: part.joint.twist_axis.to_array(),
                     plane_axis: part.joint.plane_axis.to_array(),
                     normal_half_cone: part.joint.normal_half_cone,

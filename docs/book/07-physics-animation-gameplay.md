@@ -211,8 +211,10 @@ let built = RagdollSettings::new()
 ```
 
 Each part has a pose in one shared reference pose, a shape with its offset
-from the part, a mass, and the joint to its parent, which sits at the part's
-origin. The first part is the root; every other part names an earlier one as
+from the part, a mass, a friction coefficient, and the joint to its parent,
+which sits at the part's origin. Two bodies in contact slide by the geometric
+mean of their coefficients; a part has 0.5 unless `with_friction` says
+otherwise, and bodies that are not ragdoll parts have 0.2. The first part is the root; every other part names an earlier one as
 its parent. `build` balances the masses so the joints stay stable and stops
 each part colliding with its parent. No part ever moves faster than the settings'
 `max_speed`, 50 m/s by default, however hard it is hit. The solver runs at least
@@ -464,7 +466,10 @@ inspector's form.
 
 Typing fifteen parts by hand is an afternoon of guessing. `generate_humanoid`
 gives a first draft to adjust: a pelvis, up to three spine parts, a head, upper
-and lower arms, hands, thighs, shins and feet.
+and lower arms, hands, thighs, shins and feet. Each foot is a flat box whose
+underside is the sole, so a standing body rests on two faces and not on two
+rolling capsules. A part whose segment is `Foot` is built with a friction of 4,
+which holds a planted foot where it is; every other part has 0.5.
 
 ```rust
 use concerto::ragdoll::{HumanoidSettings, generate_humanoid};
@@ -743,6 +748,46 @@ to that instead of polling.
 `describe_body` gives the state, the running behaviours with their priorities
 and parts, and the sensing values as text, which is what the editor's
 `body_report` tool replies with.
+
+#### Balance
+
+`Balance` is the behaviour that keeps a pushed body on its own feet. Add it to
+a character that has a `BodyDrive`, a `BodySense` and a `PhysicalState`:
+
+```rust
+cmd.entity(character).insert(Balance::default());
+```
+
+It powers the body with its `profile`, `braced` by default, and from then on,
+each fixed step:
+
+- it holds the hips, knees and ankles with `leg_stiffness`, and claims the
+  pelvis and legs at `BALANCE_PRIORITY`, so a flinch still moves the trunk
+  and arms above them;
+- it assists the pelvis, since joint torques alone do not hold up a body that
+  has no ankle strategy: a torque towards the animated orientation, a force
+  towards the animated height, a force against the sway of the centre of mass,
+  and, only while the capture point is outside the feet, a force that pushes
+  it back. Each is capped (`max_upright_torque`, `max_lift`, `max_centring`),
+  so a hard push still overwhelms them. `with_assist(0.0, 0.0, 0.0)` leaves
+  the joints alone, and the body falls easily;
+- when the capture point is more than `step_margin` outside the feet, it
+  steps: the foot further from the point lifts and lands `step_beyond` past
+  it, at most `max_step` of the leg's length away, in `step_seconds`, bent
+  there by two-bone IK. A point to the side is caught by the foot on that
+  side, so the legs never cross. Both feet rest `step_rest` before the next.
+
+It ends by itself, removing the component and triggering `BehaviourEnded`:
+with `Outcome::Succeeded` once the body has been balanced and slower than
+`settle_speed` for `settle_seconds`, and the character returns to following
+its animation; with `Outcome::GaveUp` when the trunk leans past `max_lean`, the
+feet leave the ground, a step has no ground to land on, or `max_steps` steps
+did not bring the point back, and
+`PhysicalState` becomes `Falling`. A fall behaviour starts from that signal.
+
+With the defaults the reference humanoid, 75 kg, absorbs a 12 N·s push on the
+chest without a step, catches a 70 N·s push in one or two steps, and gives up
+under 300 N·s.
 
 Ragdoll parts are in `Layers::RAGDOLL` and collide with everything but
 `Layers::CHARACTER` (`CollisionLayers::ragdoll()`, or `RagdollSettings::layers`
