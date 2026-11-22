@@ -1,4 +1,5 @@
 mod blended_materials;
+mod bloom;
 mod camera_environment_edit;
 mod camera_render_target;
 mod camera_viewport;

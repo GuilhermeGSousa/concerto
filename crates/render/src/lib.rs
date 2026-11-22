@@ -18,6 +18,7 @@ extern crate self as concerto_render;
 
 pub mod assets;
 pub mod batching;
+pub mod bloom;
 pub mod capabilities;
 pub mod components;
 pub mod device;
@@ -50,6 +51,7 @@ pub use wgpu;
 pub use concerto_render_macros::AsBindGroup;
 
 pub use assets::material::Material;
+pub use bloom::{Bloom, BloomPlugin};
 pub use components::camera::ExclusiveCamera;
 pub use components::material::MaterialComponent;
 pub use material_plugin::{MaterialPipeline, MaterialPlugin, RenderMaterial};
