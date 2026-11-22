@@ -943,6 +943,7 @@ dependencies = [
  "concerto-particles",
  "concerto-physics",
  "concerto-procedural-animation",
+ "concerto-ragdoll",
  "concerto-reflect",
  "concerto-render",
  "concerto-scene",
@@ -1092,10 +1093,13 @@ dependencies = [
  "concerto-color",
  "concerto-ecs",
  "concerto-foundation",
+ "concerto-physics",
+ "concerto-ragdoll",
  "concerto-render",
  "concerto-ui",
  "concerto-window",
  "criterion",
+ "glam 0.33.12",
  "serde",
 ]
 
@@ -1570,6 +1574,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "concerto-physics-editor"
+version = "0.1.0"
+dependencies = [
+ "concerto-app",
+ "concerto-editor",
+ "concerto-physics-gizmos",
+]
+
+[[package]]
+name = "concerto-physics-gizmos"
+version = "0.1.0"
+dependencies = [
+ "concerto-app",
+ "concerto-color",
+ "concerto-debug-gizmos",
+ "concerto-ecs",
+ "concerto-foundation",
+ "concerto-mesh",
+ "concerto-physics",
+ "concerto-render",
+ "glam 0.33.12",
+]
+
+[[package]]
 name = "concerto-procedural-animation"
 version = "0.1.0"
 dependencies = [
@@ -1616,6 +1644,54 @@ dependencies = [
  "serde_json",
  "tempfile",
  "toml_edit",
+]
+
+[[package]]
+name = "concerto-ragdoll"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bincode",
+ "concerto-animation",
+ "concerto-app",
+ "concerto-ecs",
+ "concerto-foundation",
+ "concerto-mesh",
+ "concerto-name",
+ "concerto-physics",
+ "concerto-ragdoll",
+ "concerto-reflect",
+ "glam 0.33.12",
+ "log",
+ "proptest",
+ "serde",
+ "uuid",
+]
+
+[[package]]
+name = "concerto-ragdoll-editor"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "concerto",
+ "concerto-animation",
+ "concerto-app",
+ "concerto-ecs",
+ "concerto-editor",
+ "concerto-foundation",
+ "concerto-mcp",
+ "concerto-mesh",
+ "concerto-ragdoll",
+ "concerto-render",
+ "concerto-ui",
+ "concerto-window",
+ "rmcp",
+ "schemars",
+ "serde",
+ "serde_json",
+ "taffy",
+ "tempfile",
+ "tokio",
 ]
 
 [[package]]
@@ -5252,6 +5328,16 @@ name = "r-efi"
 version = "6.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
+
+[[package]]
+name = "ragdoll-test"
+version = "0.1.0"
+dependencies = [
+ "concerto",
+ "concerto-physics-gizmos",
+ "env_logger",
+ "glam 0.33.12",
+]
 
 [[package]]
 name = "rand"

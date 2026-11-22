@@ -8,6 +8,7 @@ use concerto_ecs::{
 use concerto_foundation::assets::{asset_store::AssetStore, handle::AssetLifetimeEvent, AssetId};
 use concerto_mesh::{Mesh, MeshComponent};
 use concerto_reflect::{Reflect, ReflectDefault};
+use glam::Vec3;
 use log::warn;
 
 use crate::{
@@ -17,23 +18,66 @@ use crate::{
     ActiveBackend,
 };
 
-pub struct PhysicsShape(pub(crate) <ActiveBackend as PhysicsBackend>::ShapeHandle);
+/// What a collision shape is, as plain data.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ShapeKind {
+    Sphere {
+        radius: f32,
+    },
+    Cuboid {
+        half_extents: Vec3,
+    },
+    /// A capsule along the local Y axis.
+    Capsule {
+        half_height: f32,
+        radius: f32,
+    },
+    /// A triangle mesh; its bounds are the shape's `local_aabb`.
+    Mesh,
+}
+
+pub struct PhysicsShape(
+    pub(crate) <ActiveBackend as PhysicsBackend>::ShapeHandle,
+    ShapeKind,
+);
 
 impl PhysicsShape {
     pub fn from_mesh(mesh: &Mesh) -> Result<Self, MeshShapeCreationError> {
-        Ok(Self(ActiveBackend::create_shape_from_mesh(mesh)?))
+        Ok(Self(
+            ActiveBackend::create_shape_from_mesh(mesh)?,
+            ShapeKind::Mesh,
+        ))
     }
 
     pub fn create_sphere_shape(radius: f32) -> Self {
-        Self(ActiveBackend::create_sphere_shape(radius))
+        Self(
+            ActiveBackend::create_sphere_shape(radius),
+            ShapeKind::Sphere { radius },
+        )
     }
 
     pub fn create_cuboid_shape(width: f32, height: f32, length: f32) -> Self {
-        Self(ActiveBackend::create_cuboid_shape(width, height, length))
+        Self(
+            ActiveBackend::create_cuboid_shape(width, height, length),
+            ShapeKind::Cuboid {
+                half_extents: Vec3::new(width, height, length),
+            },
+        )
     }
 
     pub fn create_capsule_shape(half_height: f32, radius: f32) -> Self {
-        Self(ActiveBackend::create_capsule_shape(half_height, radius))
+        Self(
+            ActiveBackend::create_capsule_shape(half_height, radius),
+            ShapeKind::Capsule {
+                half_height,
+                radius,
+            },
+        )
+    }
+
+    /// What the shape is, for drawing it.
+    pub fn kind(&self) -> ShapeKind {
+        self.1
     }
 
     /// The shape's axis-aligned bounds (min, max) in its own local space,

@@ -15,6 +15,9 @@ run = [
     "dep:concerto-color",
     "dep:concerto-ecs",
     "dep:concerto-foundation",
+    "dep:concerto-physics",
+    "dep:concerto-ragdoll",
+    "dep:glam",
     "dep:concerto-render",
     "dep:concerto-ui",
     "dep:concerto-window",
@@ -31,7 +34,10 @@ concerto-app = { workspace = true, optional = true }
 concerto-color = { workspace = true, optional = true }
 concerto-ecs = { workspace = true, optional = true }
 concerto-foundation = { workspace = true, optional = true }
+concerto-physics = { workspace = true, optional = true }
+concerto-ragdoll = { workspace = true, optional = true, features = ["test-support"] }
 concerto-render = { workspace = true, optional = true }
+glam = { workspace = true, optional = true }
 concerto-ui = { workspace = true, optional = true }
 concerto-window = { workspace = true, optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
@@ -44,6 +50,11 @@ required-features = ["run"]
 
 [[bench]]
 name = "ui"
+harness = false
+required-features = ["run"]
+
+[[bench]]
+name = "ragdoll"
 harness = false
 required-features = ["run"]
 

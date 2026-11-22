@@ -17,6 +17,7 @@ pub use concerto_noise as noise;
 pub use concerto_particles as particles;
 pub use concerto_physics as physics;
 pub use concerto_procedural_animation as procedural_animation;
+pub use concerto_ragdoll as ragdoll;
 pub use concerto_reflect as reflect;
 pub use concerto_render as render;
 pub use concerto_scene as scene;
@@ -39,6 +40,7 @@ use concerto_motion_matching::MotionMatchingPlugin;
 use concerto_particles::ParticlesPlugin;
 use concerto_physics::plugin::PhysicsPlugin;
 use concerto_procedural_animation::ProceduralAnimationPlugin;
+use concerto_ragdoll::RagdollPlugin;
 use concerto_render::{
     assets::material::StandardMaterial, plugin::RenderPlugin,
     shadow_pipeline::ShadowPipelinePlugin, AmbientOcclusionPlugin, AutoExposurePlugin, BloomPlugin,
@@ -217,6 +219,7 @@ impl Plugin for DefaultPlugins {
             .register_plugin(MotionMatchingPlugin)
             .register_plugin(ProceduralAnimationPlugin)
             .register_plugin(AnimationPlugin)
+            .register_plugin(RagdollPlugin)
             .register_plugin(ScenePlugin)
             .register_plugin(WorldGridPlugin)
             .register_plugin(NavigationPlugin)

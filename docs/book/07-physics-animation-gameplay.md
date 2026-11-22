@@ -126,6 +126,119 @@ example from an `On<Add<Sensor>>` listener.
 Signals are sent once per body pair, from `LateFixedUpdate`, right after the
 physics step.
 
+
+### Contacts
+
+A `Contacts` component makes a body report what it touches. Without it a body
+reports nothing, so ordinary bodies cost nothing. After each fixed step it
+lists every solid body touching this one: the `other` entity, the world
+`point`, the `normal` pointing from the other body towards this one, and the
+`impulse` in N·s that the contact applied over that step.
+
+```rust
+use concerto::physics::contact::{ContactStart, Contacts};
+
+cmd.spawn((RigidBody::default(), Collider::sphere(0.2), Contacts::default(), transform));
+
+fn feet_down(feet: Query<&Contacts, With<Foot>>) {
+    for contacts in feet.iter() {
+        let grounded = contacts.iter().any(|contact| contact.normal.y > 0.7);
+    }
+}
+```
+
+`ContactStart` and `ContactEnd` are signals on the reporting entity, each
+carrying `other`, sent when a body begins and stops touching it, or goes away
+while touching. A body asleep on another keeps its contact listed, with the
+impulse of the last step it was simulated in. Sensors never appear here; they
+have their own signals.
+
+
+### Ragdolls
+
+A ragdoll is a tree of bodies joined by swing-twist joints, simulated by Jolt's
+own ragdoll. It is described as plain data and built once:
+
+```rust
+use concerto::physics::ragdoll::{BodyPose, JointSettings, PartSettings, PartShape, RagdollSettings};
+
+let link = |index: usize| {
+    PartSettings::new(
+        BodyPose::from_translation(Vec3::new(0.0, -0.5 * index as f32, 0.0)),
+        PartShape::Capsule { half_height: 0.15, radius: 0.08 },
+    )
+    .with_shape_offset(BodyPose::from_translation(Vec3::new(0.0, -0.25, 0.0)))
+    .with_mass(2.0)
+};
+let joint = JointSettings::new(Vec3::NEG_Y, Vec3::X).with_swing(0.6, 0.6).with_twist(-0.3, 0.3);
+let built = RagdollSettings::new()
+    .with_part(link(0))
+    .with_part(link(1).with_parent(0, joint))
+    .build()?;
+```
+
+Each part has a pose in one shared reference pose, a shape with its offset
+from the part, a mass, and the joint to its parent, which sits at the part's
+origin. The first part is the root; every other part names an earlier one as
+its parent. `build` balances the masses so the joints stay stable and stops
+each part colliding with its parent. No part ever moves faster than the settings'
+`max_speed`, 50 m/s by default, however hard it is hit.
+
+`PhysicsState::create_ragdoll(&built, owner, &pose)` adds one to the world with
+each part at its world pose and returns a `RagdollId`; `destroy_ragdoll`
+removes it. `ragdoll_pose` reads every part's world pose and `set_ragdoll_pose`
+moves them all at once. `ragdoll_bodies` gives each part's `BodyId`, for
+velocities and impulses. A ray or sphere cast that hits a part reports the
+`owner` entity and the part's index in `RayHit::part`. `RagdollId` is also a
+component: put it on the owner, and removing it or despawning the owner
+destroys the ragdoll.
+
+A ragdoll hangs from its joints until something drives it:
+
+- `drive_ragdoll_motors(id, &pose)` turns every joint's motor on, aimed at the
+  rotation each part has relative to its parent in `pose`. The body reaches for
+  the pose and holds it against gravity as far as its motors can.
+- `set_ragdoll_joint_drive(id, part, drive)` sets one joint: `JointDrive::Off`,
+  or `JointDrive::Target(JointTarget { rotation, motor })` with a
+  `MotorSettings { frequency, damping, torque_limit }`. A low torque limit
+  makes a weak muscle that sags.
+- `ragdoll_joint_motor_impulse(id, part)` reads what the motor applied in the
+  last collision step, which tells a controller that a muscle is saturated.
+- `set_ragdoll_part_motion(id, part, MotionType::Kinematic)` takes one part out
+  of the simulation's hands, so a kinematic pelvis can carry a powered torso.
+- `drive_ragdoll_kinematic(id, &pose)` sets each part's velocity so it reaches
+  `pose` at the end of the next fixed step. Kinematic parts follow it exactly
+  and push dynamic bodies aside.
+
+Ragdolls exist on Jolt only. On Rapier, and so in the browser, `build`
+succeeds and `create_ragdoll` returns `None`.
+
+### Debug drawing
+
+The `concerto-physics-gizmos` crate, which a game adds itself, draws what the
+physics holds. Register `PhysicsGizmosPlugin` after `DefaultPlugins`; the
+`PhysicsGizmos` resource turns three layers on, all off by default:
+
+- `colliders` outlines every `Collider`: a sphere, a box, a capsule, or the
+  bounds of a mesh shape, carried by the entity's transform and its
+  `ColliderOffset`. Grey-blue is static, cyan kinematic, green dynamic and
+  violet asleep.
+- `ragdolls` draws each part's shape in the same colours, and at each joint
+  its frame, its swing cone from `normal_half_cone` and `plane_half_cone`, its
+  twist range as an arc, and the child's current twist axis in white, so you
+  see how close the joint is to a limit.
+- `contacts` draws a red cross at each contact of a body that holds
+  `Contacts`, with a line along its normal.
+
+In the editor the layers are component gizmo kinds, once the game lists
+`concerto-physics-editor`: `Collider`, `Ragdoll` (on the entity that holds the
+`RagdollId`), `Contacts`, and, drawn from the authored components where no body
+exists yet, `Box collider`, `Mesh collider` and `Sensor`. The viewport's Gizmos
+menu and the `gizmos` tool turn each on by name, for the selection or for every
+entity. In a game without the editor, use the `PhysicsGizmos` resource. Both
+need `DebugGizmosPlugin`, which the plugin adds when the `App` has a renderer.
+The crate's [README](../../crates/physics-gizmos/README.md) says more.
+
 ### Queries and forces
 
 The `PhysicsState` resource answers questions about the simulated world and
@@ -263,6 +376,134 @@ fn walk_each(
 
 The physics step runs in `LateFixedUpdate`, at a fixed rate; transforms of
 simulated bodies are interpolated between steps for display.
+
+### The ragdoll asset
+
+A `Ragdoll` asset describes the physical body of one skeleton, authored once
+and shared by every character on it. It names its `skeleton` and lists its
+parts. Each `RagdollPart` follows one bone and has a `RagdollShape` (capsule,
+box or sphere) with its `offset` and `rotation` in the bone's space, a `mass`,
+and the `RagdollJoint` to its parent part: a twist axis and a plane axis in the
+bone's space, the two swing half angles, the twist range, a friction torque
+and the motor's spring.
+
+```rust
+use concerto::ragdoll::{Ragdoll, RagdollJoint, RagdollPart, RagdollShape};
+
+let ragdoll = Ragdoll::new(skeleton)
+    .with_part(RagdollPart::new("pelvis", RagdollShape::Box { half_extents: Vec3::new(0.15, 0.1, 0.1) }).with_mass(10.0))
+    .with_part(
+        RagdollPart::new("thigh_l", RagdollShape::Capsule { half_height: 0.15, radius: 0.07 })
+            .with_offset(Vec3::new(0.0, -0.2, 0.0))
+            .with_mass(7.5)
+            .with_joint(RagdollJoint::new(Vec3::NEG_Y, Vec3::X).with_swing(1.0, 0.8).with_twist(-0.4, 0.4)),
+    )
+    .with_part(
+        RagdollPart::new("calf_l", RagdollShape::Capsule { half_height: 0.15, radius: 0.05 })
+            .with_offset(Vec3::new(0.0, -0.2, 0.0))
+            .with_mass(3.5)
+            .with_joint(RagdollJoint::hinge(Vec3::X, 0.0, 2.4)),
+    );
+```
+
+A ragdoll has far fewer parts than its skeleton has bones. The parts may be
+listed in any order: each is joined to the part of its nearest ancestor bone
+that has one, and a bone without a part moves with that ancestor's part. The
+parts must form one tree.
+
+`ragdoll.resolve(&skeleton)` fits the asset to the skeleton and builds the
+physics recipe, or says why it does not fit: a bone the skeleton lacks, two
+parts on one bone, or a part outside the tree. The `ResolvedRagdoll` gives the
+`BuiltRagdoll` for `PhysicsState::create_ragdoll`, the bone each part follows,
+and for each bone the part it moves with.
+
+The asset shows in the Asset Browser, where New creates one, and opens in the
+inspector's form.
+
+#### Generating a humanoid
+
+Typing fifteen parts by hand is an afternoon of guessing. `generate_humanoid`
+gives a first draft to adjust: a pelvis, up to three spine parts, a head, upper
+and lower arms, hands, thighs, shins and feet.
+
+```rust
+use concerto::ragdoll::{HumanoidSettings, generate_humanoid};
+
+let rig = retarget_rig.resolve(&skeleton, None)?;
+let ragdoll = generate_humanoid(skeleton_handle, &skeleton, &rig, &[&body_mesh], &HumanoidSettings::default())?;
+```
+
+It needs the skeleton's `RetargetRig`, which already says which bones are the
+spine, the neck, the arms and the legs. `HumanoidChains` names the rig's chains
+for each; the defaults are `spine`, `neck`, `arm_l`, `arm_r`, `leg_l` and
+`leg_r`. An arm uses the last three bones of its chain, so a chain may start at
+the clavicle; a leg uses the first three, so it may end at the toe.
+
+Capsules run along each bone to the next. A capsule is as thick as the mean
+distance from the bone of the mesh vertices skinned to it, or in proportion to
+the bone's length when no mesh is given. `total_mass`, 75 kg by default, is
+split by body-segment fractions. Knees and elbows are hinges that bend one way
+only, shoulders and hips get a swing cone and a twist range, the spine and neck
+small ones, and every joint a little friction so a fallen body comes to rest.
+
+In the editor, a retarget rig's tab has a **Create ragdoll** button, and an
+agent has the `create_ragdoll` tool; both come from the extension crate
+`concerto-ragdoll-editor` and send one signal, `CreateRagdoll`. It reads the
+rig, its skeleton and its reference clip, runs `generate_humanoid`, checks the
+result with `Ragdoll::resolve`, and saves `ragdoll.gasset` beside the rig, or
+at an `address` you give. The tool takes `rig`, and optionally `address`,
+`total_mass` and `chains`, and answers one line per part with its bone, shape
+and mass. It reads no skinned mesh, so part radii follow the bones'
+proportions. Given a skeleton, it says to create a rig first.
+
+With the `test-support` feature, `concerto::ragdoll::testing` has a reference
+humanoid built in code (`reference_humanoid`) and a `RagdollWorld` to stand it
+in, hit a named part and step, without a GPU.
+
+### A character's ragdoll
+
+`CharacterRagdoll` gives a character a physical body. It goes on the entity
+with the `SkeletonComponent`, names the `Ragdoll` asset of that skeleton, and
+optionally the character's `capsule`:
+
+```rust
+use concerto::ragdoll::CharacterRagdoll;
+
+cmd.insert(CharacterRagdoll::new(ragdoll).with_capsule(capsule), skeleton_entity);
+```
+
+Once the asset and the skeleton have loaded, the ragdoll is built at the bones'
+current pose and the entity gets a `RagdollId` and a `RagdollBody`. Removing
+`CharacterRagdoll`, or despawning the entity, destroys it; inserting it again
+rebuilds it. An asset that does not fit the skeleton is reported once and the
+entity is marked `RagdollRefused`.
+
+Its `mode` is `RagdollMode::FollowsAnimation`: every part is kinematic, and
+each fixed step, before physics steps, it is driven to its bone's pose. The
+parts trail the drawn pose by up to one frame. They push dynamic props, so an
+arm swing knocks a bottle over, and they are already in the right place at the
+right speed the moment something disturbs the character. The animation is not
+changed.
+
+Ragdoll parts are on a collision layer of their own:
+
+- they never collide with the character's own `capsule`;
+- a scene query skips them unless it asks: `QueryFilter::ragdolls` is
+  `RagdollQuery::Skip` by default, so foot placement and the camera boom never
+  meet a limb. `RagdollQuery::Include` sees them with everything else and
+  `RagdollQuery::Only` sees nothing else, which is what a shot uses;
+- the ground probe and sensors ignore them.
+
+A hit on a part reports the character and the bone:
+
+```rust
+let hit = physics.cast_ray(origin, direction, QueryFilter::default().with_ragdolls(RagdollQuery::Only))?;
+let body = bodies.get_entity(hit.entity?)?;
+let bone = body.bone(hit.part?);
+```
+
+Nothing happens in the editor's edit and preview `App`s, where physics is not
+stepped.
 
 ## Animation
 

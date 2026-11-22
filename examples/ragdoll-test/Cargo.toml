@@ -1,0 +1,17 @@
+[package]
+name = "ragdoll-test"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description.workspace = true
+repository.workspace = true
+license.workspace = true
+
+[dependencies]
+concerto = { path = "../.." }
+concerto-physics-gizmos.workspace = true
+env_logger = "0.11.8"
+glam.workspace = true
+
+[lints]
+workspace = true
