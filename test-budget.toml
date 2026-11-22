@@ -34,7 +34,7 @@
 "crates/render" = 86
 "crates/render/macros" = 1
 "crates/scene" = 12
-"crates/skybox" = 4
+"crates/skybox" = 5
 "crates/tasks" = 2
 "crates/terminal-renderer" = 2
 "crates/texture-editor" = 1
