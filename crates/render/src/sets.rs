@@ -38,6 +38,17 @@ pub enum BackgroundSet {
     Draw,
 }
 
+/// The ordered steps inside [`RenderSet::Prepass`]: `Depth`, `Cutout`, then `Read`.
+#[derive(SystemSet, Clone, PartialEq, Eq, Hash, Debug)]
+pub enum PrepassSet {
+    /// Drawing the depth of opaque meshes for a pass that reads it.
+    Depth,
+    /// Drawing masked materials into that depth and into the shadow maps, cut to their shape.
+    Cutout,
+    /// Reading the finished depth, as ambient occlusion does.
+    Read,
+}
+
 /// The ordered steps inside [`RenderSet::PostProcess`] that need an order: `DepthOfField`, then `Bloom`.
 #[derive(SystemSet, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum PostProcessSet {

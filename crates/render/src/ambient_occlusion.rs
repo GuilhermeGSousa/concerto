@@ -27,13 +27,14 @@ use crate::{
         shadows::RenderShadowCasterViewProj,
         skeleton::{RenderSkeletonComponent, SkinUniforms},
     },
+    depth_pass::{DepthPassKind, DepthPassLayout, DepthPassView, DepthPassViews},
     device::RenderDevice,
     frustum::Frustum,
     layouts::{CameraLayout, SkeletonLayout},
     queue::RenderQueue,
     render_asset::{render_mesh::RenderMesh, render_texture::FallbackTextures, RenderAssets},
     resources::RenderContext,
-    sets::RenderSet,
+    sets::{PrepassSet, RenderSet},
     shader::create_shader_module,
     sky_light::SkyRadianceMap,
     view_target::{prepare_view_targets, ViewTarget},
@@ -95,7 +96,18 @@ impl Plugin for AmbientOcclusionPlugin {
                 Render,
                 queue_ambient_occlusion_meshes.in_set(RenderSet::Queue),
             )
-            .add_render_system(Render, render_ambient_occlusion.in_set(RenderSet::Prepass));
+            .add_render_system(
+                Render,
+                render_ambient_occlusion_depth
+                    .in_set(RenderSet::Prepass)
+                    .in_set(PrepassSet::Depth),
+            )
+            .add_render_system(
+                Render,
+                render_ambient_occlusion
+                    .in_set(RenderSet::Prepass)
+                    .in_set(PrepassSet::Read),
+            );
     }
 
     fn finish(&self, app: &mut concerto_app::App) {
@@ -119,8 +131,16 @@ impl Plugin for AmbientOcclusionPlugin {
             );
             return;
         }
-        let pipelines =
-            AmbientOcclusionPipelines::new(device, capabilities, camera_layout, skeleton_layout);
+        let depth_pass_layout = render
+            .get_resource::<DepthPassLayout>()
+            .expect("AmbientOcclusionPlugin needs RenderPlugin, registered before it");
+        let pipelines = AmbientOcclusionPipelines::new(
+            device,
+            capabilities,
+            camera_layout,
+            skeleton_layout,
+            depth_pass_layout,
+        );
         app.render_mut().insert_resource(pipelines);
     }
 }
@@ -273,11 +293,9 @@ impl AmbientOcclusionPipelines {
         capabilities: &RenderCapabilities,
         camera_layout: &CameraLayout,
         skeleton_layout: &SkeletonLayout,
+        depth_pass_layout: &DepthPassLayout,
     ) -> Self {
-        let view_proj_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("Depth Prepass Layout"),
-            entries: &[uniform_entry(0, wgpu::ShaderStages::VERTEX)],
-        });
+        let view_proj_layout = depth_pass_layout.0.clone();
         let prepass_module = create_shader_module(
             device,
             "Depth Prepass",
@@ -492,6 +510,8 @@ pub(crate) fn prepare_ambient_occlusion(
 
 pub(crate) fn queue_ambient_occlusion_meshes(
     mut views: ResMut<AmbientOcclusionViews>,
+    mut depth_pass_views: ResMut<DepthPassViews>,
+    context: Res<RenderContext>,
     render_cameras: Query<&RenderCamera>,
     render_mesh_query: Query<(&MainEntity, Option<&RenderSkeletonComponent>)>,
     render_mesh_instances: Res<RenderMeshInstances>,
@@ -505,6 +525,18 @@ pub(crate) fn queue_ambient_occlusion_meshes(
             continue;
         };
         let frustum = Frustum::from_clip_from_world(render_camera.camera_uniform.view_proj());
+        let rect = render_camera.viewport_rect(render_camera.target_size(&context));
+        if !rect.is_empty() {
+            depth_pass_views.0.push(DepthPassView {
+                kind: DepthPassKind::Prepass,
+                target: view.depth.clone(),
+                view_proj: view.view_proj.bind_group().clone(),
+                frustum,
+                layers: Some(render_camera.layers),
+                rect: Some(rect),
+                shadow_layer: None,
+            });
+        }
         let candidates = render_mesh_query
             .iter()
             .filter_map(|(main_entity, skeleton)| {
@@ -513,7 +545,9 @@ pub(crate) fn queue_ambient_occlusion_meshes(
                     || !instance
                         .flags
                         .contains(RenderMeshInstanceFlags::SHADOW_CASTER)
-                    || instance.flags.contains(RenderMeshInstanceFlags::BLENDED)
+                    || instance.flags.intersects(
+                        RenderMeshInstanceFlags::BLENDED | RenderMeshInstanceFlags::CUTOUT,
+                    )
                     || !render_meshes.contains(&instance.mesh_asset_id)
                 {
                     return None;
@@ -567,13 +601,71 @@ impl FullScreenPass<'_> {
     }
 }
 
+pub(crate) fn render_ambient_occlusion_depth(
+    pipelines: Option<Res<AmbientOcclusionPipelines>>,
+    views: Res<AmbientOcclusionViews>,
+    render_cameras: Query<(Entity, &RenderCamera)>,
+    render_meshes: Res<RenderAssets<RenderMesh>>,
+    skins: Res<SkinUniforms>,
+    context: Res<RenderContext>,
+    mut device: ResMut<RenderDevice>,
+    queue: Res<RenderQueue>,
+) {
+    let Some(pipelines) = pipelines else {
+        return;
+    };
+    let encoder = device.command_encoder();
+    for (camera, render_camera) in render_cameras.iter() {
+        let Some(view) = views.cameras.get(&camera) else {
+            continue;
+        };
+        let rect = render_camera.viewport_rect(render_camera.target_size(&context));
+        if rect.is_empty() {
+            continue;
+        }
+
+        let clip_from_world: Mat4 = render_camera.camera_uniform.view_proj();
+        view.view_proj.write(&queue, clip_from_world);
+
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            multiview_mask: None,
+            label: Some("Depth Prepass"),
+            color_attachments: &[],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: &view.depth,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(1.0),
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: None,
+            }),
+            occlusion_query_set: None,
+            timestamp_writes: None,
+        });
+        rect.apply(&mut pass);
+        if view.batches.bins.batches.is_empty() {
+            continue;
+        }
+        pass.set_pipeline(&pipelines.prepass);
+        pass.set_bind_group(0, view.view_proj.bind_group(), &[]);
+        pass.set_vertex_buffer(1, view.batches.instances.buffer().slice(..));
+        for batch in &view.batches.bins.batches {
+            let Some(mesh) = render_meshes.get(&batch.key) else {
+                continue;
+            };
+            pass.set_bind_group(1, skins.bind_group(), &[batch.skeleton_offset]);
+            pass.set_vertex_buffer(0, mesh.vertices.slice(..));
+            pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
+            pass.draw_indexed(0..mesh.index_count, 0, batch.instances.clone());
+        }
+    }
+}
+
 pub(crate) fn render_ambient_occlusion(
     pipelines: Option<Res<AmbientOcclusionPipelines>>,
     extracted: Res<ExtractedAmbientOcclusion>,
     views: Res<AmbientOcclusionViews>,
     render_cameras: Query<(Entity, &RenderCamera)>,
-    render_meshes: Res<RenderAssets<RenderMesh>>,
-    skins: Res<SkinUniforms>,
     context: Res<RenderContext>,
     mut device: ResMut<RenderDevice>,
     queue: Res<RenderQueue>,
@@ -593,46 +685,11 @@ pub(crate) fn render_ambient_occlusion(
             continue;
         }
 
-        let clip_from_world: Mat4 = render_camera.camera_uniform.view_proj();
-        view.view_proj.write(&queue, clip_from_world);
         queue.write_buffer(
             &view.uniform,
             0,
             bytemuck::bytes_of(&OcclusionUniform::new(render_camera, rect, settings)),
         );
-
-        {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                multiview_mask: None,
-                label: Some("Depth Prepass"),
-                color_attachments: &[],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &view.depth,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(1.0),
-                        store: wgpu::StoreOp::Store,
-                    }),
-                    stencil_ops: None,
-                }),
-                occlusion_query_set: None,
-                timestamp_writes: None,
-            });
-            rect.apply(&mut pass);
-            if !view.batches.bins.batches.is_empty() {
-                pass.set_pipeline(&pipelines.prepass);
-                pass.set_bind_group(0, view.view_proj.bind_group(), &[]);
-                pass.set_vertex_buffer(1, view.batches.instances.buffer().slice(..));
-                for batch in &view.batches.bins.batches {
-                    let Some(mesh) = render_meshes.get(&batch.key) else {
-                        continue;
-                    };
-                    pass.set_bind_group(1, skins.bind_group(), &[batch.skeleton_offset]);
-                    pass.set_vertex_buffer(0, mesh.vertices.slice(..));
-                    pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
-                    pass.draw_indexed(0..mesh.index_count, 0, batch.instances.clone());
-                }
-            }
-        }
 
         FullScreenPass {
             label: "Ambient Occlusion Pass",

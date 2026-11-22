@@ -40,6 +40,8 @@ struct BindingField<'a> {
 struct MaterialAttr {
     vertex_shader: Option<Expr>,
     fragment_shader: Option<Expr>,
+    /// `cutout_shader()` override: WGSL source that discards what a masked asset cuts away.
+    cutout_shader: Option<Expr>,
     /// `needs_camera()` override.  Defaults to `true` in the trait.
     camera: Option<bool>,
     /// `needs_lighting()` override.  Defaults to `false` in the trait.
@@ -192,6 +194,7 @@ fn alpha_mode_field(fields: &syn::FieldsNamed) -> syn::Result<Option<&Ident>> {
 /// Supported keys:
 /// - `vertex_shader = <expr>` — WGSL source for the vertex stage
 /// - `fragment_shader = <expr>` — WGSL source for the fragment stage
+/// - `cutout_shader = <expr>` — WGSL source with `fs_cutout`, for shadow maps and depth prepasses
 /// - `camera = true|false` — override `needs_camera()` (trait default: `true`)
 /// - `lighting = true|false` — override `needs_lighting()` (trait default: `false`)
 /// - `skeleton = true|false` — override `needs_skeleton()` (trait default: `false`)
@@ -206,6 +209,7 @@ fn parse_material_attr(attrs: &[syn::Attribute]) -> MaterialAttr {
     let mut result = MaterialAttr {
         vertex_shader: None,
         fragment_shader: None,
+        cutout_shader: None,
         camera: None,
         lighting: None,
         skeleton: None,
@@ -226,6 +230,9 @@ fn parse_material_attr(attrs: &[syn::Attribute]) -> MaterialAttr {
             } else if meta.path.is_ident("fragment_shader") {
                 let value = meta.value()?;
                 result.fragment_shader = Some(value.parse()?);
+            } else if meta.path.is_ident("cutout_shader") {
+                let value = meta.value()?;
+                result.cutout_shader = Some(value.parse()?);
             } else if meta.path.is_ident("camera") {
                 result.camera = Some(parse_bool_value(&meta)?);
             } else if meta.path.is_ident("lighting") {
@@ -606,8 +613,21 @@ fn gen_material_impl(name: &Ident, m: &MaterialAttr, alpha_mode: Option<&Ident>)
         })
         .unwrap_or_default();
 
+    let cutout_shader_fn = m
+        .cutout_shader
+        .as_ref()
+        .map(|source| {
+            quote! {
+                fn cutout_shader() -> Option<#render::assets::material::ShaderRef> {
+                    Some(#render::assets::material::ShaderRef::Source(#source))
+                }
+            }
+        })
+        .unwrap_or_default();
+
     quote! {
         impl #render::assets::material::Material for #name {
+            #cutout_shader_fn
             #camera_fn
             #lighting_fn
             #skeleton_fn
@@ -640,6 +660,7 @@ fn gen_material_impl(name: &Ident, m: &MaterialAttr, alpha_mode: Option<&Ident>)
 /// |------------------|-------------------------------------------|---------------------------|
 /// | `vertex_shader`  | `<expr>`                                  | `AsBindGroup::vertex_shader()` |
 /// | `fragment_shader`| `<expr>`                                  | `AsBindGroup::fragment_shader()` |
+/// | `cutout_shader`  | `<expr>`                                  | `cutout_shader()` (default `None`) |
 /// | `camera`         | `true \| false`                           | `needs_camera()` (default `true`) |
 /// | `lighting`       | `true \| false`                           | `needs_lighting()` (default `false`) |
 /// | `skeleton`       | `true \| false`                           | `needs_skeleton()` (default `false`) |

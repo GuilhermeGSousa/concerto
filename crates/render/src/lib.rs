@@ -24,6 +24,7 @@ pub mod bloom;
 pub mod capabilities;
 pub mod components;
 pub mod depth_of_field;
+pub(crate) mod depth_pass;
 pub mod device;
 pub mod draw_target;
 pub(crate) mod frustum;
