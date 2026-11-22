@@ -178,12 +178,12 @@ pub fn create_character_ragdolls(
 
 /// Each fixed step, before physics steps, drives the parts of every ragdoll that follows its animation to its bones' poses, and keeps the parts from colliding with the character's capsule.
 pub fn follow_animation(
-    characters: Query<(&CharacterRagdoll, &RagdollId, &mut RagdollBody)>,
+    mut characters: Query<(&CharacterRagdoll, &RagdollId, &mut RagdollBody)>,
     transforms: Query<&GlobalTransform>,
     bodies: Query<&BodyId>,
     mut state: ResMut<PhysicsState>,
 ) {
-    for (character, id, mut body) in characters.iter() {
+    for (character, id, mut body) in characters.iter_mut() {
         let capsule = character
             .capsule
             .entity()

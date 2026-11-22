@@ -171,10 +171,10 @@ fn spawn_scene(mut cmd: CommandQueue, mut state: ResMut<PhysicsState>, assets: R
 fn sync_visuals(
     state: Res<PhysicsState>,
     chains: Query<&ChainRagdoll>,
-    visuals: Query<(&RagdollVisual, &mut Transform)>,
+    mut visuals: Query<(&RagdollVisual, &mut Transform)>,
 ) {
     let mut pose = Vec::new();
-    for (visual, mut transform) in visuals.iter() {
+    for (visual, mut transform) in visuals.iter_mut() {
         let Some(chain) = chains.get_entity(visual.owner) else {
             continue;
         };
