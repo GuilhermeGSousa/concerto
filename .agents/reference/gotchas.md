@@ -130,6 +130,14 @@ fix the entry in the same commit as the change that made it false.
   applies exposure and the curve; a shader that tonemaps is tonemapped twice.
   `MaterialPlugin::pipeline_only` is the exception: its pipeline targets the
   window's format, for passes that draw on the output, as the UI does.
+- **The camera bind group holds the camera's ambient occlusion at binding 3.**
+  It is `FallbackTextures`' white texel until `prepare_ambient_occlusion` gives
+  the camera a texture and calls `RenderCamera::rebind`. A pass that draws to
+  that texture must not bind the camera group. Anything else that builds a
+  camera bind group goes through `rebind`, or the occlusion is lost.
+- **`Prepass` and `PostProcess` are ordered by their own edges, not in the
+  `RenderSet` chain.** Each is empty without its plugin, and a chained set with
+  no systems breaks the chain around it (#867).
 - **A light no camera sees is not sent to the GPU.** A point or spot light is
   culled by the sphere of its `range` against every camera's frustum. A
   `range` of 0 is unbounded, so that light is never culled and always takes one of the 128 light slots and, when

@@ -113,10 +113,11 @@ registration order:
 app.add_system(LateUpdate, app_widget.after(UiSet::Input).before(UiSet::Layout));
 ```
 
-The render crate exports `RenderSet { Lights, Queue, Shadows, Background, Draw, Transparent, PostProcess, Tonemap, Overlay, Present }`
-the same way: `Lights`, `Queue`, `Shadows`, `Background`, `Draw`, `Transparent`, `PostProcess`, `Tonemap` and `Overlay` are
-chained in that order in `Render`, `Queue` culls and bins mesh instances into each
-view's draws, `Background` clears each camera's view target and draws what lies behind
+The render crate exports `RenderSet { Lights, Queue, Shadows, Prepass, Background, Draw, Transparent, PostProcess, Tonemap, Overlay, Present }`
+the same way: `Lights`, `Queue`, `Shadows`, `Prepass`, `Background`, `Draw`, `Transparent`, `PostProcess`, `Tonemap` and `Overlay` are
+ordered that way in `Render`, `Queue` culls and bins mesh instances into each
+view's draws, `Prepass` draws what a scene pass reads before the scene is drawn, as
+ambient occlusion does from a depth prepass, `Background` clears each camera's view target and draws what lies behind
 the scene, such as the sky, `Transparent` draws blended surfaces over the scene back to front,
 `PostProcess` changes the finished HDR scene in the view target, as bloom does,
 `Tonemap` writes each camera's HDR scene to its target, exposed and tonemapped,

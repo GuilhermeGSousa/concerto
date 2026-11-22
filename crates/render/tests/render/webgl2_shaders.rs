@@ -132,6 +132,16 @@ fn every_shader_translates_to_glsl_es_300_under_the_webgl2_defines() {
             entry_points: &[VERTEX, FRAGMENT],
         },
         Shader {
+            label: "ambient_occlusion.wgsl",
+            source: include_str!("../../src/shaders/ambient_occlusion.wgsl"),
+            entry_points: &[VERTEX, FRAGMENT],
+        },
+        Shader {
+            label: "ambient_occlusion_blur.wgsl",
+            source: include_str!("../../src/shaders/ambient_occlusion_blur.wgsl"),
+            entry_points: &[VERTEX, FRAGMENT],
+        },
+        Shader {
             label: "bloom.wgsl",
             source: include_str!("../../src/shaders/bloom.wgsl"),
             entry_points: BLOOM,

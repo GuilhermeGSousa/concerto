@@ -163,6 +163,12 @@ impl Plugin for RenderPlugin {
         )
         .configure_render_sets(
             Render,
+            RenderSet::Prepass
+                .after(RenderSet::Shadows)
+                .before(RenderSet::Background),
+        )
+        .configure_render_sets(
+            Render,
             RenderSet::PostProcess
                 .after(RenderSet::Transparent)
                 .before(RenderSet::Tonemap),
