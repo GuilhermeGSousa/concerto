@@ -96,7 +96,9 @@ extern "C"
 
 	JoltRagdollSettings *jolt_ragdoll_settings_create(const JoltRagdollPart *parts,
 													  uint32_t count,
-													  float max_linear_velocity)
+													  float max_linear_velocity,
+													  uint32_t memberships,
+													  uint32_t filter)
 	{
 		jolt_global_init();
 		if (count == 0)
@@ -123,7 +125,7 @@ extern "C"
 			part.mPosition = JPH::RVec3(ToVec3(source.position));
 			part.mRotation = ToQuat(source.rotation);
 			part.mMotionType = JPH::EMotionType::Dynamic;
-			part.mObjectLayer = Layers::RAGDOLL;
+			part.mObjectLayer = Layers::Make(memberships, filter, false, false);
 			part.mOverrideMassProperties = JPH::EOverrideMassProperties::CalculateInertia;
 			part.mMassPropertiesOverride.mMass = source.mass;
 			part.mMaxLinearVelocity = max_linear_velocity;
@@ -208,7 +210,6 @@ extern "C"
 		for (JPH::BodyID id : ragdoll->ragdoll->GetBodyIDs())
 		{
 			world->reporting.erase(id);
-			world->ragdoll_ignores.erase(id);
 			world->sensor_contact_listener.Forget(id);
 		}
 		if (bounds.IsValid())
@@ -217,20 +218,6 @@ extern "C"
 			bi.ActivateBodiesInAABox(bounds, JPH::BroadPhaseLayerFilter(), JPH::ObjectLayerFilter());
 		}
 		delete ragdoll;
-	}
-
-	void jolt_ragdoll_set_ignored_body(JoltWorld *world,
-									   JoltRagdoll *ragdoll,
-									   JoltBodyId body,
-									   bool ignored)
-	{
-		for (JPH::BodyID id : ragdoll->ragdoll->GetBodyIDs())
-		{
-			if (ignored)
-				world->ragdoll_ignores[id] = JPH::BodyID(body);
-			else
-				world->ragdoll_ignores.erase(id);
-		}
 	}
 
 	uint32_t jolt_ragdoll_part_count(const JoltRagdoll *ragdoll)

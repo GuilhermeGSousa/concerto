@@ -17,6 +17,7 @@ use concerto_name::Name;
 use concerto_physics::{
     body::BodyId,
     carried::Carried,
+    layers::CollisionLayers,
     physics_pipeline::PhysicsPipeline,
     physics_state::PhysicsState,
     query::QueryFilter,
@@ -53,7 +54,7 @@ pub struct PartWeight {
 #[reflect(Component, Default, SceneComponent)]
 pub struct CharacterRagdoll {
     pub ragdoll: AssetHandle<Ragdoll>,
-    /// The character's own capsule, which its parts never collide with.
+    /// The character's own capsule, carried under the body while the character is physical; it should have `CollisionLayers::character()` so the parts pass through it.
     pub capsule: SceneEntityRef,
     pub mode: RagdollMode,
     /// How much of the simulated pose is drawn on the skeleton: 0 is the animated pose, 1 the ragdoll's.
@@ -117,7 +118,6 @@ pub struct RagdollBody {
     resolved: ResolvedRagdoll,
     bones: Vec<Entity>,
     skeleton_bones: Vec<Entity>,
-    ignored: Option<BodyId>,
     motion: MotionType,
     previous: Vec<BodyPose>,
     current: Vec<BodyPose>,
@@ -130,6 +130,7 @@ struct Carrying {
     capsule: Entity,
     body: BodyId,
     height: f32,
+    layers: CollisionLayers,
 }
 
 impl RagdollBody {
@@ -190,6 +191,7 @@ pub fn create_character_ragdolls(
         (Without<RagdollId>, Without<RagdollRefused>),
     >,
     transforms: Query<&GlobalTransform>,
+    capsules: Query<&CollisionLayers>,
     ragdolls: Res<AssetStore<Ragdoll>>,
     skeletons: Res<AssetStore<Skeleton>>,
     pipeline: Option<Res<PhysicsPipeline>>,
@@ -236,6 +238,14 @@ pub fn create_character_ragdolls(
         let Some(id) = state.create_ragdoll(resolved.built(), entity, &pose) else {
             continue;
         };
+        if let Some(capsule) = character.capsule.entity() {
+            let layers = capsules.get_entity(capsule).copied().unwrap_or_default();
+            if layers.collides_with(&resolved.settings().layers) {
+                warn!(
+                    "the capsule {capsule:?} of character {entity:?} collides with its ragdoll's parts: give it `CollisionLayers::character()`"
+                );
+            }
+        }
         for part in 0..resolved.part_count() {
             state.set_ragdoll_part_motion(id, part, MotionType::Kinematic);
         }
@@ -247,7 +257,6 @@ pub fn create_character_ragdolls(
                     bones,
                     drawn_roots: vec![None; skeleton_bones.len()],
                     skeleton_bones,
-                    ignored: None,
                     motion: MotionType::Kinematic,
                     previous: pose.clone(),
                     current: pose,
@@ -259,23 +268,13 @@ pub fn create_character_ragdolls(
     }
 }
 
-/// Each fixed step, before physics steps, makes every ragdoll's parts kinematic or dynamic as its mode asks, drives the parts of one that follows its animation to its bones' poses, and keeps the parts from colliding with the character's capsule.
+/// Each fixed step, before physics steps, makes every ragdoll's parts kinematic or dynamic as its mode asks, and drives the parts of one that follows its animation to its bones' poses.
 pub fn drive_character_ragdolls(
     characters: Query<(&CharacterRagdoll, &RagdollId, &mut RagdollBody)>,
     transforms: Query<&GlobalTransform>,
-    bodies: Query<&BodyId>,
     mut state: ResMut<PhysicsState>,
 ) {
     for (character, id, mut body) in characters.iter() {
-        let capsule = character
-            .capsule
-            .entity()
-            .and_then(|capsule| bodies.get_entity(capsule))
-            .copied();
-        if body.ignored != capsule {
-            state.set_ragdoll_ignored_body(*id, capsule);
-            body.ignored = capsule;
-        }
         let motion = match character.mode {
             RagdollMode::FollowsAnimation => MotionType::Kinematic,
             RagdollMode::Limp => MotionType::Dynamic,
@@ -322,10 +321,10 @@ fn yaw(rotation: Quat) -> Quat {
     }
 }
 
-/// Each fixed step, before physics steps, while a character's root part has any weight: its capsule is `Carried`, collides with nothing, and is put on the ground under the ragdoll's root part. When the weight is back at 0 the capsule is let go where it stands.
+/// Each fixed step, before physics steps, while a character's root part has any weight: its capsule is `Carried`, is in no collision layer, and is put on the ground under the ragdoll's root part. When the weight is back at 0 the capsule is let go where it stands.
 pub fn carry_capsules(
     characters: Query<(&CharacterRagdoll, &RagdollId, &mut RagdollBody)>,
-    bodies: Query<&BodyId>,
+    bodies: Query<(&BodyId, Option<&CollisionLayers>)>,
     carried: Query<&mut Carried>,
     mut state: ResMut<PhysicsState>,
     mut cmd: CommandQueue,
@@ -336,17 +335,18 @@ pub fn carry_capsules(
             .bone_name(0)
             .is_some_and(|bone| character.weight_of(&bone) > 0.0);
         let capsule = character.capsule.entity().and_then(|capsule| {
-            bodies.get_entity(capsule).map(|body| Carrying {
+            bodies.get_entity(capsule).map(|(body, layers)| Carrying {
                 capsule,
                 body: *body,
                 height: 0.0,
+                layers: layers.copied().unwrap_or_default(),
             })
         });
         let wanted = capsule.filter(|_| physical);
         if let Some(carrying) = body.carrying
             && wanted.is_none_or(|wanted| wanted.body != carrying.body)
         {
-            state.set_body_ghost(carrying.body, false);
+            state.set_body_layers(carrying.body, carrying.layers);
             cmd.remove::<Carried>(carrying.capsule);
             body.carrying = None;
         }
@@ -364,7 +364,7 @@ pub fn carry_capsules(
             Some(carrying) => carrying,
             None => {
                 let stands = state.body_transform(wanted.body).translation;
-                state.set_body_ghost(wanted.body, true);
+                state.set_body_layers(wanted.body, CollisionLayers::NONE);
                 let carrying = Carrying {
                     height: ground_under(&state, stands).map_or(0.0, |ground| stands.y - ground),
                     ..wanted
@@ -491,7 +491,7 @@ fn drop_body(
     cmd: &mut CommandQueue,
 ) {
     if let Some(carrying) = bodies.get_entity(entity).and_then(|body| body.carrying) {
-        state.set_body_ghost(carrying.body, false);
+        state.set_body_layers(carrying.body, carrying.layers);
         cmd.remove::<Carried>(carrying.capsule);
     }
     cmd.remove::<RagdollId>(entity);

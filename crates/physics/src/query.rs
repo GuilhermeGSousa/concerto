@@ -2,38 +2,39 @@ use concerto_ecs::entity::Entity;
 use glam::Vec3;
 
 use crate::body::BodyId;
+use crate::layers::Layers;
 
-/// Whether a scene query sees the bodies of ragdoll parts.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum RagdollQuery {
-    /// The query passes through ragdoll parts, so a foot ray or a camera boom never meets a character's limbs.
-    #[default]
-    Skip,
-    /// The query sees ragdoll parts and everything else.
-    Include,
-    /// The query sees only ragdoll parts, as a shot that asks which limb it hit does.
-    Only,
-}
-
-/// What a scene query skips.
-#[derive(Clone, Copy, Debug, Default)]
+/// What a scene query skips and which collision layers it sees.
+#[derive(Clone, Copy, Debug)]
 pub struct QueryFilter<'a> {
+    /// Bodies the query passes through.
     pub ignore: &'a [BodyId],
-    pub ragdolls: RagdollQuery,
+    /// The query sees a body that is in any of these layers. By default every layer but `Layers::RAGDOLL`, so a foot ray or a camera boom meets a character's capsule and never its limbs.
+    pub layers: Layers,
 }
 
 impl<'a> QueryFilter<'a> {
-    /// A filter that skips `ignore` and ragdoll parts.
+    /// The layers a query sees unless it says otherwise: every one but `Layers::RAGDOLL`.
+    pub const DEFAULT_LAYERS: Layers = Layers::ALL.without(Layers::RAGDOLL);
+
+    /// A filter that skips `ignore` and sees the default layers.
     pub fn ignoring(ignore: &'a [BodyId]) -> Self {
         Self {
             ignore,
-            ragdolls: RagdollQuery::Skip,
+            layers: Self::DEFAULT_LAYERS,
         }
     }
 
-    pub fn with_ragdolls(mut self, ragdolls: RagdollQuery) -> Self {
-        self.ragdolls = ragdolls;
+    /// Sees the bodies in any of `layers` and nothing else.
+    pub fn with_layers(mut self, layers: Layers) -> Self {
+        self.layers = layers;
         self
+    }
+}
+
+impl Default for QueryFilter<'_> {
+    fn default() -> Self {
+        Self::ignoring(&[])
     }
 }
 

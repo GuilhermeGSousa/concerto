@@ -58,6 +58,39 @@ A `MeshComponent` with no material is drawn plain grey, so a `MeshCollider`
 entity like the floor above is visible. Give it a material to choose how it
 looks.
 
+### Collision layers
+
+A `CollisionLayers` beside a `Collider` says which layers the body is in
+(`memberships`) and which it collides with (`filter`). Two bodies collide when
+each is in a layer the other collides with. Without the component a body is in
+`Layers::DEFAULT` and collides with every layer.
+
+```rust
+use concerto::physics::layers::{CollisionLayers, Layers};
+
+const FOLIAGE: Layers = Layers::bit(Layers::FIRST_FREE);
+
+cmd.spawn((Collider::cuboid(1.0, 2.0, 1.0), CollisionLayers::new(FOLIAGE, Layers::ALL), transform));
+cmd.spawn((RigidBody::default(), Collider::sphere(0.1), CollisionLayers::new(Layers::DEFAULT, Layers::ALL.without(FOLIAGE)), transform));
+```
+
+There are fourteen layers. The engine names three: `Layers::DEFAULT`,
+`Layers::CHARACTER` for character capsules and `Layers::RAGDOLL` for ragdoll
+parts; `Layers::bit(n)` from `Layers::FIRST_FREE` up are a game's own.
+`CollisionLayers::character()` and `CollisionLayers::ragdoll()` are the two
+that never collide with each other. Two static bodies never collide whatever
+their layers, and a sensor detects only the moving bodies its layers match;
+without a `CollisionLayers` a sensor ignores ragdoll parts, so a character
+entering it is reported once.
+
+Changing the component changes the live body. `CollisionLayers::NONE` takes a
+body out of every layer: it collides with nothing.
+
+A scene query sees the bodies in any of `QueryFilter::layers`. The default is
+every layer but `Layers::RAGDOLL`; `QueryFilter::default().with_layers(FOLIAGE)`
+sees only foliage, and `Layers::ALL.without(FOLIAGE)` lets a camera boom pass
+through it.
+
 ### Collision steps
 
 The fixed step is 33 ms. Physics divides it into the fewest equal collision
@@ -551,8 +584,8 @@ it:
   the first-person walker. Held input moves nothing;
 - each fixed step it is put on the ground under the ragdoll's pelvis, so when
   the character returns to animation it is already there and nothing teleports;
-- it collides with nothing and no query sees it while it is carried
-  (`PhysicsState::set_body_ghost`);
+- it is in no collision layer while it is carried, so it collides with nothing
+  and no query sees it; it gets its own layers back when it is let go;
 - when every weight at the pelvis is back at 0 it is let go where it stands,
   and the springs restart from the body's velocity and facing, which `Carried`
   holds, so the first animated frame does not snap.
@@ -560,19 +593,19 @@ it:
 The capsule is not checked for a clear standing spot when it is let go; a body
 that came to rest inside a wall's reach is pushed out by the solver.
 
-Ragdoll parts are on a collision layer of their own:
-
-- they never collide with the character's own `capsule`;
-- a scene query skips them unless it asks: `QueryFilter::ragdolls` is
-  `RagdollQuery::Skip` by default, so foot placement and the camera boom never
-  meet a limb. `RagdollQuery::Include` sees them with everything else and
-  `RagdollQuery::Only` sees nothing else, which is what a shot uses;
-- the ground probe and sensors ignore them.
+Ragdoll parts are in `Layers::RAGDOLL` and collide with everything but
+`Layers::CHARACTER` (`CollisionLayers::ragdoll()`, or `RagdollSettings::layers`
+to change it). Give the character's capsule `CollisionLayers::character()`:
+then no ragdoll part ever touches a capsule, its own or another character's, a
+default scene query sees the capsule and never a limb, and a shot asks for the
+limbs with `QueryFilter::default().with_layers(Layers::RAGDOLL)`. A capsule left
+on the default layer is pushed around by its own body; the engine warns when a
+`CharacterRagdoll` names one.
 
 A hit on a part reports the character and the bone:
 
 ```rust
-let hit = physics.cast_ray(origin, direction, QueryFilter::default().with_ragdolls(RagdollQuery::Only))?;
+let hit = physics.cast_ray(origin, direction, QueryFilter::default().with_layers(Layers::RAGDOLL))?;
 let body = bodies.get_entity(hit.entity?)?;
 let bone = body.bone(hit.part?);
 ```

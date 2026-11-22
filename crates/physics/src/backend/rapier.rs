@@ -23,9 +23,10 @@ use rapier3d::parry::shape::Ball;
 use rapier3d::pipeline::EventHandler;
 use rapier3d::prelude::{
     ActiveCollisionTypes, ActiveEvents, BroadPhaseBvh, CCDSolver, ColliderBuilder, ColliderSet,
-    CollisionEvent, CollisionEventFlags, ContactPair, ImpulseJointSet, IntegrationParameters,
-    InteractionGroups, IslandManager, LockedAxes, MultibodyJointSet, NarrowPhase, Ray,
-    RigidBodyBuilder, RigidBodyHandle, RigidBodySet, SharedShape,
+    CollisionEvent, CollisionEventFlags, ContactPair, Group, ImpulseJointSet,
+    IntegrationParameters, InteractionGroups, InteractionTestMode, IslandManager, LockedAxes,
+    MultibodyJointSet, NarrowPhase, Ray, RigidBodyBuilder, RigidBodyHandle, RigidBodySet,
+    SharedShape,
 };
 
 use crate::backend::{
@@ -34,7 +35,7 @@ use crate::backend::{
 };
 use crate::body::BodyActivity;
 use crate::collider::{Collider, ColliderOffset};
-use crate::query::RagdollQuery;
+use crate::layers::{CollisionLayers, Layers};
 use crate::ragdoll::{BodyPose, JointDrive, RagdollBuildError, RagdollSettings};
 use crate::rigid_body::{AllowedDofs, MotionType, RigidBody};
 
@@ -81,6 +82,24 @@ fn to_rapier_pose(transform: &Transform) -> rapier3d::math::Pose {
         to_rapier_vec(transform.translation),
         rapier3d::glamx::Rot3::from_array(transform.rotation.to_array()),
     )
+}
+
+fn to_interaction_groups(layers: CollisionLayers) -> InteractionGroups {
+    InteractionGroups::new(
+        Group::from_bits_truncate(layers.memberships.mask()),
+        Group::from_bits_truncate(layers.filter.mask()),
+        InteractionTestMode::And,
+    )
+}
+
+fn in_layers(collider: &rapier3d::geometry::Collider, layers: Layers) -> bool {
+    collider.collision_groups().memberships.bits() & layers.mask() != 0
+}
+
+fn collides(a: &rapier3d::geometry::Collider, b: &rapier3d::geometry::Collider) -> bool {
+    let a = a.collision_groups();
+    let b = b.collision_groups();
+    a.memberships.bits() & b.filter.bits() != 0 && b.memberships.bits() & a.filter.bits() != 0
 }
 
 /// Locks every degree of freedom `dofs` does not allow.
@@ -144,7 +163,6 @@ pub struct RapierBackend {
     ccd_solver: CCDSolver,
     collision_events: CollisionEventCollector,
     reporting: HashSet<RigidBodyHandle>,
-    ghosts: HashSet<RigidBodyHandle>,
     contact_changes: Vec<RawContact<RigidBodyHandle>>,
     touches: Vec<RawContact<RigidBodyHandle>>,
 }
@@ -238,13 +256,6 @@ impl PhysicsBackend for RapierBackend {
 
     fn destroy_ragdoll(&mut self, _ragdoll: Self::RagdollHandle) {}
 
-    fn set_ragdoll_ignored_body(
-        &mut self,
-        _ragdoll: Self::RagdollHandle,
-        _body: Option<Self::BodyHandle>,
-    ) {
-    }
-
     fn ragdoll_bodies(&self, _ragdoll: Self::RagdollHandle) -> Vec<Self::BodyHandle> {
         Vec::new()
     }
@@ -295,7 +306,6 @@ impl PhysicsBackend for RapierBackend {
             ccd_solver: CCDSolver::new(),
             collision_events: CollisionEventCollector::default(),
             reporting: HashSet::new(),
-            ghosts: HashSet::new(),
             contact_changes: Vec::new(),
             touches: Vec::new(),
         }
@@ -338,6 +348,7 @@ impl PhysicsBackend for RapierBackend {
         offset: Option<&ColliderOffset>,
         sensor: bool,
         gravity_scale: f32,
+        layers: CollisionLayers,
     ) -> Self::BodyHandle {
         let mut body_builder = match rigid_body {
             None => RigidBodyBuilder::fixed(),
@@ -359,7 +370,8 @@ impl PhysicsBackend for RapierBackend {
         let density = rigid_body.map_or(1000.0, |rigid_body| rigid_body.density);
         let mut collider_builder =
             ColliderBuilder::new(scaled_shape(&collider.shape().0, transform.scale))
-                .density(density);
+                .density(density)
+                .collision_groups(to_interaction_groups(layers));
         if let Some(offset) = offset {
             // The offset is the collider's pose relative to the body, so it
             // shifts the geometry without showing up in `body_transform`.
@@ -428,7 +440,6 @@ impl PhysicsBackend for RapierBackend {
             true,
         );
         self.reporting.remove(&body);
-        self.ghosts.remove(&body);
         self.contact_changes
             .retain(|change| change.first != body && change.second != body);
         self.touches
@@ -529,27 +540,15 @@ impl PhysicsBackend for RapierBackend {
         out.extend(ends);
     }
 
-    fn set_body_ghost(&mut self, body: Self::BodyHandle, ghost: bool) {
-        let Some(rigid_body) = self.bodies.get(body) else {
+    fn set_body_layers(&mut self, body: Self::BodyHandle, layers: CollisionLayers) {
+        let Some(rigid_body) = self.bodies.get_mut(body) else {
             return;
         };
-        if rigid_body.is_fixed() {
-            return;
-        }
-        let groups = if ghost {
-            InteractionGroups::none()
-        } else {
-            InteractionGroups::all()
-        };
+        rigid_body.wake_up(true);
         for handle in rigid_body.colliders().to_vec() {
             if let Some(collider) = self.colliders.get_mut(handle) {
-                collider.set_collision_groups(groups);
+                collider.set_collision_groups(to_interaction_groups(layers));
             }
-        }
-        if ghost {
-            self.ghosts.insert(body);
-        } else {
-            self.ghosts.remove(&body);
         }
     }
 
@@ -616,7 +615,7 @@ impl PhysicsBackend for RapierBackend {
         origin: Vec3,
         direction: Vec3,
         ignore: &[Self::BodyHandle],
-        _ragdolls: RagdollQuery,
+        layers: Layers,
     ) -> Option<RawRayHit<Self::BodyHandle>> {
         // With an unnormalised direction, a time of impact of 1.0 is the tip
         // of `direction` — so the hit's time of impact is exactly the
@@ -628,7 +627,7 @@ impl PhysicsBackend for RapierBackend {
             let body = collider
                 .parent()
                 .expect("every collider is created with a parent body");
-            if collider.is_sensor() || ignore.contains(&body) || self.ghosts.contains(&body) {
+            if collider.is_sensor() || ignore.contains(&body) || !in_layers(collider, layers) {
                 continue;
             }
             let Some(intersection) =
@@ -659,7 +658,7 @@ impl PhysicsBackend for RapierBackend {
         radius: f32,
         direction: Vec3,
         ignore: &[Self::BodyHandle],
-        _ragdolls: RagdollQuery,
+        layers: Layers,
     ) -> Option<RawShapeHit<Self::BodyHandle>> {
         let ball = Ball::new(radius);
         let ball_pose = rapier3d::math::Pose::from_translation(to_rapier_vec(origin));
@@ -675,7 +674,7 @@ impl PhysicsBackend for RapierBackend {
             let body = collider
                 .parent()
                 .expect("every collider is created with a parent body");
-            if collider.is_sensor() || ignore.contains(&body) || self.ghosts.contains(&body) {
+            if collider.is_sensor() || ignore.contains(&body) || !in_layers(collider, layers) {
                 continue;
             }
             let pose = collider.position();
@@ -733,9 +732,7 @@ impl PhysicsBackend for RapierBackend {
             for (_, ground_collider) in self.colliders.iter() {
                 if ground_collider.parent() == Some(body)
                     || ground_collider.is_sensor()
-                    || ground_collider
-                        .parent()
-                        .is_some_and(|parent| self.ghosts.contains(&parent))
+                    || !collides(probe_collider, ground_collider)
                     || !candidates.intersects(&ground_collider.compute_aabb())
                 {
                     continue;

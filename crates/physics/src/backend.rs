@@ -19,7 +19,7 @@ use glam::Vec3;
 use crate::aabb::Aabb;
 use crate::body::BodyActivity;
 use crate::collider::{Collider, ColliderOffset};
-use crate::query::RagdollQuery;
+use crate::layers::{CollisionLayers, Layers};
 use crate::ragdoll::{BodyPose, JointDrive, RagdollBuildError, RagdollSettings};
 use crate::rigid_body::{MotionType, RigidBody};
 
@@ -153,6 +153,7 @@ pub trait PhysicsBackend: Send + Sync + Sized {
         offset: Option<&ColliderOffset>,
         sensor: bool,
         gravity_scale: f32,
+        layers: CollisionLayers,
     ) -> Self::BodyHandle;
 
     /// Removes `body` from the simulation and destroys it, waking any bodies
@@ -169,8 +170,8 @@ pub trait PhysicsBackend: Send + Sync + Sized {
     /// Moves the contacts seen since the last drain into `out`, in order; call it after [`drain_sensor_contacts`](Self::drain_sensor_contacts).
     fn drain_contacts(&mut self, out: &mut Vec<RawContact<Self::BodyHandle>>);
 
-    /// Makes a dynamic or kinematic body collide with nothing and be skipped by every query, or puts it back.
-    fn set_body_ghost(&mut self, body: Self::BodyHandle, ghost: bool);
+    /// Gives the body its collision layers; in no layer it collides with nothing and no query sees it.
+    fn set_body_layers(&mut self, body: Self::BodyHandle, layers: CollisionLayers);
 
     /// Moves the body's origin at once, keeping its rotation and velocity.
     fn set_body_translation(&mut self, body: Self::BodyHandle, translation: Vec3);
@@ -202,7 +203,7 @@ pub trait PhysicsBackend: Send + Sync + Sized {
         origin: Vec3,
         direction: Vec3,
         ignore: &[Self::BodyHandle],
-        ragdolls: RagdollQuery,
+        layers: Layers,
     ) -> Option<RawRayHit<Self::BodyHandle>>;
 
     /// Sweeps a sphere of `radius` from `origin` along `direction` and returns the first body it touches, skipping `ignore`.
@@ -212,7 +213,7 @@ pub trait PhysicsBackend: Send + Sync + Sized {
         radius: f32,
         direction: Vec3,
         ignore: &[Self::BodyHandle],
-        ragdolls: RagdollQuery,
+        layers: Layers,
     ) -> Option<RawShapeHit<Self::BodyHandle>>;
 
     /// Collides `body`'s shape against the world (ignoring `body` itself)
@@ -238,13 +239,6 @@ pub trait PhysicsBackend: Send + Sync + Sized {
 
     /// Removes the ragdoll's bodies and joints from the simulation and destroys them.
     fn destroy_ragdoll(&mut self, ragdoll: Self::RagdollHandle);
-
-    /// Stops every part of the ragdoll colliding with `body`, or with nothing in particular when it is `None`.
-    fn set_ragdoll_ignored_body(
-        &mut self,
-        ragdoll: Self::RagdollHandle,
-        body: Option<Self::BodyHandle>,
-    );
 
     /// The body of each part, in part order.
     fn ragdoll_bodies(&self, ragdoll: Self::RagdollHandle) -> Vec<Self::BodyHandle>;

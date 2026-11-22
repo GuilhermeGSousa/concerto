@@ -19,7 +19,6 @@ extern "C"
 	{
 		JoltBodyCreationSettings *settings = new JoltBodyCreationSettings();
 		settings->settings.mMotionType = JPH::EMotionType::Static;
-		settings->settings.mObjectLayer = Layers::NON_MOVING;
 		return settings;
 	}
 
@@ -45,8 +44,6 @@ extern "C"
 													 JoltMotionType motion_type)
 	{
 		settings->settings.mMotionType = static_cast<JPH::EMotionType>(motion_type);
-		settings->settings.mObjectLayer =
-			motion_type == JOLT_MOTION_TYPE_STATIC ? Layers::NON_MOVING : Layers::MOVING;
 	}
 
 	void jolt_body_creation_settings_set_allowed_dofs(JoltBodyCreationSettings *settings,
@@ -59,6 +56,14 @@ extern "C"
 														float gravity_factor)
 	{
 		settings->settings.mGravityFactor = gravity_factor;
+	}
+
+	void jolt_body_creation_settings_set_layers(JoltBodyCreationSettings *settings,
+												uint32_t memberships,
+												uint32_t filter)
+	{
+		settings->memberships = memberships;
+		settings->filter = filter;
 	}
 
 	void jolt_body_creation_settings_set_is_sensor(JoltBodyCreationSettings *settings,
@@ -112,10 +117,13 @@ extern "C"
 		if (creation.mIsSensor)
 		{
 			creation.mMotionType = JPH::EMotionType::Kinematic;
-			creation.mObjectLayer = Layers::SENSOR;
 			creation.mAllowSleeping = false;
 			activation = JPH::EActivation::Activate;
 		}
+		creation.mObjectLayer = Layers::Make(settings->memberships,
+											 settings->filter,
+											 creation.mMotionType == JPH::EMotionType::Static,
+											 creation.mIsSensor);
 		JPH::BodyID id = world->system.GetBodyInterface().CreateAndAddBody(creation, activation);
 		if (creation.mIsSensor && !id.IsInvalid())
 			world->sensors.insert(id);
@@ -263,21 +271,7 @@ extern "C"
 			system.GetDefaultBroadPhaseLayerFilter(layer);
 		JPH::DefaultObjectLayerFilter default_object_filter = system.GetDefaultLayerFilter(layer);
 		NonSensorBroadPhaseLayerFilter broadphase_filter(default_broadphase_filter);
-		NonSensorObjectLayerFilter non_sensor_filter(default_object_filter);
-		class SolidGroundFilter final : public JPH::ObjectLayerFilter
-		{
-		public:
-			explicit SolidGroundFilter(const JPH::ObjectLayerFilter &inner) : inner(inner) {}
-
-			bool ShouldCollide(JPH::ObjectLayer inLayer) const override
-			{
-				return inLayer != Layers::RAGDOLL && inLayer != Layers::GHOST && inner.ShouldCollide(inLayer);
-			}
-
-		private:
-			const JPH::ObjectLayerFilter &inner;
-		};
-		SolidGroundFilter object_filter(non_sensor_filter);
+		NonSensorObjectLayerFilter object_filter(default_object_filter);
 		JPH::IgnoreSingleBodyFilter body_filter(id);
 
 		Collector collector(position);
@@ -316,18 +310,16 @@ extern "C"
 		out_result->velocity[2] = ground_velocity.GetZ();
 	}
 
-	void jolt_body_set_ghost(JoltWorld *world, JoltBodyId body, bool ghost)
+	void jolt_body_set_layers(JoltWorld *world, JoltBodyId body, uint32_t memberships, uint32_t filter)
 	{
 		JPH::BodyInterface &bi = world->system.GetBodyInterface();
 		JPH::BodyID id(body);
+		if (!bi.IsAdded(id))
+			return;
 		JPH::ObjectLayer layer = bi.GetObjectLayer(id);
-		if (ghost && layer == Layers::MOVING)
-			bi.SetObjectLayer(id, Layers::GHOST);
-		else if (!ghost && layer == Layers::GHOST)
-		{
-			bi.SetObjectLayer(id, Layers::MOVING);
-			bi.ActivateBody(id);
-		}
+		bi.SetObjectLayer(id,
+						  Layers::Make(memberships, filter, Layers::IsStatic(layer), Layers::IsSensor(layer)));
+		bi.ActivateBody(id);
 	}
 
 	void jolt_body_set_position(JoltWorld *world, JoltBodyId body, const float position[3])

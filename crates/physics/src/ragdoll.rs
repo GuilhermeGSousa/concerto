@@ -8,6 +8,7 @@ use concerto_foundation::transform::Transform;
 use glam::{Quat, Vec3};
 
 use crate::backend::PhysicsBackend;
+use crate::layers::CollisionLayers;
 use crate::ActiveBackend;
 
 /// A rigid pose: where a body or a ragdoll part is, without scale.
@@ -236,6 +237,8 @@ pub struct RagdollSettings {
     pub parts: Vec<PartSettings>,
     /// The fastest any part may move, in m/s; a part hit harder is slowed to it.
     pub max_speed: f32,
+    /// The collision layers of every part; by default `CollisionLayers::ragdoll()`.
+    pub layers: CollisionLayers,
 }
 
 impl Default for RagdollSettings {
@@ -243,6 +246,7 @@ impl Default for RagdollSettings {
         Self {
             parts: Vec::new(),
             max_speed: 50.0,
+            layers: CollisionLayers::ragdoll(),
         }
     }
 }
@@ -254,6 +258,11 @@ impl RagdollSettings {
 
     pub fn with_max_speed(mut self, max_speed: f32) -> Self {
         self.max_speed = max_speed;
+        self
+    }
+
+    pub fn with_layers(mut self, layers: CollisionLayers) -> Self {
+        self.layers = layers;
         self
     }
 

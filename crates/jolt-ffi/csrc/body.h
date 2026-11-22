@@ -68,7 +68,14 @@ extern "C"
     void jolt_body_creation_settings_set_gravity_factor(JoltBodyCreationSettings *settings,
                                                         float gravity_factor);
 
-    /* Makes the body a kinematic, always active sensor on the SENSOR layer. */
+    /* The collision layers the body is in and the ones it collides with, each
+     * a mask of bits 0 to 13. Two bodies collide when each is in a layer the
+     * other collides with. Defaults: in layer 0, colliding with every layer. */
+    void jolt_body_creation_settings_set_layers(JoltBodyCreationSettings *settings,
+                                                uint32_t memberships,
+                                                uint32_t filter);
+
+    /* Makes the body a kinematic, always active sensor. */
     void jolt_body_creation_settings_set_is_sensor(JoltBodyCreationSettings *settings,
                                                    bool is_sensor);
 
@@ -121,15 +128,6 @@ extern "C"
     /* Whether the body is being simulated: false for a static or sleeping body. */
     bool jolt_body_is_active(const JoltWorld *world, JoltBodyId body);
 
-    /* Whether a scene query sees the bodies of ragdoll parts. */
-    typedef uint32_t JoltRagdollQuery;
-    enum
-    {
-        JOLT_RAGDOLL_QUERY_SKIP = 0,
-        JOLT_RAGDOLL_QUERY_INCLUDE = 1,
-        JOLT_RAGDOLL_QUERY_ONLY = 2,
-    };
-
     typedef uint8_t JoltContactKind;
     enum
     {
@@ -159,10 +157,11 @@ extern "C"
 
     uint32_t jolt_world_drain_contacts(JoltWorld *world, JoltContact *out, uint32_t capacity);
 
-    /* Makes a dynamic or kinematic body collide with nothing and be skipped by
-     * every query, or puts it back among the moving bodies. Static bodies,
-     * sensors and ragdoll parts are left alone. */
-    void jolt_body_set_ghost(JoltWorld *world, JoltBodyId body, bool ghost);
+    /* Puts the body in the layers `memberships` and makes it collide with the
+     * layers `filter`, as jolt_body_creation_settings_set_layers does at
+     * creation. With no memberships it collides with nothing and no query sees
+     * it. */
+    void jolt_body_set_layers(JoltWorld *world, JoltBodyId body, uint32_t memberships, uint32_t filter);
 
     /* Moves the body's origin at once, keeping its rotation and velocity. */
     void jolt_body_set_position(JoltWorld *world, JoltBodyId body, const float position[3]);
