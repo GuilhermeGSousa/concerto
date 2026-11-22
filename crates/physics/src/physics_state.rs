@@ -11,6 +11,7 @@ use crate::collider::{Collider, ColliderOffset};
 use crate::contact::{Contact, ContactChange};
 use crate::ground::{GroundContact, GroundState};
 use crate::query::{QueryFilter, ShapeHit};
+use crate::ragdoll::{BodyPose, BuiltRagdoll, RagdollId};
 use crate::ray::RayHit;
 use crate::rigid_body::RigidBody;
 use crate::sensor::SensorContact;
@@ -50,6 +51,16 @@ struct Touch {
     summed: bool,
 }
 
+#[derive(Clone, Copy)]
+struct BodyOwner {
+    entity: Entity,
+    part: Option<usize>,
+}
+
+struct RagdollRecord {
+    bodies: Vec<BodyId>,
+}
+
 /// Owns the physics world of the active backend, plus the engine-side
 /// body↔entity bookkeeping shared by every backend.
 #[derive(Resource)]
@@ -60,7 +71,8 @@ pub struct PhysicsState {
     /// body-to-entity lookups (e.g. after a raycast) are O(1).
     ///
     /// [`Collider`]: crate::collider::Collider
-    body_to_entity: HashMap<BodyId, Entity>,
+    body_to_entity: HashMap<BodyId, BodyOwner>,
+    ragdolls: HashMap<RagdollId, RagdollRecord>,
     overlaps: HashSet<SensorOverlap>,
     sensor_contacts: Vec<SensorContact>,
     reporting: HashSet<BodyId>,
@@ -73,6 +85,7 @@ impl PhysicsState {
         Self {
             backend: ActiveBackend::new(),
             body_to_entity: HashMap::new(),
+            ragdolls: HashMap::new(),
             overlaps: HashSet::new(),
             sensor_contacts: Vec::new(),
             reporting: HashSet::new(),
@@ -91,11 +104,78 @@ impl PhysicsState {
     /// The entity whose [`Collider`](crate::collider::Collider) owns `body`,
     /// if any.
     pub fn get_entity(&self, body: BodyId) -> Option<Entity> {
-        self.body_to_entity.get(&body).copied()
+        self.body_to_entity.get(&body).map(|owner| owner.entity)
+    }
+
+    /// The index of the ragdoll part `body` is, when it belongs to a ragdoll.
+    pub fn get_part(&self, body: BodyId) -> Option<usize> {
+        self.body_to_entity.get(&body).and_then(|owner| owner.part)
     }
 
     pub(crate) fn register_body_entity(&mut self, body: BodyId, entity: Entity) {
-        self.body_to_entity.insert(body, entity);
+        self.body_to_entity
+            .insert(body, BodyOwner { entity, part: None });
+    }
+
+    /// Creates a ragdoll owned by `owner` with each part at its world pose in `pose`, one per part in part order. `None` when the backend has no ragdolls (Rapier), `pose` has the wrong length, or the world is out of bodies.
+    pub fn create_ragdoll(
+        &mut self,
+        built: &BuiltRagdoll,
+        owner: Entity,
+        pose: &[BodyPose],
+    ) -> Option<RagdollId> {
+        let ragdoll = RagdollId(self.backend.create_ragdoll(&built.handle, pose)?);
+        let bodies: Vec<BodyId> = self
+            .backend
+            .ragdoll_bodies(ragdoll.0)
+            .into_iter()
+            .map(BodyId)
+            .collect();
+        for (part, body) in bodies.iter().enumerate() {
+            self.body_to_entity.insert(
+                *body,
+                BodyOwner {
+                    entity: owner,
+                    part: Some(part),
+                },
+            );
+        }
+        self.ragdolls.insert(ragdoll, RagdollRecord { bodies });
+        Some(ragdoll)
+    }
+
+    /// Removes the ragdoll from the simulation and destroys it; an id already destroyed is ignored.
+    pub fn destroy_ragdoll(&mut self, ragdoll: RagdollId) {
+        let Some(record) = self.ragdolls.remove(&ragdoll) else {
+            return;
+        };
+        self.backend.destroy_ragdoll(ragdoll.0);
+        for body in record.bodies {
+            self.forget_body(body);
+            self.unregister_body_entity(body);
+        }
+    }
+
+    /// The body of each part of the ragdoll, in part order; empty for a destroyed ragdoll.
+    pub fn ragdoll_bodies(&self, ragdoll: RagdollId) -> &[BodyId] {
+        self.ragdolls
+            .get(&ragdoll)
+            .map_or(&[], |record| record.bodies.as_slice())
+    }
+
+    /// Writes the world pose of every part into `out`, in part order; `out` is left empty for a destroyed ragdoll.
+    pub fn ragdoll_pose(&self, ragdoll: RagdollId, out: &mut Vec<BodyPose>) {
+        out.clear();
+        if self.ragdolls.contains_key(&ragdoll) {
+            self.backend.ragdoll_pose(ragdoll.0, out);
+        }
+    }
+
+    /// Moves every part to its world pose in `pose` at once, keeping velocities; ignored when `pose` has the wrong length.
+    pub fn set_ragdoll_pose(&mut self, ragdoll: RagdollId, pose: &[BodyPose]) {
+        if self.ragdolls.contains_key(&ragdoll) {
+            self.backend.set_ragdoll_pose(ragdoll.0, pose);
+        }
     }
 
     pub(crate) fn unregister_body_entity(&mut self, body: BodyId) {
@@ -129,6 +209,10 @@ impl PhysicsState {
     /// `Collider::on_remove`.
     pub(crate) fn destroy_body(&mut self, body: BodyId) {
         self.backend.destroy_body(body.0);
+        self.forget_body(body);
+    }
+
+    fn forget_body(&mut self, body: BodyId) {
         self.reporting.remove(&body);
         let ended: Vec<BodyPair> = self
             .touching
@@ -155,13 +239,13 @@ impl PhysicsState {
             if overlap.sensor != body && overlap.other != body {
                 return true;
             }
-            if let (Some(&sensor), Some(&other)) = (
+            if let (Some(sensor), Some(other)) = (
                 body_to_entity.get(&overlap.sensor),
                 body_to_entity.get(&overlap.other),
             ) {
                 sensor_contacts.push(SensorContact {
-                    sensor,
-                    other,
+                    sensor: sensor.entity,
+                    other: other.entity,
                     kind: SensorContactKind::Exit,
                 });
             }
@@ -364,6 +448,7 @@ impl PhysicsState {
                 RayHit {
                     body,
                     entity: self.get_entity(body),
+                    part: self.get_part(body),
                     fraction: hit.fraction,
                     point: origin + direction * hit.fraction,
                     normal: hit.normal,
@@ -393,6 +478,7 @@ impl PhysicsState {
                 ShapeHit {
                     body,
                     entity: self.get_entity(body),
+                    part: self.get_part(body),
                     fraction: hit.fraction,
                     point: hit.point,
                     normal: hit.normal,
