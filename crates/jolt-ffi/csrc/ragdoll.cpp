@@ -327,6 +327,15 @@ extern "C"
 													   JPH::EActivation::Activate);
 	}
 
+	void jolt_ragdoll_set_frozen(JoltWorld *world, JoltRagdoll *ragdoll, bool frozen)
+	{
+		JPH::BodyInterface &bodies = world->system.GetBodyInterface();
+		for (JPH::BodyID body : ragdoll->ragdoll->GetBodyIDs())
+			bodies.SetMotionType(body,
+								 frozen ? JPH::EMotionType::Static : JPH::EMotionType::Dynamic,
+								 frozen ? JPH::EActivation::DontActivate : JPH::EActivation::Activate);
+	}
+
 	void jolt_ragdoll_get_joint_motor_impulse(const JoltRagdoll *ragdoll,
 											  uint32_t part,
 											  float out_impulse[3])

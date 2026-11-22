@@ -31,6 +31,7 @@ use log::warn;
 use crate::{
     asset::{PartStrength, Ragdoll},
     behaviour::BodyDrive,
+    dying::{Dying, Settled},
     hit::Flinch,
     resolve::ResolvedRagdoll,
 };
@@ -171,6 +172,8 @@ struct Held {
 
 const SLACK_TORQUE: f32 = 1.0e-3;
 const MAX_LEAD: f32 = 0.5;
+const DYING_STIFFNESS: f32 = 400.0;
+const DYING_TORQUE: f32 = 120.0;
 
 impl Held {
     const KINEMATIC: Self = Self {
@@ -458,21 +461,25 @@ fn wanted_strengths(
 
 /// Each fixed step, before physics steps, holds every ragdoll's parts to the animated pose as its mode and strength profile ask: a kinematic part is driven to its bone, a powered part's motor is aimed at its bone's rotation under its parent's, leading it by the animation's own speed, and a limp part's motor is off. A change of strength takes hold over the character's `blend`. Triggers `PoseLost` when the root part has been too far from its animated place for too long.
 pub fn drive_character_ragdolls(
-    characters: Query<(
-        Entity,
-        &CharacterRagdoll,
-        &RagdollId,
-        &mut RagdollBody,
-        Option<&Flinch>,
-        Option<&mut BodyDrive>,
-    )>,
+    characters: Query<
+        (
+            Entity,
+            &CharacterRagdoll,
+            &RagdollId,
+            &mut RagdollBody,
+            Option<&Flinch>,
+            Option<&mut BodyDrive>,
+            Option<&Dying>,
+        ),
+        Without<Settled>,
+    >,
     ragdolls: Res<AssetStore<Ragdoll>>,
     mut state: ResMut<PhysicsState>,
     mut cmd: CommandQueue,
 ) {
     let dt = Time::fixed_delta_time().as_secs_f32();
     let mut simulated = Vec::new();
-    for (entity, character, id, mut body, flinch, drive) in characters.iter() {
+    for (entity, character, id, mut body, flinch, drive, dying) in characters.iter() {
         let animated = body.animated.clone();
         let claims = drive.map(|mut drive| drive.take()).unwrap_or_default();
         let mut wanted = wanted_strengths(character, &body, ragdolls.get(&character.ragdoll));
@@ -483,7 +490,7 @@ pub fn drive_character_ragdolls(
                 held.torque_limit *= scale;
             }
         }
-        let step = if character.blend > 0.0 && flinch.is_none() {
+        let step = if character.blend > 0.0 && flinch.is_none() && dying.is_none() {
             dt / character.blend
         } else {
             1.0
@@ -520,6 +527,19 @@ pub fn drive_character_ragdolls(
             forces[claim.part] += claim.command.force * claim.weight;
             torques[claim.part] += claim.command.torque * claim.weight;
             claimed[claim.part] = true;
+        }
+        if let Some(dying) = dying {
+            for part in 0..count {
+                let left = dying.left(body.resolved.segment(part));
+                if wanted[part].kinematic {
+                    wanted[part] = Held::of(PartStrength::powered(DYING_STIFFNESS, DYING_TORQUE));
+                }
+                wanted[part].stiffness *= left;
+                wanted[part].damping *= left;
+                wanted[part].torque_limit *= left;
+                forces[part] *= left;
+                torques[part] *= left;
+            }
         }
         for (part, held) in wanted.iter().enumerate() {
             body.changing[part] = held.kinematic != body.held[part].kinematic;
@@ -629,7 +649,7 @@ fn yaw(rotation: Quat) -> Quat {
 
 /// Each fixed step, before physics steps, while a character's root part has any weight: its capsule is `Carried`, is in no collision layer, and is put on the ground under the ragdoll's root part. When the weight is back at 0 the capsule is let go where it stands.
 pub fn carry_capsules(
-    characters: Query<(&CharacterRagdoll, &RagdollId, &mut RagdollBody)>,
+    characters: Query<(&CharacterRagdoll, &RagdollId, &mut RagdollBody), Without<Settled>>,
     bodies: Query<(&BodyId, Option<&CollisionLayers>)>,
     carried: Query<&mut Carried>,
     mut state: ResMut<PhysicsState>,

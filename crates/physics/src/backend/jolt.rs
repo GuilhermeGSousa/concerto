@@ -885,6 +885,13 @@ impl PhysicsBackend for JoltBackend {
         }
     }
 
+    fn set_ragdoll_frozen(&mut self, ragdoll: Self::RagdollHandle, frozen: bool) {
+        // SAFETY: `ragdoll` is a live ragdoll of this world.
+        unsafe {
+            concerto_jolt_ffi::jolt_ragdoll_set_frozen(self.world, ragdoll.0, frozen);
+        }
+    }
+
     fn ragdoll_joint_motor_impulse(&self, ragdoll: Self::RagdollHandle, part: usize) -> Vec3 {
         let mut impulse = [0.0f32; 3];
         // SAFETY: `ragdoll` is a live ragdoll of this world, the shim answers zero for a part it does not have, and `impulse` is a valid xyz triple.

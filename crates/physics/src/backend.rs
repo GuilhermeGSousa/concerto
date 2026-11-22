@@ -281,6 +281,8 @@ pub trait PhysicsBackend: Send + Sync + Sized {
         motion: MotionType,
     );
 
+    fn set_ragdoll_frozen(&mut self, ragdoll: Self::RagdollHandle, frozen: bool);
+
     fn ragdoll_joint_motor_impulse(&self, ragdoll: Self::RagdollHandle, part: usize) -> Vec3;
 
     /// The shape's axis-aligned bounds (min, max) in its own local space,

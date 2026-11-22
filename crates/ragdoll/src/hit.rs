@@ -1,5 +1,5 @@
 use concerto_ecs::{
-    CommandQueue, Component, Entity, Query, ResMut,
+    CommandQueue, Component, Entity, Query, ResMut, Without,
     reflect::{ReflectComponent, ReflectSceneComponent},
     signal::{On, Signal},
 };
@@ -12,6 +12,7 @@ use glam::Vec3;
 use crate::{
     behaviour::PhysicalState,
     character::{CharacterRagdoll, RagdollBody, RagdollMode},
+    dying::Settled,
     generate::FLINCH,
     shot::{ShotReaction, takes_shot},
 };
@@ -136,15 +137,18 @@ fn dip(scales: &mut [f32], body: &RagdollBody, reaction: &HitReaction, part: usi
 /// Starts or restarts a character's flinch when it is hit. A character without a `HitReaction`, or whose ragdoll is limp or powered by something else, only takes the impulse.
 pub fn flinch_when_hit(
     on: On<BodyHit>,
-    characters: Query<(
-        &mut CharacterRagdoll,
-        &RagdollId,
-        &RagdollBody,
-        Option<&HitReaction>,
-        Option<&mut Flinch>,
-        Option<&ShotReaction>,
-        Option<&PhysicalState>,
-    )>,
+    characters: Query<
+        (
+            &mut CharacterRagdoll,
+            &RagdollId,
+            &RagdollBody,
+            Option<&HitReaction>,
+            Option<&mut Flinch>,
+            Option<&ShotReaction>,
+            Option<&PhysicalState>,
+        ),
+        Without<Settled>,
+    >,
     mut state: ResMut<PhysicsState>,
     mut cmd: CommandQueue,
 ) {
