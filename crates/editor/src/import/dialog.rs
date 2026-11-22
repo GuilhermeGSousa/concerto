@@ -9,7 +9,10 @@ use concerto_ecs::{
     command::CommandQueue,
     entity::hierarchy::{ChildOf, Children},
     events::event_reader::EventReader,
-    query::{change_detection::DetectChanges, filter::With},
+    query::{
+        change_detection::DetectChanges,
+        filter::{With, Without},
+    },
     reflect::AppTypeRegistry,
     signal::{
         On,
@@ -356,7 +359,7 @@ fn show_settings(
     staging: Res<ImportStaging>,
     types: Res<AppTypeRegistry>,
     mut panels: Query<(&mut SettingsPanel, &mut UINode)>,
-    mut sections: Query<(Entity, &SettingsSection, &mut UINode)>,
+    mut sections: Query<(Entity, &SettingsSection, &mut UINode), Without<SettingsPanel>>,
     shown: Query<(Entity, &SettingsRows)>,
     mut cmd: CommandQueue,
 ) {
@@ -591,7 +594,7 @@ fn render_dialog(
     staging: Res<ImportStaging>,
     theme: Res<UITheme>,
     mut fields: Query<(&DialogField, &mut UITextInput)>,
-    mut statuses: Query<(&DialogStatus, &mut UIText)>,
+    mut statuses: Query<(&DialogStatus, &mut UIText), Without<ImportButton>>,
     mut buttons: Query<(Entity, &ImportButton, &mut UIText, Option<&UIDisabled>)>,
     mut cmd: CommandQueue,
 ) {

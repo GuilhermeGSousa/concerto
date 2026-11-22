@@ -4,7 +4,7 @@ use concerto_ecs::{
         Entity,
     },
     query::{
-        filter::{Changed, Without},
+        filter::{Changed, With, Without},
         Query,
     },
 };
@@ -27,7 +27,10 @@ pub fn update_simple_entities(mut roots: SimpleEntities<'_, '_>) {
 
 pub fn propagate_global_transforms(
     mut roots: Query<(&Children, &mut GlobalTransform, &Transform), Without<ChildOf>>,
-    mut transform_query: Query<(Entity, &mut GlobalTransform, &Transform, Option<&Children>)>,
+    mut transform_query: Query<
+        (Entity, &mut GlobalTransform, &Transform, Option<&Children>),
+        With<ChildOf>,
+    >,
 ) {
     let mut visited = HashSet::new();
     let mut stack = Vec::new();

@@ -8,7 +8,7 @@ use concerto_ecs::{
     events::{Event, event_reader::EventReader, event_writer::EventWriter},
     query::{
         Query,
-        filter::{Added, With},
+        filter::{Added, With, Without},
     },
     resource::{Res, ResMut},
 };
@@ -884,7 +884,7 @@ pub(crate) fn setup_text_inputs(
 }
 
 fn project_quad(
-    quads: &mut Query<(&mut UINode, &mut UIMaterial)>,
+    quads: &mut Query<(&mut UINode, &mut UIMaterial), Without<UIText>>,
     quad: Entity,
     place: Option<(Vec2, f32)>,
     color: Color,
@@ -918,7 +918,7 @@ pub(crate) fn project_text_inputs(
     )>,
     mut labels: Query<(&mut UIText, &mut UINode)>,
     layouts: Query<&UILayout>,
-    mut quads: Query<(&mut UINode, &mut UIMaterial)>,
+    mut quads: Query<(&mut UINode, &mut UIMaterial), Without<UIText>>,
     theme: Res<UITheme>,
 ) {
     let now = Instant::now();

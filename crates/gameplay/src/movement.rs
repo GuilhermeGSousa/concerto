@@ -1,5 +1,5 @@
 use concerto_director::VirtualCamera;
-use concerto_ecs::{Query, Res, With, entity::hierarchy::Children};
+use concerto_ecs::{Query, Res, With, Without, entity::hierarchy::Children};
 use concerto_foundation::{time::Time, transform::Transform};
 use concerto_window::input::{Input, InputState, KeyCode, PhysicalKey};
 use glam::{Quat, Vec3};
@@ -8,7 +8,7 @@ use crate::player::Player;
 
 pub fn first_person_player_fly(
     mut players: Query<(&mut Transform, &Children), With<Player>>,
-    mut cameras: Query<&mut Transform, With<VirtualCamera>>,
+    mut cameras: Query<&mut Transform, (With<VirtualCamera>, Without<Player>)>,
     input: Res<Input>,
     time: Res<Time>,
 ) {

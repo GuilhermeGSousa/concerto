@@ -7,7 +7,10 @@ use concerto_ecs::{
     component::Component,
     entity::{Entity, hierarchy::ChildOf},
     events::{event_reader::EventReader, event_writer::EventWriter},
-    query::{Query, filter::Without},
+    query::{
+        Query,
+        filter::{With, Without},
+    },
     resource::{Res, ResMut, Resource},
     signal::On,
     system::input::SystemLocal,
@@ -320,9 +323,9 @@ struct PanelInfo {
 /// Rebuilds the stack, closes stale chains, and projects `open` onto the node's visibility and layer.
 pub fn track_panel_stack(
     mut panels: Query<(Entity, &mut UIAnchoredPanel, &mut UINode)>,
-    nodes: Query<&UINode>,
+    nodes: Query<&UINode, Without<UIAnchoredPanel>>,
     parents: Query<&ChildOf>,
-    parented_panels: Query<(Entity, &UIAnchoredPanel, &ChildOf)>,
+    parented_panels: Query<Entity, (With<UIAnchoredPanel>, With<ChildOf>)>,
     nodeless_panels: Query<(Entity, &UIAnchoredPanel), Without<UINode>>,
     interactables: Query<&Interactable>,
     mut warned: SystemLocal<MisusedPanels>,
@@ -331,7 +334,7 @@ pub fn track_panel_stack(
     mut focus_lost: EventWriter<UIFocusLost>,
     mut focus_gained: EventWriter<UIFocusGained>,
 ) {
-    for (entity, _, _) in parented_panels.iter() {
+    for entity in parented_panels.iter() {
         if warned.insert(entity) {
             warn!(
                 "UIAnchoredPanel on {entity:?} has a ChildOf: a panel must be a UI root, or it \
@@ -347,24 +350,6 @@ pub fn track_panel_stack(
             );
         }
     }
-    for (entity, panel, _) in panels.iter_mut() {
-        if !panel.toggled_by_owner {
-            continue;
-        }
-        let clickable = match panel.owner {
-            Some(owner) => {
-                nodes.get_entity(owner).is_none() || interactables.get_entity(owner).is_some()
-            }
-            None => false,
-        };
-        if !clickable && warned.insert(entity) {
-            warn!(
-                "UIAnchoredPanel on {entity:?} is toggled by its owner, but the owner is missing \
-                 or not Interactable: clicking it never opens the panel"
-            );
-        }
-    }
-
     let mut infos: Vec<PanelInfo> = panels
         .iter_mut()
         .map(|(entity, panel, _)| PanelInfo {
@@ -375,6 +360,25 @@ pub fn track_panel_stack(
         })
         .collect();
     let panel_entities: Vec<Entity> = infos.iter().map(|info| info.entity).collect();
+
+    for (entity, panel, _) in panels.iter_mut() {
+        if !panel.toggled_by_owner {
+            continue;
+        }
+        let clickable = match panel.owner {
+            Some(owner) => {
+                !(panel_entities.contains(&owner) || nodes.get_entity(owner).is_some())
+                    || interactables.get_entity(owner).is_some()
+            }
+            None => false,
+        };
+        if !clickable && warned.insert(entity) {
+            warn!(
+                "UIAnchoredPanel on {entity:?} is toggled by its owner, but the owner is missing \
+                 or not Interactable: clicking it never opens the panel"
+            );
+        }
+    }
 
     for info in infos.iter_mut() {
         if !info.open {
@@ -480,7 +484,7 @@ pub fn track_panel_stack(
 
 fn on_screen(
     entity: Entity,
-    nodes: &Query<&UINode>,
+    nodes: &Query<&UINode, Without<UIAnchoredPanel>>,
     parents: &Query<&ChildOf>,
     panel_entities: &[Entity],
 ) -> bool {

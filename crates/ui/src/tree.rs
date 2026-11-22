@@ -321,7 +321,7 @@ fn click_caret(
 
 pub(crate) fn update_trees(
     mut trees: Query<(Entity, &UITree, &mut UIScrollArea, Option<&UILayout>)>,
-    mut children: Query<&mut Children>,
+    mut children: Query<(Entity, &mut Children)>,
     elements: Query<&UITreeElement>,
     hidden: Query<&UIHidden>,
     mut nodes: Query<&mut UINode>,
@@ -335,9 +335,8 @@ pub(crate) fn update_trees(
     (items, culled, materials): (Query<&UIItem>, Query<&UICulled>, Query<&UIMaterial>),
     theme: Res<UITheme>,
     mut cmd: CommandQueue,
-    (resized, changed_children, changed_elements, added_hidden, parents, removed): (
+    (resized, changed_elements, added_hidden, parents, removed): (
         Query<Entity, (With<UITree>, Or<(Changed<UITree>, Changed<UILayout>)>)>,
-        Query<Entity, Changed<Children>>,
         Query<Entity, Changed<UITreeElement>>,
         Query<Entity, Added<UIHidden>>,
         Query<&ChildOf>,
@@ -349,8 +348,10 @@ pub(crate) fn update_trees(
     ),
 ) {
     let (mut removed_children, mut removed_elements, mut removed_hidden) = removed;
-    let touched = changed_children
-        .iter()
+    let touched = children
+        .iter_mut()
+        .filter(|(_, children)| children.is_changed())
+        .map(|(entity, _)| entity)
         .chain(changed_elements.iter())
         .chain(added_hidden.iter())
         .chain(removed_children.read())
@@ -371,7 +372,7 @@ pub(crate) fn update_trees(
         let row_height = tree.row_height.unwrap_or(theme.row_height);
         let mut roots = Vec::new();
         let mut spacer = None;
-        if let Some(mut children) = children.get_entity_mut(entity) {
+        if let Some((_, mut children)) = children.get_entity_mut(entity) {
             keep_parts_last(&mut children, &parts);
             for &child in children.iter() {
                 if elements.contains_entity(child) {
@@ -384,7 +385,9 @@ pub(crate) fn update_trees(
         let mut marked = |entity: Entity| {
             children
                 .get_entity_mut(entity)
-                .map(|children| marked_items(&children, |child| elements.contains_entity(child)))
+                .map(|(_, children)| {
+                    marked_items(&children, |child| elements.contains_entity(child))
+                })
                 .unwrap_or_default()
         };
         let rows = flatten_tree(&roots, tree.filtering, |entity| TreeNode {
@@ -436,7 +439,7 @@ pub(crate) fn update_trees(
             shape_item(row, &theme, &mut nodes);
             let (caret, drawn) = children
                 .get_entity_mut(row.entity)
-                .map(|mut children| {
+                .map(|(_, mut children)| {
                     keep_parts_first(&mut children, &parts);
                     let caret = children
                         .iter()

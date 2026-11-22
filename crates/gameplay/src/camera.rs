@@ -86,15 +86,21 @@ pub struct EntityFollow {
 }
 
 pub(crate) fn update_entity_follow(
-    mut follow: Query<(&EntityFollow, &mut Transform)>,
+    follow: Query<(Entity, &EntityFollow)>,
     mut entities: Query<&mut Transform>,
 ) {
-    for (to_follow, mut transform) in follow.iter_mut() {
-        let Some(target) = entities.get_entity_mut(to_follow.target) else {
+    for (entity, to_follow) in follow.iter() {
+        let Some(target) = entities
+            .get_entity_mut(to_follow.target)
+            .map(|target| target.translation)
+        else {
+            continue;
+        };
+        let Some(mut transform) = entities.get_entity_mut(entity) else {
             continue;
         };
 
-        transform.translation = target.translation + to_follow.offset;
+        transform.translation = target + to_follow.offset;
     }
 }
 
