@@ -455,3 +455,118 @@ mod name_field {
         assert_eq!(f.name(f.second), "second");
     }
 }
+
+#[test]
+fn a_color_swatch_opens_a_picker_that_edits_the_scene_and_escape_restores_the_color() {
+    use concerto_ui::{
+        anchor::{UIAnchoredPanel, UIPanelEscaped},
+        color_picker::{UIColorChanged, UIColorPicker, setup_color_pickers_system},
+        interaction::{UIClick, UIPointerDown},
+    };
+    use concerto_window::input::MouseButton;
+
+    fn click(world: &mut World, swatch: Entity) {
+        world.trigger_on(
+            swatch,
+            UIClick {
+                position: Vec2::ZERO,
+                button: MouseButton::Left,
+            },
+        );
+    }
+    fn open(world: &mut World) -> bool {
+        let mut panels = world.query::<(&UIAnchoredPanel, &color::ColorPickerPopup), ()>();
+        let open: Vec<bool> = panels.iter(world).map(|(panel, _)| panel.open).collect();
+        assert_eq!(open.len(), 1, "the color rows share one popup");
+        open[0]
+    }
+    fn picker(world: &mut World) -> Entity {
+        let mut pickers = world.query::<(Entity, &UIColorPicker), ()>();
+        let found: Vec<Entity> = pickers.iter(world).map(|(entity, _)| entity).collect();
+        assert_eq!(found.len(), 1, "the popup holds one picker");
+        found[0]
+    }
+
+    let original = Color::hsl(200.0, 0.5, 0.5, 1.0);
+    let (mut w, _, _) = inspecting();
+    w.register::<Spawner>();
+    let edited = w.spawn_in_scene(Spawner {
+        tint: original,
+        ..spawner()
+    });
+    w.select(Some(edited));
+    w.update();
+    w.update();
+    let world = &mut w.f.world;
+    let tint = row(world, &["tint"]);
+    let mut swatches = world.query::<(Entity, &color::ColorSwatch), ()>();
+    let swatch = swatches
+        .iter(world)
+        .find(|(_, swatch)| swatch.row == tint)
+        .map(|(entity, _)| entity)
+        .expect("the color row has a swatch");
+
+    click(world, swatch);
+    let mut setup = setup_color_pickers_system();
+    setup.initialize(world);
+    setup.run_and_apply((), world);
+    assert!(open(world));
+    let shown = picker(world);
+    assert_eq!(
+        world
+            .get_component_for_entity::<UIColorPicker>(shown)
+            .unwrap()
+            .color(),
+        original
+    );
+
+    let square = world
+        .get_component_for_entity::<Children>(shown)
+        .unwrap()
+        .iter()
+        .copied()
+        .next()
+        .expect("the picker has its square");
+    world.insert(layout(150.0), square);
+    world.trigger_on(
+        square,
+        UIPointerDown {
+            position: Vec2::new(0.0, 75.0),
+            button: MouseButton::Left,
+        },
+    );
+    run(world, send_property_commits);
+    let Color::Hsla(grey) = w.get::<Spawner>(edited).unwrap().tint else {
+        panic!("the color stays HSL");
+    };
+    assert_eq!(grey.h, 200.0);
+    assert_eq!(grey.s, 0.0);
+    assert!(w.f.unsaved(w.document));
+
+    let picked = Color::hsl(90.0, 0.25, 0.5, 0.5);
+    let world = &mut w.f.world;
+    world.trigger_on(shown, UIColorChanged { color: picked });
+    run(world, send_property_commits);
+    assert_eq!(w.get::<Spawner>(edited).unwrap().tint, picked);
+
+    let world = &mut w.f.world;
+    let mut popups = world.query::<(Entity, &color::ColorPickerPopup), ()>();
+    let popup = popups.iter(world).map(|(entity, _)| entity).next().unwrap();
+    world.trigger_on(popup, UIPanelEscaped);
+    run(world, send_property_commits);
+    assert_eq!(w.get::<Spawner>(edited).unwrap().tint, original);
+
+    let world = &mut w.f.world;
+    click(world, swatch);
+    assert!(!open(world));
+    click(world, swatch);
+    assert!(open(world));
+
+    let other = w.spawn_in_scene(spawner());
+    w.select(Some(other));
+    w.update();
+    w.update();
+    run(&mut w.f.world, color::close_color_picker);
+    assert!(!open(&mut w.f.world));
+    assert_eq!(w.get::<Spawner>(other).unwrap().tint, spawner().tint);
+}

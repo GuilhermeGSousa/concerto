@@ -61,7 +61,7 @@ use sync::{
 };
 
 use boolean::refresh_bool_fields;
-use color::refresh_color_swatches;
+use color::{close_color_picker, refresh_color_swatches};
 use name_text::{cancel_name_fields, commit_name_fields, refresh_name_fields};
 #[cfg(any(test, feature = "testing"))]
 pub use numeric::commit_number;
@@ -212,6 +212,7 @@ impl Plugin for InspectorPlugin {
             .add_system(LateUpdate, refresh_numeric_fields)
             .add_system(LateUpdate, refresh_numeric_labels)
             .add_system(LateUpdate, refresh_color_swatches)
+            .add_system(LateUpdate, close_color_picker)
             .add_system(LateUpdate, refresh_bool_fields)
             .add_system(LateUpdate, refresh_name_fields)
             .add_system(LateUpdate, refresh_text_fields)
@@ -229,6 +230,7 @@ pub(crate) fn install_listeners(world: &mut World) {
     world.add_listener(add_component::forget_scene);
     world.add_listener(component_menu::forget_scene);
     world.add_listener(variants::forget_scene);
+    world.add_listener(color::forget_scene);
     world.add_listener(read_inspected_values);
     world.add_listener(refresh_on_new_app);
     world.add_listener(commit_value);
