@@ -18,6 +18,7 @@ const POINT_SHADOW_NEAR = 0.1;
 const PI = 3.14159265359;
 // Roughness below this produces a near-singular specular lobe.
 const MIN_ROUGHNESS = 0.045;
+const SKY_RADIANCE_MAX_LEVEL = 6.0;
 
 struct MaterialUniform {
     base_color_factor: vec4<f32>,
@@ -339,7 +340,10 @@ fn pbr_fs(in: VertexOutput) -> vec4<f32> {
     if camera.sky_lit != 0u {
         ambient_light = sky_irradiance(mapped_normal) / PI + camera.night_ambient.rgb;
     }
-    let ambient = ambient_light * base_color.rgb * occlusion * screen_occlusion(in.clip_position.xy);
+    let reflected = specular_environment(reflect(-view_dir, mapped_normal), roughness)
+        * environment_brdf(f0, roughness, NdotV);
+    let ambient = (ambient_light * diffuse_color + reflected)
+        * occlusion * screen_occlusion(in.clip_position.xy);
     var color = ambient + total_light + emissive;
 
     if camera.fog_color.a > 0.0 {
@@ -480,12 +484,33 @@ fn sky_radiance_uv(direction: vec3<f32>) -> vec2<f32> {
 }
 
 fn sky_radiance(direction: vec3<f32>) -> vec3<f32> {
-    let texel = textureSampleLevel(t_sky_radiance, s_sky_radiance, sky_radiance_uv(direction), 0.0).rgb;
+    return sky_radiance_level(direction, 0.0);
+}
+
+fn sky_radiance_level(direction: vec3<f32>, level: f32) -> vec3<f32> {
+    let texel = textureSampleLevel(t_sky_radiance, s_sky_radiance, sky_radiance_uv(direction), level).rgb;
 #ifdef SKY_RADIANCE_SQRT
     return texel * texel * SKY_RADIANCE_SCALE;
 #else
     return texel;
 #endif
+}
+
+fn specular_environment(direction: vec3<f32>, roughness: f32) -> vec3<f32> {
+    if camera.sky_lit == 0u {
+        return camera.ambient.rgb;
+    }
+    let mirrored = sky_radiance_level(direction, roughness * SKY_RADIANCE_MAX_LEVEL)
+        + camera.night_color.rgb;
+    let scattered = sky_irradiance(direction) / PI + camera.night_ambient.rgb;
+    return mix(mirrored, scattered, roughness * roughness);
+}
+
+fn environment_brdf(f0: vec3<f32>, roughness: f32, NdotV: f32) -> vec3<f32> {
+    let r = roughness * vec4<f32>(-1.0, -0.0275, -0.572, 0.022) + vec4<f32>(1.0, 0.0425, 1.04, -0.04);
+    let a004 = min(r.x * r.x, exp2(-9.28 * NdotV)) * r.x + r.y;
+    let scale_bias = vec2<f32>(-1.04, 1.04) * a004 + r.zw;
+    return f0 * scale_bias.x + vec3<f32>(scale_bias.y);
 }
 
 fn sky_fog_color(to_fragment: vec3<f32>) -> vec3<f32> {

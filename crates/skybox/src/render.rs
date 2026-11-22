@@ -40,6 +40,7 @@ use crate::{
 
 const SKY_RADIANCE_MAP_WIDTH: u32 = 256;
 const SKY_RADIANCE_MAP_HEIGHT: u32 = 128;
+const SKY_RADIANCE_MAP_LEVELS: u32 = 7;
 
 /// Renders the sky-radiance map and draws the sky behind every camera with a [`Sky`]; requires `RenderPlugin`.
 pub struct SkyRenderPlugin;
@@ -80,11 +81,12 @@ impl Plugin for SkyRenderPlugin {
             .expect("SkyRenderPlugin needs RenderPlugin, registered before it")
             .view_target_format;
 
-        let map = sky_radiance_map(device, capabilities);
+        let SkyRadiance { map, mips } = sky_radiance_map(device, capabilities);
         let sky_view = SkyViewPass::new(device, capabilities, map.format);
         let sky = SkyPass::new(device, capabilities, camera_layout, target_format);
         app.render_mut()
             .insert_resource(map)
+            .insert_resource(mips)
             .insert_resource(sky_view)
             .insert_resource(sky);
     }
@@ -205,7 +207,24 @@ impl SunUniform {
     }
 }
 
-fn sky_radiance_map(device: &wgpu::Device, capabilities: &RenderCapabilities) -> SkyRadianceMap {
+#[derive(Resource)]
+pub(crate) struct SkyRadianceMips {
+    levels: Vec<wgpu::TextureView>,
+    sources: Vec<wgpu::BindGroup>,
+    pipeline: wgpu::RenderPipeline,
+}
+
+struct SkyRadiance {
+    map: SkyRadianceMap,
+    mips: SkyRadianceMips,
+}
+
+fn sky_radiance_map(device: &wgpu::Device, capabilities: &RenderCapabilities) -> SkyRadiance {
+    let level_count = if capabilities.single_layer_texture_arrays {
+        SKY_RADIANCE_MAP_LEVELS
+    } else {
+        1
+    };
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("sky_radiance_map"),
         size: wgpu::Extent3d {
@@ -213,14 +232,61 @@ fn sky_radiance_map(device: &wgpu::Device, capabilities: &RenderCapabilities) ->
             height: SKY_RADIANCE_MAP_HEIGHT,
             depth_or_array_layers: 1,
         },
-        mip_level_count: 1,
+        mip_level_count: level_count,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
         format: SkyRadianceMap::format_for(capabilities),
         usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
         view_formats: &[],
     });
-    SkyRadianceMap::new(device, &texture)
+    let levels: Vec<wgpu::TextureView> = (0..level_count)
+        .map(|level| {
+            texture.create_view(&wgpu::TextureViewDescriptor {
+                base_mip_level: level,
+                mip_level_count: Some(1),
+                ..Default::default()
+            })
+        })
+        .collect();
+    let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("sky_radiance_mip_layout"),
+        entries: &[texture_entry(0)],
+    });
+    let sources = levels
+        .iter()
+        .map(|level| {
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("sky_radiance_mip_bind_group"),
+                layout: &layout,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(level),
+                }],
+            })
+        })
+        .collect();
+    let module = create_shader_module(
+        device,
+        "Sky Radiance Mip",
+        include_str!("shaders/sky_radiance_mip.wgsl"),
+        &capabilities.shader_defs(),
+    );
+    let pipeline = fullscreen_pipeline(
+        device,
+        "Sky Radiance Mip Pipeline",
+        &module,
+        &[Some(&layout)],
+        texture.format(),
+        1,
+    );
+    SkyRadiance {
+        map: SkyRadianceMap::new(device, &texture),
+        mips: SkyRadianceMips {
+            levels,
+            sources,
+            pipeline,
+        },
+    }
 }
 
 fn lut_texture(device: &wgpu::Device, label: &str, width: u32, height: u32) -> wgpu::Texture {
@@ -523,7 +589,7 @@ pub(crate) fn render_sky_view(
     sky: Res<ExtractedSky>,
     luts: Res<AtmosphereLuts>,
     pass: Res<SkyViewPass>,
-    map: Res<SkyRadianceMap>,
+    mips: Res<SkyRadianceMips>,
     mut device: ResMut<RenderDevice>,
     queue: Res<RenderQueue>,
     mut last: SystemLocal<LastSkyView>,
@@ -555,7 +621,7 @@ pub(crate) fn render_sky_view(
         label: Some("Sky View Pass"),
         color_attachments: &[Some(wgpu::RenderPassColorAttachment {
             depth_slice: None,
-            view: &map.view,
+            view: &mips.levels[0],
             resolve_target: None,
             ops: wgpu::Operations {
                 load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
@@ -572,6 +638,27 @@ pub(crate) fn render_sky_view(
         render_pass.draw(0..3, 0..1);
     }
     drop(render_pass);
+    for (source, level) in mips.sources.iter().zip(mips.levels.iter().skip(1)) {
+        let mut mip_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            multiview_mask: None,
+            label: Some("Sky Radiance Mip Pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                depth_slice: None,
+                view: level,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            occlusion_query_set: None,
+            timestamp_writes: None,
+        });
+        mip_pass.set_pipeline(&mips.pipeline);
+        mip_pass.set_bind_group(0, source, &[]);
+        mip_pass.draw(0..3, 0..1);
+    }
     last.rendered = inputs;
 }
 
