@@ -30,7 +30,7 @@ use log::warn;
 
 use crate::{
     asset::{PartStrength, Ragdoll},
-    behaviour::BodyDrive,
+    behaviour::{BodyDrive, Claim},
     dying::{Dying, Settled},
     hit::Flinch,
     resolve::ResolvedRagdoll,
@@ -496,113 +496,37 @@ pub fn drive_character_ragdolls(
             1.0
         };
         let count = body.resolved.part_count();
-        let mut targets: Vec<Quat> = (0..count)
-            .map(|part| match body.resolved.settings().parts[part].parent {
-                Some(parent) => {
-                    (animated[parent].rotation.inverse() * animated[part].rotation).normalize()
-                }
-                None => Quat::IDENTITY,
-            })
-            .collect();
-        let mut forces = vec![Vec3::ZERO; count];
-        let mut torques = vec![Vec3::ZERO; count];
-        let mut claimed = vec![false; count];
-        for claim in &claims {
-            if claim.part >= count || claim.weight <= 0.0 {
-                continue;
-            }
-            let asked = Held::of(claim.command.strength);
-            wanted[claim.part] = if asked.kinematic || wanted[claim.part].kinematic {
-                if claim.weight >= 0.5 {
-                    asked
-                } else {
-                    wanted[claim.part]
-                }
-            } else {
-                wanted[claim.part].towards(asked, claim.weight)
-            };
-            if let Some(target) = claim.command.target {
-                targets[claim.part] = targets[claim.part].slerp(target, claim.weight).normalize();
-            }
-            forces[claim.part] += claim.command.force * claim.weight;
-            torques[claim.part] += claim.command.torque * claim.weight;
-            claimed[claim.part] = true;
-        }
+        let mut asked = Asked {
+            targets: (0..count)
+                .map(|part| match body.resolved.settings().parts[part].parent {
+                    Some(parent) => {
+                        (animated[parent].rotation.inverse() * animated[part].rotation).normalize()
+                    }
+                    None => Quat::IDENTITY,
+                })
+                .collect(),
+            forces: vec![Vec3::ZERO; count],
+            torques: vec![Vec3::ZERO; count],
+            claimed: vec![false; count],
+        };
+        apply_claims(&claims, &mut wanted, &mut asked);
         if let Some(dying) = dying {
-            for part in 0..count {
-                let left = dying.left(body.resolved.segment(part));
-                if wanted[part].kinematic {
-                    wanted[part] = Held::of(PartStrength::powered(DYING_STIFFNESS, DYING_TORQUE));
-                }
-                wanted[part].stiffness *= left;
-                wanted[part].damping *= left;
-                wanted[part].torque_limit *= left;
-                forces[part] *= left;
-                torques[part] *= left;
-            }
+            drain_strengths(dying, &body.resolved, &mut wanted, &mut asked);
         }
         for (part, held) in wanted.iter().enumerate() {
             body.changing[part] = held.kinematic != body.held[part].kinematic;
         }
         let body = &mut *body;
-        let parts = &body.resolved.settings().parts;
-        for part in 0..parts.len() {
-            let before = body.held[part];
-            let held = before.towards(wanted[part], if claimed[part] { 1.0 } else { step });
-            body.held[part] = held;
-            if before.kinematic != held.kinematic {
-                let motion = if held.kinematic {
-                    MotionType::Kinematic
-                } else {
-                    MotionType::Dynamic
-                };
-                state.set_ragdoll_part_motion(*id, part, motion);
-            }
-            if held.kinematic {
-                body.slack[part] = false;
-                let part_body = state.ragdoll_bodies(*id)[part];
-                state.move_body_kinematic(part_body, animated[part]);
-                body.aimed[part] = Quat::IDENTITY;
-                continue;
-            }
-            if forces[part] != Vec3::ZERO || torques[part] != Vec3::ZERO {
-                let part_body = state.ragdoll_bodies(*id)[part];
-                state.add_force(part_body, forces[part]);
-                state.add_torque(part_body, torques[part]);
-            }
-            if parts[part].parent.is_none() {
-                continue;
-            }
-            if held.slack() {
-                if !body.slack[part] {
-                    state.set_ragdoll_joint_drive(*id, part, JointDrive::Off);
-                    body.slack[part] = true;
-                }
-                body.aimed[part] = Quat::IDENTITY;
-                continue;
-            }
-            body.slack[part] = false;
-            let target = targets[part];
-            let before_target = if before.kinematic || before.slack() {
-                target
-            } else {
-                body.aimed[part]
-            };
-            let turned = (target * before_target.inverse()).normalize();
-            let turned = if turned.w < 0.0 { -turned } else { turned };
-            let lead = held.damping / held.stiffness;
-            let ahead = (turned.to_scaled_axis() / dt * lead).clamp_length_max(MAX_LEAD);
-            body.aimed[part] = target;
-            state.set_ragdoll_joint_drive(
-                *id,
-                part,
-                JointDrive::Spring(JointSpring {
-                    rotation: (Quat::from_scaled_axis(ahead) * target).normalize(),
-                    stiffness: held.stiffness,
-                    damping: held.damping,
-                    torque_limit: held.torque_limit,
-                }),
-            );
+        let driven = Driven {
+            id: *id,
+            animated: &animated,
+            wanted: &wanted,
+            asked: &asked,
+            step,
+            dt,
+        };
+        for part in 0..body.resolved.settings().parts.len() {
+            drive_part(&driven, part, body, &mut state);
         }
         if body.held.first().is_some_and(|root| root.kinematic) {
             body.lost_for = 0.0;
@@ -624,6 +548,139 @@ pub fn drive_character_ragdolls(
             cmd.entity(entity).trigger(PoseLost);
         }
     }
+}
+
+struct Asked {
+    targets: Vec<Quat>,
+    forces: Vec<Vec3>,
+    torques: Vec<Vec3>,
+    claimed: Vec<bool>,
+}
+
+struct Driven<'a> {
+    id: RagdollId,
+    animated: &'a [BodyPose],
+    wanted: &'a [Held],
+    asked: &'a Asked,
+    step: f32,
+    dt: f32,
+}
+
+fn apply_claims(claims: &[Claim], wanted: &mut [Held], asked: &mut Asked) {
+    let count = wanted.len();
+    for claim in claims {
+        if claim.part >= count || claim.weight <= 0.0 {
+            continue;
+        }
+        let strength = Held::of(claim.command.strength);
+        wanted[claim.part] = if strength.kinematic || wanted[claim.part].kinematic {
+            if claim.weight >= 0.5 {
+                strength
+            } else {
+                wanted[claim.part]
+            }
+        } else {
+            wanted[claim.part].towards(strength, claim.weight)
+        };
+        if let Some(target) = claim.command.target {
+            asked.targets[claim.part] = asked.targets[claim.part]
+                .slerp(target, claim.weight)
+                .normalize();
+        }
+        asked.forces[claim.part] += claim.command.force * claim.weight;
+        asked.torques[claim.part] += claim.command.torque * claim.weight;
+        asked.claimed[claim.part] = true;
+    }
+}
+
+fn drain_strengths(
+    dying: &Dying,
+    resolved: &ResolvedRagdoll,
+    wanted: &mut [Held],
+    asked: &mut Asked,
+) {
+    for (part, held) in wanted.iter_mut().enumerate() {
+        let left = dying.left(resolved.segment(part));
+        if held.kinematic {
+            *held = Held::of(PartStrength::powered(DYING_STIFFNESS, DYING_TORQUE));
+        }
+        held.stiffness *= left;
+        held.damping *= left;
+        held.torque_limit *= left;
+        asked.forces[part] *= left;
+        asked.torques[part] *= left;
+    }
+}
+
+fn drive_part(
+    driven: &Driven,
+    part: usize,
+    body: &mut RagdollBody,
+    state: &mut ResMut<PhysicsState>,
+) {
+    let id = driven.id;
+    let asked = driven.asked;
+    let before = body.held[part];
+    let blend = if asked.claimed[part] {
+        1.0
+    } else {
+        driven.step
+    };
+    let held = before.towards(driven.wanted[part], blend);
+    body.held[part] = held;
+    if before.kinematic != held.kinematic {
+        let motion = if held.kinematic {
+            MotionType::Kinematic
+        } else {
+            MotionType::Dynamic
+        };
+        state.set_ragdoll_part_motion(id, part, motion);
+    }
+    if held.kinematic {
+        body.slack[part] = false;
+        let part_body = state.ragdoll_bodies(id)[part];
+        state.move_body_kinematic(part_body, driven.animated[part]);
+        body.aimed[part] = Quat::IDENTITY;
+        return;
+    }
+    if asked.forces[part] != Vec3::ZERO || asked.torques[part] != Vec3::ZERO {
+        let part_body = state.ragdoll_bodies(id)[part];
+        state.add_force(part_body, asked.forces[part]);
+        state.add_torque(part_body, asked.torques[part]);
+    }
+    if body.resolved.settings().parts[part].parent.is_none() {
+        return;
+    }
+    if held.slack() {
+        if !body.slack[part] {
+            state.set_ragdoll_joint_drive(id, part, JointDrive::Off);
+            body.slack[part] = true;
+        }
+        body.aimed[part] = Quat::IDENTITY;
+        return;
+    }
+    body.slack[part] = false;
+    let target = asked.targets[part];
+    let before_target = if before.kinematic || before.slack() {
+        target
+    } else {
+        body.aimed[part]
+    };
+    let turned = (target * before_target.inverse()).normalize();
+    let turned = if turned.w < 0.0 { -turned } else { turned };
+    let lead = held.damping / held.stiffness;
+    let ahead = (turned.to_scaled_axis() / driven.dt * lead).clamp_length_max(MAX_LEAD);
+    body.aimed[part] = target;
+    state.set_ragdoll_joint_drive(
+        id,
+        part,
+        JointDrive::Spring(JointSpring {
+            rotation: (Quat::from_scaled_axis(ahead) * target).normalize(),
+            stiffness: held.stiffness,
+            damping: held.damping,
+            torque_limit: held.torque_limit,
+        }),
+    );
 }
 
 const GROUND_REACH: f32 = 3.0;
