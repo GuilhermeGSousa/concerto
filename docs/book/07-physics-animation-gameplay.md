@@ -417,6 +417,36 @@ and for each bone the part it moves with.
 The asset shows in the Asset Browser, where New creates one, and opens in the
 inspector's form.
 
+#### Generating a humanoid
+
+Typing fifteen parts by hand is an afternoon of guessing. `generate_humanoid`
+gives a first draft to adjust: a pelvis, up to three spine parts, a head, upper
+and lower arms, hands, thighs, shins and feet.
+
+```rust
+use concerto::ragdoll::{HumanoidSettings, generate_humanoid};
+
+let rig = retarget_rig.resolve(&skeleton, None)?;
+let ragdoll = generate_humanoid(skeleton_handle, &skeleton, &rig, &[&body_mesh], &HumanoidSettings::default())?;
+```
+
+It needs the skeleton's `RetargetRig`, which already says which bones are the
+spine, the neck, the arms and the legs. `HumanoidChains` names the rig's chains
+for each; the defaults are `spine`, `neck`, `arm_l`, `arm_r`, `leg_l` and
+`leg_r`. An arm uses the last three bones of its chain, so a chain may start at
+the clavicle; a leg uses the first three, so it may end at the toe.
+
+Capsules run along each bone to the next. A capsule is as thick as the mean
+distance from the bone of the mesh vertices skinned to it, or in proportion to
+the bone's length when no mesh is given. `total_mass`, 75 kg by default, is
+split by body-segment fractions. Knees and elbows are hinges that bend one way
+only, shoulders and hips get a swing cone and a twist range, the spine and neck
+small ones, and every joint a little friction so a fallen body comes to rest.
+
+With the `test-support` feature, `concerto::ragdoll::testing` has a reference
+humanoid built in code (`reference_humanoid`) and a `RagdollWorld` to stand it
+in, hit a named part and step, without a GPU.
+
 ## Animation
 
 A skinned model imported from glTF comes with a skeleton asset (bone names, parents, rest pose, inverse bind poses and bone ids, in `concerto::mesh`) and its animation
