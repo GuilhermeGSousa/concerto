@@ -45,6 +45,7 @@ use crate::{
     resources::RenderContext,
     sets::RenderSet,
     shader::create_shader_module,
+    view_target::ViewPipelines,
     Material,
 };
 
@@ -54,7 +55,8 @@ use crate::{
 // meshes that use material type `M`:
 //
 // * Registers `M` as an asset type and `MaterialComponent<M>` for reflection.
-// * Creates an opaque and a blended `wgpu::RenderPipeline` whose layout is built
+// * Creates an opaque and a blended `wgpu::RenderPipeline`, each for one and
+//   for four samples, whose layout is built
 //   from `M`'s own bind group layout plus whichever engine bind groups `M`
 //   declares it needs via [`Material::needs_camera`],
 //   [`Material::needs_lighting`] and [`Material::needs_skeleton`].
@@ -95,9 +97,8 @@ pub(crate) const DEFAULT_SHADER_SOURCE: &str = include_str!("shaders/shader.wgsl
 //
 // Inserted as a resource by [`MaterialPlugin<M>::finish`].
 pub struct MaterialPipeline<M: 'static> {
-    pub pipeline: wgpu::RenderPipeline,
-    /// The pipeline that blends `AlphaMode::Blend` assets without writing depth; `None` for a pipeline-only plugin.
-    pub blended_pipeline: Option<wgpu::RenderPipeline>,
+    pipelines: ViewPipelines,
+    blended_pipelines: Option<ViewPipelines>,
     // The `@group(0)` bind-group layout for `M`'s own data.
     pub bind_group_layout: wgpu::BindGroupLayout,
     _marker: PhantomData<fn() -> M>,
@@ -105,16 +106,28 @@ pub struct MaterialPipeline<M: 'static> {
 
 impl<M: 'static> MaterialPipeline<M> {
     pub fn new(
-        pipeline: wgpu::RenderPipeline,
-        blended_pipeline: Option<wgpu::RenderPipeline>,
+        pipelines: ViewPipelines,
+        blended_pipelines: Option<ViewPipelines>,
         bind_group_layout: wgpu::BindGroupLayout,
     ) -> Self {
         Self {
-            pipeline,
-            blended_pipeline,
+            pipelines,
+            blended_pipelines,
             bind_group_layout,
             _marker: PhantomData,
         }
+    }
+
+    /// The pipeline that draws into a target of `samples` samples.
+    pub fn pipeline(&self, samples: u32) -> &wgpu::RenderPipeline {
+        self.pipelines.get(samples)
+    }
+
+    /// The pipeline that blends `AlphaMode::Blend` assets without writing depth into a target of `samples` samples; `None` for a pipeline-only plugin.
+    pub fn blended_pipeline(&self, samples: u32) -> Option<&wgpu::RenderPipeline> {
+        self.blended_pipelines
+            .as_ref()
+            .map(|pipelines| pipelines.get(samples))
     }
 }
 
@@ -605,7 +618,12 @@ pub(crate) fn material_renderpass<M: Material>(
         let mut render_pass =
             begin_material_pass::<M>(encoder, "Material Render Pass", render_camera);
         rect.apply(&mut render_pass);
-        draw.draw(&mut render_pass, &pipeline.pipeline, render_camera, batches);
+        draw.draw(
+            &mut render_pass,
+            pipeline.pipeline(render_camera.view_target.sample_count()),
+            render_camera,
+            batches,
+        );
     }
 }
 
@@ -620,9 +638,6 @@ pub(crate) fn material_transparent_renderpass<M: Material>(
     view_batches: Res<MaterialViewBatches<M>>,
     context: Res<RenderContext>,
 ) {
-    let Some(blended_pipeline) = &pipeline.blended_pipeline else {
-        return;
-    };
     let draw = MaterialDraw {
         render_meshes: &render_meshes,
         render_materials: &render_materials,
@@ -643,6 +658,11 @@ pub(crate) fn material_transparent_renderpass<M: Material>(
         if rect.is_empty() {
             continue;
         }
+        let Some(blended_pipeline) =
+            pipeline.blended_pipeline(render_camera.view_target.sample_count())
+        else {
+            continue;
+        };
         let mut render_pass =
             begin_material_pass::<M>(encoder, "Blended Material Render Pass", render_camera);
         rect.apply(&mut render_pass);
@@ -809,59 +829,69 @@ impl<M: Material> Plugin for MaterialPlugin<M> {
         // Use the vertex layouts from the material trait.
         let vertex_layouts: Vec<_> = M::vertex_layouts().into_iter().map(Some).collect();
 
-        let create_pipeline =
-            |label: &str,
-             blend: Option<wgpu::BlendState>,
-             depth_stencil: Option<wgpu::DepthStencilState>| {
-                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                    label: Some(label),
-                    layout: Some(&pipeline_layout),
-                    vertex: wgpu::VertexState {
-                        module: &vs_module,
-                        entry_point: Some("vs_main"),
-                        buffers: &vertex_layouts,
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    },
-                    fragment: Some(wgpu::FragmentState {
-                        module: &fs_module,
-                        entry_point: Some("fs_main"),
-                        targets: &[Some(wgpu::ColorTargetState {
-                            format: target_format,
-                            blend,
-                            write_mask: wgpu::ColorWrites::ALL,
-                        })],
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    }),
-                    primitive: wgpu::PrimitiveState {
-                        topology: M::topology(),
-                        strip_index_format: None,
-                        front_face: wgpu::FrontFace::Ccw,
-                        cull_mode: M::cull_mode(),
-                        polygon_mode: wgpu::PolygonMode::Fill,
-                        unclipped_depth: false,
-                        conservative: false,
-                    },
-                    depth_stencil,
-                    multisample: wgpu::MultisampleState {
-                        count: 1,
-                        mask: !0,
-                        alpha_to_coverage_enabled: false,
-                    },
-                    multiview_mask: None,
-                    cache: None,
-                })
-            };
-
-        let pipeline = create_pipeline("Material Pipeline", M::blend_state(), M::depth_stencil());
-        let blended_pipeline = (!self.pipeline_only).then(|| {
-            create_pipeline(
-                "Blended Material Pipeline",
-                Some(wgpu::BlendState::ALPHA_BLENDING),
-                M::depth_stencil().map(|depth_stencil| wgpu::DepthStencilState {
-                    depth_write_enabled: Some(false),
-                    ..depth_stencil
+        let create_pipeline = |label: &str,
+                               blend: Option<wgpu::BlendState>,
+                               depth_stencil: Option<wgpu::DepthStencilState>,
+                               samples: u32| {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some(label),
+                layout: Some(&pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &vs_module,
+                    entry_point: Some("vs_main"),
+                    buffers: &vertex_layouts,
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &fs_module,
+                    entry_point: Some("fs_main"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: target_format,
+                        blend,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
                 }),
+                primitive: wgpu::PrimitiveState {
+                    topology: M::topology(),
+                    strip_index_format: None,
+                    front_face: wgpu::FrontFace::Ccw,
+                    cull_mode: M::cull_mode(),
+                    polygon_mode: wgpu::PolygonMode::Fill,
+                    unclipped_depth: false,
+                    conservative: false,
+                },
+                depth_stencil,
+                multisample: wgpu::MultisampleState {
+                    count: samples,
+                    mask: !0,
+                    alpha_to_coverage_enabled: false,
+                },
+                multiview_mask: None,
+                cache: None,
+            })
+        };
+
+        let pipeline = ViewPipelines::new(|samples| {
+            create_pipeline(
+                "Material Pipeline",
+                M::blend_state(),
+                M::depth_stencil(),
+                samples,
             )
+        });
+        let blended_pipeline = (!self.pipeline_only).then(|| {
+            ViewPipelines::new(|samples| {
+                create_pipeline(
+                    "Blended Material Pipeline",
+                    Some(wgpu::BlendState::ALPHA_BLENDING),
+                    M::depth_stencil().map(|depth_stencil| wgpu::DepthStencilState {
+                        depth_write_enabled: Some(false),
+                        ..depth_stencil
+                    }),
+                    samples,
+                )
+            })
         });
 
         app.render_mut().insert_resource(MaterialPipeline::<M>::new(

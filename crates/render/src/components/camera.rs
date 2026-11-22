@@ -38,7 +38,7 @@ use crate::{
     resources::RenderContext,
     sky_light::{CameraSkyLight, SkyRadianceMap},
     tonemapping::{Exposure, Tonemapping},
-    view_target::ViewTarget,
+    view_target::{Msaa, ViewTarget},
 };
 
 #[rustfmt::skip]
@@ -322,6 +322,7 @@ pub struct RenderCamera {
     pub(crate) viewport: Option<Viewport>,
     pub(crate) layers: RenderLayers,
     pub(crate) ambient_occlusion: Option<wgpu::TextureView>,
+    pub(crate) msaa: Msaa,
 }
 
 impl RenderCamera {
@@ -427,6 +428,7 @@ pub(crate) fn extract_cameras(
             Option<&RenderLayers>,
             Option<&Tonemapping>,
             Option<&Exposure>,
+            Option<&Msaa>,
             &GlobalTransform,
             &RenderEntity,
         )>,
@@ -450,11 +452,13 @@ pub(crate) fn extract_cameras(
         layers,
         tonemapping,
         exposure,
+        msaa,
         transform,
         render_entity,
     ) in cameras.iter()
     {
         let layers = layers.copied().unwrap_or_default();
+        let msaa = msaa.copied().unwrap_or_default();
         if exclusive.as_ref().is_some_and(|only| only.0 != entity) {
             continue;
         }
@@ -472,6 +476,7 @@ pub(crate) fn extract_cameras(
             render_camera.clear_color = clear_color;
             render_camera.viewport = camera.viewport;
             render_camera.layers = layers;
+            render_camera.msaa = msaa;
 
             if let RenderTarget::Texture(handle) = &camera.render_target {
                 if let Some(texture) = texture_assets.get(handle) {
@@ -541,7 +546,7 @@ pub(crate) fn extract_cameras(
             }
             None => UVec2::new(context.surface_config.width, context.surface_config.height),
         };
-        let view_target = ViewTarget::new(&device, context.view_target_format, view_size);
+        let view_target = ViewTarget::new(&device, context.view_target_format, view_size, msaa);
 
         let render_cam = RenderCamera {
             camera_bind_group,
@@ -553,6 +558,7 @@ pub(crate) fn extract_cameras(
             viewport: camera.viewport,
             layers,
             ambient_occlusion: None,
+            msaa,
         };
         publish_render_target(camera, &render_cam, &mut render_textures);
 

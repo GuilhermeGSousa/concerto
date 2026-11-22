@@ -131,6 +131,28 @@ cmd.spawn((
   `EXT_color_buffer_float`, the view target is 8-bit and scene light is clamped
   at 1 before exposure.
 
+### Anti-aliasing
+
+A camera draws its scene with four samples a pixel, so the edges of geometry
+are smoothed. `Msaa` on the camera's entity sets it: `Msaa::Sample4`, the
+default, or `Msaa::Off`.
+
+```rust
+use concerto::render::Msaa;
+
+cmd.spawn((Camera::default(), Msaa::Off, Transform::IDENTITY));
+```
+
+- The view target's colour and depth are multisampled, and the colour is
+  resolved into the single-sampled HDR texture after the blended surfaces,
+  before bloom and tonemapping.
+- It smooths the edges of triangles only. An alpha-cutout edge, a specular
+  highlight and a line of debug gizmos, which are drawn after the resolve, stay
+  as they were.
+- Shadow maps and the ambient occlusion prepass are single-sampled.
+- A pass of your own that draws into a view target needs a pipeline for each
+  sample count; `ViewPipelines` builds and picks them.
+
 ### Bloom
 
 `Bloom` on a camera makes the bright parts of its scene glow: the HDR frame is

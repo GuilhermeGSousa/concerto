@@ -122,7 +122,10 @@ fix the entry in the same commit as the change that made it false.
   `RenderCamera::view_target` holds the HDR colour and depth textures, cleared
   once by `clear_cameras`; passes in `Background`, `Draw` and `Transparent` take
   their attachments from it with `LoadOp::Load` and a pipeline built for
-  `RenderContext::view_target_format`. `tonemap_cameras` then overwrites the
+  `RenderContext::view_target_format` and the view target's `sample_count()`,
+  one or four under `Msaa`; `ViewPipelines` holds one of each. `main_texture()`
+  is the resolved scene only after `resolve_view_targets`, which runs between
+  `Transparent` and `PostProcess`. `tonemap_cameras` then overwrites the
   camera's rect of the window, or its whole texture, so anything drawn on
   `RenderCamera::output_view` before `RenderSet::Tonemap` is lost. Passes in
   `Overlay` and the UI draw on the output, in `surface_config.format`.
