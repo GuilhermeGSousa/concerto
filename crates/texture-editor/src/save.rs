@@ -5,7 +5,7 @@ use concerto_ecs::{
     Entity, Query, Res, ResMut, With, command::CommandQueue, events::event_writer::EventWriter,
 };
 use concerto_editor::{
-    asset_editor::{EditorDocument, SaveRequested, Unsaved},
+    asset_editor::{EditorDocument, SaveRequested, report_save},
     import::ImportQueue,
     project::ProjectState,
     scene::{SaveFailed, SceneSaved},
@@ -64,28 +64,16 @@ pub(crate) fn save_textures(
         if tab.derive_wanted || tab.job.is_some() {
             continue;
         }
-        cmd.remove::<SaveRequested>(entity);
         let written = root
             .context("Open a project before saving")
             .and_then(|root| save_document(&mut document, &mut tab, root, &mut assets));
-        match written {
-            Ok(asset) => {
-                document.status = format!("Saved {}", asset.address);
-                saved.write(SceneSaved {
-                    document: entity,
-                    written: vec![asset.clone()],
-                    asset,
-                });
-                cmd.remove::<Unsaved>(entity);
-            }
-            Err(error) => {
-                let message = format!("Save failed: {error:#}");
-                document.status = message.clone();
-                failed.write(SaveFailed {
-                    document: entity,
-                    message,
-                });
-            }
-        }
+        report_save(
+            entity,
+            &mut document,
+            written.map(Into::into),
+            &mut saved,
+            &mut failed,
+            &mut cmd,
+        );
     }
 }

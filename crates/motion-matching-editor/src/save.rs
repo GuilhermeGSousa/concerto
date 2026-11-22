@@ -5,7 +5,7 @@ use concerto_ecs::{
     Entity, Query, Res, ResMut, With, command::CommandQueue, events::event_writer::EventWriter,
 };
 use concerto_editor::{
-    asset_editor::{EditorDocument, SaveRequested, Unsaved},
+    asset_editor::{EditorDocument, SaveRequested, report_save},
     project::ProjectState,
     scene::{SaveFailed, SceneSaved},
 };
@@ -41,42 +41,6 @@ pub(crate) fn save_document(
     Ok(saved)
 }
 
-fn save_and_report(
-    entity: Entity,
-    document: &mut EditorDocument,
-    state: &mut DefinitionDocument,
-    root: Option<&Path>,
-    assets: &mut AssetRegistry,
-    saved: &mut EventWriter<SceneSaved>,
-    failed: &mut EventWriter<SaveFailed>,
-    cmd: &mut CommandQueue,
-) -> bool {
-    let written = root
-        .context("Open a project before saving")
-        .and_then(|root| save_document(document, state, root, assets));
-    match written {
-        Ok(asset) => {
-            document.status = format!("Saved {}", asset.address);
-            saved.write(SceneSaved {
-                document: entity,
-                written: vec![asset.clone()],
-                asset,
-            });
-            cmd.remove::<Unsaved>(entity);
-            true
-        }
-        Err(error) => {
-            let message = format!("Save failed: {error:#}");
-            document.status = message.clone();
-            failed.write(SaveFailed {
-                document: entity,
-                message,
-            });
-            false
-        }
-    }
-}
-
 pub(crate) fn save_definitions(
     mut requested: Query<
         (Entity, &mut EditorDocument, &mut DefinitionDocument),
@@ -93,13 +57,13 @@ pub(crate) fn save_definitions(
         .as_ref()
         .map(|project| project.root.as_path());
     for (entity, mut document, mut state) in requested.iter_mut() {
-        cmd.remove::<SaveRequested>(entity);
-        save_and_report(
+        let written = root
+            .context("Open a project before saving")
+            .and_then(|root| save_document(&mut document, &mut state, root, &mut assets));
+        report_save(
             entity,
             &mut document,
-            &mut state,
-            root,
-            &mut assets,
+            written.map(Into::into),
             &mut saved,
             &mut failed,
             &mut cmd,
