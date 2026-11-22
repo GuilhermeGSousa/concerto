@@ -50,6 +50,11 @@ impl RenderCapabilities {
         }
     }
 
+    /// Whether a multisampled depth texture can be read in a shader. `false` on GL.
+    pub fn multisampled_depth_sampling(&self) -> bool {
+        self.single_layer_texture_arrays
+    }
+
     /// The platform shader defs for these capabilities.
     pub fn shader_defs(&self) -> ShaderDefs {
         let mut defs = ShaderDefs::default();

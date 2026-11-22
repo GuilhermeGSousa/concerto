@@ -14,6 +14,7 @@ pub use concerto_name as name;
 pub use concerto_navigation as navigation;
 use concerto_navigation::NavigationPlugin;
 pub use concerto_noise as noise;
+pub use concerto_particles as particles;
 pub use concerto_physics as physics;
 pub use concerto_procedural_animation as procedural_animation;
 pub use concerto_reflect as reflect;
@@ -35,11 +36,13 @@ use concerto_director::CameraDirectorPlugin;
 #[cfg(not(target_arch = "wasm32"))]
 use concerto_foundation::assets::derived::CookReport;
 use concerto_motion_matching::MotionMatchingPlugin;
+use concerto_particles::ParticlesPlugin;
 use concerto_physics::plugin::PhysicsPlugin;
 use concerto_procedural_animation::ProceduralAnimationPlugin;
 use concerto_render::{
     assets::material::StandardMaterial, plugin::RenderPlugin,
-    shadow_pipeline::ShadowPipelinePlugin, MaterialPlugin,
+    shadow_pipeline::ShadowPipelinePlugin, AmbientOcclusionPlugin, AutoExposurePlugin, BloomPlugin,
+    DepthOfFieldPlugin, MaterialPlugin,
 };
 use concerto_scene::plugin::ScenePlugin;
 use concerto_skybox::plugin::SkyboxPlugin;
@@ -203,7 +206,12 @@ impl Plugin for DefaultPlugins {
             .register_plugin(RenderPlugin)
             .register_plugin(SkyboxPlugin)
             .register_plugin(ShadowPipelinePlugin)
-            .register_plugin(MaterialPlugin::<StandardMaterial>::default());
+            .register_plugin(MaterialPlugin::<StandardMaterial>::default())
+            .register_plugin(DepthOfFieldPlugin)
+            .register_plugin(BloomPlugin)
+            .register_plugin(AmbientOcclusionPlugin)
+            .register_plugin(AutoExposurePlugin)
+            .register_plugin(ParticlesPlugin);
 
         app.register_plugin(PhysicsPlugin)
             .register_plugin(MotionMatchingPlugin)

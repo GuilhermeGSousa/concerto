@@ -1,6 +1,6 @@
 use concerto_ecs::SystemSet;
 
-/// The ordered phases of the render world: `Lights`, `Queue`, `Shadows`, `Background`, `Draw`, `Transparent`, `Tonemap` and `Overlay` in
+/// The ordered phases of the render world: `Lights`, `Queue`, `Shadows`, `Prepass`, `Background`, `Draw`, `Transparent`, `PostProcess`, `Tonemap` and `Overlay` in
 /// [`Render`](concerto_app::schedule_groups::Render), `Present` in
 /// [`LateRender`](concerto_app::schedule_groups::LateRender).
 #[derive(SystemSet, Clone, PartialEq, Eq, Hash, Debug)]
@@ -11,12 +11,16 @@ pub enum RenderSet {
     Queue,
     /// Computing and rendering shadow maps.
     Shadows,
+    /// Drawing what a scene pass reads before the scene is drawn, as ambient occlusion does from a depth prepass.
+    Prepass,
     /// Clearing each camera's view target and drawing what lies behind the scene, such as the sky.
     Background,
     /// Drawing the scene.
     Draw,
     /// Drawing blended surfaces over the scene, back to front.
     Transparent,
+    /// Changing each camera's finished HDR scene in its view target, as bloom does.
+    PostProcess,
     /// Writing each camera's HDR scene to its target, exposed and tonemapped.
     Tonemap,
     /// Drawing over the finished frame on each camera's target, before any pass that samples it.
@@ -32,4 +36,24 @@ pub enum BackgroundSet {
     Clear,
     /// Drawing what lies behind the scene, such as the sky, over the cleared target.
     Draw,
+}
+
+/// The ordered steps inside [`RenderSet::Prepass`]: `Depth`, `Cutout`, then `Read`.
+#[derive(SystemSet, Clone, PartialEq, Eq, Hash, Debug)]
+pub enum PrepassSet {
+    /// Drawing the depth of opaque meshes for a pass that reads it.
+    Depth,
+    /// Drawing masked materials into that depth and into the shadow maps, cut to their shape.
+    Cutout,
+    /// Reading the finished depth, as ambient occlusion does.
+    Read,
+}
+
+/// The ordered steps inside [`RenderSet::PostProcess`] that need an order: `DepthOfField`, then `Bloom`.
+#[derive(SystemSet, Clone, PartialEq, Eq, Hash, Debug)]
+pub enum PostProcessSet {
+    /// Softening what is out of focus, before anything spreads light over it.
+    DepthOfField,
+    /// Spreading bright light around itself.
+    Bloom,
 }

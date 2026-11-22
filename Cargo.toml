@@ -69,6 +69,7 @@ concerto-navigation = { path = "crates/navigation", version = "0.1.0" }
 concerto-navigation-gizmos = { path = "crates/navigation-gizmos", version = "0.1.0" }
 concerto-noise = { path = "crates/noise", version = "0.1.0" }
 concerto-obj = { path = "crates/obj", version = "0.1.0" }
+concerto-particles = { path = "crates/particles", version = "0.1.0" }
 concerto-physics = { path = "crates/physics", version = "0.1.0" }
 concerto-procedural-animation = { path = "crates/procedural-animation", version = "0.1.0" }
 concerto-render = { path = "crates/render", version = "0.1.0" }
@@ -110,6 +111,7 @@ concerto-reflect.workspace = true
 concerto-color.workspace = true
 concerto-ui.workspace = true
 concerto-scene.workspace = true
+concerto-particles.workspace = true
 concerto-skybox.workspace = true
 concerto-world-grid.workspace = true
 # Physics runs everywhere: Jolt natively, Rapier on the web (Jolt's C++

@@ -24,7 +24,7 @@ use concerto_render::{
     material_plugin::MaterialPlugin,
     plugin::RenderPlugin,
     readback::read_texture,
-    Exposure, Tonemapping,
+    AutoExposure, AutoExposurePlugin, Exposure, Tonemapping,
 };
 use concerto_window::plugin::{Window, WindowPlugin};
 use glam::{Quat, Vec2, Vec3};
@@ -51,7 +51,8 @@ impl Scene {
             .register_plugin(WindowPlugin)
             .register_plugin(TransformPlugin)
             .register_plugin(RenderPlugin)
-            .register_plugin(MaterialPlugin::<StandardMaterial>::default());
+            .register_plugin(MaterialPlugin::<StandardMaterial>::default())
+            .register_plugin(AutoExposurePlugin);
         app.main_mut().world_mut().register_component::<Transform>();
 
         let server = app.get_resource::<AssetServer>().unwrap().clone();
@@ -177,5 +178,55 @@ fn scene_light_above_one_is_kept_until_the_camera_exposes_and_tonemaps_it() {
         scene.shown(),
         Tonemapping::Aces.apply(LIGHT * 2.0),
         "exposure applies before the curve",
+    );
+}
+
+#[test]
+fn auto_exposure_brings_a_bright_scene_and_a_dark_one_toward_middle_grey_within_its_range() {
+    let Some(gpu) = Gpu::request_for_test() else {
+        return;
+    };
+    let mut scene = Scene::new(&gpu);
+    let camera = scene.camera;
+    let world = scene.app.main_mut().world_mut();
+    world.insert(Tonemapping::None, camera);
+    world.insert(Exposure::new(-6.0), camera);
+    let dim = scene.shown();
+    assert!(
+        dim[0] < 20 && dim[1] < 5,
+        "six stops down, light of four is dark: {dim:?}"
+    );
+
+    scene
+        .app
+        .main_mut()
+        .world_mut()
+        .insert(AutoExposure::default().with_speed(1000.0), camera);
+    let adapted = scene.shown();
+    scene
+        .app
+        .main_mut()
+        .world_mut()
+        .insert(Exposure::new(0.0), camera);
+    let bright_adapted = scene.shown();
+    assert!(
+        adapted[0] < 20,
+        "exposure still applies on top, as a compensation: {adapted:?}"
+    );
+    assert!(
+        (60..=200).contains(&bright_adapted[0]) && (5..=40).contains(&bright_adapted[1]),
+        "light of four and a half is brought down toward middle grey: {bright_adapted:?}"
+    );
+
+    scene.app.main_mut().world_mut().insert(
+        AutoExposure::default()
+            .with_range(0.0, 0.0)
+            .with_speed(1000.0),
+        camera,
+    );
+    assert_shown(
+        scene.shown(),
+        Vec3::new(1.0, 0.5, 0.0),
+        "a range of nothing leaves the exposure alone",
     );
 }

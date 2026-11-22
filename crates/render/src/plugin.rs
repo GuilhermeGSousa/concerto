@@ -8,7 +8,8 @@ use crate::{
         camera::{extract_cameras, rebind_sky_radiance, sync_camera_aspect, Camera},
         camera_environment::CameraEnvironment,
         light::{
-            cull_lights, extract_lights, write_visible_lights, Light, RenderLights, VisibleLights,
+            cull_lights, extract_lights, write_visible_lights, Light, RenderLights, ShadowCascades,
+            VisibleLights,
         },
         material::MaterialComponent,
         mesh::{extract_meshes, RenderMeshInstances},
@@ -16,10 +17,12 @@ use crate::{
         shadows::{
             assign_shadow_layers, resize_shadow_maps, update_shadow_view_proj, RenderLighting,
             RenderPointShadowMaps, RenderShadowViewProjs, RenderSpotDirectionalShadowMaps,
+            SpotDirectionalClipFromWorld,
         },
         skeleton::{extract_skeletons, SkinUniforms},
         visibility::{NoFrustumCulling, NotShadowCaster, RenderLayers},
     },
+    depth_pass::{clear_depth_pass_views, DepthPassLayout, DepthPassViews},
     device::RenderDevice,
     draw_target::DrawTarget,
     gpu::Gpu,
@@ -34,14 +37,15 @@ use crate::{
         RenderAssetPlugin,
     },
     resources::RenderContext,
-    sets::{BackgroundSet, RenderSet},
+    sets::{BackgroundSet, PostProcessSet, PrepassSet, RenderSet},
     sky_light::SkyRadianceMap,
     systems::{
         render::{finish_render, present_window},
         update_window,
     },
     tonemapping::{tonemap_cameras, Exposure, Tonemapping, TonemappingPipeline},
-    view_target::prepare_view_targets,
+    view_phase::{clear_view_phases, render_opaque_phase, render_transparent_phase, ViewPhases},
+    view_target::{prepare_view_targets, resolve_view_targets, Msaa},
 };
 use concerto_app::{
     edit_time::AtEditTime,
@@ -113,10 +117,12 @@ impl Plugin for RenderPlugin {
             .register_derived_asset::<Texture>()
             .register_asset::<Skeleton>();
         app.register_type::<Light>()
+            .register_type::<ShadowCascades>()
             .register_type::<Camera>()
             .register_type::<CameraEnvironment>()
             .register_type::<Tonemapping>()
             .register_type::<Exposure>()
+            .register_type::<Msaa>()
             .register_type::<SyncWithRenderWorld>()
             .register_type::<NoFrustumCulling>()
             .register_type::<NotShadowCaster>()
@@ -161,6 +167,25 @@ impl Plugin for RenderPlugin {
             )
                 .chain(),
         )
+        .configure_render_sets(
+            Render,
+            RenderSet::Prepass
+                .after(RenderSet::Shadows)
+                .before(RenderSet::Background),
+        )
+        .configure_render_sets(Render, RenderSet::Background.after(RenderSet::Queue))
+        .configure_render_sets(Render, PrepassSet::Depth.before(PrepassSet::Cutout))
+        .configure_render_sets(Render, PrepassSet::Cutout.before(PrepassSet::Read))
+        .configure_render_sets(
+            Render,
+            PostProcessSet::DepthOfField.before(PostProcessSet::Bloom),
+        )
+        .configure_render_sets(
+            Render,
+            RenderSet::PostProcess
+                .after(RenderSet::Transparent)
+                .before(RenderSet::Tonemap),
+        )
         .configure_render_sets(Render, (BackgroundSet::Clear, BackgroundSet::Draw).chain())
         .add_render_system(
             Render,
@@ -174,21 +199,40 @@ impl Plugin for RenderPlugin {
             tonemap_cameras
                 .in_set(RenderSet::Tonemap)
                 .after(RenderSet::Background)
-                .after(RenderSet::Draw),
+                .after(RenderSet::Draw)
+                .after(RenderSet::Transparent),
+        )
+        .add_render_system(
+            Render,
+            resolve_view_targets
+                .after(RenderSet::Background)
+                .after(RenderSet::Draw)
+                .after(RenderSet::Transparent)
+                .before(RenderSet::PostProcess)
+                .before(RenderSet::Tonemap),
         )
         .add_render_system(Render, rebind_sky_radiance.before(RenderSet::Background))
         .add_render_system(Render, clear_draw_stats.in_set(RenderSet::Queue))
+        .add_render_system(Render, clear_view_phases.in_set(RenderSet::Queue))
+        .add_render_system(Render, render_opaque_phase.in_set(RenderSet::Draw))
+        .add_render_system(
+            Render,
+            render_transparent_phase.in_set(RenderSet::Transparent),
+        )
         .add_render_system(Render, assign_fallback_material.before(clear_draw_stats))
         .add_render_system(
             Render,
-            (cull_lights, assign_shadow_layers, write_visible_lights)
+            (
+                cull_lights,
+                assign_shadow_layers,
+                write_visible_lights,
+                update_shadow_view_proj,
+                resize_shadow_maps,
+            )
                 .chain()
                 .in_set(RenderSet::Lights),
         )
-        .add_render_system(
-            Render,
-            (update_shadow_view_proj, resize_shadow_maps).in_set(RenderSet::Shadows),
-        )
+        .add_render_system(Render, clear_depth_pass_views.before(RenderSet::Queue))
         .add_render_system(LateRender, finish_render)
         .add_render_system(
             LateRender,
@@ -261,6 +305,7 @@ impl Plugin for RenderPlugin {
             TonemappingPipeline::new(&device, &capabilities, &camera_layouts, config.format);
 
         let lighting_layout = LightingLayout::new(&device, &capabilities);
+        let depth_pass_layout = DepthPassLayout::new(&device);
 
         let render_lights = RenderLights::new(&device);
         let render_spot_directional_shadow_maps =
@@ -288,6 +333,7 @@ impl Plugin for RenderPlugin {
                 target,
                 surface_config: config,
                 view_target_format: capabilities.view_target_format(),
+                multisampled_depth_sampled: capabilities.multisampled_depth_sampling(),
             })
             .insert_resource(RenderDevice {
                 device,
@@ -306,10 +352,14 @@ impl Plugin for RenderPlugin {
             .insert_resource(render_spot_directional_shadow_maps)
             .insert_resource(render_point_shadow_maps)
             .insert_resource(render_shadow_view_projs)
+            .insert_resource(SpotDirectionalClipFromWorld::default())
+            .insert_resource(depth_pass_layout)
+            .insert_resource(DepthPassViews::default())
             .insert_resource(render_lighting)
             .insert_resource(skin_uniforms)
             .insert_resource(batched_instance_buffers)
             .insert_resource(RenderDrawStats::default())
+            .insert_resource(ViewPhases::default())
             .insert_resource(RenderMeshInstances::default());
     }
 }

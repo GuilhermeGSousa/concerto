@@ -1,6 +1,7 @@
 use concerto_mesh::Aabb;
 use glam::{Mat4, Vec3, Vec4, Vec4Swizzles};
 
+#[derive(Clone, Copy)]
 pub(crate) struct Frustum {
     planes: [Vec4; 6],
 }

@@ -18,6 +18,7 @@ const POINT_SHADOW_NEAR = 0.1;
 const PI = 3.14159265359;
 // Roughness below this produces a near-singular specular lobe.
 const MIN_ROUGHNESS = 0.045;
+const SKY_RADIANCE_MAX_LEVEL = 6.0;
 
 struct MaterialUniform {
     base_color_factor: vec4<f32>,
@@ -41,6 +42,7 @@ struct Light {
     shadow_layer: i32,
     range: f32,
     shadow_far: f32,
+    shadow_cascades: u32,
 };
 
 struct Lights {
@@ -70,6 +72,9 @@ struct CameraUniform {
     night_color: vec4<f32>,
     night_ambient: vec4<f32>,
     sky_lit: u32,
+    exposure: f32,
+    tonemapping: u32,
+    shadow_view: u32,
 };
 
 struct VertexInput {
@@ -206,6 +211,9 @@ var t_sky_radiance: texture_2d<f32>;
 @group(1) @binding(2)
 var s_sky_radiance: sampler;
 
+@group(1) @binding(3)
+var t_ambient_occlusion: texture_2d<f32>;
+
 @group(2) @binding(0)
 var<uniform> lights: Lights;
 
@@ -240,10 +248,19 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 fn pbr_fs(in: VertexOutput) -> vec4<f32> {
     let base_color = sample_base_color(in.tex_coords) * material.base_color_factor;
 
+#ifdef ALPHA_TO_COVERAGE
+    var coverage = base_color.a;
+    if (material.flags & ALPHA_CUTOUT) != 0u {
+        let edge = max(fwidth(base_color.a), 0.0001);
+        coverage = clamp((base_color.a - material.alpha_cutoff) / edge + 0.5, 0.0, 1.0);
+    }
+#else
+    let coverage = base_color.a;
     // Alpha cutout: discard transparent fragments for mask-mode materials.
     if (material.flags & ALPHA_CUTOUT) != 0u && base_color.a < material.alpha_cutoff {
         discard;
     }
+#endif
 
     let metallic_roughness = sample_metallic_roughness(in.tex_coords);
     let metallic = metallic_roughness.b * material.metallic_factor;
@@ -309,6 +326,8 @@ fn pbr_fs(in: VertexOutput) -> vec4<f32> {
         var shadow = 1.0;
         if light_type == POINT_LIGHT {
             shadow = point_shadow_visibility(light, in.world_position + offset);
+        } else if light_type == DIRECTIONAL_LIGHT {
+            shadow = cascaded_shadow_visibility(light, in.world_position, geometric_normal * grazing);
         } else {
             shadow = shadow_visibility(light.shadow_layer, in.world_position + offset);
         }
@@ -336,7 +355,10 @@ fn pbr_fs(in: VertexOutput) -> vec4<f32> {
     if camera.sky_lit != 0u {
         ambient_light = sky_irradiance(mapped_normal) / PI + camera.night_ambient.rgb;
     }
-    let ambient = ambient_light * base_color.rgb * occlusion;
+    let reflected = specular_environment(reflect(-view_dir, mapped_normal), roughness)
+        * environment_brdf(f0, roughness, NdotV);
+    let ambient = (ambient_light * diffuse_color + reflected)
+        * occlusion * screen_occlusion(in.clip_position.xy);
     var color = ambient + total_light + emissive;
 
     if camera.fog_color.a > 0.0 {
@@ -350,7 +372,7 @@ fn pbr_fs(in: VertexOutput) -> vec4<f32> {
         color = mix(color, fog_color, fog_amount);
     }
 
-    return vec4<f32>(color, base_color.a);
+    return vec4<f32>(color, coverage);
 }
 
 // Visibility factor (0 = fully shadowed, 1 = fully lit) for a spot/directional
@@ -380,6 +402,10 @@ fn shadow_visibility(shadow_layer: i32, world_position: vec3<f32>) -> f32 {
         return 1.0; // Outside the light's shadow frustum: treat as unshadowed.
     }
 
+    return shadow_map_visibility(shadow_layer, shadow_uv, light_ndc.z);
+}
+
+fn shadow_map_visibility(shadow_layer: i32, shadow_uv: vec2<f32>, depth: f32) -> f32 {
     let texel = 1.0 / vec2<f32>(textureDimensions(t_shadow_spot_directional));
     var lit = 0.0;
     for (var y: i32 = -1; y <= 1; y = y + 1) {
@@ -389,11 +415,52 @@ fn shadow_visibility(shadow_layer: i32, world_position: vec3<f32>) -> f32 {
                 sampler_shadow_spot_directional,
                 shadow_uv + vec2<f32>(f32(x), f32(y)) * texel,
                 shadow_layer,
-                light_ndc.z,
+                depth,
             );
         }
     }
     return lit / 9.0;
+}
+
+const CASCADE_BLEND_START: f32 = 0.8;
+const CASCADE_NORMAL_OFFSET_TEXELS: f32 = 1.5;
+
+fn cascaded_shadow_visibility(light: Light, world_position: vec3<f32>, normal: vec3<f32>) -> f32 {
+    if light.shadow_layer < 0 || light.shadow_cascades == 0u {
+        return 1.0;
+    }
+
+    let count = i32(light.shadow_cascades);
+    let first = light.shadow_layer + i32(camera.shadow_view) * count;
+    let map_size = f32(textureDimensions(t_shadow_spot_directional).x);
+    var visibility = 0.0;
+    var remaining = 1.0;
+    var last = 1.0;
+    var last_cascade = count;
+    for (var cascade: i32 = 0; cascade < count; cascade = cascade + 1) {
+        let layer = first + cascade;
+        let clip_from_world = shadow_view_projs.matrices[layer];
+        let texel = 2.0 / (length(clip_from_world[0].xyz) * map_size);
+        let position = world_position + normal * texel * CASCADE_NORMAL_OFFSET_TEXELS;
+        let ndc = (clip_from_world * vec4<f32>(position, 1.0)).xyz;
+        let edge = max(abs(ndc.x), abs(ndc.y));
+        if edge >= 1.0 || ndc.z < 0.0 || ndc.z > 1.0 {
+            continue;
+        }
+        let shadow_uv = ndc.xy * vec2<f32>(0.5, -0.5) + vec2<f32>(0.5, 0.5);
+        let weight = 1.0 - smoothstep(CASCADE_BLEND_START, 1.0, edge);
+        last = shadow_map_visibility(layer, shadow_uv, ndc.z);
+        last_cascade = cascade;
+        visibility += remaining * weight * last;
+        remaining *= 1.0 - weight;
+        if remaining <= 0.001 {
+            break;
+        }
+    }
+    if last_cascade >= count - 1 {
+        last = 1.0;
+    }
+    return visibility + remaining * last;
 }
 
 fn point_shadow_visibility(light: Light, world_position: vec3<f32>) -> f32 {
@@ -443,6 +510,11 @@ fn sample_point_shadow(direction: vec3<f32>, shadow_layer: i32, depth: f32) -> f
 #endif
 }
 
+fn screen_occlusion(position: vec2<f32>) -> f32 {
+    let last = vec2<i32>(textureDimensions(t_ambient_occlusion)) - vec2<i32>(1);
+    return textureLoad(t_ambient_occlusion, min(vec2<i32>(position), last), 0).r;
+}
+
 fn sky_irradiance(normal: vec3<f32>) -> vec3<f32> {
     let x = normal.x;
     let y = normal.y;
@@ -472,12 +544,33 @@ fn sky_radiance_uv(direction: vec3<f32>) -> vec2<f32> {
 }
 
 fn sky_radiance(direction: vec3<f32>) -> vec3<f32> {
-    let texel = textureSampleLevel(t_sky_radiance, s_sky_radiance, sky_radiance_uv(direction), 0.0).rgb;
+    return sky_radiance_level(direction, 0.0);
+}
+
+fn sky_radiance_level(direction: vec3<f32>, level: f32) -> vec3<f32> {
+    let texel = textureSampleLevel(t_sky_radiance, s_sky_radiance, sky_radiance_uv(direction), level).rgb;
 #ifdef SKY_RADIANCE_SQRT
     return texel * texel * SKY_RADIANCE_SCALE;
 #else
     return texel;
 #endif
+}
+
+fn specular_environment(direction: vec3<f32>, roughness: f32) -> vec3<f32> {
+    if camera.sky_lit == 0u {
+        return camera.ambient.rgb;
+    }
+    let mirrored = sky_radiance_level(direction, roughness * SKY_RADIANCE_MAX_LEVEL)
+        + camera.night_color.rgb;
+    let scattered = sky_irradiance(direction) / PI + camera.night_ambient.rgb;
+    return mix(mirrored, scattered, roughness * roughness);
+}
+
+fn environment_brdf(f0: vec3<f32>, roughness: f32, NdotV: f32) -> vec3<f32> {
+    let r = roughness * vec4<f32>(-1.0, -0.0275, -0.572, 0.022) + vec4<f32>(1.0, 0.0425, 1.04, -0.04);
+    let a004 = min(r.x * r.x, exp2(-9.28 * NdotV)) * r.x + r.y;
+    let scale_bias = vec2<f32>(-1.04, 1.04) * a004 + r.zw;
+    return f0 * scale_bias.x + vec3<f32>(scale_bias.y);
 }
 
 fn sky_fog_color(to_fragment: vec3<f32>) -> vec3<f32> {

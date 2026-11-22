@@ -12,6 +12,9 @@ pub const NO_CUBE_ARRAY_TEXTURES_SUPPORT: &str = "NO_CUBE_ARRAY_TEXTURES_SUPPORT
 /// Defined, with `SKY_RADIANCE_SCALE` as its value, when the sky-radiance map holds `sqrt(radiance / scale)`.
 pub const SKY_RADIANCE_SQRT: &str = "SKY_RADIANCE_SQRT";
 
+/// Defined in the fragment shader of a material whose `Mask` assets are drawn with alpha to coverage.
+pub const ALPHA_TO_COVERAGE: &str = "ALPHA_TO_COVERAGE";
+
 /// Named shader defs.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ShaderDefs(HashMap<String, ShaderDefValue>);

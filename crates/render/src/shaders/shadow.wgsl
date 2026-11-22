@@ -24,6 +24,9 @@ struct Skeleton {
 
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
+#ifdef CUTOUT
+    @location(0) tex_coords: vec2<f32>,
+#endif
 }
 
 @group(0) @binding(0)
@@ -48,6 +51,9 @@ fn vs_main(
     let world_position = model_matrix * vec4<f32>(model.position, 1.0);
 
     var out: VertexOutput;
+#ifdef CUTOUT
+    out.tex_coords = model.tex_coords;
+#endif
 
     let total_weight = model.bone_weights.x + model.bone_weights.y + model.bone_weights.z + model.bone_weights.w;
     if total_weight > 0 {
