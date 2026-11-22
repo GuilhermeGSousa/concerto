@@ -51,6 +51,7 @@ concerto-debug-gizmos = { path = "crates/debug-gizmos", version = "0.1.0" }
 concerto-director = { path = "crates/director", version = "0.1.0" }
 concerto-ecs = { path = "crates/ecs", version = "0.1.0" }
 concerto-ecs-macros = { path = "crates/ecs/macros", version = "0.1.0" }
+concerto-ragdoll = { path = "crates/ragdoll", version = "0.1.0" }
 concerto-reflect = { path = "crates/reflect", version = "0.1.0" }
 concerto-reflect-macros = { path = "crates/reflect/macros", version = "0.1.0" }
 concerto-editor = { path = "crates/editor", version = "0.1.0" }
@@ -100,6 +101,7 @@ concerto-director.workspace = true
 concerto-mesh.workspace = true
 concerto-motion-matching.workspace = true
 concerto-procedural-animation.workspace = true
+concerto-ragdoll.workspace = true
 concerto-name.workspace = true
 concerto-navigation.workspace = true
 concerto-noise.workspace = true
