@@ -41,6 +41,15 @@ impl RenderCapabilities {
         }
     }
 
+    /// The format cameras draw their scene in: `Rgba16Float`, or `Rgba8UnormSrgb`, which clamps scene light at 1, where a float target can't be rendered to.
+    pub fn view_target_format(&self) -> wgpu::TextureFormat {
+        if self.float_render_targets {
+            wgpu::TextureFormat::Rgba16Float
+        } else {
+            wgpu::TextureFormat::Rgba8UnormSrgb
+        }
+    }
+
     /// The platform shader defs for these capabilities.
     pub fn shader_defs(&self) -> ShaderDefs {
         let mut defs = ShaderDefs::default();

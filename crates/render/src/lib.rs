@@ -39,7 +39,8 @@ pub mod shader;
 pub mod shadow_pipeline;
 pub mod sky_light;
 pub mod systems;
-pub(crate) mod viewport_clear;
+pub mod tonemapping;
+pub mod view_target;
 pub mod wgpu_wrapper;
 
 #[doc(hidden)]
@@ -56,3 +57,5 @@ pub use sky_light::{
     CameraSkyLight, LightTint, RadianceSample, SkyRadianceMap, SphericalHarmonics,
     SKY_RADIANCE_SCALE,
 };
+pub use tonemapping::{Exposure, Tonemapping};
+pub use view_target::ViewTarget;

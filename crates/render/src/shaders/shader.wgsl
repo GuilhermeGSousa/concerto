@@ -350,8 +350,7 @@ fn pbr_fs(in: VertexOutput) -> vec4<f32> {
         color = mix(color, fog_color, fog_amount);
     }
 
-    // Tone map to LDR; the sRGB surface format applies gamma encoding.
-    return vec4<f32>(aces_tonemap(color), base_color.a);
+    return vec4<f32>(color, base_color.a);
 }
 
 // Visibility factor (0 = fully shadowed, 1 = fully lit) for a spot/directional
@@ -509,12 +508,6 @@ fn geometry_smith(NdotV: f32, NdotL: f32, roughness: f32) -> f32 {
 
 fn fresnel_schlick(cos_theta: f32, f0: vec3<f32>) -> vec3<f32> {
     return f0 + (vec3<f32>(1.0) - f0) * pow(clamp(1.0 - cos_theta, 0.0, 1.0), 5.0);
-}
-
-// Narkowicz ACES filmic approximation
-fn aces_tonemap(color: vec3<f32>) -> vec3<f32> {
-    let mapped = (color * (2.51 * color + 0.03)) / (color * (2.43 * color + 0.59) + 0.14);
-    return clamp(mapped, vec3<f32>(0.0), vec3<f32>(1.0));
 }
 
 fn sample_base_color(tex_coords: vec2<f32>) -> vec4<f32> {
