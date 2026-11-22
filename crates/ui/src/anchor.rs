@@ -321,19 +321,10 @@ struct PanelInfo {
     open: bool,
 }
 
-/// Rebuilds the stack, closes stale chains, and projects `open` onto the node's visibility and layer.
-pub fn track_panel_stack(
-    mut panels: Query<(Entity, &mut UIAnchoredPanel, &mut UINode)>,
-    nodes: Query<&UINode, Without<UIAnchoredPanel>>,
-    parents: Query<&ChildOf>,
-    parented_panels: Query<Entity, (With<UIAnchoredPanel>, With<ChildOf>)>,
-    nodeless_panels: Query<(Entity, &UIAnchoredPanel), Without<UINode>>,
-    interactables: Query<&Interactable>,
-    mut warned: SystemLocal<MisusedPanels>,
-    mut stack: ResMut<UIPanelStack>,
-    mut focused: ResMut<FocusedWidget>,
-    mut focus_lost: EventWriter<UIFocusLost>,
-    mut focus_gained: EventWriter<UIFocusGained>,
+fn warn_misplaced_panels(
+    parented_panels: &Query<Entity, (With<UIAnchoredPanel>, With<ChildOf>)>,
+    nodeless_panels: &Query<(Entity, &UIAnchoredPanel), Without<UINode>>,
+    warned: &mut MisusedPanels,
 ) {
     for entity in parented_panels.iter() {
         if warned.insert(entity) {
@@ -351,17 +342,15 @@ pub fn track_panel_stack(
             );
         }
     }
-    let mut infos: Vec<PanelInfo> = panels
-        .iter_mut()
-        .map(|(entity, panel, _)| PanelInfo {
-            entity,
-            owner: panel.owner,
-            target: panel.target,
-            open: panel.open,
-        })
-        .collect();
-    let panel_entities: Vec<Entity> = infos.iter().map(|info| info.entity).collect();
+}
 
+fn warn_unclickable_owners(
+    panels: &mut Query<(Entity, &mut UIAnchoredPanel, &mut UINode)>,
+    nodes: &Query<&UINode, Without<UIAnchoredPanel>>,
+    interactables: &Query<&Interactable>,
+    panel_entities: &[Entity],
+    warned: &mut MisusedPanels,
+) {
     for (entity, panel, _) in panels.iter_mut() {
         if !panel.toggled_by_owner {
             continue;
@@ -380,24 +369,37 @@ pub fn track_panel_stack(
             );
         }
     }
+}
 
+fn close_off_screen_panels(
+    infos: &mut [PanelInfo],
+    nodes: &Query<&UINode, Without<UIAnchoredPanel>>,
+    parents: &Query<&ChildOf>,
+    panel_entities: &[Entity],
+) {
     for info in infos.iter_mut() {
         if !info.open {
             continue;
         }
         let owner_alive = match info.owner {
-            Some(owner) => on_screen(owner, &nodes, &parents, &panel_entities),
+            Some(owner) => on_screen(owner, nodes, parents, panel_entities),
             None => true,
         };
         let target_alive = match info.target {
-            UIAnchorTarget::Node { entity } => on_screen(entity, &nodes, &parents, &panel_entities),
+            UIAnchorTarget::Node { entity } => on_screen(entity, nodes, parents, panel_entities),
             UIAnchorTarget::Point { .. } => true,
         };
         if !owner_alive || !target_alive {
             info.open = false;
         }
     }
+}
 
+fn close_orphaned_panels(
+    infos: &mut [PanelInfo],
+    parents: &Query<&ChildOf>,
+    panel_entities: &[Entity],
+) {
     loop {
         let mut orphaned = false;
         for index in 0..infos.len() {
@@ -407,10 +409,10 @@ pub fn track_panel_stack(
             let Some(owner) = infos[index].owner else {
                 continue;
             };
-            let Some(parent) = enclosing_panel(owner, &parents, &panel_entities) else {
+            let Some(parent) = enclosing_panel(owner, parents, panel_entities) else {
                 continue;
             };
-            if !is_open(parent, &infos) {
+            if !is_open(parent, infos) {
                 infos[index].open = false;
                 orphaned = true;
             }
@@ -419,30 +421,37 @@ pub fn track_panel_stack(
             break;
         }
     }
+}
 
+fn open_panels_outermost_first(
+    infos: &[PanelInfo],
+    parents: &Query<&ChildOf>,
+    panel_entities: &[Entity],
+) -> Vec<Entity> {
     let mut ordered: Vec<(usize, Entity)> = infos
         .iter()
         .filter(|info| info.open)
         .map(|info| {
             let depth = info
                 .owner
-                .map(|owner| depth_of(owner, &parents, &panel_entities, &infos))
+                .map(|owner| depth_of(owner, parents, panel_entities, infos))
                 .unwrap_or(0);
             (depth, info.entity)
         })
         .collect();
     ordered.sort_by_key(|(depth, entity)| (*depth, entity.index(), entity.generation()));
 
-    let open: Vec<Entity> = ordered.into_iter().map(|(_, entity)| entity).collect();
-    let previously_open = if stack.open() != open.as_slice() {
-        std::mem::replace(&mut stack.open, open)
-    } else {
-        open
-    };
+    ordered.into_iter().map(|(_, entity)| entity).collect()
+}
 
+fn project_open_panels(
+    panels: &mut Query<(Entity, &mut UIAnchoredPanel, &mut UINode)>,
+    open: &[Entity],
+    previously_open: &[Entity],
+) -> Option<Entity> {
     let mut focus_target = None;
     for (entity, mut panel, mut node) in panels.iter_mut() {
-        let is_panel_open = stack.open.contains(&entity);
+        let is_panel_open = open.contains(&entity);
         if is_panel_open && !previously_open.contains(&entity) {
             focus_target = panel.focus_on_open.or(focus_target);
         }
@@ -453,17 +462,60 @@ pub fn track_panel_stack(
             node.visible = is_panel_open;
         }
         if is_panel_open {
-            let index = stack
-                .open
-                .iter()
-                .position(|open| *open == entity)
-                .unwrap_or(0);
+            let index = open.iter().position(|open| *open == entity).unwrap_or(0);
             let layer = UI_PANEL_LAYER + index as i32;
             if node.z_index != layer {
                 node.z_index = layer;
             }
         }
     }
+    focus_target
+}
+
+/// Rebuilds the stack, closes stale chains, and projects `open` onto the node's visibility and layer.
+pub fn track_panel_stack(
+    mut panels: Query<(Entity, &mut UIAnchoredPanel, &mut UINode)>,
+    nodes: Query<&UINode, Without<UIAnchoredPanel>>,
+    parents: Query<&ChildOf>,
+    parented_panels: Query<Entity, (With<UIAnchoredPanel>, With<ChildOf>)>,
+    nodeless_panels: Query<(Entity, &UIAnchoredPanel), Without<UINode>>,
+    interactables: Query<&Interactable>,
+    mut warned: SystemLocal<MisusedPanels>,
+    mut stack: ResMut<UIPanelStack>,
+    mut focused: ResMut<FocusedWidget>,
+    mut focus_lost: EventWriter<UIFocusLost>,
+    mut focus_gained: EventWriter<UIFocusGained>,
+) {
+    warn_misplaced_panels(&parented_panels, &nodeless_panels, &mut warned);
+    let mut infos: Vec<PanelInfo> = panels
+        .iter_mut()
+        .map(|(entity, panel, _)| PanelInfo {
+            entity,
+            owner: panel.owner,
+            target: panel.target,
+            open: panel.open,
+        })
+        .collect();
+    let panel_entities: Vec<Entity> = infos.iter().map(|info| info.entity).collect();
+
+    warn_unclickable_owners(
+        &mut panels,
+        &nodes,
+        &interactables,
+        &panel_entities,
+        &mut warned,
+    );
+    close_off_screen_panels(&mut infos, &nodes, &parents, &panel_entities);
+    close_orphaned_panels(&mut infos, &parents, &panel_entities);
+
+    let open = open_panels_outermost_first(&infos, &parents, &panel_entities);
+    let previously_open = if stack.open() != open.as_slice() {
+        std::mem::replace(&mut stack.open, open)
+    } else {
+        open
+    };
+
+    let focus_target = project_open_panels(&mut panels, &stack.open, &previously_open);
 
     if let Some(target) = focus_target
         && **focused != Some(target)
