@@ -589,6 +589,41 @@ from its animated place for `lost_seconds`, the character is sent `PoseLost`,
 once, until it is back: it can no longer hold the pose, and something should
 catch it or let it fall.
 
+#### A hit
+
+`BodyHit { character, part, point, impulse }` says a character's body was hit:
+on this part of its ragdoll, at this world point, with this impulse in N·s. It
+says nothing about damage or death; the game decides those. Trigger it from
+the ray that found the part:
+
+```rust
+let hit = physics.cast_ray(muzzle, aim, QueryFilter::default().with_layers(Layers::RAGDOLL))?;
+cmd.trigger(BodyHit { character: hit.entity?, part: hit.part?, point: hit.point, impulse: aim.normalize() * 30.0 });
+```
+
+It is triggered for every listener, so the engine and the game both hear it. A
+9 mm bullet carries about 3 N·s, which barely moves a 75 kg body; games scale
+it up for the look, and the signal carries whatever the game sends.
+
+A character with a `HitReaction` flinches when it is hit while its ragdoll
+follows its animation:
+
+1. the body is powered with the reaction's `profile`, `flinch` by default, so
+   the pelvis and legs keep following the animation and need no balance;
+2. the part takes the impulse at the point;
+3. the hit part's strength drops to `dip` of itself and its neighbours' to
+   `neighbour_dip`, and comes back over `recover` seconds;
+4. the simulated body is drawn in full for `hold` seconds after the last hit,
+   then returns to the animation over `settle` seconds, after which the parts
+   are kinematic again.
+
+A second hit during a flinch restarts the recovery and adds its impulse. A hit
+on a part the profile keeps kinematic, a leg, moves nothing. Without a
+`HitReaction`, or when the ragdoll is limp or powered by something else, the
+part only takes the impulse. `FlinchRecord` on the character holds what its
+last flinch did: the part, how far it got from its animated place, and how long
+the flinch lasted.
+
 What is drawn is a separate matter, set by weights. `weight` runs from 0, the
 animated pose, to 1, the ragdoll's; `part_weights` gives single parts a weight
 of their own by bone name. `go_limp()` sets the mode and a weight of 1:

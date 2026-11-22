@@ -3,6 +3,7 @@
 pub mod asset;
 pub mod character;
 pub mod generate;
+pub mod hit;
 pub mod overlap;
 pub mod plugin;
 pub mod resolve;
@@ -21,6 +22,7 @@ pub use generate::{
     BRACED, FLINCH, GenerateError, HumanoidChains, HumanoidSettings, LIMP, Segment,
     generate_humanoid,
 };
+pub use hit::{BodyHit, Flinch, FlinchRecord, HitReaction};
 pub use overlap::PartOverlap;
 pub use plugin::RagdollPlugin;
 pub use resolve::{RagdollError, ResolvedRagdoll};

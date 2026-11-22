@@ -30,6 +30,7 @@ use log::warn;
 
 use crate::{
     asset::{PartStrength, Ragdoll},
+    hit::Flinch,
     resolve::ResolvedRagdoll,
 };
 
@@ -242,6 +243,7 @@ pub struct RagdollBody {
     held: Vec<Held>,
     aimed: Vec<Quat>,
     slack: Vec<bool>,
+    changing: Vec<bool>,
     lost_for: f32,
     lost: bool,
     animated: Vec<BodyPose>,
@@ -275,6 +277,15 @@ impl RagdollBody {
     /// The name of the bone the part follows.
     pub fn bone_name(&self, part: usize) -> Option<Name> {
         self.resolved.bone_name(part)
+    }
+
+    /// Whether the part is kinematic right now.
+    pub fn is_kinematic(&self, part: usize) -> bool {
+        self.held.get(part).is_some_and(|held| held.kinematic)
+    }
+
+    pub(crate) fn is_changing(&self, part: usize) -> bool {
+        self.changing.get(part).copied().unwrap_or(false)
     }
 
     /// The world pose the animation asked of every part on the last frame, in part order, whatever was drawn.
@@ -404,6 +415,7 @@ pub fn create_character_ragdolls(
                     held: vec![Held::KINEMATIC; pose.len()],
                     aimed: vec![Quat::IDENTITY; pose.len()],
                     slack: vec![false; pose.len()],
+                    changing: vec![false; pose.len()],
                     lost_for: 0.0,
                     lost: false,
                     animated: pose.clone(),
@@ -445,21 +457,37 @@ fn wanted_strengths(
 
 /// Each fixed step, before physics steps, holds every ragdoll's parts to the animated pose as its mode and strength profile ask: a kinematic part is driven to its bone, a powered part's motor is aimed at its bone's rotation under its parent's, leading it by the animation's own speed, and a limp part's motor is off. A change of strength takes hold over the character's `blend`. Triggers `PoseLost` when the root part has been too far from its animated place for too long.
 pub fn drive_character_ragdolls(
-    characters: Query<(Entity, &CharacterRagdoll, &RagdollId, &mut RagdollBody)>,
+    characters: Query<(
+        Entity,
+        &CharacterRagdoll,
+        &RagdollId,
+        &mut RagdollBody,
+        Option<&Flinch>,
+    )>,
     ragdolls: Res<AssetStore<Ragdoll>>,
     mut state: ResMut<PhysicsState>,
     mut cmd: CommandQueue,
 ) {
     let dt = Time::fixed_delta_time().as_secs_f32();
     let mut simulated = Vec::new();
-    for (entity, character, id, mut body) in characters.iter() {
+    for (entity, character, id, mut body, flinch) in characters.iter() {
         let animated = body.animated.clone();
-        let wanted = wanted_strengths(character, &body, ragdolls.get(&character.ragdoll));
-        let step = if character.blend > 0.0 {
+        let mut wanted = wanted_strengths(character, &body, ragdolls.get(&character.ragdoll));
+        if let Some(flinch) = flinch {
+            for (held, scale) in wanted.iter_mut().zip(flinch.scales()) {
+                held.stiffness *= scale;
+                held.damping *= scale;
+                held.torque_limit *= scale;
+            }
+        }
+        let step = if character.blend > 0.0 && flinch.is_none() {
             dt / character.blend
         } else {
             1.0
         };
+        for (part, held) in wanted.iter().enumerate() {
+            body.changing[part] = held.kinematic != body.held[part].kinematic;
+        }
         let body = &mut *body;
         let parts = &body.resolved.settings().parts;
         for part in 0..parts.len() {

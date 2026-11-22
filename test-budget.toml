@@ -31,7 +31,7 @@
 "crates/procedural-animation" = 28
 "crates/procedural-animation-gizmos" = 1
 "crates/project" = 15
-"crates/ragdoll" = 9
+"crates/ragdoll" = 10
 "crates/ragdoll-editor" = 2
 "crates/reflect" = 16
 "crates/render" = 81

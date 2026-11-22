@@ -1,6 +1,7 @@
 //! The editor's tab and tools for a `Ragdoll`, and its generator from a retarget rig, as an extension of `concerto-editor`.
 mod action;
 mod create;
+mod hit;
 mod parts;
 mod preview;
 mod tab;
@@ -13,6 +14,7 @@ use concerto_app::{
 use concerto_mcp::{AppMcpExt, McpTool, Needs, ToolRegistry};
 
 pub use create::{ChainNames, CreateRagdoll, CreatedRagdoll, RagdollCreation};
+pub use hit::HitCharacter;
 pub use preview::{
     DropRagdoll, PlayRagdoll, PokeRagdoll, ResetRagdoll, SetRagdoll, ShowRagdollStage,
     ragdoll_preview,
@@ -35,6 +37,8 @@ impl Plugin for RagdollEditorPlugin {
                 create::create_ragdoll_call,
             )
             .add_system(LateUpdate, create::answer_creations)
+            .add_tool::<HitCharacter, _>(hit::hit_tool(), hit::hit_character)
+            .add_system(LateUpdate, hit::answer_hits)
             .add_tool::<tools::RagdollParts, _>(tools::parts_tool(), tools::ragdoll_parts)
             .add_tool::<tools::SetRagdollPart, _>(tools::set_part_tool(), tools::set_ragdoll_part)
             .add_tool::<tools::TestRagdoll, _>(tools::test_tool(), tools::test_ragdoll)

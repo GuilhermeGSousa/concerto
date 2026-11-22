@@ -1835,6 +1835,19 @@ parts that overlap in the rest pose, by bone with the depth. `preview_ragdoll`
 sends the preview a drop, poke, play (`clip`) or reset, as the buttons do, and
 answers the report of a drop or a poke.
 
+`hit_character` works on the game that is playing and needs `play` first. It
+takes `entity` (the character's id as `scene_tree` shows it), `bone` (the part
+that is hit), `impulse` in N·s (`[0, 0, -30]`) and `point` in world space (the
+part's current position), and sends the `BodyHit` signal a bullet would send,
+through `EditWorldSignals`; no physics is called directly. A character with a
+`HitReaction` that follows its animation answers once its flinch is over, from
+its `FlinchRecord`: the bone, the peak displacement in metres and the seconds
+until the body was back on its animation. A character without a
+`HitReaction`, or whose ragdoll is limp or powered by something else, answers
+at once that it only took the impulse. An unknown entity, one with no
+`CharacterRagdoll`, a ragdoll not built yet and an unknown bone (the reply lists
+the part bones) are errors that say what to do next.
+
 ### The texture tab
 
 The editor of a `Texture` is in the crate
