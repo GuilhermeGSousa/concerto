@@ -9,18 +9,20 @@ use concerto_ecs::{
 };
 use concerto_foundation::{
     assets::{asset_store::AssetStore, handle::AssetHandle},
-    transform::GlobalTransform,
+    time::Time,
+    transform::{GlobalTransform, Transform},
 };
-use concerto_mesh::{Skeleton, SkeletonComponent};
+use concerto_mesh::{JointName, Skeleton, SkeletonComponent};
 use concerto_name::Name;
 use concerto_physics::{
     body::BodyId,
     physics_pipeline::PhysicsPipeline,
     physics_state::PhysicsState,
-    ragdoll::{BodyPose, RagdollId},
+    ragdoll::{BodyPose, JointDrive, RagdollId},
     rigid_body::MotionType,
 };
 use concerto_reflect::{Reflect, ReflectDefault};
+use glam::Mat4;
 use log::warn;
 
 use crate::{asset::Ragdoll, resolve::ResolvedRagdoll};
@@ -32,6 +34,16 @@ pub enum RagdollMode {
     /// Every part is kinematic and is driven to its bone each fixed step: the body pushes props and can be hit, and the animation is untouched.
     #[default]
     FollowsAnimation,
+    /// Every part is dynamic with its motors off, and keeps the velocity it had: the body falls as a body.
+    Limp,
+}
+
+/// How much of one part's simulated pose is drawn, overriding the character's `weight` for the part on `bone`.
+#[derive(Reflect, Clone, Copy, Debug, Default, PartialEq)]
+#[reflect(Default)]
+pub struct PartWeight {
+    pub bone: JointName,
+    pub weight: f32,
 }
 
 /// Gives a character a physical body: goes on the entity with the `SkeletonComponent`, names the ragdoll asset of that skeleton, and builds the ragdoll at the current pose once both have loaded.
@@ -42,6 +54,10 @@ pub struct CharacterRagdoll {
     /// The character's own capsule, which its parts never collide with.
     pub capsule: SceneEntityRef,
     pub mode: RagdollMode,
+    /// How much of the simulated pose is drawn on the skeleton: 0 is the animated pose, 1 the ragdoll's.
+    pub weight: f32,
+    /// Weights of single parts, each replacing `weight` for its part.
+    pub part_weights: Vec<PartWeight>,
 }
 
 impl CharacterRagdoll {
@@ -62,6 +78,35 @@ impl CharacterRagdoll {
         self.mode = mode;
         self
     }
+
+    pub fn with_weight(mut self, weight: f32) -> Self {
+        self.weight = weight;
+        self
+    }
+
+    /// Draws `weight` of the simulated pose on the part on `bone`, whatever the character's `weight` is.
+    pub fn with_part_weight(mut self, bone: impl Into<JointName>, weight: f32) -> Self {
+        self.part_weights.push(PartWeight {
+            bone: bone.into(),
+            weight,
+        });
+        self
+    }
+
+    /// Lets the body go: every part dynamic, and the whole simulated pose drawn.
+    pub fn go_limp(&mut self) {
+        self.mode = RagdollMode::Limp;
+        self.weight = 1.0;
+    }
+
+    /// The weight of the part on `bone`, from 0 to 1.
+    pub fn weight_of(&self, bone: &str) -> f32 {
+        self.part_weights
+            .iter()
+            .find(|part| &*part.bone == bone)
+            .map_or(self.weight, |part| part.weight)
+            .clamp(0.0, 1.0)
+    }
 }
 
 /// A character's built ragdoll, beside its `RagdollId`: which bone each part follows.
@@ -69,7 +114,12 @@ impl CharacterRagdoll {
 pub struct RagdollBody {
     resolved: ResolvedRagdoll,
     bones: Vec<Entity>,
+    skeleton_bones: Vec<Entity>,
     ignored: Option<BodyId>,
+    motion: MotionType,
+    previous: Vec<BodyPose>,
+    current: Vec<BodyPose>,
+    drawn_roots: Vec<Option<Mat4>>,
 }
 
 impl RagdollBody {
@@ -91,6 +141,20 @@ impl RagdollBody {
     /// The bone entity of every part, in part order.
     pub fn bones(&self) -> &[Entity] {
         &self.bones
+    }
+
+    /// The world pose of every part between the last two fixed steps: `alpha` 0 is the step before last, 1 the last.
+    pub fn interpolated_pose(&self, alpha: f32) -> Vec<BodyPose> {
+        self.previous
+            .iter()
+            .zip(&self.current)
+            .map(|(previous, current)| {
+                BodyPose::new(
+                    previous.translation.lerp(current.translation, alpha),
+                    previous.rotation.slerp(current.rotation, alpha),
+                )
+            })
+            .collect()
     }
 }
 
@@ -140,19 +204,22 @@ pub fn create_character_ragdolls(
                 continue;
             }
         };
-        let Some(bones) = resolved
+        let Some(skeleton_bones) = skeleton_component
             .bones()
             .iter()
-            .map(|bone| {
-                skeleton_component
-                    .bones()
-                    .get(*bone)
-                    .and_then(|bone| bone.entity())
-            })
+            .map(|bone| bone.entity())
             .collect::<Option<Vec<Entity>>>()
         else {
             continue;
         };
+        if skeleton_bones.len() != skeleton.bone_count() {
+            continue;
+        }
+        let bones: Vec<Entity> = resolved
+            .bones()
+            .iter()
+            .map(|bone| skeleton_bones[*bone])
+            .collect();
         let Some(pose) = part_poses(&bones, &transforms) else {
             continue;
         };
@@ -168,7 +235,12 @@ pub fn create_character_ragdolls(
                 RagdollBody {
                     resolved,
                     bones,
+                    drawn_roots: vec![None; skeleton_bones.len()],
+                    skeleton_bones,
                     ignored: None,
+                    motion: MotionType::Kinematic,
+                    previous: pose.clone(),
+                    current: pose,
                 },
             ),
             entity,
@@ -176,8 +248,8 @@ pub fn create_character_ragdolls(
     }
 }
 
-/// Each fixed step, before physics steps, drives the parts of every ragdoll that follows its animation to its bones' poses, and keeps the parts from colliding with the character's capsule.
-pub fn follow_animation(
+/// Each fixed step, before physics steps, makes every ragdoll's parts kinematic or dynamic as its mode asks, drives the parts of one that follows its animation to its bones' poses, and keeps the parts from colliding with the character's capsule.
+pub fn drive_character_ragdolls(
     characters: Query<(&CharacterRagdoll, &RagdollId, &mut RagdollBody)>,
     transforms: Query<&GlobalTransform>,
     bodies: Query<&BodyId>,
@@ -193,12 +265,117 @@ pub fn follow_animation(
             state.set_ragdoll_ignored_body(*id, capsule);
             body.ignored = capsule;
         }
-        match character.mode {
-            RagdollMode::FollowsAnimation => {
-                if let Some(pose) = part_poses(&body.bones, &transforms) {
-                    state.drive_ragdoll_kinematic(*id, &pose);
+        let motion = match character.mode {
+            RagdollMode::FollowsAnimation => MotionType::Kinematic,
+            RagdollMode::Limp => MotionType::Dynamic,
+        };
+        if !matches!(
+            (body.motion, motion),
+            (MotionType::Kinematic, MotionType::Kinematic)
+                | (MotionType::Dynamic, MotionType::Dynamic)
+        ) {
+            for part in 0..body.resolved.part_count() {
+                state.set_ragdoll_part_motion(*id, part, motion);
+                if matches!(motion, MotionType::Dynamic) {
+                    state.set_ragdoll_joint_drive(*id, part, JointDrive::Off);
                 }
             }
+            body.motion = motion;
+        }
+        if character.mode == RagdollMode::FollowsAnimation
+            && let Some(pose) = part_poses(&body.bones, &transforms)
+        {
+            state.drive_ragdoll_kinematic(*id, &pose);
+        }
+    }
+}
+
+/// After each physics step, keeps every ragdoll's last two poses, which the drawn pose is interpolated between.
+pub fn record_ragdoll_poses(
+    characters: Query<(&RagdollId, &mut RagdollBody)>,
+    state: Res<PhysicsState>,
+) {
+    let mut pose = Vec::new();
+    for (id, mut body) in characters.iter() {
+        state.ragdoll_pose(*id, &mut pose);
+        if pose.len() != body.current.len() {
+            continue;
+        }
+        let body = &mut *body;
+        std::mem::swap(&mut body.previous, &mut body.current);
+        body.current.clone_from(&pose);
+    }
+}
+
+fn blend(animated: Mat4, simulated: BodyPose, weight: f32) -> Mat4 {
+    let (scale, rotation, translation) = animated.to_scale_rotation_translation();
+    Mat4::from_scale_rotation_translation(
+        scale,
+        rotation.slerp(simulated.rotation, weight),
+        translation.lerp(simulated.translation, weight),
+    )
+}
+
+/// Each frame, after the animation has written the bones and before transforms propagate, writes onto the bones the ragdoll's pose, interpolated between the last two fixed steps, by each part's weight. A bone with no part keeps its animated pose under its parent, so fingers and a face still animate on a limp body.
+pub fn write_ragdoll_poses(
+    characters: Query<(&CharacterRagdoll, &mut RagdollBody, &SkeletonComponent)>,
+    skeletons: Res<AssetStore<Skeleton>>,
+    globals: Query<&GlobalTransform>,
+    locals: Query<&mut Transform>,
+    time: Res<Time>,
+) {
+    let alpha = time.fixed_alpha();
+    for (character, mut body, skeleton_component) in characters.iter() {
+        let Some(skeleton) = skeletons.get(skeleton_component.skeleton()) else {
+            continue;
+        };
+        let weights: Vec<f32> = (0..body.resolved.part_count())
+            .map(|part| {
+                body.bone_name(part)
+                    .map_or(0.0, |bone| character.weight_of(&bone))
+            })
+            .collect();
+        if weights.iter().all(|weight| *weight <= 0.0) {
+            body.drawn_roots.iter_mut().for_each(|drawn| *drawn = None);
+            continue;
+        }
+        let simulated = body.interpolated_pose(alpha);
+        let mut part_of_bone: Vec<Option<usize>> = vec![None; body.skeleton_bones.len()];
+        for (part, bone) in body.resolved.bones().iter().enumerate() {
+            part_of_bone[*bone] = Some(part);
+        }
+        let mut world: Vec<Mat4> = Vec::with_capacity(body.skeleton_bones.len());
+        for (bone, entity) in body.skeleton_bones.clone().into_iter().enumerate() {
+            let Some(mut local) = locals.get_entity(entity) else {
+                world.push(Mat4::IDENTITY);
+                continue;
+            };
+            let animated_local = local.compute_matrix();
+            let parent = match skeleton.parents[bone] {
+                Some(parent) => world[parent as usize],
+                None => {
+                    let propagated = globals
+                        .get_entity(entity)
+                        .map_or(Mat4::IDENTITY, GlobalTransform::matrix);
+                    propagated * body.drawn_roots[bone].unwrap_or(animated_local).inverse()
+                }
+            };
+            let animated = parent * animated_local;
+            let weight = part_of_bone[bone].map_or(0.0, |part| weights[part]);
+            let drawn = match part_of_bone[bone] {
+                Some(part) if weight > 0.0 => blend(animated, simulated[part], weight),
+                _ => animated,
+            };
+            if weight > 0.0 {
+                let (_, rotation, translation) =
+                    (parent.inverse() * drawn).to_scale_rotation_translation();
+                local.translation = translation;
+                local.rotation = rotation.normalize();
+            }
+            if skeleton.parents[bone].is_none() {
+                body.drawn_roots[bone] = Some(local.compute_matrix());
+            }
+            world.push(drawn);
         }
     }
 }
