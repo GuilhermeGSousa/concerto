@@ -103,6 +103,8 @@ jobs:
         run: cargo clippy --locked --workspace --all-targets -- -A clippy::type_complexity -A clippy::too_many_arguments -D warnings
         env:
           CARGO_BUILD_WARNINGS: deny
+      - name: Check cognitive complexity
+        run: cargo clippy --locked --workspace -- -A clippy::all -D clippy::cognitive_complexity
       - name: Run clippy on the Rapier physics backend
         run: cargo clippy --locked -p concerto-physics --no-default-features --features force-rapier -- -A clippy::type_complexity -A clippy::too_many_arguments -D warnings
         env:

@@ -91,6 +91,7 @@ cargo fmt --all -- --check
 python3 .github/scripts/test_budget.py
 cargo deny check bans
 CARGO_BUILD_WARNINGS=deny cargo clippy --locked --workspace --all-targets -- -A clippy::type_complexity -A clippy::too_many_arguments -D warnings
+cargo clippy --locked --workspace -- -A clippy::all -D clippy::cognitive_complexity
 CARGO_BUILD_WARNINGS=deny cargo clippy --locked -p concerto-physics --no-default-features --features force-rapier -- -A clippy::type_complexity -A clippy::too_many_arguments -D warnings
 cargo test --locked --workspace
 cargo test --locked -p concerto-physics --no-default-features --features force-rapier
@@ -104,7 +105,14 @@ code that CI's clippy rejects.
 `CARGO_BUILD_WARNINGS=deny` makes cargo's own warnings fail clippy, among them
 a dependency that no target of its crate uses: remove it, or make it optional
 behind the feature that enables the targets using it, as `concerto-benches`
-does with `run`. `cargo deny check bans` fails when the lockfile holds two
+does with `run`.
+
+The cognitive complexity line fails on a function in production code that
+scores above `cognitive-complexity-threshold` in `clippy.toml`; tests are not
+checked. Split the function. The threshold is a ceiling set at the highest
+score in the workspace, lowered as those functions are split and never raised.
+
+`cargo deny check bans` fails when the lockfile holds two
 versions of one crate. When an upstream crate brings the second version, add
 it to `skip` in `deny.toml` with a `reason` naming that crate; delete the entry
 once cargo-deny reports it unmatched.
