@@ -7,11 +7,12 @@ use crate::common::{physics_world, register_bodies};
 use concerto_foundation::transform::Transform;
 use concerto_physics::body::BodyId;
 use concerto_physics::collider::Collider;
+use concerto_physics::ground::GroundState;
 use concerto_physics::physics_pipeline::PhysicsPipeline;
 use concerto_physics::physics_state::PhysicsState;
 use concerto_physics::query::QueryFilter;
 use concerto_physics::rigid_body::RigidBody;
-use glam::Vec3;
+use glam::{Quat, Vec3};
 
 #[test]
 fn despawned_collider_stops_colliding() {
@@ -40,6 +41,9 @@ fn despawned_collider_stops_colliding() {
     let body = *world
         .get_component_for_entity::<BodyId>(sphere)
         .expect("sphere should have a BodyId");
+    let floor_body = *world
+        .get_component_for_entity::<BodyId>(floor)
+        .expect("floor should have a BodyId");
     let state = world.get_resource::<PhysicsState>().unwrap();
     let landed_y = state.body_transform(body).translation.y;
     assert!(
@@ -66,6 +70,33 @@ fn despawned_collider_stops_colliding() {
             .cast_ray(ray_origin, ray, QueryFilter::default())
             .is_none(),
         "despawned floor should no longer be hittable"
+    );
+
+    let state = world.get_resource_mut::<PhysicsState>().unwrap();
+    state.set_linear_velocity(floor_body, Vec3::X);
+    state.add_impulse(floor_body, Vec3::X);
+    state.add_impulse_at(floor_body, Vec3::X, Vec3::Y);
+    state.add_force(floor_body, Vec3::X);
+    state.add_force_at(floor_body, Vec3::X, Vec3::Y);
+    let stale = state.body_transform(floor_body);
+    assert_eq!(
+        stale.translation,
+        Vec3::ZERO,
+        "a destroyed body should read as sitting at the origin"
+    );
+    assert_eq!(
+        stale.rotation,
+        Quat::IDENTITY,
+        "a destroyed body should read as unrotated"
+    );
+    assert_eq!(
+        state.linear_velocity(floor_body),
+        Vec3::ZERO,
+        "a destroyed body should read as still"
+    );
+    assert!(
+        matches!(state.probe_ground(floor_body, 0.1, 0.8), GroundState::InAir),
+        "a destroyed body should stand on nothing"
     );
 
     // With the floor gone, the sphere falls straight through where it was.

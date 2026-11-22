@@ -15,18 +15,19 @@ use concerto_mesh::Mesh;
 use glam::{Quat, Vec3};
 use log::warn;
 use rapier3d::parry::bounding_volume::BoundingVolume;
+use rapier3d::parry::partitioning::BvhNode;
 use rapier3d::parry::query::{
-    cast_shapes, ContactManifold, DefaultQueryDispatcher, PersistentQueryDispatcher,
+    cast_shapes, ContactManifold, DefaultQueryDispatcher, PersistentQueryDispatcher, RayCast,
     ShapeCastOptions,
 };
 use rapier3d::parry::shape::Ball;
 use rapier3d::pipeline::EventHandler;
 use rapier3d::prelude::{
-    ActiveCollisionTypes, ActiveEvents, BroadPhaseBvh, CCDSolver, ColliderBuilder, ColliderSet,
-    CollisionEvent, CollisionEventFlags, ContactPair, Group, ImpulseJointSet,
+    ActiveCollisionTypes, ActiveEvents, BroadPhaseBvh, CCDSolver, ColliderBuilder, ColliderHandle,
+    ColliderSet, CollisionEvent, CollisionEventFlags, ContactPair, Group, ImpulseJointSet,
     IntegrationParameters, InteractionGroups, InteractionTestMode, IslandManager, LockedAxes,
-    MultibodyJointSet, NarrowPhase, Ray, RigidBodyBuilder, RigidBodyHandle, RigidBodySet,
-    SharedShape,
+    MultibodyJointSet, NarrowPhase, QueryFilter, QueryPipeline, Ray, RigidBodyBuilder,
+    RigidBodyHandle, RigidBodySet, SharedShape,
 };
 
 use crate::backend::{
@@ -167,7 +168,20 @@ pub struct RapierBackend {
     touches: Vec<RawContact<RigidBodyHandle>>,
 }
 
+fn collider_order(handle: ColliderHandle) -> u32 {
+    handle.into_raw_parts().0
+}
+
 impl RapierBackend {
+    fn scene<'a>(&'a self, filter: QueryFilter<'a>) -> QueryPipeline<'a> {
+        self.broad_phase.as_query_pipeline(
+            self.narrow_phase.query_dispatcher(),
+            &self.bodies,
+            &self.colliders,
+            filter.exclude_sensors(),
+        )
+    }
+
     fn gather_touches(&mut self) {
         if self.reporting.is_empty() {
             return;
@@ -225,15 +239,6 @@ pub struct Stepper {
     pipeline: rapier3d::pipeline::PhysicsPipeline,
     integration_parameters: IntegrationParameters,
 }
-
-// Scene queries (`cast_ray`, `probe_ground`) iterate the collider set
-// directly instead of going through Rapier's BVH-backed `QueryPipeline`.
-// The BVH is only refreshed inside `PhysicsPipeline::step`, so it knows
-// nothing about bodies created since the last step (Jolt, by contrast,
-// indexes bodies into its broad phase at creation time — and the engine
-// raycasts against freshly spawned worlds, e.g. in tests). A linear scan is
-// always correct, and at this engine's body counts it is not a bottleneck;
-// revisit if profiling ever says otherwise.
 
 impl PhysicsBackend for RapierBackend {
     type BodyHandle = RigidBodyHandle;
@@ -389,8 +394,14 @@ impl PhysicsBackend for RapierBackend {
                         | ActiveCollisionTypes::KINEMATIC_KINEMATIC,
                 );
         }
-        self.colliders
-            .insert_with_parent(collider_builder, handle, &mut self.bodies);
+        let collider_handle =
+            self.colliders
+                .insert_with_parent(collider_builder, handle, &mut self.bodies);
+        self.broad_phase.set_aabb(
+            &IntegrationParameters::default(),
+            collider_handle,
+            self.colliders[collider_handle].compute_aabb(),
+        );
 
         handle
     }
@@ -593,7 +604,10 @@ impl PhysicsBackend for RapierBackend {
     }
 
     fn body_transform(&self, body: Self::BodyHandle) -> Transform {
-        let pose = self.bodies[body].position();
+        let Some(rigid_body) = self.bodies.get(body) else {
+            return Transform::from_translation_rotation(Vec3::ZERO, Quat::IDENTITY);
+        };
+        let pose = rigid_body.position();
 
         Transform::from_translation_rotation(
             from_rapier_vec(pose.translation),
@@ -602,39 +616,55 @@ impl PhysicsBackend for RapierBackend {
     }
 
     fn linear_velocity(&self, body: Self::BodyHandle) -> Vec3 {
-        from_rapier_vec(self.bodies[body].linvel())
+        self.bodies.get(body).map_or(Vec3::ZERO, |rigid_body| {
+            from_rapier_vec(rigid_body.linvel())
+        })
     }
 
     fn angular_velocity(&self, body: Self::BodyHandle) -> Vec3 {
-        from_rapier_vec(self.bodies[body].angvel())
+        self.bodies.get(body).map_or(Vec3::ZERO, |rigid_body| {
+            from_rapier_vec(rigid_body.angvel())
+        })
     }
 
     fn set_linear_velocity(&mut self, body: Self::BodyHandle, velocity: Vec3) {
-        self.bodies[body].set_linvel(to_rapier_vec(velocity), true);
+        if let Some(rigid_body) = self.bodies.get_mut(body) {
+            rigid_body.set_linvel(to_rapier_vec(velocity), true);
+        }
     }
 
     fn add_impulse(&mut self, body: Self::BodyHandle, impulse: Vec3) {
-        self.bodies[body].apply_impulse(to_rapier_vec(impulse), true);
+        if let Some(rigid_body) = self.bodies.get_mut(body) {
+            rigid_body.apply_impulse(to_rapier_vec(impulse), true);
+        }
     }
 
     fn add_impulse_at(&mut self, body: Self::BodyHandle, impulse: Vec3, position: Vec3) {
-        self.bodies[body].apply_impulse_at_point(
-            to_rapier_vec(impulse),
-            to_rapier_vec(position),
-            true,
-        );
+        if let Some(rigid_body) = self.bodies.get_mut(body) {
+            rigid_body.apply_impulse_at_point(
+                to_rapier_vec(impulse),
+                to_rapier_vec(position),
+                true,
+            );
+        }
     }
 
     fn add_force(&mut self, body: Self::BodyHandle, force: Vec3) {
-        self.bodies[body].add_force(to_rapier_vec(force), true);
+        if let Some(rigid_body) = self.bodies.get_mut(body) {
+            rigid_body.add_force(to_rapier_vec(force), true);
+        }
     }
 
     fn add_torque(&mut self, body: Self::BodyHandle, torque: Vec3) {
-        self.bodies[body].add_torque(to_rapier_vec(torque), true);
+        if let Some(rigid_body) = self.bodies.get_mut(body) {
+            rigid_body.add_torque(to_rapier_vec(torque), true);
+        }
     }
 
     fn add_force_at(&mut self, body: Self::BodyHandle, force: Vec3, position: Vec3) {
-        self.bodies[body].add_force_at_point(to_rapier_vec(force), to_rapier_vec(position), true);
+        if let Some(rigid_body) = self.bodies.get_mut(body) {
+            rigid_body.add_force_at_point(to_rapier_vec(force), to_rapier_vec(position), true);
+        }
     }
 
     fn cast_ray(
@@ -648,31 +678,28 @@ impl PhysicsBackend for RapierBackend {
         // of `direction` — so the hit's time of impact is exactly the
         // `RawRayHit` fraction.
         let ray = Ray::new(to_rapier_vec(origin), to_rapier_vec(direction));
+        let unignored = |_: ColliderHandle, collider: &rapier3d::prelude::Collider| {
+            collider.parent().is_none_or(|body| !ignore.contains(&body))
+                && in_layers(collider, layers)
+        };
+        let scene = self.scene(QueryFilter::new().predicate(&unignored));
 
         let mut best: Option<RawRayHit<Self::BodyHandle>> = None;
-        for (_, collider) in self.colliders.iter() {
-            let body = collider
-                .parent()
-                .expect("every collider is created with a parent body");
-            if collider.is_sensor() || ignore.contains(&body) || !in_layers(collider, layers) {
-                continue;
-            }
-            let Some(intersection) =
-                collider
-                    .shape()
-                    .cast_ray_and_get_normal(collider.position(), &ray, 1.0, true)
-            else {
-                continue;
-            };
-            if best
-                .as_ref()
-                .is_none_or(|best| intersection.time_of_impact < best.fraction)
-            {
+        let mut best_order = u32::MAX;
+        for (handle, collider, intersection) in scene.intersect_ray(ray, 1.0, true) {
+            let order = collider_order(handle);
+            if best.as_ref().is_none_or(|best| {
+                intersection.time_of_impact < best.fraction
+                    || (intersection.time_of_impact == best.fraction && order < best_order)
+            }) {
                 best = Some(RawRayHit {
-                    body,
+                    body: collider
+                        .parent()
+                        .expect("every collider is created with a parent body"),
                     fraction: intersection.time_of_impact,
                     normal: from_rapier_vec(intersection.normal),
                 });
+                best_order = order;
             }
         }
 
@@ -696,14 +723,27 @@ impl PhysicsBackend for RapierBackend {
             ..ShapeCastOptions::default()
         };
 
+        let sweep = Ray::new(to_rapier_vec(origin), velocity);
+        let unignored = |_: ColliderHandle, collider: &rapier3d::prelude::Collider| {
+            collider.parent().is_none_or(|body| !ignore.contains(&body))
+                && in_layers(collider, layers)
+        };
+        let scene = self.scene(QueryFilter::new().predicate(&unignored));
+
         let mut best: Option<RawShapeHit<Self::BodyHandle>> = None;
-        for (_, collider) in self.colliders.iter() {
-            let body = collider
-                .parent()
-                .expect("every collider is created with a parent body");
-            if collider.is_sensor() || ignore.contains(&body) || !in_layers(collider, layers) {
+        let mut best_order = u32::MAX;
+        for leaf in scene.bvh.leaves(|node: &BvhNode| {
+            node.aabb()
+                .loosened(radius)
+                .intersects_local_ray(&sweep, 1.0)
+        }) {
+            let Some((collider, handle)) = self.colliders.get_unknown_gen(leaf) else {
+                continue;
+            };
+            if !scene.filter.test(&self.bodies, handle, collider) {
                 continue;
             }
+            let order = collider_order(handle);
             let pose = collider.position();
             let Ok(Some(hit)) = cast_shapes(
                 &ball_pose,
@@ -716,16 +756,19 @@ impl PhysicsBackend for RapierBackend {
             ) else {
                 continue;
             };
-            if best
-                .as_ref()
-                .is_none_or(|best| hit.time_of_impact < best.fraction)
-            {
+            if best.as_ref().is_none_or(|best| {
+                hit.time_of_impact < best.fraction
+                    || (hit.time_of_impact == best.fraction && order < best_order)
+            }) {
                 best = Some(RawShapeHit {
-                    body,
+                    body: collider
+                        .parent()
+                        .expect("every collider is created with a parent body"),
                     fraction: hit.time_of_impact,
                     point: from_rapier_vec(pose.transform_point(hit.witness2)),
                     normal: from_rapier_vec(pose.rotation * hit.normal2),
                 });
+                best_order = order;
             }
         }
 
@@ -737,6 +780,10 @@ impl PhysicsBackend for RapierBackend {
         body: Self::BodyHandle,
         max_separation: f32,
     ) -> Option<RawGroundHit<Self::BodyHandle>> {
+        let rigid_body = self.bodies.get(body)?;
+        let scene = self.scene(QueryFilter::new().exclude_rigid_body(body));
+        let mut grounds: Vec<ColliderHandle> = Vec::new();
+
         // Collide the body's shape against every collider whose bounds come
         // within `max_separation` of it, exactly like the Jolt probe's
         // narrow-phase query with a separation margin. Contact manifolds are
@@ -751,19 +798,25 @@ impl PhysicsBackend for RapierBackend {
         let mut best: Option<RawGroundHit<Self::BodyHandle>> = None;
         let mut best_dot = f32::NEG_INFINITY;
 
-        for collider_handle in self.bodies[body].colliders() {
+        for collider_handle in rigid_body.colliders() {
             let probe_collider = &self.colliders[*collider_handle];
             let probe_pose = probe_collider.position();
             let candidates = probe_collider.compute_aabb().loosened(max_separation);
 
-            for (_, ground_collider) in self.colliders.iter() {
-                if ground_collider.parent() == Some(body)
-                    || ground_collider.is_sensor()
-                    || !collides(probe_collider, ground_collider)
-                    || !candidates.intersects(&ground_collider.compute_aabb())
-                {
-                    continue;
-                }
+            grounds.clear();
+            grounds.extend(
+                scene
+                    .intersect_aabb_conservative(candidates)
+                    .filter(|(_, ground_collider)| {
+                        collides(probe_collider, ground_collider)
+                            && candidates.intersects(&ground_collider.compute_aabb())
+                    })
+                    .map(|(handle, _)| handle),
+            );
+            grounds.sort_unstable_by_key(|handle| collider_order(*handle));
+
+            for ground_handle in &grounds {
+                let ground_collider = &self.colliders[*ground_handle];
                 let ground_pose = ground_collider.position();
 
                 manifolds.clear();
