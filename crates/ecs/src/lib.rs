@@ -14,7 +14,7 @@
 //! #[derive(Component)]
 //! struct Velocity(f32);
 //!
-//! fn integrate(query: Query<(&mut Position, &Velocity)>) {
+//! fn integrate(mut query: Query<(&mut Position, &Velocity)>) {
 //!     for (mut position, velocity) in query.iter_mut() {
 //!         position.0 += velocity.0;
 //!     }

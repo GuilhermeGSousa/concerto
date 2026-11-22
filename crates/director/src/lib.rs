@@ -24,8 +24,8 @@
 //!     .spawn((VirtualCamera::new(100).disabled(), Transform::default()))
 //!     .entity();
 //!
-//! cameras.get_entity(shot).unwrap().set_enabled(true);   // takes over
-//! cameras.get_entity(shot).unwrap().set_enabled(false);  // hands control back
+//! cameras.get_entity_mut(shot).unwrap().set_enabled(true);   // takes over
+//! cameras.get_entity_mut(shot).unwrap().set_enabled(false);  // hands control back
 //! ```
 
 pub mod director;
