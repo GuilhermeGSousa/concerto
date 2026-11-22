@@ -50,11 +50,11 @@ pub(crate) fn channel(color: &Color, slot: usize, number: f64) -> Result<f32, Ed
 }
 
 fn hue(degrees: f32) -> f32 {
-    let turns = degrees.rem_euclid(360.0) / 360.0;
-    if turns >= 1.0 {
+    let wrapped = degrees.rem_euclid(360.0);
+    if wrapped >= 360.0 {
         0.0
     } else {
-        positive_zero(turns)
+        positive_zero(wrapped)
     }
 }
 
@@ -79,11 +79,7 @@ fn channels_mut(color: &mut Color) -> [&mut f32; 4] {
 }
 
 pub(crate) fn shown(color: &Color, slot: usize) -> Option<f64> {
-    let number = f64::from(*channels(color).get(slot)?);
-    Some(match (color, slot) {
-        (Color::Hsla(_), 0) => number * 360.0,
-        _ => number,
-    })
+    channels(color).get(slot).copied().map(f64::from)
 }
 
 impl NumericValue for Color {
@@ -195,17 +191,18 @@ mod tests {
     {
         let linear = Color::rgba(0.5, 0.5, 0.5, 1.0);
         let srgb = Color::srgba(0.5, 0.25, 0.75, 1.0);
-        let hsl = Color::hsl(0.5, 0.5, 0.5, 1.0);
+        let hsl = Color::hsl(180.0, 0.5, 0.5, 1.0);
         let rows = [
             row(linear, 0, 4.0, Some(Color::rgba(4.0, 0.5, 0.5, 1.0))),
             row(linear, 0, -0.1, None),
             row(linear, 3, 1.5, None),
             row(srgb, 0, 0.9, Some(Color::srgba(0.9, 0.25, 0.75, 1.0))),
             row(srgb, 1, 1.2, None),
-            row(hsl, 0, 180.0, Some(Color::hsl(0.5, 0.5, 0.5, 1.0))),
-            row(hsl, 0, 450.0, Some(Color::hsl(0.25, 0.5, 0.5, 1.0))),
-            row(hsl, 0, -90.0, Some(Color::hsl(0.75, 0.5, 0.5, 1.0))),
-            row(hsl, 2, 0.75, Some(Color::hsl(0.5, 0.5, 0.75, 1.0))),
+            row(hsl, 0, 200.0, Some(Color::hsl(200.0, 0.5, 0.5, 1.0))),
+            row(hsl, 0, 450.0, Some(Color::hsl(90.0, 0.5, 0.5, 1.0))),
+            row(hsl, 0, -90.0, Some(Color::hsl(270.0, 0.5, 0.5, 1.0))),
+            row(hsl, 0, 360.0, Some(Color::hsl(0.0, 0.5, 0.5, 1.0))),
+            row(hsl, 2, 0.75, Some(Color::hsl(180.0, 0.5, 0.75, 1.0))),
             row(hsl, 1, 1.5, None),
             row(srgb, 0, f64::NAN, None),
             ChannelEdit {
