@@ -48,6 +48,8 @@ struct MaterialAttr {
     lighting: Option<bool>,
     /// `needs_skeleton()` override.  Defaults to `false` in the trait.
     skeleton: Option<bool>,
+    /// `alpha_to_coverage()` override.  Defaults to `false` in the trait.
+    alpha_to_coverage: Option<bool>,
     /// `cull_mode()` override: `"back"`, `"front"`, or `"none"`.
     cull_mode: Option<String>,
     /// `topology()` override: `"triangle_list"` or `"line_list"`.
@@ -198,6 +200,7 @@ fn alpha_mode_field(fields: &syn::FieldsNamed) -> syn::Result<Option<&Ident>> {
 /// - `camera = true|false` — override `needs_camera()` (trait default: `true`)
 /// - `lighting = true|false` — override `needs_lighting()` (trait default: `false`)
 /// - `skeleton = true|false` — override `needs_skeleton()` (trait default: `false`)
+/// - `alpha_to_coverage = true|false` — override `alpha_to_coverage()` (trait default: `false`)
 /// - `cull_mode = "back"|"front"|"none"` — override `cull_mode()`
 /// - `topology = "triangle_list"|"line_list"` — override `topology()`
 /// - `depth_stencil = "none"|"default"|"read_only"` — override `depth_stencil()`
@@ -213,6 +216,7 @@ fn parse_material_attr(attrs: &[syn::Attribute]) -> MaterialAttr {
         camera: None,
         lighting: None,
         skeleton: None,
+        alpha_to_coverage: None,
         cull_mode: None,
         topology: None,
         depth_stencil: None,
@@ -239,6 +243,8 @@ fn parse_material_attr(attrs: &[syn::Attribute]) -> MaterialAttr {
                 result.lighting = Some(parse_bool_value(&meta)?);
             } else if meta.path.is_ident("skeleton") {
                 result.skeleton = Some(parse_bool_value(&meta)?);
+            } else if meta.path.is_ident("alpha_to_coverage") {
+                result.alpha_to_coverage = Some(parse_bool_value(&meta)?);
             } else if meta.path.is_ident("cull_mode") {
                 result.cull_mode = Some(parse_str_value(&meta)?);
             } else if meta.path.is_ident("topology") {
@@ -517,6 +523,15 @@ fn gen_material_impl(name: &Ident, m: &MaterialAttr, alpha_mode: Option<&Ident>)
         })
         .unwrap_or_default();
 
+    let alpha_to_coverage_fn = m
+        .alpha_to_coverage
+        .map(|val| {
+            quote! {
+                fn alpha_to_coverage() -> bool { #val }
+            }
+        })
+        .unwrap_or_default();
+
     let skeleton_fn = m
         .skeleton
         .map(|val| {
@@ -628,6 +643,7 @@ fn gen_material_impl(name: &Ident, m: &MaterialAttr, alpha_mode: Option<&Ident>)
     quote! {
         impl #render::assets::material::Material for #name {
             #cutout_shader_fn
+            #alpha_to_coverage_fn
             #camera_fn
             #lighting_fn
             #skeleton_fn
@@ -664,6 +680,7 @@ fn gen_material_impl(name: &Ident, m: &MaterialAttr, alpha_mode: Option<&Ident>)
 /// | `camera`         | `true \| false`                           | `needs_camera()` (default `true`) |
 /// | `lighting`       | `true \| false`                           | `needs_lighting()` (default `false`) |
 /// | `skeleton`       | `true \| false`                           | `needs_skeleton()` (default `false`) |
+/// | `alpha_to_coverage` | `true \| false`                        | `alpha_to_coverage()` (default `false`) |
 /// | `cull_mode`      | `"back" \| "front" \| "none"`            | `cull_mode()` (default `Back`) |
 /// | `topology`       | `"triangle_list" \| "line_list"`          | `topology()` |
 /// | `depth_stencil`  | `"none" \| "default" \| "read_only"`     | `depth_stencil()` |

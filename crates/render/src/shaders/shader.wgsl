@@ -248,10 +248,19 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 fn pbr_fs(in: VertexOutput) -> vec4<f32> {
     let base_color = sample_base_color(in.tex_coords) * material.base_color_factor;
 
+#ifdef ALPHA_TO_COVERAGE
+    var coverage = base_color.a;
+    if (material.flags & ALPHA_CUTOUT) != 0u {
+        let edge = max(fwidth(base_color.a), 0.0001);
+        coverage = clamp((base_color.a - material.alpha_cutoff) / edge + 0.5, 0.0, 1.0);
+    }
+#else
+    let coverage = base_color.a;
     // Alpha cutout: discard transparent fragments for mask-mode materials.
     if (material.flags & ALPHA_CUTOUT) != 0u && base_color.a < material.alpha_cutoff {
         discard;
     }
+#endif
 
     let metallic_roughness = sample_metallic_roughness(in.tex_coords);
     let metallic = metallic_roughness.b * material.metallic_factor;
@@ -363,7 +372,7 @@ fn pbr_fs(in: VertexOutput) -> vec4<f32> {
         color = mix(color, fog_color, fog_amount);
     }
 
-    return vec4<f32>(color, base_color.a);
+    return vec4<f32>(color, coverage);
 }
 
 // Visibility factor (0 = fully shadowed, 1 = fully lit) for a spot/directional
