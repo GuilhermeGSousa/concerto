@@ -805,7 +805,8 @@ on top of it instead of placing the feet itself:
 - **Legs.** Each step it calls `Balance::hinder` with a `Hindrance`: steps
   cover less of the distance balance wants (`short_steps`), take longer
   (`slow_steps`), the legs and balance's assists are weaker (`weak_legs`), and
-  the knees lose strength for a quarter of a second after each landing. All of
+  the knees lose strength for a quarter of a second after each landing, and
+  the body may take `more_steps` steps on top of balance's `max_steps`. All of
   it scales with the severity and wears off over `seconds`. Any behaviour can
   hinder balance the same way.
 - **Trunk.** The spine bends towards the direction, by `bend` radians at
@@ -818,7 +819,7 @@ on top of it instead of placing the feet itself:
 It claims the spine and the arms at `STAGGER_PRIORITY`, above balance and
 below nothing the engine has yet. It ends when balance ends and triggers
 `BehaviourEnded` for `stagger` with the same outcome. On the reference
-humanoid a 70 N·s push with severity 0.4 takes more steps than balance alone
+humanoid a 70 N·s push with severity 0.3 takes more steps than balance alone
 and ends standing; with severity 1 it ends `Falling`. Between those the
 outcome is in doubt, as it should be: do not build game logic on a stagger of
 a given severity surviving.
@@ -871,6 +872,46 @@ reaction.
 A body standing on one leg may take a long time to settle or never settle;
 the reaction then lasts until the game ends it by removing `Shot` and
 `Balance`, or the character dies.
+
+#### Fall
+
+A body that goes limp the moment it loses its balance falls like a dropped
+puppet. `Fall` is what a person does instead. Give the character a
+`FallReaction` and a `Fall` starts whenever its state becomes `Falling`, which
+is what balance sets when it gives up:
+
+```rust
+cmd.entity(character).insert(FallReaction { strength: 1.0 });
+```
+
+`strength` is how conscious the fall is: 1 is fully braced, 0 is the limp
+fall, and everything between is a weaker version of the same motion, so the
+game sets it from the wound. Inserting a `Fall` directly starts one on a
+standing character too. While it runs:
+
+- **Arms.** Each hand goes towards where the chest will land, from
+  `BodySense::chest_impact`, `spread` to its own side, by two-bone IK that
+  stops at `reach` of the arm's length so the elbow stays bent. When the hand
+  touches something its arm drops to `buckled` of its strength over
+  `buckle_seconds`, and gives under the weight.
+- **Bracing.** When the predicted impact is on something upright and less than
+  `brace_seconds` away, the hands go to it at chest height instead.
+- **Head.** The neck holds the head `tuck` radians away from the way the body
+  travels: chin up falling forward, chin in falling backward.
+- **Trunk.** The spine curls by `curl`, and twists by `twist` when the fall is
+  backward, so one shoulder leads.
+- **Legs.** The knees bend by `knee_bend` at `legs` of the strength, so they
+  fold.
+- **Landing.** Once the chest or pelvis touches something and the body is
+  slower than 0.5 m/s the state is `Down`. The strength then drains to
+  `resting` over `relax_seconds`, the ragdoll goes limp, and the behaviour
+  ends with `BehaviourEnded` for `fall`.
+
+It claims at `FALL_PRIORITY`. Hands are held to the ground by friction, not by
+a constraint. A fall from a height, where a roll is the right answer, is not
+handled. On the reference humanoid pushed over with 300 N·s, forward or
+backward, the braced fall's peak contact impulse on the head is under half the
+limp fall's, and falling forward both hands land before the chest.
 
 Ragdoll parts are in `Layers::RAGDOLL` and collide with everything but
 `Layers::CHARACTER` (`CollisionLayers::ragdoll()`, or `RagdollSettings::layers`
