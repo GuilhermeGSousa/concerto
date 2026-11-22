@@ -1,14 +1,15 @@
 use concerto_ecs::{
     entity::{
         hierarchy::{ChildOf, Children},
-        Entity,
+        Entity, EntityHashSet,
     },
     query::{
-        filter::{Changed, With, Without},
+        change_detection::{DetectChanges, Ref},
+        filter::{Changed, Or, With, Without},
         Query,
     },
 };
-use std::collections::HashSet;
+use glam::Mat4;
 
 use crate::transform::{GlobalTransform, Transform};
 
@@ -25,41 +26,119 @@ pub fn update_simple_entities(mut roots: SimpleEntities<'_, '_>) {
     }
 }
 
-pub fn propagate_global_transforms(
-    mut roots: Query<(&Children, &mut GlobalTransform, &Transform), Without<ChildOf>>,
-    mut transform_query: Query<
-        (Entity, &mut GlobalTransform, &Transform, Option<&Children>),
-        With<ChildOf>,
-    >,
+struct Pending {
+    entity: Entity,
+    parent: Entity,
+    parent_matrix: Mat4,
+    parent_moved: bool,
+}
+
+fn push_children(
+    stack: &mut Vec<Pending>,
+    children: &Children,
+    parent: Entity,
+    parent_matrix: Mat4,
+    parent_moved: bool,
 ) {
-    let mut visited = HashSet::new();
+    stack.extend(children.iter().rev().map(|&entity| Pending {
+        entity,
+        parent,
+        parent_matrix,
+        parent_moved,
+    }));
+}
+
+type HierarchyRoots<'world, 'state> = Query<
+    'world,
+    'state,
+    (
+        Entity,
+        &'static Children,
+        &'static mut GlobalTransform,
+        &'static Transform,
+    ),
+    Without<ChildOf>,
+>;
+
+type HierarchyDescendants<'world, 'state> = Query<
+    'world,
+    'state,
+    (
+        &'static mut GlobalTransform,
+        Ref<'static, Transform>,
+        Ref<'static, ChildOf>,
+        Option<&'static Children>,
+    ),
+    With<ChildOf>,
+>;
+
+type MovedDescendants<'world, 'state> =
+    Query<'world, 'state, &'static ChildOf, Or<(Changed<Transform>, Changed<ChildOf>)>>;
+
+fn ancestors_of_moved(
+    moved: &MovedDescendants<'_, '_>,
+    parents: &Query<&ChildOf>,
+) -> EntityHashSet {
+    let mut ancestors = EntityHashSet::default();
+    for child_of in moved.iter() {
+        let mut ancestor = child_of.parent();
+        while ancestors.insert(ancestor) {
+            match parents.get_entity(ancestor) {
+                Some(child_of) => ancestor = child_of.parent(),
+                None => break,
+            }
+        }
+    }
+    ancestors
+}
+
+fn propagate_to_descendant(
+    pending: Pending,
+    descendants: &mut HierarchyDescendants<'_, '_>,
+    stack: &mut Vec<Pending>,
+) {
+    let Some((mut global_transform, local_transform, child_of, children)) =
+        descendants.get_entity_mut(pending.entity)
+    else {
+        return;
+    };
+    if child_of.parent() != pending.parent {
+        return;
+    }
+
+    if pending.parent_moved || local_transform.is_changed() || child_of.is_changed() {
+        let matrix = pending.parent_matrix * local_transform.compute_matrix();
+        global_transform.set_if_neq(GlobalTransform::new(matrix));
+        if let Some(children) = children {
+            push_children(stack, children, pending.entity, matrix, true);
+        }
+    } else if let Some(children) = children {
+        let matrix = global_transform.matrix();
+        push_children(stack, children, pending.entity, matrix, false);
+    }
+}
+
+pub fn propagate_global_transforms(
+    mut roots: HierarchyRoots<'_, '_>,
+    mut descendants: HierarchyDescendants<'_, '_>,
+    moved: MovedDescendants<'_, '_>,
+    parents: Query<&ChildOf>,
+) {
+    let ancestors = ancestors_of_moved(&moved, &parents);
     let mut stack = Vec::new();
 
-    for (root_children, mut root_global_transform, root_local_transform) in roots.iter_mut() {
+    for (root, root_children, mut root_global_transform, root_local_transform) in roots.iter_mut() {
         let root_matrix = root_local_transform.compute_matrix();
-        root_global_transform.set_if_neq(GlobalTransform::new(root_matrix));
-        stack.extend(
-            root_children
-                .iter()
-                .rev()
-                .copied()
-                .map(|child| (child, root_matrix)),
-        );
+        let stamped = root_global_transform.is_changed();
+        let root_moved =
+            root_global_transform.set_if_neq(GlobalTransform::new(root_matrix)) || stamped;
+        if !root_moved && !ancestors.contains(&root) {
+            continue;
+        }
+        push_children(&mut stack, root_children, root, root_matrix, root_moved);
 
-        while let Some((entity, parent_matrix)) = stack.pop() {
-            if !visited.insert(entity) {
-                continue;
-            }
-
-            if let Some((_, mut global_transform, local_transform, children)) =
-                transform_query.get_entity_mut(entity)
-            {
-                let matrix = parent_matrix * local_transform.compute_matrix();
-                global_transform.set_if_neq(GlobalTransform::new(matrix));
-                if let Some(children) = children {
-                    stack.extend(children.iter().rev().copied().map(|child| (child, matrix)));
-                }
-            }
+        while let Some(pending) = stack.pop() {
+            propagate_to_descendant(pending, &mut descendants, &mut stack);
         }
     }
 }
@@ -114,7 +193,10 @@ mod tests {
 
         let root = world.spawn(Transform::from_translation(Vec3::X));
         let child = world.spawn(Transform::from_translation(Vec3::Y));
+        let leaf = world.spawn(Transform::from_translation(Vec3::Z));
+        let other = world.spawn(Transform::from_translation(Vec3::new(10.0, 0.0, 0.0)));
         world.entity_mut(root).add_child(child);
+        world.entity_mut(child).add_child(leaf);
 
         let mut system = propagate_global_transforms.into_system();
         system.initialize(&mut world);
@@ -126,15 +208,55 @@ mod tests {
             let mut query = world.query::<Entity, Changed<GlobalTransform>>();
             query.iter(world).collect()
         };
+        let translation = |world: &World, entity: Entity| -> Vec3 {
+            world
+                .get_component_for_entity::<GlobalTransform>(entity)
+                .unwrap()
+                .translation()
+        };
+        let translate = |world: &mut World, entity: Entity, to: Vec3| {
+            world
+                .get_component_for_entity_mut::<Transform>(entity)
+                .unwrap()
+                .translation = to;
+        };
         assert_eq!(changed(&mut world), HashSet::new());
+        assert_eq!(translation(&world, leaf), Vec3::new(1.0, 1.0, 1.0));
 
         world.tick();
-        world
-            .get_component_for_entity_mut::<Transform>(root)
-            .unwrap()
-            .translation = Vec3::Z;
+        translate(&mut world, root, Vec3::ZERO);
         system.run_and_apply((), &mut world);
+        assert_eq!(changed(&mut world), HashSet::from([root, child, leaf]));
+        assert_eq!(translation(&world, leaf), Vec3::new(0.0, 1.0, 1.0));
 
-        assert_eq!(changed(&mut world), HashSet::from([root, child]));
+        world.tick();
+        translate(&mut world, leaf, Vec3::new(0.0, 0.0, 2.0));
+        system.run_and_apply((), &mut world);
+        assert_eq!(changed(&mut world), HashSet::from([leaf]));
+        assert_eq!(translation(&world, leaf), Vec3::new(0.0, 1.0, 2.0));
+
+        world.tick();
+        translate(&mut world, child, Vec3::new(0.0, 3.0, 0.0));
+        system.run_and_apply((), &mut world);
+        assert_eq!(changed(&mut world), HashSet::from([child, leaf]));
+        assert_eq!(translation(&world, leaf), Vec3::new(0.0, 3.0, 2.0));
+
+        world.tick();
+        world.entity_mut(other).add_child(child);
+        system.run_and_apply((), &mut world);
+        assert_eq!(changed(&mut world), HashSet::from([child, leaf]));
+        assert_eq!(translation(&world, child), Vec3::new(10.0, 3.0, 0.0));
+        assert_eq!(translation(&world, leaf), Vec3::new(10.0, 3.0, 2.0));
+
+        world.tick();
+        let spawned = world.spawn(Transform::from_translation(Vec3::X));
+        world.entity_mut(leaf).add_child(spawned);
+        system.run_and_apply((), &mut world);
+        assert_eq!(changed(&mut world), HashSet::from([spawned]));
+        assert_eq!(translation(&world, spawned), Vec3::new(11.0, 3.0, 2.0));
+
+        world.tick();
+        system.run_and_apply((), &mut world);
+        assert_eq!(changed(&mut world), HashSet::new());
     }
 }
