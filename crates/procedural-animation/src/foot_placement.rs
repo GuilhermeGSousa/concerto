@@ -323,9 +323,7 @@ impl FootPlacementNode {
             .and_then(|ignored| ignored.body);
         let caster = Caster {
             physics,
-            filter: QueryFilter {
-                ignore: ignored.as_slice(),
-            },
+            filter: QueryFilter::ignoring(ignored.as_slice()),
             floor: model_to_world.translation.y,
             up: self.max_step_up,
             down: self.max_step_down,

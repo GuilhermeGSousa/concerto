@@ -25,14 +25,16 @@
 
 JPH_SUPPRESS_WARNINGS
 
-// Object layers: statics and sensors only collide with dynamics; dynamics
-// collide with everything.
+// Object layers: statics collide with dynamics and ragdoll parts; sensors
+// only with dynamics; dynamics with everything; ragdoll parts with
+// everything but sensors.
 namespace Layers
 {
 	constexpr JPH::ObjectLayer NON_MOVING = 0;
 	constexpr JPH::ObjectLayer MOVING = 1;
 	constexpr JPH::ObjectLayer SENSOR = 2;
-	constexpr JPH::uint NUM_LAYERS = 3;
+	constexpr JPH::ObjectLayer RAGDOLL = 3;
+	constexpr JPH::uint NUM_LAYERS = 4;
 } // namespace Layers
 
 namespace BroadPhaseLayers
@@ -51,11 +53,13 @@ public:
 		switch (inObject1)
 		{
 		case Layers::NON_MOVING:
-			return inObject2 == Layers::MOVING;
+			return inObject2 == Layers::MOVING || inObject2 == Layers::RAGDOLL;
 		case Layers::MOVING:
 			return true;
 		case Layers::SENSOR:
 			return inObject2 == Layers::MOVING;
+		case Layers::RAGDOLL:
+			return inObject2 != Layers::SENSOR;
 		default:
 			JPH_ASSERT(false);
 			return false;
@@ -71,6 +75,7 @@ public:
 		mObjectToBroadPhase[Layers::NON_MOVING] = BroadPhaseLayers::NON_MOVING;
 		mObjectToBroadPhase[Layers::MOVING] = BroadPhaseLayers::MOVING;
 		mObjectToBroadPhase[Layers::SENSOR] = BroadPhaseLayers::SENSOR;
+		mObjectToBroadPhase[Layers::RAGDOLL] = BroadPhaseLayers::MOVING;
 	}
 
 	JPH::uint GetNumBroadPhaseLayers() const override
@@ -119,6 +124,8 @@ public:
 			return true;
 		case Layers::SENSOR:
 			return inLayer2 == BroadPhaseLayers::MOVING;
+		case Layers::RAGDOLL:
+			return inLayer2 != BroadPhaseLayers::SENSOR;
 		default:
 			JPH_ASSERT(false);
 			return false;
@@ -154,6 +161,28 @@ private:
 	const JPH::ObjectLayerFilter &inner;
 };
 
+// Passes solid layers a scene query asked for: ragdoll parts are skipped,
+// included or the only thing seen.
+class QueryObjectLayerFilter final : public JPH::ObjectLayerFilter
+{
+public:
+	explicit QueryObjectLayerFilter(JoltRagdollQuery ragdolls) : ragdolls(ragdolls) {}
+
+	bool ShouldCollide(JPH::ObjectLayer inLayer) const override
+	{
+		if (inLayer == Layers::SENSOR)
+			return false;
+		if (ragdolls == JOLT_RAGDOLL_QUERY_SKIP)
+			return inLayer != Layers::RAGDOLL;
+		if (ragdolls == JOLT_RAGDOLL_QUERY_ONLY)
+			return inLayer == Layers::RAGDOLL;
+		return true;
+	}
+
+private:
+	JoltRagdollQuery ragdolls;
+};
+
 struct SensorPair
 {
 	JPH::BodyID sensor;
@@ -179,9 +208,20 @@ class SensorContactListener final : public JPH::ContactListener
 {
 public:
 	SensorContactListener(const std::unordered_set<JPH::BodyID> &sensors,
-						  const std::unordered_set<JPH::BodyID> &reporting)
-		: sensors(sensors), reporting(reporting)
+						  const std::unordered_set<JPH::BodyID> &reporting,
+						  const std::unordered_map<JPH::BodyID, JPH::BodyID> &ragdoll_ignores)
+		: sensors(sensors), reporting(reporting), ragdoll_ignores(ragdoll_ignores)
 	{
+	}
+
+	JPH::ValidateResult OnContactValidate(const JPH::Body &inBody1,
+										  const JPH::Body &inBody2,
+										  JPH::RVec3Arg,
+										  const JPH::CollideShapeResult &) override
+	{
+		if (Ignores(inBody1, inBody2) || Ignores(inBody2, inBody1))
+			return JPH::ValidateResult::RejectAllContactsForThisBodyPair;
+		return JPH::ValidateResult::AcceptAllContactsForThisBodyPair;
 	}
 
 	void OnContactAdded(const JPH::Body &inBody1,
@@ -317,6 +357,14 @@ public:
 	}
 
 private:
+	bool Ignores(const JPH::Body &part, const JPH::Body &other) const
+	{
+		if (part.GetObjectLayer() != Layers::RAGDOLL)
+			return false;
+		auto found = ragdoll_ignores.find(part.GetID());
+		return found != ragdoll_ignores.end() && found->second == other.GetID();
+	}
+
 	void ReportSolid(const JPH::Body &inBody1,
 					 const JPH::Body &inBody2,
 					 const JPH::ContactManifold &inManifold,
@@ -375,6 +423,7 @@ private:
 
 	const std::unordered_set<JPH::BodyID> &sensors;
 	const std::unordered_set<JPH::BodyID> &reporting;
+	const std::unordered_map<JPH::BodyID, JPH::BodyID> &ragdoll_ignores;
 	std::mutex mutex;
 	std::unordered_map<SensorPair, uint32_t, SensorPairHash> counts;
 	std::vector<JoltSensorContact> queued;
@@ -392,7 +441,8 @@ struct JoltWorld
 	ObjectLayerPairFilterImpl object_layer_pair_filter;
 	std::unordered_set<JPH::BodyID> sensors;
 	std::unordered_set<JPH::BodyID> reporting;
-	SensorContactListener sensor_contact_listener{sensors, reporting};
+	std::unordered_map<JPH::BodyID, JPH::BodyID> ragdoll_ignores;
+	SensorContactListener sensor_contact_listener{sensors, reporting, ragdoll_ignores};
 	JPH::PhysicsSystem system;
 };
 

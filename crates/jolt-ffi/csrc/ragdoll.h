@@ -80,6 +80,15 @@ extern "C"
      * them, waking what touched them. */
     void jolt_ragdoll_destroy(JoltWorld *world, JoltRagdoll *ragdoll);
 
+    /* Stops every part of the ragdoll colliding with `body`, a character's
+     * own capsule, or lets them collide again when `ignored` is false. A
+     * ragdoll ignores one body at a time. Must not be called while the world
+     * steps. */
+    void jolt_ragdoll_set_ignored_body(JoltWorld *world,
+                                       JoltRagdoll *ragdoll,
+                                       JoltBodyId body,
+                                       bool ignored);
+
     uint32_t jolt_ragdoll_part_count(const JoltRagdoll *ragdoll);
     JoltBodyId jolt_ragdoll_part_body(const JoltRagdoll *ragdoll, uint32_t part);
 

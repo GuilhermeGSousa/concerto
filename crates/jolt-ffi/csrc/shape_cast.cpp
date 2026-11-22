@@ -16,6 +16,7 @@ extern "C"
 								const float direction[3],
 								const JoltBodyId *ignore,
 								uint32_t ignore_count,
+								JoltRagdollQuery ragdolls,
 								JoltShapeHit *out_hit)
 	{
 		JPH::RefConst<JPH::Shape> sphere = new JPH::SphereShape(radius);
@@ -37,9 +38,8 @@ extern "C"
 			body_filter.IgnoreBody(JPH::BodyID(ignore[i]));
 
 		JPH::BroadPhaseLayerFilter all_broad_phase_layers;
-		JPH::ObjectLayerFilter all_object_layers;
 		NonSensorBroadPhaseLayerFilter broad_phase_filter(all_broad_phase_layers);
-		NonSensorObjectLayerFilter object_filter(all_object_layers);
+		QueryObjectLayerFilter object_filter(ragdolls);
 
 		JPH::ClosestHitCollisionCollector<JPH::CastShapeCollector> collector;
 		world->system.GetNarrowPhaseQuery().CastShape(cast, settings, base_offset, collector, broad_phase_filter, object_filter, body_filter);

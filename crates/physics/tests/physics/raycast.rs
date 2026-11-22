@@ -80,7 +80,7 @@ fn a_ray_reports_the_first_body_it_reaches_unless_that_body_is_ignored() {
     for ray in rays {
         let ignore = [sphere_body];
         let filter = if ray.ignore_sphere {
-            QueryFilter { ignore: &ignore }
+            QueryFilter::ignoring(&ignore)
         } else {
             QueryFilter::default()
         };

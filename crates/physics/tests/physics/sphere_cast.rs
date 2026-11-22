@@ -121,7 +121,7 @@ fn a_sphere_sweep_stops_a_radius_short_of_the_first_body_it_reaches_unless_ignor
     for sweep in sweeps {
         let ignore = [blocker_body];
         let filter = if sweep.ignore_blocker {
-            QueryFilter { ignore: &ignore }
+            QueryFilter::ignoring(&ignore)
         } else {
             QueryFilter::default()
         };
