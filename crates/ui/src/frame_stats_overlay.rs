@@ -62,7 +62,7 @@ fn update_overlay_text(
     time: Res<Time>,
     stats: Res<FrameStats>,
     mut timer: ResMut<OverlayRefreshTimer>,
-    text_nodes: Query<&mut UIText, With<FrameStatsText>>,
+    mut text_nodes: Query<&mut UIText, With<FrameStatsText>>,
 ) {
     timer.0 += time.delta().as_secs_f32();
     if timer.0 < REFRESH_INTERVAL || stats.is_empty() {
@@ -70,7 +70,7 @@ fn update_overlay_text(
     }
     timer.0 = 0.0;
 
-    for mut text in text_nodes.iter() {
+    for mut text in text_nodes.iter_mut() {
         text.text = format!(
             "{:>6.0} FPS  {:>6.2} ms\np99 {:>5.2} ms  max {:>5.2} ms",
             stats.fps(),

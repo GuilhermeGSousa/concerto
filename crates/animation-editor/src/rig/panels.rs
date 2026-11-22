@@ -38,7 +38,7 @@ use super::{
     ChainColor, MOTION_ROOT_COLOR, ROOT_COLOR, RigDocument, RigFacts, chain_colors, same_skeleton,
 };
 use crate::{
-    panels::{NO_VALUE, error_line, fact, title},
+    panels::{NO_VALUE, error_line, fact, title, write_line, write_text},
     transport::{TransportTimeline, scrub_transport, spawn_transport},
 };
 
@@ -179,12 +179,12 @@ fn assign_bone(
     assignment: Option<Assignment>,
 ) -> Listener<UIClick> {
     (move |on: On<UIClick>,
-           menus: Query<&mut UIAnchoredPanel, With<NameMenu>>,
+           mut menus: Query<&mut UIAnchoredPanel, With<NameMenu>>,
            mut cmd: CommandQueue| {
         if on.signal().button != MouseButton::Left {
             return;
         }
-        close_menu(&menus);
+        close_menu(&mut menus);
         if let Some(assignment) = &assignment {
             cmd.trigger(WriteValue {
                 target: Arc::clone(&target),
@@ -199,7 +199,7 @@ fn assign_bone(
 fn open_bone_menu(document: Entity, bone: Name) -> Listener<UIItemContextMenu> {
     (move |on: On<UIItemContextMenu>,
            documents: Query<(&InspectedDocument, &InspectedValues)>,
-           menus: Query<(Entity, &mut UIAnchoredPanel), With<NameMenu>>,
+           mut menus: Query<(Entity, &mut UIAnchoredPanel), With<NameMenu>>,
            theme: Res<UITheme>,
            mut cmd: CommandQueue| {
         let Some((inspected, values)) = documents.get_entity(document) else {
@@ -224,7 +224,7 @@ fn open_bone_menu(document: Entity, bone: Name) -> Listener<UIItemContextMenu> {
                     .cloned();
                 assign_bone(Arc::clone(target), assignment)
             },
-            &menus,
+            &mut menus,
             &theme,
             &mut cmd,
         );
@@ -403,43 +403,29 @@ fn fact_lines(facts: &RigFacts) -> FactLines {
     }
 }
 
+fn write_color(texts: &mut Query<&mut UIText>, entity: Entity, color: Color) {
+    if let Some(mut text) = texts.get_entity_mut(entity)
+        && text.color != color
+    {
+        text.color = color;
+    }
+}
+
 pub(crate) fn sync_rig_panels(
-    documents: Query<(
+    mut documents: Query<(
         Entity,
         &EditorDocument,
         Ref<InspectedDocument>,
         &RigDocument,
         &mut RigPanels,
     )>,
-    rows: Query<&mut BoneRow>,
-    texts: Query<&mut UIText>,
-    nodes: Query<&mut UINode>,
+    mut rows: Query<&mut BoneRow>,
+    mut texts: Query<&mut UIText>,
+    mut nodes: Query<&mut UINode>,
     theme: Res<UITheme>,
     mut cmd: CommandQueue,
 ) {
-    let write_text = |entity: Entity, value: &str| {
-        if let Some(mut text) = texts.get_entity(entity)
-            && text.text != value
-        {
-            text.text = value.to_owned();
-        }
-    };
-    let write_color = |entity: Entity, color: Color| {
-        if let Some(mut text) = texts.get_entity(entity)
-            && text.color != color
-        {
-            text.color = color;
-        }
-    };
-    let write_line = |entity: Entity, value: &str| {
-        write_text(entity, value);
-        if let Some(mut node) = nodes.get_entity(entity)
-            && node.visible == value.is_empty()
-        {
-            node.visible = !value.is_empty();
-        }
-    };
-    for (document, editor, inspected, state, mut panels) in documents.iter() {
+    for (document, editor, inspected, state, mut panels) in documents.iter_mut() {
         let rig = open_rig(&inspected);
         if !same_skeleton(panels.bones.shown.as_ref(), state.skeleton.as_ref()) {
             let bones = &mut panels.bones;
@@ -458,7 +444,7 @@ pub(crate) fn sync_rig_panels(
             let chains = rig.map_or_else(Vec::new, |rig| chain_colors(rig, None));
             let names = state.skeleton.as_ref().map(|skeleton| &skeleton.names);
             for row in &panels.bones.rows {
-                let Some(mut held) = rows.get_entity(*row) else {
+                let Some(mut held) = rows.get_entity_mut(*row) else {
                     continue;
                 };
                 let Some(name) = names.and_then(|names| names.get(held.bone)) else {
@@ -481,15 +467,15 @@ pub(crate) fn sync_rig_panels(
             (None, Some(error)) => (error.as_str(), theme.error),
             (None, None) => (NO_SKELETON, theme.text_muted),
         };
-        write_line(bones.empty, empty);
-        write_color(bones.empty, color);
+        write_line(&mut texts, &mut nodes, bones.empty, empty);
+        write_color(&mut texts, bones.empty, color);
 
         let inspector = &panels.inspector;
         let facts = fact_lines(&state.facts);
-        write_text(inspector.scale, &facts.scale);
-        write_text(inspector.chains, &facts.chains);
-        write_text(inspector.driven, &facts.driven);
-        write_line(inspector.status, &editor.status);
+        write_text(&mut texts, inspector.scale, &facts.scale);
+        write_text(&mut texts, inspector.chains, &facts.chains);
+        write_text(&mut texts, inspector.driven, &facts.driven);
+        write_line(&mut texts, &mut nodes, inspector.status, &editor.status);
     }
 }
 

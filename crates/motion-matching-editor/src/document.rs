@@ -310,7 +310,7 @@ fn live_channels(
 }
 
 pub(crate) fn load_definition(
-    documents: Query<(
+    mut documents: Query<(
         Entity,
         &mut EditorDocument,
         &mut DefinitionDocument,
@@ -324,7 +324,7 @@ pub(crate) fn load_definition(
     let Some(root) = project.project.as_ref().map(|project| project.root.clone()) else {
         return;
     };
-    for (entity, mut document, mut state, hosted, failed) in documents.iter() {
+    for (entity, mut document, mut state, hosted, failed) in documents.iter_mut() {
         if hosted.is_none() && failed.is_none() {
             continue;
         }
@@ -361,11 +361,11 @@ pub(crate) fn load_definition(
 
 pub(crate) fn restore_discarded_edits(
     on: On<DiscardEdits>,
-    documents: Query<(&mut DefinitionDocument, Option<&HostedApp>)>,
+    mut documents: Query<(&mut DefinitionDocument, Option<&HostedApp>)>,
     mut cmd: CommandQueue,
 ) {
     let document = on.signal().0;
-    let Some((mut state, hosted)) = documents.get_entity(document) else {
+    let Some((mut state, hosted)) = documents.get_entity_mut(document) else {
         return;
     };
     let Some(definition) = state.loaded.clone() else {
@@ -405,9 +405,9 @@ pub(crate) fn follow_definition_edits(
 
 pub(crate) fn clear_status_on_edit(
     on: On<Add<Unsaved>>,
-    documents: Query<&mut EditorDocument, With<DefinitionDocument>>,
+    mut documents: Query<&mut EditorDocument, With<DefinitionDocument>>,
 ) {
-    if let Some(mut document) = documents.get_entity(on.signal().entity)
+    if let Some(mut document) = documents.get_entity_mut(on.signal().entity)
         && !document.status.is_empty()
     {
         document.status.clear();

@@ -211,17 +211,17 @@ fn play_look(theme: &UITheme, state: Option<&PlayState>) -> PlayLook {
 }
 
 fn sync_play_buttons(
-    buttons: Query<(
+    mut buttons: Query<(
         &EditorTabPlay,
         &mut UIText,
         &mut UIInteractionStyle,
         &mut UIMaterial,
     )>,
-    glyphs: Query<(&PlayGlyph, &mut UIText), Without<EditorTabPlay>>,
+    mut glyphs: Query<(&PlayGlyph, &mut UIText), Without<EditorTabPlay>>,
     states: Query<&PlayState>,
     theme: Res<UITheme>,
 ) {
-    for (play, mut text, mut interaction, mut material) in buttons.iter() {
+    for (play, mut text, mut interaction, mut material) in buttons.iter_mut() {
         let state = states.get_entity(play.document);
         let label = play_label(state);
         let look = play_look(&theme, state);
@@ -239,7 +239,7 @@ fn sync_play_buttons(
             material.border_color = border;
         }
     }
-    for (mark, mut text) in glyphs.iter() {
+    for (mark, mut text) in glyphs.iter_mut() {
         let look = play_look(&theme, states.get_entity(mark.document));
         if !text.text.chars().eq([look.glyph]) {
             text.text = look.glyph.to_string();
@@ -255,13 +255,13 @@ fn sync_tabs(
     contents: Query<Entity, With<TabStripContent>>,
     documents: Query<(Entity, &EditorDocument)>,
     unsaved: Query<&Unsaved>,
-    (labels, tab_icons): (
+    (mut labels, mut tab_icons): (
         Query<(&TabLabel, &mut UIText)>,
         Query<(&TabIcon, &mut UIText), Without<TabLabel>>,
     ),
     existing_tabs: Query<&EditorTab>,
     tab_button_entities: Query<(Entity, &EditorTab)>,
-    tab_buttons: Query<(&EditorTab, &mut UIInteractionStyle)>,
+    mut tab_buttons: Query<(&EditorTab, &mut UIInteractionStyle)>,
     active: Res<ActiveEditor>,
     theme: Res<UITheme>,
     (registry, icons): (Res<AssetEditorRegistry>, Res<AssetIcons>),
@@ -309,10 +309,16 @@ fn sync_tabs(
             .unwrap_or("Asset");
         let is_active = active.0 == Some(entity);
         let mark = icons.glyph(kind);
-        if let Some((_, mut text)) = tab_icons.iter().find(|(icon, _)| icon.document == entity) {
+        if let Some((_, mut text)) = tab_icons
+            .iter_mut()
+            .find(|(icon, _)| icon.document == entity)
+        {
             draw_row_icon(&mut text, &theme, mark, is_active);
         }
-        if let Some((_, mut label)) = labels.iter().find(|(label, _)| label.document == entity) {
+        if let Some((_, mut label)) = labels
+            .iter_mut()
+            .find(|(label, _)| label.document == entity)
+        {
             if label.text != title {
                 label.text = title.clone();
             }
@@ -325,7 +331,7 @@ fn sync_tabs(
                 label.color = color;
             }
         }
-        for (tab, mut interaction) in tab_buttons.iter() {
+        for (tab, mut interaction) in tab_buttons.iter_mut() {
             if tab.document == entity {
                 let style = theme.interaction(ButtonVariant::Tab, is_active);
                 if interaction.normal != style.normal {
@@ -466,15 +472,15 @@ fn scroll_tabs(
     mut events: EventReader<WindowEvent>,
     hovered: Res<HoveredNode>,
     parents: Query<&ChildOf>,
-    strips: Query<(Entity, &TabStrip, &mut TabScroll, &UILayout)>,
-    contents: Query<(&TabStripContent, &mut UINode, &UILayout)>,
+    mut strips: Query<(Entity, &TabStrip, &mut TabScroll, &UILayout)>,
+    mut contents: Query<(&TabStripContent, &mut UINode, &UILayout)>,
     tabs: Query<(&EditorTab, &UILayout)>,
     active: Res<ActiveEditor>,
 ) {
-    let Some((strip_entity, _, mut scroll, strip_layout)) = strips.iter().next() else {
+    let Some((strip_entity, _, mut scroll, strip_layout)) = strips.iter_mut().next() else {
         return;
     };
-    let Some((_, mut content, content_layout)) = contents.iter().next() else {
+    let Some((_, mut content, content_layout)) = contents.iter_mut().next() else {
         return;
     };
     let over_strip = (**hovered).is_some_and(|mut node| {

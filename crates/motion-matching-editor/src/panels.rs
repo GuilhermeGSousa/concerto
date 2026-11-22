@@ -122,9 +122,9 @@ fn range_of(first: u32, last: u32, rate: f32, duration: f32) -> TimeRange {
 
 fn select_range(document: Entity) -> Listener<TimelineSelected> {
     (move |on: On<TimelineSelected>,
-           documents: Query<(&mut DefinitionDocument, Option<&PreviewFailed>)>,
+           mut documents: Query<(&mut DefinitionDocument, Option<&PreviewFailed>)>,
            mut cmd: CommandQueue| {
-        let Some((mut state, None)) = documents.get_entity(document) else {
+        let Some((mut state, None)) = documents.get_entity_mut(document) else {
             return;
         };
         let Some(facts) = selected_facts(&state) else {
@@ -150,11 +150,11 @@ fn select_range(document: Entity) -> Listener<TimelineSelected> {
 }
 
 fn select_entry(document: Entity, index: usize) -> Listener<UIClick> {
-    (move |on: On<UIClick>, documents: Query<&mut DefinitionDocument>| {
+    (move |on: On<UIClick>, mut documents: Query<&mut DefinitionDocument>| {
         if on.signal().button != MouseButton::Left {
             return;
         }
-        if let Some(mut state) = documents.get_entity(document)
+        if let Some(mut state) = documents.get_entity_mut(document)
             && state.selected_entry != Some(index)
         {
             state.selected_entry = Some(index);
@@ -174,11 +174,13 @@ fn selection_after_removal(selected: usize, removed: usize, left: usize) -> Opti
 }
 
 fn remove_entry(document: Entity, index: usize) -> Listener<UIClick> {
-    (move |on: On<UIClick>, documents: Query<&mut DefinitionDocument>, mut cmd: CommandQueue| {
+    (move |on: On<UIClick>,
+           mut documents: Query<&mut DefinitionDocument>,
+           mut cmd: CommandQueue| {
         if on.signal().button != MouseButton::Left {
             return;
         }
-        let Some(mut state) = documents.get_entity(document) else {
+        let Some(mut state) = documents.get_entity_mut(document) else {
             return;
         };
         if index < state.entries.len() {
@@ -195,10 +197,10 @@ fn remove_entry(document: Entity, index: usize) -> Listener<UIClick> {
 
 fn toggle_mirrored(document: Entity, index: usize) -> Listener<UICheckboxChanged> {
     (move |on: On<UICheckboxChanged>,
-           documents: Query<&mut DefinitionDocument>,
+           mut documents: Query<&mut DefinitionDocument>,
            mut cmd: CommandQueue| {
         let checked = on.signal().checked;
-        if let Some(mut state) = documents.get_entity(document)
+        if let Some(mut state) = documents.get_entity_mut(document)
             && let Some(entry) = state.entries.get(index)
             && entry.mirrored != checked
         {
@@ -212,7 +214,7 @@ fn toggle_mirrored(document: Entity, index: usize) -> Listener<UICheckboxChanged
 fn toggle_skeleton_picker(document: Entity) -> Listener<UIClick> {
     (move |on: On<UIClick>,
            documents: Query<&DefinitionDocument>,
-           menus: Query<(Entity, &mut AssetPickerMenu, &mut UIAnchoredPanel)>,
+           mut menus: Query<(Entity, &mut AssetPickerMenu, &mut UIAnchoredPanel)>,
            assets: Res<AssetRegistry>,
            theme: Res<UITheme>,
            mut cmd: CommandQueue| {
@@ -228,7 +230,7 @@ fn toggle_skeleton_picker(document: Entity) -> Listener<UIClick> {
             None,
             current,
             pick_skeleton(document),
-            &menus,
+            &mut menus,
             &assets,
             &theme,
             &mut cmd,
@@ -240,16 +242,16 @@ fn toggle_skeleton_picker(document: Entity) -> Listener<UIClick> {
 fn pick_skeleton(document: Entity) -> impl Fn(AssetId) -> Listener<UIClick> {
     move |id| {
         (move |on: On<UIClick>,
-               menus: Query<&mut UIAnchoredPanel, With<AssetPickerMenu>>,
-               documents: Query<&mut DefinitionDocument>,
+               mut menus: Query<&mut UIAnchoredPanel, With<AssetPickerMenu>>,
+               mut documents: Query<&mut DefinitionDocument>,
                mut cmd: CommandQueue| {
             if on.signal().button != MouseButton::Left {
                 return;
             }
-            for mut panel in menus.iter() {
+            for mut panel in menus.iter_mut() {
                 panel.open = false;
             }
-            if let Some(mut state) = documents.get_entity(document)
+            if let Some(mut state) = documents.get_entity_mut(document)
                 && state.skeleton.id() != id
             {
                 state.skeleton = AssetHandle::weak(id);
@@ -262,7 +264,7 @@ fn pick_skeleton(document: Entity) -> impl Fn(AssetId) -> Listener<UIClick> {
 
 fn toggle_clip_picker(document: Entity) -> Listener<UIClick> {
     (move |on: On<UIClick>,
-           menus: Query<(Entity, &mut AssetPickerMenu, &mut UIAnchoredPanel)>,
+           mut menus: Query<(Entity, &mut AssetPickerMenu, &mut UIAnchoredPanel)>,
            assets: Res<AssetRegistry>,
            theme: Res<UITheme>,
            mut cmd: CommandQueue| {
@@ -275,7 +277,7 @@ fn toggle_clip_picker(document: Entity) -> Listener<UIClick> {
             None,
             None,
             pick_clip(document),
-            &menus,
+            &mut menus,
             &assets,
             &theme,
             &mut cmd,
@@ -287,16 +289,16 @@ fn toggle_clip_picker(document: Entity) -> Listener<UIClick> {
 fn pick_clip(document: Entity) -> impl Fn(AssetId) -> Listener<UIClick> {
     move |id| {
         (move |on: On<UIClick>,
-               menus: Query<&mut UIAnchoredPanel, With<AssetPickerMenu>>,
-               documents: Query<&mut DefinitionDocument>,
+               mut menus: Query<&mut UIAnchoredPanel, With<AssetPickerMenu>>,
+               mut documents: Query<&mut DefinitionDocument>,
                mut cmd: CommandQueue| {
             if on.signal().button != MouseButton::Left {
                 return;
             }
-            for mut panel in menus.iter() {
+            for mut panel in menus.iter_mut() {
                 panel.open = false;
             }
-            if let Some(mut state) = documents.get_entity(document) {
+            if let Some(mut state) = documents.get_entity_mut(document) {
                 state.entries.push(MotionEntry {
                     clip: AssetHandle::weak(id),
                     range: None,
@@ -353,7 +355,7 @@ fn channel_types(registry: &TypeRegistry) -> Vec<String> {
 
 fn remove_channel(document: Entity, id: ChannelId) -> Listener<UIClick> {
     (move |on: On<UIClick>,
-           documents: Query<(
+           mut documents: Query<(
         &mut DefinitionDocument,
         &HostedApp,
         &InspectedValues,
@@ -363,7 +365,7 @@ fn remove_channel(document: Entity, id: ChannelId) -> Listener<UIClick> {
         if on.signal().button != MouseButton::Left {
             return;
         }
-        let Some((mut state, hosted, values, shown)) = documents.get_entity(document) else {
+        let Some((mut state, hosted, values, shown)) = documents.get_entity_mut(document) else {
             return;
         };
         let Some(types) = hosted.type_registry() else {
@@ -383,7 +385,7 @@ fn remove_channel(document: Entity, id: ChannelId) -> Listener<UIClick> {
 fn toggle_channel_menu(document: Entity) -> Listener<UIClick> {
     (move |on: On<UIClick>,
            previews: Query<&HostedApp>,
-           menus: Query<(Entity, &mut UIAnchoredPanel), With<NameMenu>>,
+           mut menus: Query<(Entity, &mut UIAnchoredPanel), With<NameMenu>>,
            theme: Res<UITheme>,
            mut cmd: CommandQueue| {
         if on.signal().button != MouseButton::Left {
@@ -398,7 +400,7 @@ fn toggle_channel_menu(document: Entity) -> Listener<UIClick> {
             &names,
             None,
             |name| pick_channel(document, name.to_owned()),
-            &menus,
+            &mut menus,
             &theme,
             &mut cmd,
         );
@@ -408,8 +410,8 @@ fn toggle_channel_menu(document: Entity) -> Listener<UIClick> {
 
 fn pick_channel(document: Entity, name: String) -> Listener<UIClick> {
     (move |on: On<UIClick>,
-           menus: Query<&mut UIAnchoredPanel, With<NameMenu>>,
-           documents: Query<(
+           mut menus: Query<&mut UIAnchoredPanel, With<NameMenu>>,
+           mut documents: Query<(
         &mut EditorDocument,
         &mut DefinitionDocument,
         &HostedApp,
@@ -420,8 +422,8 @@ fn pick_channel(document: Entity, name: String) -> Listener<UIClick> {
         if on.signal().button != MouseButton::Left {
             return;
         }
-        close_menu(&menus);
-        let Some((mut held, mut state, hosted, values, shown)) = documents.get_entity(document)
+        close_menu(&mut menus);
+        let Some((mut held, mut state, hosted, values, shown)) = documents.get_entity_mut(document)
         else {
             return;
         };
@@ -866,25 +868,30 @@ fn spawn_stat_line(list: &mut EntityCommandQueue, line: &StatLine, theme: &UIThe
     );
 }
 
-fn write_text(texts: &Query<&mut UIText>, entity: Entity, value: &str) {
-    if let Some(mut text) = texts.get_entity(entity)
+fn write_text(texts: &mut Query<&mut UIText>, entity: Entity, value: &str) {
+    if let Some(mut text) = texts.get_entity_mut(entity)
         && text.text != value
     {
         text.text = value.to_owned();
     }
 }
 
-fn write_color(texts: &Query<&mut UIText>, entity: Entity, color: Color) {
-    if let Some(mut text) = texts.get_entity(entity)
+fn write_color(texts: &mut Query<&mut UIText>, entity: Entity, color: Color) {
+    if let Some(mut text) = texts.get_entity_mut(entity)
         && text.color != color
     {
         text.color = color;
     }
 }
 
-fn write_line(texts: &Query<&mut UIText>, nodes: &Query<&mut UINode>, entity: Entity, value: &str) {
+fn write_line(
+    texts: &mut Query<&mut UIText>,
+    nodes: &mut Query<&mut UINode>,
+    entity: Entity,
+    value: &str,
+) {
     write_text(texts, entity, value);
-    if let Some(mut node) = nodes.get_entity(entity)
+    if let Some(mut node) = nodes.get_entity_mut(entity)
         && node.visible == value.is_empty()
     {
         node.visible = !value.is_empty();
@@ -892,13 +899,13 @@ fn write_line(texts: &Query<&mut UIText>, nodes: &Query<&mut UINode>, entity: En
 }
 
 fn write_selected(
-    styles: &Query<&mut UIInteractionStyle>,
+    styles: &mut Query<&mut UIInteractionStyle>,
     theme: &UITheme,
     entity: Entity,
     selected: bool,
 ) {
     let wanted = theme.interaction(ButtonVariant::Ghost, selected);
-    if let Some(mut style) = styles.get_entity(entity)
+    if let Some(mut style) = styles.get_entity_mut(entity)
         && style.normal != wanted.normal
     {
         **style = wanted;
@@ -918,8 +925,8 @@ fn write_disabled(
     }
 }
 
-fn write_checked(checkboxes: &Query<&mut UICheckbox>, entity: Entity, checked: bool) {
-    if let Some(mut checkbox) = checkboxes.get_entity(entity)
+fn write_checked(checkboxes: &mut Query<&mut UICheckbox>, entity: Entity, checked: bool) {
+    if let Some(mut checkbox) = checkboxes.get_entity_mut(entity)
         && checkbox.checked != checked
     {
         checkbox.checked = checked;
@@ -956,28 +963,28 @@ fn entry_selection(entry: Option<&MotionEntry>, rate: Option<f32>) -> Option<(u3
 }
 
 pub(crate) fn sync_definition_panels(
-    documents: Query<(
+    mut documents: Query<(
         Entity,
         &EditorDocument,
         &DefinitionDocument,
         &mut DefinitionPanels,
         Option<&HostedApp>,
     )>,
-    timelines: Query<&mut Timeline>,
-    texts: Query<&mut UIText>,
-    nodes: Query<&mut UINode>,
-    checkboxes: Query<&mut UICheckbox>,
-    styles: Query<&mut UIInteractionStyle>,
+    mut timelines: Query<&mut Timeline>,
+    mut texts: Query<&mut UIText>,
+    mut nodes: Query<&mut UINode>,
+    mut checkboxes: Query<&mut UICheckbox>,
+    mut styles: Query<&mut UIInteractionStyle>,
     disabled: Query<&UIDisabled>,
     assets: Res<AssetRegistry>,
     theme: Res<UITheme>,
     mut cmd: CommandQueue,
 ) {
-    for (entity, document, state, mut panels, hosted) in documents.iter() {
+    for (entity, document, state, mut panels, hosted) in documents.iter_mut() {
         let read_only = hosted.is_none() || state.loaded.is_none();
 
         write_text(
-            &texts,
+            &mut texts,
             panels.skeleton,
             &asset_name(&assets, state.skeleton.id()),
         );
@@ -986,8 +993,8 @@ pub(crate) fn sync_definition_panels(
             .as_ref()
             .and_then(|shown| shown.error.as_deref())
             .unwrap_or("");
-        write_line(&texts, &nodes, panels.skeleton_error, error);
-        write_line(&texts, &nodes, panels.status, &document.status);
+        write_line(&mut texts, &mut nodes, panels.skeleton_error, error);
+        write_line(&mut texts, &mut nodes, panels.status, &document.status);
 
         if panels.shown_stats != state.stats {
             let lines = state
@@ -998,7 +1005,7 @@ pub(crate) fn sync_definition_panels(
             for line in &lines {
                 spawn_stat_line(&mut list, line, &theme);
             }
-            if let Some(mut node) = nodes.get_entity(panels.stats_view) {
+            if let Some(mut node) = nodes.get_entity_mut(panels.stats_view) {
                 node.visible = state.stats.is_some();
                 node.height = UIValue::Px((lines.len() as f32 * STAT_HEIGHT).min(STATS_MAX_HEIGHT));
             }
@@ -1014,15 +1021,15 @@ pub(crate) fn sync_definition_panels(
         }
         for (index, (row, entry)) in panels.entry_rows.iter().zip(&state.entries).enumerate() {
             let clip = entry.clip.id();
-            write_text(&texts, row.name, &asset_name(&assets, clip));
-            write_text(&texts, row.range, &range_line(entry.range));
+            write_text(&mut texts, row.name, &asset_name(&assets, clip));
+            write_text(&mut texts, row.range, &range_line(entry.range));
             let (driven, color) =
                 driven_line(state.facts_of(clip), !state.skeleton.id().is_nil(), &theme);
-            write_text(&texts, row.driven, &driven);
-            write_color(&texts, row.driven, color);
-            write_checked(&checkboxes, row.mirrored, entry.mirrored);
+            write_text(&mut texts, row.driven, &driven);
+            write_color(&mut texts, row.driven, color);
+            write_checked(&mut checkboxes, row.mirrored, entry.mirrored);
             write_selected(
-                &styles,
+                &mut styles,
                 &theme,
                 row.row,
                 state.selected_entry == Some(index),
@@ -1031,7 +1038,7 @@ pub(crate) fn sync_definition_panels(
             write_disabled(&disabled, &mut cmd, row.mirrored, read_only);
         }
 
-        if let Some(mut timeline) = timelines.get_entity(panels.timeline) {
+        if let Some(mut timeline) = timelines.get_entity_mut(panels.timeline) {
             let facts = selected_facts(state);
             let rate = facts.and_then(|facts| facts.rate);
             let entry = state
@@ -1087,7 +1094,7 @@ fn wanted_channel_rows(
 }
 
 pub(crate) fn sync_channel_rows(
-    documents: Query<(
+    mut documents: Query<(
         Entity,
         &DefinitionDocument,
         &mut DefinitionPanels,
@@ -1095,11 +1102,11 @@ pub(crate) fn sync_channel_rows(
         Option<&InspectedValues>,
         Option<&ShownValue>,
     )>,
-    styles: Query<&mut UIInteractionStyle>,
+    mut styles: Query<&mut UIInteractionStyle>,
     theme: Res<UITheme>,
     mut cmd: CommandQueue,
 ) {
-    for (document, state, mut panels, hosted, values, shown) in documents.iter() {
+    for (document, state, mut panels, hosted, values, shown) in documents.iter_mut() {
         let wanted = wanted_channel_rows(state, hosted.is_some(), values);
         if !channel_rows_match(&panels.channel_rows, &wanted) {
             panels.channel_rows =
@@ -1108,9 +1115,9 @@ pub(crate) fn sync_channel_rows(
         let shown = values
             .zip(shown)
             .and_then(|(values, shown)| shown_index(values, shown));
-        write_selected(&styles, &theme, panels.settings, shown == Some(0));
+        write_selected(&mut styles, &theme, panels.settings, shown == Some(0));
         for (index, row) in panels.channel_rows.iter().enumerate() {
-            write_selected(&styles, &theme, row.row, shown == Some(index + 1));
+            write_selected(&mut styles, &theme, row.row, shown == Some(index + 1));
         }
     }
 }
@@ -1119,12 +1126,12 @@ fn fit_scroll_area(
     view: Entity,
     content: Entity,
     layouts: &Query<&UILayout>,
-    areas: &Query<&mut UIScrollArea>,
+    areas: &mut Query<&mut UIScrollArea>,
 ) {
     let (Some(shown), Some(content), Some(mut area)) = (
         layouts.get_entity(view),
         layouts.get_entity(content),
-        areas.get_entity(view),
+        areas.get_entity_mut(view),
     ) else {
         return;
     };
@@ -1143,11 +1150,11 @@ fn fit_scroll_area(
 pub(crate) fn sync_panel_scroll(
     panels: Query<&DefinitionPanels>,
     layouts: Query<&UILayout>,
-    areas: Query<&mut UIScrollArea>,
+    mut areas: Query<&mut UIScrollArea>,
 ) {
     for panels in panels.iter() {
-        fit_scroll_area(panels.view, panels.content, &layouts, &areas);
-        fit_scroll_area(panels.stats_view, panels.stats, &layouts, &areas);
+        fit_scroll_area(panels.view, panels.content, &layouts, &mut areas);
+        fit_scroll_area(panels.stats_view, panels.stats, &layouts, &mut areas);
     }
 }
 

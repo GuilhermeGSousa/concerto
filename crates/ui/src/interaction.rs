@@ -337,14 +337,14 @@ pub(crate) fn apply_interaction_styles(
     hovered: Res<HoveredNode>,
     input: Res<Input>,
     disabled_nodes: Query<(Entity, &UIDisabled)>,
-    styled: Query<(Entity, &UIInteractionStyle, &mut UIMaterial)>,
+    mut styled: Query<(Entity, &UIInteractionStyle, &mut UIMaterial)>,
 ) {
     let left_held = matches!(
         input.get_mouse_button_state(MouseButton::Left),
         InputState::Pressed | InputState::Down
     );
 
-    for (entity, style, mut material) in styled.iter() {
+    for (entity, style, mut material) in styled.iter_mut() {
         let color = if disabled_nodes.get_entity(entity).is_some() {
             style.disabled
         } else if **hovered == Some(entity) {

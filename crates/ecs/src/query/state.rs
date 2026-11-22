@@ -63,7 +63,7 @@ impl<T: QueryData, F: QueryFilter> QueryState<T, F> {
     ) -> QueryIter<'world, 'state, T, F> {
         let ticks = world.out_of_system_ticks();
         // SAFETY: the exclusive borrow of `world` covers any access.
-        unsafe { Query::new(world.as_unsafe_world_cell_mut(), self, ticks) }.iter()
+        unsafe { Query::new(world.as_unsafe_world_cell_mut(), self, ticks) }.into_iter_exclusive()
     }
 
     fn add_archetype(&mut self, archetype: &Archetype) {

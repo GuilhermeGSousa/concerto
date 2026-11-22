@@ -69,12 +69,12 @@ impl EventsPanel {
 
 fn add_event_at_head(document: Entity) -> Listener<UIClick> {
     (move |on: On<UIClick>,
-           documents: Query<(&mut EditorDocument, &mut ClipDocument, &ClipTransport)>,
+           mut documents: Query<(&mut EditorDocument, &mut ClipDocument, &ClipTransport)>,
            mut cmd: CommandQueue| {
         if on.signal().button != MouseButton::Left {
             return;
         }
-        let Some((mut editor, mut state, transport)) = documents.get_entity(document) else {
+        let Some((mut editor, mut state, transport)) = documents.get_entity_mut(document) else {
             return;
         };
         let time = transport.time;
@@ -86,12 +86,12 @@ fn add_event_at_head(document: Entity) -> Listener<UIClick> {
 
 fn remove_selected(document: Entity) -> Listener<UIClick> {
     (move |on: On<UIClick>,
-           documents: Query<(&mut EditorDocument, &mut ClipDocument)>,
+           mut documents: Query<(&mut EditorDocument, &mut ClipDocument)>,
            mut cmd: CommandQueue| {
         if on.signal().button != MouseButton::Left {
             return;
         }
-        let Some((mut editor, mut state)) = documents.get_entity(document) else {
+        let Some((mut editor, mut state)) = documents.get_entity_mut(document) else {
             return;
         };
         let Some(index) = state.selected_event else {
@@ -229,8 +229,8 @@ fn submitted_edit(
     }
 }
 
-fn write_value(fields: &Query<&mut UITextInput>, entity: Entity, value: &str) {
-    if let Some(mut input) = fields.get_entity(entity)
+fn write_value(fields: &mut Query<&mut UITextInput>, entity: Entity, value: &str) {
+    if let Some(mut input) = fields.get_entity_mut(entity)
         && input.value != value
     {
         input.value = value.to_owned();
@@ -242,12 +242,12 @@ fn write_value(fields: &Query<&mut UITextInput>, entity: Entity, value: &str) {
 pub(crate) fn apply_clip_event_fields(
     mut submitted: EventReader<UITextInputSubmitted>,
     mut cancelled: EventReader<UITextInputCancelled>,
-    documents: Query<(Entity, &mut EditorDocument, &mut ClipDocument, &ClipPanels)>,
-    fields: Query<&mut UITextInput>,
+    mut documents: Query<(Entity, &mut EditorDocument, &mut ClipDocument, &ClipPanels)>,
+    mut fields: Query<&mut UITextInput>,
     mut cmd: CommandQueue,
 ) {
     for event in submitted.read() {
-        for (document, mut editor, mut state, panels) in documents.iter() {
+        for (document, mut editor, mut state, panels) in documents.iter_mut() {
             let Some(field) = panels.inspector.events.field(event.entity) else {
                 continue;
             };
@@ -255,7 +255,7 @@ pub(crate) fn apply_clip_event_fields(
                 settle_edit(result, document, &mut editor, &mut cmd);
             }
             if let Some(value) = field_text(&state, field) {
-                write_value(&fields, event.entity, &value);
+                write_value(&mut fields, event.entity, &value);
             }
         }
     }
@@ -264,8 +264,8 @@ pub(crate) fn apply_clip_event_fields(
             let Some(field) = panels.inspector.events.field(event.entity) else {
                 continue;
             };
-            if let Some(value) = field_text(&state, field) {
-                write_value(&fields, event.entity, &value);
+            if let Some(value) = field_text(state, field) {
+                write_value(&mut fields, event.entity, &value);
             }
         }
     }
@@ -273,15 +273,15 @@ pub(crate) fn apply_clip_event_fields(
 
 pub(crate) fn sync_clip_events(
     documents: Query<(&ClipDocument, &ClipPanels)>,
-    nodes: Query<&mut UINode>,
-    texts: Query<&mut UIText>,
-    fields: Query<&mut UITextInput>,
+    mut nodes: Query<&mut UINode>,
+    mut texts: Query<&mut UIText>,
+    mut fields: Query<&mut UITextInput>,
     disabled: Query<&UIDisabled>,
     focus: Res<FocusedWidget>,
     mut cmd: CommandQueue,
 ) {
-    let show = |entity: Entity, visible: bool| {
-        if let Some(mut node) = nodes.get_entity(entity)
+    let mut show = |entity: Entity, visible: bool| {
+        if let Some(mut node) = nodes.get_entity_mut(entity)
             && node.visible != visible
         {
             node.visible = visible;
@@ -305,7 +305,7 @@ pub(crate) fn sync_clip_events(
         show(section.name_row, named);
         show(section.time_row, named);
         show(section.type_name, type_name.is_some());
-        if let Some(mut text) = texts.get_entity(section.type_name) {
+        if let Some(mut text) = texts.get_entity_mut(section.type_name) {
             let value = type_name.unwrap_or("");
             if text.text != value {
                 text.text = value.to_owned();
@@ -323,7 +323,7 @@ pub(crate) fn sync_clip_events(
                 continue;
             }
             if let Some(value) = field_text(state, field) {
-                write_value(&fields, entity, &value);
+                write_value(&mut fields, entity, &value);
             }
         }
     }
@@ -332,7 +332,7 @@ pub(crate) fn sync_clip_events(
 pub(crate) fn remove_clip_event(
     mut fired: EventReader<ActionFired>,
     active: Res<ActiveEditor>,
-    documents: Query<(&mut EditorDocument, &mut ClipDocument)>,
+    mut documents: Query<(&mut EditorDocument, &mut ClipDocument)>,
     mut cmd: CommandQueue,
 ) {
     let remove = fired
@@ -341,7 +341,7 @@ pub(crate) fn remove_clip_event(
     let Some(document) = active.0.filter(|_| remove) else {
         return;
     };
-    let Some((mut editor, mut state)) = documents.get_entity(document) else {
+    let Some((mut editor, mut state)) = documents.get_entity_mut(document) else {
         return;
     };
     let Some(index) = selected_named(&state).and(state.selected_event) else {

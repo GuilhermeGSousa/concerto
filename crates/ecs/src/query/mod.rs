@@ -35,8 +35,8 @@ use crate::{
 /// Obtain a `Query` in a system by adding it as a parameter:
 ///
 /// ```ignore
-/// fn move_system(query: Query<(&mut Transform, &Velocity)>) {
-///     for (transform, velocity) in query.iter() {
+/// fn move_system(mut query: Query<(&mut Transform, &Velocity)>) {
+///     for (mut transform, velocity) in query.iter_mut() {
 ///         transform.translation += velocity.linear;
 ///     }
 /// }
@@ -55,6 +55,9 @@ pub trait QueryData: WorldQuery {
     /// The item type produced for each matched entity.
     type Item<'a>;
 
+    /// The same data fetched without write access.
+    type ReadOnly: ReadOnlyQueryData;
+
     /// Returns the [`ComponentId`]s that must be present on an entity for it to match.
     fn component_ids() -> Vec<ComponentId>;
 
@@ -72,6 +75,7 @@ pub trait QueryData: WorldQuery {
     fn fill_access(meta: &mut SystemMetadata, access: &mut SystemAccess);
 }
 
+/// A [`QueryData`] that only reads, so its items may be fetched through a shared borrow.
 pub trait ReadOnlyQueryData: QueryData {}
 
 impl<'world, 'state, T: QueryData, F: QueryFilter> Query<'world, 'state, T, F> {
@@ -93,8 +97,7 @@ impl<'world, 'state, T: QueryData, F: QueryFilter> Query<'world, 'state, T, F> {
         }
     }
 
-    /// Returns an iterator over all matching entities.
-    pub fn iter(&self) -> QueryIter<'world, 'state, T, F> {
+    pub(crate) fn into_iter_exclusive(self) -> QueryIter<'world, 'state, T, F> {
         QueryIter {
             world: self.world,
             matched_archetypes: self.state.matched_archetypes(),
@@ -107,8 +110,68 @@ impl<'world, 'state, T: QueryData, F: QueryFilter> Query<'world, 'state, T, F> {
         }
     }
 
-    /// Fetches the query data for a specific entity, returning `None` if it doesn't match.
-    pub fn get_entity(&self, entity: Entity) -> Option<T::Item<'world>> {
+    /// Returns an iterator over the read-only items of all matching entities.
+    pub fn iter(&self) -> QueryIter<'_, 'state, T::ReadOnly, F> {
+        QueryIter {
+            world: self.world,
+            matched_archetypes: self.state.matched_archetypes(),
+            current_entities: &[],
+            current_row: 0,
+            current_len: 0,
+            ticks: self.ticks,
+            _marker_data: PhantomData,
+            _marker_filter: PhantomData,
+        }
+    }
+
+    /// Returns an iterator over a read-only query whose items live as long as the world borrow.
+    pub fn iter_inner(&self) -> QueryIter<'world, 'state, T, F>
+    where
+        T: ReadOnlyQueryData,
+    {
+        QueryIter {
+            world: self.world,
+            matched_archetypes: self.state.matched_archetypes(),
+            current_entities: &[],
+            current_row: 0,
+            current_len: 0,
+            ticks: self.ticks,
+            _marker_data: PhantomData,
+            _marker_filter: PhantomData,
+        }
+    }
+
+    /// Returns an iterator over all matching entities, with write access to what `T` writes.
+    pub fn iter_mut(&mut self) -> QueryIter<'_, 'state, T, F> {
+        QueryIter {
+            world: self.world,
+            matched_archetypes: self.state.matched_archetypes(),
+            current_entities: &[],
+            current_row: 0,
+            current_len: 0,
+            ticks: self.ticks,
+            _marker_data: PhantomData,
+            _marker_filter: PhantomData,
+        }
+    }
+
+    /// Fetches the read-only query data for a specific entity, returning `None` if it doesn't match.
+    pub fn get_entity(&self, entity: Entity) -> Option<<T::ReadOnly as QueryData>::Item<'_>> {
+        // SAFETY: the query's system declared the access of `T` and `F`, and holds it while
+        // the query lives; the read-only items borrow the query shared.
+        if !unsafe { F::filter(self.world, entity, self.ticks) } {
+            return None;
+        }
+        // SAFETY: as above; the entity store is read only to locate `entity`.
+        unsafe { self.world.world() }
+            .entity_store()
+            .find_location(entity)?;
+        // SAFETY: as above.
+        unsafe { <T::ReadOnly as QueryData>::fetch(self.world, entity, self.ticks) }
+    }
+
+    /// Fetches the query data for a specific entity, with write access to what `T` writes.
+    pub fn get_entity_mut(&mut self, entity: Entity) -> Option<T::Item<'_>> {
         // SAFETY: the query's system declared the access of `T` and `F`, and holds it while
         // the query lives.
         if !unsafe { F::filter(self.world, entity, self.ticks) } {
@@ -216,6 +279,7 @@ where
     T: Component,
 {
     type Item<'w> = &'w T;
+    type ReadOnly = Self;
 
     fn component_ids() -> Vec<ComponentId> {
         vec![TypeId::of::<T>()]
@@ -246,6 +310,7 @@ where
     T: Component,
 {
     type Item<'w> = Mut<'w, T>;
+    type ReadOnly = &'static T;
 
     fn component_ids() -> Vec<ComponentId> {
         vec![TypeId::of::<T>()]
@@ -286,6 +351,7 @@ where
     T: Component,
 {
     type Item<'w> = Ref<'w, T>;
+    type ReadOnly = Self;
 
     fn component_ids() -> Vec<ComponentId> {
         vec![TypeId::of::<T>()]
@@ -314,6 +380,7 @@ impl<T: Component> ReadOnlyQueryData for Ref<'_, T> {}
 
 impl QueryData for Entity {
     type Item<'a> = Entity;
+    type ReadOnly = Self;
 
     fn component_ids() -> Vec<ComponentId> {
         vec![]
@@ -337,6 +404,7 @@ where
     T: Component,
 {
     type Item<'w> = Option<&'w T>;
+    type ReadOnly = Self;
 
     fn component_ids() -> Vec<ComponentId> {
         vec![]
@@ -367,6 +435,7 @@ where
     T: Component,
 {
     type Item<'w> = Option<Mut<'w, T>>;
+    type ReadOnly = Option<&'static T>;
 
     fn component_ids() -> Vec<ComponentId> {
         vec![]
@@ -408,6 +477,7 @@ where
     T<_>: QueryData,
 {
     type Item<'w> = typle_for!(i in .. => T<{i}>::Item<'w>);
+    type ReadOnly = typle_for!(i in .. => T<{i}>::ReadOnly);
 
     #[allow(clippy::let_and_return)]
     fn component_ids() -> Vec<ComponentId> {

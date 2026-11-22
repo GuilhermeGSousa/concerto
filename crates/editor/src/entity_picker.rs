@@ -146,7 +146,7 @@ fn held(values: &Query<&PropertyRowValue>, row: Entity) -> Option<SceneEntityRef
 fn toggle_entity_picker(row: Entity) -> Listener<UIClick> {
     (move |on: On<UIClick>,
            values: Query<&PropertyRowValue>,
-           menus: Query<(Entity, &mut EntityPickerMenu, &mut UIAnchoredPanel)>,
+           mut menus: Query<(Entity, &mut EntityPickerMenu, &mut UIAnchoredPanel)>,
            roots: EditWorld<Query<(Entity, &SceneRoot)>>,
            top_level: EditWorld<Query<Entity, (Without<ChildOf>, Without<GlobalListener>)>>,
            children: EditWorld<Query<&Children>>,
@@ -159,7 +159,7 @@ fn toggle_entity_picker(row: Entity) -> Listener<UIClick> {
             return;
         }
         let button = on.entity();
-        let mut menu = match menus.iter().next() {
+        let mut menu = match menus.iter_mut().next() {
             Some((entity, mut menu, mut panel)) => {
                 if panel.open && panel.owner == Some(button) {
                     panel.open = false;
@@ -281,7 +281,7 @@ fn fill_menu(
 
 fn pick_entity(row: Entity, value: SceneEntityRef) -> Listener<UIClick> {
     (move |on: On<UIClick>,
-           menus: Query<&mut UIAnchoredPanel, With<EntityPickerMenu>>,
+           mut menus: Query<&mut UIAnchoredPanel, With<EntityPickerMenu>>,
            rows: Query<(&PropertyRow, &PropertyRowValue)>,
            mut commits: ResMut<PropertyCommits>| {
         if on.signal().button != MouseButton::Left {
@@ -293,7 +293,7 @@ fn pick_entity(row: Entity, value: SceneEntityRef) -> Listener<UIClick> {
         {
             log::warn!("Entity pick dropped: {error}");
         }
-        for mut panel in menus.iter() {
+        for mut panel in menus.iter_mut() {
             panel.open = false;
         }
     })
@@ -337,9 +337,9 @@ fn select_referenced(row: Entity) -> Listener<UIClick> {
 fn filter_entity_picker(
     mut events: EventReader<UITextInputChanged>,
     filters: Query<&EntityPickerFilter>,
-    menus: Query<&mut EntityPickerMenu>,
-    items: Query<(&EntityPickerItem, &mut UINode)>,
-    views: Query<
+    mut menus: Query<&mut EntityPickerMenu>,
+    mut items: Query<(&EntityPickerItem, &mut UINode)>,
+    mut views: Query<
         (&mut UIScrollArea, &mut UINode),
         (With<EntityPickerView>, Without<EntityPickerItem>),
     >,
@@ -352,18 +352,18 @@ fn filter_entity_picker(
     else {
         return;
     };
-    for mut menu in menus.iter() {
+    for mut menu in menus.iter_mut() {
         if menu.filter != text {
             menu.filter = text.clone();
         }
     }
     let filter = text.to_lowercase();
     let parents: HashMap<Entity, Option<Entity>> = items
-        .iter()
+        .iter_mut()
         .filter_map(|(item, _)| item.entity.map(|entity| (entity, item.parent)))
         .collect();
     let mut shown = HashSet::new();
-    for (item, _) in items.iter() {
+    for (item, _) in items.iter_mut() {
         let Some(entity) = item.entity else {
             continue;
         };
@@ -379,7 +379,7 @@ fn filter_entity_picker(
         }
     }
     let mut count = 0;
-    for (item, mut node) in items.iter() {
+    for (item, mut node) in items.iter_mut() {
         let visible = item.entity.is_none_or(|entity| shown.contains(&entity));
         count += usize::from(visible);
         if node.visible != visible {
@@ -388,7 +388,7 @@ fn filter_entity_picker(
     }
     let extent = count as f32 * ITEM_HEIGHT;
     let height = UIValue::Px(extent.min(LIST_MAX_HEIGHT));
-    for (mut area, mut node) in views.iter() {
+    for (mut area, mut node) in views.iter_mut() {
         if area.content_extent != extent || area.offset != 0.0 {
             area.content_extent = extent;
             area.offset = 0.0;
@@ -401,9 +401,9 @@ fn filter_entity_picker(
 
 fn forget_scene(
     _: On<Remove<EditTarget>>,
-    menus: Query<&mut UIAnchoredPanel, With<EntityPickerMenu>>,
+    mut menus: Query<&mut UIAnchoredPanel, With<EntityPickerMenu>>,
 ) {
-    for mut panel in menus.iter() {
+    for mut panel in menus.iter_mut() {
         if panel.open {
             panel.open = false;
         }
@@ -420,7 +420,7 @@ fn entity_label(entity: Entity, name: Option<&Name>) -> String {
 /// Writes the name of each picker row's entity into its label.
 pub(crate) fn refresh_entity_picker_labels(
     values: Query<&PropertyRowValue>,
-    labels: Query<(&EntityPickerLabel, &mut UIText)>,
+    mut labels: Query<(&EntityPickerLabel, &mut UIText)>,
     names: EditWorld<Query<Option<&Name>>>,
     roots: EditWorld<Query<(Entity, &SceneRoot)>>,
     top_level: EditWorld<Query<Entity, (Without<ChildOf>, Without<GlobalListener>)>>,
@@ -442,7 +442,7 @@ pub(crate) fn refresh_entity_picker_labels(
     .into_iter()
     .map(|listed| listed.entity)
     .collect();
-    for (label, mut text) in labels.iter() {
+    for (label, mut text) in labels.iter_mut() {
         let Some(reference) = held(&values, label.row) else {
             continue;
         };

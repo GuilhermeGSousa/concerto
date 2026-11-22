@@ -210,7 +210,7 @@ pub(crate) fn open_to(
     tree: Entity,
     filtering: bool,
     item: Entity,
-    elements: &Query<&mut UITreeElement>,
+    elements: &mut Query<&mut UITreeElement>,
     hidden: &Query<&UIHidden>,
     children: &Query<&Children>,
     parents: &Query<&ChildOf>,
@@ -220,7 +220,7 @@ pub(crate) fn open_to(
         && let Some(entity) = ancestor
         && entity != tree
     {
-        if let Some(mut element) = elements.get_entity(entity)
+        if let Some(mut element) = elements.get_entity_mut(entity)
             && !element.expanded
         {
             element.expanded = true;
@@ -278,7 +278,7 @@ pub(crate) fn set_up_tree(
 fn click_caret(
     on: On<UIClick>,
     parents: Query<&ChildOf>,
-    elements: Query<&mut UITreeElement>,
+    mut elements: Query<&mut UITreeElement>,
     (items, trees): (Query<&UIItem>, Query<&UITree>),
     mut focused: ResMut<FocusedWidget>,
     mut lost: EventWriter<UIFocusLost>,
@@ -297,7 +297,7 @@ fn click_caret(
     if filtering {
         return;
     }
-    if let Some(mut element) = elements.get_entity(item) {
+    if let Some(mut element) = elements.get_entity_mut(item) {
         element.expanded = !element.expanded;
     }
     let previous = **focused;
@@ -311,18 +311,18 @@ fn click_caret(
 }
 
 pub(crate) fn update_trees(
-    trees: Query<(Entity, &UITree, &mut UIScrollArea, Option<&UILayout>)>,
-    children: Query<&mut Children>,
+    mut trees: Query<(Entity, &UITree, &mut UIScrollArea, Option<&UILayout>)>,
+    mut children: Query<&mut Children>,
     elements: Query<&UITreeElement>,
     hidden: Query<&UIHidden>,
-    nodes: Query<&mut UINode>,
+    mut nodes: Query<&mut UINode>,
     parts: Query<&UIWidgetPart>,
-    (carets, connectors, texts): (
+    (carets, connectors, mut texts): (
         Query<&UITreeCaret>,
         Query<&UITreeConnector>,
         Query<&mut UIText>,
     ),
-    spacers: Query<&mut UIIntrinsicHeight, With<UIRowSpacer>>,
+    mut spacers: Query<&mut UIIntrinsicHeight, With<UIRowSpacer>>,
     (items, culled, materials): (Query<&UIItem>, Query<&UICulled>, Query<&UIMaterial>),
     theme: Res<UITheme>,
     mut cmd: CommandQueue,
@@ -355,27 +355,27 @@ pub(crate) fn update_trees(
             .filter_map(|entity| owning_tree(entity, &trees, &items, &parents)),
     );
     let every_tree = theme.is_changed();
-    for (entity, tree, mut area, layout) in trees.iter() {
+    for (entity, tree, mut area, layout) in trees.iter_mut() {
         if !every_tree && !area.is_changed() && !stale.contains(&entity) {
             continue;
         }
         let row_height = tree.row_height.unwrap_or(theme.row_height);
         let mut roots = Vec::new();
         let mut spacer = None;
-        if let Some(mut children) = children.get_entity(entity) {
+        if let Some(mut children) = children.get_entity_mut(entity) {
             keep_parts_last(&mut children, &parts);
             for &child in children.iter() {
                 if elements.contains_entity(child) {
                     roots.push(child);
                 } else if spacer.is_none() {
-                    spacer = spacers.get_entity(child);
+                    spacer = spacers.get_entity_mut(child);
                 }
             }
         }
         let marked = |entity: Entity| {
             children
                 .get_entity(entity)
-                .map(|children| marked_items(&children, |child| elements.contains_entity(child)))
+                .map(|children| marked_items(children, |child| elements.contains_entity(child)))
                 .unwrap_or_default()
         };
         let rows = flatten_tree(&roots, tree.filtering, |entity| TreeNode {
@@ -404,7 +404,7 @@ pub(crate) fn update_trees(
             tree.selectable,
             layout.map(|layout| layout.content_rect.size.y),
             &mut area,
-            &nodes,
+            &mut nodes,
             &items,
             &culled,
             &mut cmd,
@@ -424,9 +424,9 @@ pub(crate) fn update_trees(
             &mut cmd,
         );
         for row in &rows {
-            shape_item(row, &theme, &nodes);
+            shape_item(row, &theme, &mut nodes);
             let (caret, drawn) = children
-                .get_entity(row.entity)
+                .get_entity_mut(row.entity)
                 .map(|mut children| {
                     keep_parts_first(&mut children, &parts);
                     let caret = children
@@ -442,15 +442,17 @@ pub(crate) fn update_trees(
                 })
                 .unwrap_or_default();
             let segments = connector_segments(row, &theme, row_height);
-            sync_connectors(row.entity, &segments, &drawn, &theme, &nodes, &mut cmd);
+            sync_connectors(row.entity, &segments, &drawn, &theme, &mut nodes, &mut cmd);
             match (caret, row.has_children) {
                 (None, true) => spawn_caret(row, &theme, &mut cmd),
                 (Some(caret), false) => cmd.despawn(caret),
-                (Some(caret), true) => sync_caret(caret, row, &theme, &carets, &texts, &nodes),
+                (Some(caret), true) => {
+                    sync_caret(caret, row, &theme, &carets, &mut texts, &mut nodes)
+                }
                 (None, false) => {}
             }
         }
-        fit_owner(entity, spacer, area.content_extent, &nodes);
+        fit_owner(entity, spacer, area.content_extent, &mut nodes);
     }
 }
 
@@ -474,8 +476,8 @@ fn owning_tree(
     })
 }
 
-fn shape_item(row: &TreeRow, theme: &UITheme, nodes: &Query<&mut UINode>) {
-    let Some(mut node) = nodes.get_entity(row.entity) else {
+fn shape_item(row: &TreeRow, theme: &UITheme, nodes: &mut Query<&mut UINode>) {
+    let Some(mut node) = nodes.get_entity_mut(row.entity) else {
         return;
     };
     let left = caret_left(row, theme) + theme.tree_caret_column;
@@ -556,18 +558,18 @@ fn sync_caret(
     row: &TreeRow,
     theme: &UITheme,
     carets: &Query<&UITreeCaret>,
-    texts: &Query<&mut UIText>,
-    nodes: &Query<&mut UINode>,
+    texts: &mut Query<&mut UIText>,
+    nodes: &mut Query<&mut UINode>,
 ) {
     let inset = caret_inset(row, theme);
-    if let Some(mut node) = nodes.get_entity(caret)
+    if let Some(mut node) = nodes.get_entity_mut(caret)
         && node.inset != inset
     {
         node.inset = inset;
     }
     let glyph = caret_glyph(row, theme);
     if let Some(caret) = carets.get_entity(caret)
-        && let Some(mut text) = texts.get_entity(caret.glyph)
+        && let Some(mut text) = texts.get_entity_mut(caret.glyph)
         && text.text != glyph
     {
         text.text = glyph;
@@ -608,7 +610,7 @@ fn sync_connectors(
     segments: &[UIBox],
     drawn: &[Entity],
     theme: &UITheme,
-    nodes: &Query<&mut UINode>,
+    nodes: &mut Query<&mut UINode>,
     cmd: &mut CommandQueue,
 ) {
     for (index, segment) in segments.iter().enumerate() {
@@ -634,7 +636,7 @@ fn sync_connectors(
             cmd.add_child(row, connector);
             continue;
         };
-        if let Some(mut node) = nodes.get_entity(connector)
+        if let Some(mut node) = nodes.get_entity_mut(connector)
             && (node.inset != inset || node.width != width || node.height != height)
         {
             node.inset = inset;

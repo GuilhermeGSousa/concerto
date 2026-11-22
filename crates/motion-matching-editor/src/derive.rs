@@ -187,7 +187,7 @@ fn derivable(state: &DefinitionDocument) -> Option<MotionDatabase> {
 
 pub(crate) fn follow_written_inputs(
     mut written: EventReader<AssetsWritten>,
-    documents: Query<&mut DefinitionDocument>,
+    mut documents: Query<&mut DefinitionDocument>,
 ) {
     let ids: Vec<AssetId> = written
         .read()
@@ -196,7 +196,7 @@ pub(crate) fn follow_written_inputs(
     if ids.is_empty() {
         return;
     }
-    for mut state in documents.iter() {
+    for mut state in documents.iter_mut() {
         let reads = state.loaded.as_ref().is_some_and(|definition| {
             definition
                 .derived_inputs()
@@ -267,7 +267,7 @@ fn forget_derived(document: Entity, state: &mut DefinitionDocument, previews: &m
 }
 
 pub(crate) fn derive_definitions(
-    documents: Query<(Entity, &mut EditorDocument, &mut DefinitionDocument)>,
+    mut documents: Query<(Entity, &mut EditorDocument, &mut DefinitionDocument)>,
     project: Res<ProjectState>,
     assets: Res<AssetRegistry>,
     server: Res<AssetServer>,
@@ -276,7 +276,7 @@ pub(crate) fn derive_definitions(
     let Some(project) = project.project.as_ref() else {
         return;
     };
-    for (document, mut editor, mut state) in documents.iter() {
+    for (document, mut editor, mut state) in documents.iter_mut() {
         if state
             .derive_job
             .as_ref()

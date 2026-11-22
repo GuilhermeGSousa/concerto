@@ -243,7 +243,7 @@ fn update_gizmo(
         Query<&LinkedNode>,
         Query<(Option<&ChildOf>, Option<&SceneRoot>)>,
     ),
-    transforms: Query<&mut Transform>,
+    mut transforms: Query<&mut Transform>,
     mut state: ResMut<GizmoState>,
     mut gizmos: DebugGizmos,
     mut edited: EventWriter<SceneEdited>,
@@ -307,7 +307,7 @@ fn update_gizmo(
     if let Some(drag) = state.drag.as_mut() {
         let axis = drag.axis.direction();
         origin = drag.origin;
-        if let (Some(ray), Some(mut transform)) = (ray, transforms.get_entity(target)) {
+        if let (Some(ray), Some(mut transform)) = (ray, transforms.get_entity_mut(target)) {
             match drag.mode {
                 GizmoMode::Translate => {
                     if let Some(param) = axis_param(&ray, drag.origin, axis) {

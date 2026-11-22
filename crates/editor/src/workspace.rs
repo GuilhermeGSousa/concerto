@@ -114,9 +114,9 @@ pub(crate) fn sync_workspace(
     changed_hosts: Query<&EditorHosts, Changed<EditorHosts>>,
     values: Query<&InspectedValues>,
     changed_values: Query<&InspectedValues, Changed<InspectedValues>>,
-    nodes: Query<&mut UINode>,
+    mut nodes: Query<&mut UINode>,
     parents: Query<&ChildOf>,
-    children: Query<&mut Children>,
+    mut children: Query<&mut Children>,
 ) {
     let hosts_changed = changed_hosts.iter().next().is_some();
     let values_changed = changed_values.iter().next().is_some();
@@ -131,12 +131,12 @@ pub(crate) fn sync_workspace(
         .is_some_and(|entity| values.get_entity(entity).is_some());
     let form = document.is_some_and(|doc| editors.form(doc.asset_type));
     if let Some(centre) = registry.region(Region::Centre) {
-        set_visible(&nodes, centre, !form);
+        set_visible(&mut nodes, centre, !form);
     }
     let bases = panel_bodies(&registry);
     for (entity, visible) in bases.into_iter().zip([viewport, scene, scene || inspected]) {
         if let Some(entity) = entity {
-            set_visible(&nodes, entity, visible);
+            set_visible(&mut nodes, entity, visible);
         }
     }
     let front = active
@@ -174,11 +174,11 @@ pub(crate) fn sync_workspace(
             .into_iter()
             .flatten()
         {
-            set_visible(&nodes, host, active.0 == Some(entity));
+            set_visible(&mut nodes, host, active.0 == Some(entity));
         }
         if let Some(host) = hosts.inspector
             && values.get_entity(entity).is_some()
-            && let Some(mut node) = nodes.get_entity(host)
+            && let Some(mut node) = nodes.get_entity_mut(host)
             && (node.flex_grow != 0.0 || node.flex_shrink != 0.0)
         {
             node.flex_grow = 0.0;
@@ -188,13 +188,13 @@ pub(crate) fn sync_workspace(
     if hosts_changed || registry.is_changed() {
         if let Some(base) = bases[1] {
             let contextual: Vec<_> = hosts.iter().filter_map(|(_, h)| h.left).collect();
-            sort_siblings(&parents, &children, base, |entity| {
+            sort_siblings(&parents, &mut children, base, |entity| {
                 usize::from(entity != base && !contextual.contains(&entity))
             });
         }
         if let Some(base) = bases[2] {
             let contextual: Vec<_> = hosts.iter().filter_map(|(_, h)| h.inspector).collect();
-            sort_siblings(&parents, &children, base, |entity| {
+            sort_siblings(&parents, &mut children, base, |entity| {
                 if contextual.contains(&entity) {
                     0
                 } else {
@@ -207,20 +207,20 @@ pub(crate) fn sync_workspace(
 
 fn sort_siblings(
     parents: &Query<&ChildOf>,
-    children: &Query<&mut Children>,
+    children: &mut Query<&mut Children>,
     entity: Entity,
     key: impl FnMut(Entity) -> usize,
 ) {
     if let Some(mut siblings) = parents
         .get_entity(entity)
-        .and_then(|parent| children.get_entity(parent.parent()))
+        .and_then(|parent| children.get_entity_mut(parent.parent()))
     {
         siblings.sort_by_key(key);
     }
 }
 
-fn set_visible(nodes: &Query<&mut UINode>, entity: Entity, visible: bool) {
-    if let Some(mut node) = nodes.get_entity(entity)
+fn set_visible(nodes: &mut Query<&mut UINode>, entity: Entity, visible: bool) {
+    if let Some(mut node) = nodes.get_entity_mut(entity)
         && node.visible != visible
     {
         node.visible = visible;

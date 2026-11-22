@@ -336,10 +336,10 @@ fn scrollbar_gutter(theme: &UITheme) -> f32 {
 
 fn sync_inspector_scroll(
     stacks: Query<(&ComponentStack, &UILayout)>,
-    views: Query<(&DetailsView, &mut UIScrollArea, &UILayout)>,
+    mut views: Query<(&DetailsView, &mut UIScrollArea, &UILayout)>,
     data: Res<InspectorData>,
 ) {
-    let Some((_, mut area, view)) = views.iter().next() else {
+    let Some((_, mut area, view)) = views.iter_mut().next() else {
         return;
     };
 

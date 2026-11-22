@@ -12,9 +12,9 @@ pub(crate) struct OrderItems(pub(crate) Vec<(Entity, Vec<Entity>)>);
 impl Signal for OrderItems {}
 impl EntitySignal for OrderItems {}
 
-pub(crate) fn order_items(on: On<OrderItems>, children: Query<&mut Children>) {
+pub(crate) fn order_items(on: On<OrderItems>, mut children: Query<&mut Children>) {
     for (parent, items) in &on.signal().0 {
-        if let Some(mut children) = children.get_entity(*parent) {
+        if let Some(mut children) = children.get_entity_mut(*parent) {
             follow_order(&mut children, items);
         }
     }

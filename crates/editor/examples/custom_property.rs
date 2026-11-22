@@ -153,10 +153,10 @@ pub fn toggle_setting(
 }
 
 pub fn refresh_settings(
-    buttons: Query<(&SettingButton, &mut UIText)>,
+    mut buttons: Query<(&SettingButton, &mut UIText)>,
     rows: Query<&PropertyRowValue>,
 ) {
-    for (button, mut text) in buttons.iter() {
+    for (button, mut text) in buttons.iter_mut() {
         let Some(value) = rows.get_entity(button.0) else {
             continue;
         };

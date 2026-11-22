@@ -166,27 +166,27 @@ fn attach_source<P: Clone + Send + Sync + 'static>(
 fn detach_source<P: Clone + Send + Sync + 'static>(
     on: On<Remove<DragSource<P>>>,
     mut state: ResMut<DragState>,
-    labels: Query<&mut UINode, With<DragLabel>>,
+    mut labels: Query<&mut UINode, With<DragLabel>>,
     mut cmd: CommandQueue,
 ) {
     let entity = on.signal().entity;
     cmd.remove::<Listener<UIDrag>>(entity);
     cmd.remove::<Listener<UIPointerUp>>(entity);
-    drop_source(entity, &mut state, &labels);
+    drop_source(entity, &mut state, &mut labels);
 }
 
 fn forget_source<P: Clone + Send + Sync + 'static>(
     on: On<Despawn<DragSource<P>>>,
     mut state: ResMut<DragState>,
-    labels: Query<&mut UINode, With<DragLabel>>,
+    mut labels: Query<&mut UINode, With<DragLabel>>,
 ) {
-    drop_source(on.signal().entity, &mut state, &labels);
+    drop_source(on.signal().entity, &mut state, &mut labels);
 }
 
 fn drop_source(
     entity: Entity,
     state: &mut DragState,
-    labels: &Query<&mut UINode, With<DragLabel>>,
+    labels: &mut Query<&mut UINode, With<DragLabel>>,
 ) {
     if matches!(*state, DragState::Dragging { source } if source == entity) {
         hide_label(labels);
@@ -201,7 +201,7 @@ fn follow_drag<P: Clone + Send + Sync + 'static>(label: String) -> Listener<UIDr
            parents: Query<&ChildOf>,
            targets: Query<&DropTarget<P>>,
            theme: Res<UITheme>,
-           labels: Query<(&mut UINode, &mut UIText, &mut UIMaterial), With<DragLabel>>| {
+           mut labels: Query<(&mut UINode, &mut UIText, &mut UIMaterial), With<DragLabel>>| {
         let drag = on.signal();
         if drag.button != MouseButton::Left {
             return;
@@ -226,7 +226,7 @@ fn follow_drag<P: Clone + Send + Sync + 'static>(label: String) -> Listener<UIDr
             *state = DragState::Dragging { source };
         }
         let accepted = target_under(**hovered, &parents, &targets).is_some();
-        show_label(&labels, &theme, &label, drag.position, accepted);
+        show_label(&mut labels, &theme, &label, drag.position, accepted);
     })
     .into_listener()
 }
@@ -237,7 +237,7 @@ fn finish_drag<P: Clone + Send + Sync + 'static>(payload: P) -> Listener<UIPoint
            hovered: Res<HoveredNode>,
            parents: Query<&ChildOf>,
            targets: Query<&DropTarget<P>>,
-           labels: Query<&mut UINode, With<DragLabel>>,
+           mut labels: Query<&mut UINode, With<DragLabel>>,
            mut cmd: CommandQueue| {
         let up = on.signal();
         if up.button != MouseButton::Left {
@@ -248,7 +248,7 @@ fn finish_drag<P: Clone + Send + Sync + 'static>(payload: P) -> Listener<UIPoint
         if !dragged {
             return;
         }
-        hide_label(&labels);
+        hide_label(&mut labels);
         if let Some(target) = target_under(**hovered, &parents, &targets) {
             cmd.entity(target).trigger(Dropped {
                 payload: payload.clone(),
@@ -275,7 +275,7 @@ fn target_under<P: Clone + Send + Sync + 'static>(
 }
 
 fn show_label(
-    labels: &Query<(&mut UINode, &mut UIText, &mut UIMaterial), With<DragLabel>>,
+    labels: &mut Query<(&mut UINode, &mut UIText, &mut UIMaterial), With<DragLabel>>,
     theme: &UITheme,
     label: &str,
     cursor: Vec2,
@@ -293,7 +293,7 @@ fn show_label(
         theme.text_muted
     };
     let border = if accepted { theme.accent } else { theme.border }.to_linear();
-    for (mut node, mut text, mut material) in labels.iter() {
+    for (mut node, mut text, mut material) in labels.iter_mut() {
         if !node.visible || node.inset != inset {
             node.visible = true;
             node.inset = inset;
@@ -308,8 +308,8 @@ fn show_label(
     }
 }
 
-fn hide_label(labels: &Query<&mut UINode, With<DragLabel>>) {
-    for mut node in labels.iter() {
+fn hide_label(labels: &mut Query<&mut UINode, With<DragLabel>>) {
+    for mut node in labels.iter_mut() {
         if node.visible {
             node.visible = false;
         }
@@ -320,7 +320,7 @@ fn cancel_drag(
     input: Res<Input>,
     pointer: Res<UIInputState>,
     mut state: ResMut<DragState>,
-    labels: Query<&mut UINode, With<DragLabel>>,
+    mut labels: Query<&mut UINode, With<DragLabel>>,
 ) {
     let captured = pointer.captured(MouseButton::Left);
     let next = match *state {
@@ -332,7 +332,7 @@ fn cancel_drag(
         _ => return,
     };
     if matches!(*state, DragState::Dragging { .. }) {
-        hide_label(&labels);
+        hide_label(&mut labels);
     }
     *state = next;
 }

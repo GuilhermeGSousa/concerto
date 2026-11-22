@@ -171,7 +171,7 @@ fn draw_channels(
 
 /// Draws what each character's `MotionMatchingGizmos` turns on, at where its capsule is drawn this frame.
 pub fn draw_motion_matching(
-    characters: Query<(&mut MotionMatchingGizmos, &CharacterLink, &GlobalTransform)>,
+    mut characters: Query<(&mut MotionMatchingGizmos, &CharacterLink, &GlobalTransform)>,
     players: Query<&AnimationPlayer>,
     simulations: Query<&CharacterSimulation>,
     globals: Query<&GlobalTransform>,
@@ -183,7 +183,7 @@ pub fn draw_motion_matching(
     mut gizmos: DebugGizmos,
 ) {
     gizmos.set_line_width(SIMULATION_WIDTH);
-    for (mut shown, link, character) in characters.iter() {
+    for (mut shown, link, character) in characters.iter_mut() {
         let (Some(capsule), Some(skeleton)) = (link.capsule.entity(), link.skeleton.entity())
         else {
             continue;

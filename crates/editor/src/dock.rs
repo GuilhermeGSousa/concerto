@@ -377,13 +377,13 @@ pub(crate) fn apply_layout(
     layout: Res<EditorLayout>,
     states: Res<PanelStates>,
     window: Res<Window>,
-    parts: Query<(&LayoutPart, &mut UINode)>,
+    mut parts: Query<(&LayoutPart, &mut UINode)>,
 ) {
     if !(layout.is_changed() || states.is_changed() || window.is_changed()) {
         return;
     }
     let shown = layout.shown(&states, window.logical_size());
-    for (part, mut node) in parts.iter() {
+    for (part, mut node) in parts.iter_mut() {
         let panel = match *part {
             LayoutPart::Splitter(panel) => {
                 let visible = states.of(panel) == PanelState::Sized;

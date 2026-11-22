@@ -91,10 +91,10 @@ fn finish_derive(
 }
 
 pub(crate) fn derive_textures(
-    documents: Query<(&mut EditorDocument, &mut TextureTab)>,
+    mut documents: Query<(&mut EditorDocument, &mut TextureTab)>,
     server: Res<AssetServer>,
 ) {
-    for (mut editor, mut tab) in documents.iter() {
+    for (mut editor, mut tab) in documents.iter_mut() {
         if tab.job.as_ref().is_some_and(|job| job.handle.is_finished())
             && let Some(job) = tab.job.take()
         {
@@ -186,21 +186,21 @@ fn fitted(texels: [f32; 2], room: [f32; 2]) -> [f32; 2] {
 }
 
 pub(crate) fn show_previews(
-    documents: Query<(&EditorDocument, &TextureTab, &mut TexturePreview)>,
+    mut documents: Query<(&EditorDocument, &TextureTab, &mut TexturePreview)>,
     textures: Option<Res<AssetStore<Texture>>>,
-    materials: Query<&mut UIMaterial>,
+    mut materials: Query<&mut UIMaterial>,
     layouts: Query<&UILayout>,
-    nodes: Query<&mut UINode>,
-    texts: Query<&mut UIText>,
+    mut nodes: Query<&mut UINode>,
+    mut texts: Query<&mut UIText>,
 ) {
-    for (editor, tab, mut preview) in documents.iter() {
-        if let Some(mut text) = texts.get_entity(preview.line)
+    for (editor, tab, mut preview) in documents.iter_mut() {
+        if let Some(mut text) = texts.get_entity_mut(preview.line)
             && text.text != editor.status
         {
             text.text = editor.status.clone();
         }
         if let Some(handle) = &tab.preview
-            && let Some(mut material) = materials.get_entity(preview.image)
+            && let Some(mut material) = materials.get_entity_mut(preview.image)
             && material
                 .texture
                 .as_ref()
@@ -222,7 +222,7 @@ pub(crate) fn show_previews(
         };
         let room = frame.content_rect.size;
         let [width, height] = fitted(texels, [room.x, room.y - line.rect.size.y]);
-        if let Some(mut node) = nodes.get_entity(preview.image)
+        if let Some(mut node) = nodes.get_entity_mut(preview.image)
             && (node.width != UIValue::Px(width) || node.height != UIValue::Px(height))
         {
             node.width = UIValue::Px(width);

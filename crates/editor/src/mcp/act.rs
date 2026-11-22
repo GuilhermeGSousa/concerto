@@ -347,7 +347,7 @@ fn open_asset(
     state: Res<ProjectState>,
     registry: Res<AssetRegistry>,
     editors: Res<AssetEditorRegistry>,
-    documents: Query<(Entity, &mut EditorDocument)>,
+    mut documents: Query<(Entity, &mut EditorDocument)>,
     mut commands: ResMut<EditorCommands>,
     mut cmd: CommandQueue,
 ) {
@@ -378,11 +378,11 @@ fn open_asset(
         };
         commands.0.push_back(EditorCommand::OpenAsset(asset.id));
         let document = documents
-            .iter()
+            .iter_mut()
             .find(|(_, document)| document.asset_type == kind)
             .map(|(entity, _)| entity);
         if let Some(entity) = document
-            && let Some((_, mut shown)) = documents.get_entity(entity)
+            && let Some((_, mut shown)) = documents.get_entity_mut(entity)
         {
             if shown
                 .current

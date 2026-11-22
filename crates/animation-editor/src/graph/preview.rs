@@ -141,10 +141,10 @@ fn show_graphs(
     on: On<ShowGraphs>,
     server: Res<AssetServer>,
     mut stage: ResMut<GraphStage>,
-    players: Query<&mut AnimationPlayer>,
+    mut players: Query<&mut AnimationPlayer>,
 ) {
     let shown = on.signal();
-    for mut player in players.iter() {
+    for mut player in players.iter_mut() {
         player.set_paused(true);
     }
     let mut graphs = Vec::new();
@@ -174,11 +174,11 @@ fn set_graph_param(
     on: On<SetGraphParam>,
     types: Res<AppTypeRegistry>,
     mut stage: ResMut<GraphStage>,
-    players: Query<&mut AnimationPlayer>,
+    mut players: Query<&mut AnimationPlayer>,
 ) {
     let param = on.signal();
     let types = types.read();
-    for mut player in players.iter() {
+    for mut player in players.iter_mut() {
         if let Some(value) = param_value(&types, param) {
             player.set_boxed_param(param.name, value);
         }
@@ -193,7 +193,7 @@ fn set_graph_playback(
     on: On<SetGraphPlayback>,
     mut stage: ResMut<GraphStage>,
     mut time: ResMut<Time>,
-    players: Query<&mut AnimationPlayer>,
+    mut players: Query<&mut AnimationPlayer>,
 ) {
     let playback = on.signal();
     stage.playing = playback.playing;
@@ -201,7 +201,7 @@ fn set_graph_playback(
     if stage.restart != Restart::Settled {
         return;
     }
-    for mut player in players.iter() {
+    for mut player in players.iter_mut() {
         player.set_paused(!playback.playing);
     }
 }
@@ -210,7 +210,7 @@ fn start_graph_players(
     mut stage: ResMut<GraphStage>,
     server: Res<AssetServer>,
     types: Res<AppTypeRegistry>,
-    players: Query<(
+    mut players: Query<(
         Entity,
         &mut AnimationPlayer,
         Option<&AnimationHandleComponent>,
@@ -224,7 +224,7 @@ fn start_graph_players(
         return;
     }
     let restart = stage.restart;
-    for (entity, mut player, started) in players.iter() {
+    for (entity, mut player, started) in players.iter_mut() {
         if started.is_none() {
             let types = types.read();
             for param in &stage.params {
@@ -281,7 +281,7 @@ fn carry_root_motion(
     skeletons: Query<(Entity, &SkeletonComponent)>,
     spaces: Query<&GlobalTransform>,
     root_bones: Query<&AnimationRootBone>,
-    roots: Query<&mut Transform, With<ClipPreviewRoot>>,
+    mut roots: Query<&mut Transform, With<ClipPreviewRoot>>,
 ) {
     let Some(skeleton) = first_rooted(skeletons.iter()) else {
         return;
@@ -302,7 +302,7 @@ fn carry_root_motion(
     if !moved.is_finite() || !turned.is_finite() {
         return;
     }
-    for mut root in roots.iter() {
+    for mut root in roots.iter_mut() {
         root.translation += moved;
         root.rotation = (turned * root.rotation).normalize();
     }

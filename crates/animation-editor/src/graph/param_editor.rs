@@ -128,7 +128,7 @@ fn toggle_param_menu<T: Reflect + Default>(row: Entity) -> Listener<UIClick> {
            active: Res<ActiveEditor>,
            documents: Query<&GraphDocument>,
            values: Query<&PropertyRowValue>,
-           menus: Query<(Entity, &mut UIAnchoredPanel), With<NameMenu>>,
+           mut menus: Query<(Entity, &mut UIAnchoredPanel), With<NameMenu>>,
            theme: Res<UITheme>,
            mut cmd: CommandQueue| {
         if on.signal().button != MouseButton::Left {
@@ -152,7 +152,7 @@ fn toggle_param_menu<T: Reflect + Default>(row: Entity) -> Listener<UIClick> {
             &names,
             current.as_ref().map(Name::as_str),
             |name| pick_param::<T>(row, Name::new(name)),
-            &menus,
+            &mut menus,
             &theme,
             &mut cmd,
         );
@@ -162,13 +162,13 @@ fn toggle_param_menu<T: Reflect + Default>(row: Entity) -> Listener<UIClick> {
 
 fn pick_param<T: Reflect + Default>(row: Entity, name: Name) -> Listener<UIClick> {
     (move |on: On<UIClick>,
-           menus: Query<&mut UIAnchoredPanel, With<NameMenu>>,
+           mut menus: Query<&mut UIAnchoredPanel, With<NameMenu>>,
            rows: Query<&PropertyRow>,
            mut commits: ResMut<PropertyCommits>| {
         if on.signal().button != MouseButton::Left {
             return;
         }
-        close_menu(&menus);
+        close_menu(&mut menus);
         let Some(target) = rows.get_entity(row) else {
             return;
         };
@@ -190,12 +190,12 @@ pub(crate) fn commit_param_fields(
     mut lost: EventReader<UIFocusLost>,
     mut cancelled: EventReader<UITextInputCancelled>,
     rows: Query<&PropertyRow>,
-    fields: Query<(&mut ParamNameField, &mut UITextInput)>,
+    mut fields: Query<(&mut ParamNameField, &mut UITextInput)>,
     mut commits: ResMut<PropertyCommits>,
     mut focused: ResMut<FocusedWidget>,
 ) {
     for event in submitted.read() {
-        let Some((mut field, mut input)) = fields.get_entity(event.entity) else {
+        let Some((mut field, mut input)) = fields.get_entity_mut(event.entity) else {
             continue;
         };
         let Some(row) = rows.get_entity(field.row) else {
@@ -209,12 +209,12 @@ pub(crate) fn commit_param_fields(
         field.displayed = name;
     }
     for event in lost.read() {
-        if let Some((field, mut input)) = fields.get_entity(event.0) {
+        if let Some((field, mut input)) = fields.get_entity_mut(event.0) {
             revert(&field, &mut input);
         }
     }
     for event in cancelled.read() {
-        let Some((field, mut input)) = fields.get_entity(event.entity) else {
+        let Some((field, mut input)) = fields.get_entity_mut(event.entity) else {
             continue;
         };
         revert(&field, &mut input);
@@ -227,9 +227,9 @@ pub(crate) fn commit_param_fields(
 pub(crate) fn refresh_param_fields(
     focused: Res<FocusedWidget>,
     rows: Query<&PropertyRowValue>,
-    fields: Query<(Entity, &mut ParamNameField, &mut UITextInput)>,
+    mut fields: Query<(Entity, &mut ParamNameField, &mut UITextInput)>,
 ) {
-    for (entity, mut field, mut input) in fields.iter() {
+    for (entity, mut field, mut input) in fields.iter_mut() {
         if **focused == Some(entity) {
             continue;
         }

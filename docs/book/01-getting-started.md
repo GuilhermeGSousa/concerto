@@ -114,8 +114,8 @@ fn setup(mut cmd: CommandQueue) {
     cmd.spawn(WorldGrid::default());
 }
 
-fn orbit(time: Res<Time>, cameras: Query<(&mut Orbit, &mut Transform), With<VirtualCamera>>) {
-    for (mut orbit, mut transform) in cameras.iter() {
+fn orbit(time: Res<Time>, mut cameras: Query<(&mut Orbit, &mut Transform), With<VirtualCamera>>) {
+    for (mut orbit, mut transform) in cameras.iter_mut() {
         orbit.angle += 0.3 * time.delta().as_secs_f32();
         let position = Vec3::new(orbit.angle.sin() * 12.0, 4.0, orbit.angle.cos() * 12.0);
         let look = Quat::from_rotation_y(orbit.angle) * Quat::from_rotation_x(-0.3);

@@ -153,7 +153,7 @@ pub struct NavUnreachable {
 
 /// Stops each agent on a route that lost its `NavDestination` or `NavAgent`, keeping its facing.
 pub fn stop_nav_agents(
-    agents: Query<
+    mut agents: Query<
         (Entity, &mut NavSteering),
         (
             With<NavRoute>,
@@ -162,7 +162,7 @@ pub fn stop_nav_agents(
     >,
     mut cmd: CommandQueue,
 ) {
-    for (agent, mut steering) in agents.iter() {
+    for (agent, mut steering) in agents.iter_mut() {
         steering.velocity = Vec3::ZERO;
         cmd.remove::<NavRoute>(agent);
     }
@@ -221,7 +221,7 @@ fn mesh_path(query: &NavMeshQuery, from: Vec3, point: &NavGraphPoint) -> Option<
 
 /// Plans a route for each agent without one, whose destination changed, whose route the changed graph may have broken, or whose route was planned on another navmesh than the one loaded now; while a `NavMeshComponent`'s mesh is still loading and none is loaded, an agent without a route, or whose destination changed, stops and waits, and every other route is kept as it is.
 pub fn plan_nav_routes(
-    agents: Query<
+    mut agents: Query<
         (
             Entity,
             Ref<NavDestination>,
@@ -262,7 +262,7 @@ pub fn plan_nav_routes(
             navmeshes.get(&component.handle).is_none()
                 && server.is_loading_or_loaded(component.handle.id())
         });
-    for (agent, destination, transform, route, steering) in agents.iter() {
+    for (agent, destination, transform, route, steering) in agents.iter_mut() {
         match route {
             None if mesh_loading => continue,
             None => {}
@@ -328,7 +328,7 @@ pub fn plan_nav_routes(
 
 /// Moves each agent's `NavSteering` along its route, and stops it on the last point.
 pub fn steer_nav_agents(
-    agents: Query<(
+    mut agents: Query<(
         Entity,
         &NavAgent,
         &NavDestination,
@@ -340,7 +340,7 @@ pub fn steer_nav_agents(
     mut arrived: EventWriter<NavArrived>,
     mut cmd: CommandQueue,
 ) {
-    for (agent, settings, destination, transform, mut route, mut steering) in agents.iter() {
+    for (agent, settings, destination, transform, mut route, mut steering) in agents.iter_mut() {
         let position = transform.translation();
         let last = route.path.positions.len() - 1;
         while route.next < last && waypoint_reached(&route, position, settings.arrival_radius) {
