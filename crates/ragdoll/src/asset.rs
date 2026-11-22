@@ -2,6 +2,7 @@ use concerto_foundation::assets::{
     Asset, CreatableAsset, LoadableAsset, asset_server::AssetLoadContext, handle::AssetHandle,
 };
 use concerto_mesh::{JointName, ReflectSkeletonSource, Skeleton, SkeletonSource};
+use concerto_name::Name;
 use concerto_reflect::{Reflect, ReflectDefault};
 use glam::{Quat, Vec3};
 use serde::{Deserialize, Serialize};
@@ -12,6 +13,8 @@ use serde::{Deserialize, Serialize};
 pub struct Ragdoll {
     pub skeleton: AssetHandle<Skeleton>,
     pub parts: Vec<RagdollPart>,
+    /// Named strength settings for the whole body, such as "flinch", "braced" and "limp"; a `CharacterRagdoll` in the powered mode names one.
+    pub profiles: Vec<StrengthProfile>,
 }
 
 impl Ragdoll {
@@ -20,12 +23,23 @@ impl Ragdoll {
         Self {
             skeleton,
             parts: Vec::new(),
+            profiles: Vec::new(),
         }
     }
 
     pub fn with_part(mut self, part: RagdollPart) -> Self {
         self.parts.push(part);
         self
+    }
+
+    pub fn with_profile(mut self, profile: StrengthProfile) -> Self {
+        self.profiles.push(profile);
+        self
+    }
+
+    /// The profile called `name`, if the ragdoll has one.
+    pub fn profile(&self, name: &str) -> Option<&StrengthProfile> {
+        self.profiles.iter().find(|profile| &*profile.name == name)
     }
 
     /// The part on `bone`, if it has one.
@@ -63,6 +77,77 @@ impl CreatableAsset for Ragdoll {
 impl SkeletonSource for Ragdoll {
     fn skeleton(&self) -> Option<&AssetHandle<Skeleton>> {
         Some(&self.skeleton)
+    }
+}
+
+/// How one part is held to the animated pose.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Reflect, Serialize, Deserialize)]
+pub enum PartStrength {
+    /// The part follows its bone exactly and nothing moves it.
+    #[default]
+    Kinematic,
+    /// The part is dynamic and its joint's motor pulls it towards the animated pose: `stiffness` in N·m/rad, `damping` in N·m·s/rad, and no more torque than `torque_limit` N·m.
+    Powered {
+        stiffness: f32,
+        damping: f32,
+        torque_limit: f32,
+    },
+    /// The part is dynamic and its joint's motor is off.
+    Limp,
+}
+
+impl PartStrength {
+    /// A powered part with a spring of `stiffness` N·m/rad, damped at a tenth of it, capped at `torque_limit` N·m.
+    pub fn powered(stiffness: f32, torque_limit: f32) -> Self {
+        Self::Powered {
+            stiffness,
+            damping: stiffness * 0.1,
+            torque_limit,
+        }
+    }
+}
+
+/// The strength of the part on one bone, where it differs from its profile's.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Reflect, Serialize, Deserialize)]
+pub struct BoneStrength {
+    pub bone: JointName,
+    pub strength: PartStrength,
+}
+
+/// Named strength settings for a whole body: one strength for every part, and others for the parts that differ.
+#[derive(Clone, Debug, Default, PartialEq, Reflect, Serialize, Deserialize)]
+pub struct StrengthProfile {
+    pub name: Name,
+    /// The strength of every part that `parts` does not name.
+    pub strength: PartStrength,
+    pub parts: Vec<BoneStrength>,
+}
+
+impl StrengthProfile {
+    /// A profile called `name` with every part at `strength`.
+    pub fn new(name: impl Into<Name>, strength: PartStrength) -> Self {
+        Self {
+            name: name.into(),
+            strength,
+            parts: Vec::new(),
+        }
+    }
+
+    /// Gives the part on `bone` a strength of its own.
+    pub fn with_part(mut self, bone: impl Into<JointName>, strength: PartStrength) -> Self {
+        self.parts.push(BoneStrength {
+            bone: bone.into(),
+            strength,
+        });
+        self
+    }
+
+    /// The strength of the part on `bone`.
+    pub fn strength_of(&self, bone: &str) -> PartStrength {
+        self.parts
+            .iter()
+            .find(|part| &*part.bone == bone)
+            .map_or(self.strength, |part| part.strength)
     }
 }
 
@@ -186,6 +271,32 @@ impl RagdollJoint {
     }
 }
 
+/// The kind of body segment a part is, which tells the sensing and the behaviours which parts are the feet, the trunk and the arms, and decides a generated part's mass, thickness and limits.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Reflect, Serialize, Deserialize)]
+pub enum Segment {
+    /// A part that is none of the others: a tail, a prop.
+    #[default]
+    Other,
+    Pelvis,
+    Spine,
+    Head,
+    UpperArm,
+    LowerArm,
+    Hand,
+    Thigh,
+    Shin,
+    Foot,
+}
+
+/// Which side of the body a part is on.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Reflect, Serialize, Deserialize)]
+pub enum Side {
+    #[default]
+    Centre,
+    Left,
+    Right,
+}
+
 /// One body of a ragdoll, following one bone.
 #[derive(Clone, Debug, PartialEq, Reflect, Serialize, Deserialize)]
 pub struct RagdollPart {
@@ -199,6 +310,9 @@ pub struct RagdollPart {
     pub mass: f32,
     /// The joint to the parent part; unused on the root part.
     pub joint: RagdollJoint,
+    /// What part of the body this is.
+    pub segment: Segment,
+    pub side: Side,
 }
 
 impl Default for RagdollPart {
@@ -210,6 +324,8 @@ impl Default for RagdollPart {
             rotation: Quat::IDENTITY,
             mass: 1.0,
             joint: RagdollJoint::default(),
+            segment: Segment::Other,
+            side: Side::Centre,
         }
     }
 }
@@ -241,6 +357,13 @@ impl RagdollPart {
 
     pub fn with_joint(mut self, joint: RagdollJoint) -> Self {
         self.joint = joint;
+        self
+    }
+
+    /// Says what part of the body this is.
+    pub fn with_segment(mut self, segment: Segment, side: Side) -> Self {
+        self.segment = segment;
+        self.side = side;
         self
     }
 }

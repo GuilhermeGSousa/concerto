@@ -19,7 +19,7 @@ use glam::Vec3;
 use crate::aabb::Aabb;
 use crate::body::BodyActivity;
 use crate::collider::{Collider, ColliderOffset};
-use crate::query::RagdollQuery;
+use crate::layers::{CollisionLayers, Layers};
 use crate::ragdoll::{BodyPose, JointDrive, RagdollBuildError, RagdollSettings};
 use crate::rigid_body::{MotionType, RigidBody};
 
@@ -153,6 +153,7 @@ pub trait PhysicsBackend: Send + Sync + Sized {
         offset: Option<&ColliderOffset>,
         sensor: bool,
         gravity_scale: f32,
+        layers: CollisionLayers,
     ) -> Self::BodyHandle;
 
     /// Removes `body` from the simulation and destroys it, waking any bodies
@@ -169,6 +170,15 @@ pub trait PhysicsBackend: Send + Sync + Sized {
     /// Moves the contacts seen since the last drain into `out`, in order; call it after [`drain_sensor_contacts`](Self::drain_sensor_contacts).
     fn drain_contacts(&mut self, out: &mut Vec<RawContact<Self::BodyHandle>>);
 
+    /// Gives the body its collision layers; in no layer it collides with nothing and no query sees it.
+    fn set_body_layers(&mut self, body: Self::BodyHandle, layers: CollisionLayers);
+
+    /// Sets the body's velocities so that it reaches `pose` after `delta_time`.
+    fn move_body_kinematic(&mut self, body: Self::BodyHandle, pose: BodyPose, delta_time: f32);
+
+    /// Moves the body's origin at once, keeping its rotation and velocity.
+    fn set_body_translation(&mut self, body: Self::BodyHandle, translation: Vec3);
+
     /// How `body` is moving right now.
     fn body_activity(&self, body: Self::BodyHandle) -> BodyActivity;
 
@@ -176,6 +186,8 @@ pub trait PhysicsBackend: Send + Sync + Sized {
     fn body_transform(&self, body: Self::BodyHandle) -> Transform;
 
     fn linear_velocity(&self, body: Self::BodyHandle) -> Vec3;
+
+    fn angular_velocity(&self, body: Self::BodyHandle) -> Vec3;
 
     /// Also wakes the body, so a sleeping body picks the velocity up.
     fn set_linear_velocity(&mut self, body: Self::BodyHandle, velocity: Vec3);
@@ -188,6 +200,8 @@ pub trait PhysicsBackend: Send + Sync + Sized {
 
     fn add_force_at(&mut self, body: Self::BodyHandle, force: Vec3, position: Vec3);
 
+    fn add_torque(&mut self, body: Self::BodyHandle, torque: Vec3);
+
     /// Casts a ray from `origin` along `direction` — whose length is the
     /// maximum cast distance — and returns the closest hit, if any, skipping
     /// the bodies in `ignore`.
@@ -196,7 +210,7 @@ pub trait PhysicsBackend: Send + Sync + Sized {
         origin: Vec3,
         direction: Vec3,
         ignore: &[Self::BodyHandle],
-        ragdolls: RagdollQuery,
+        layers: Layers,
     ) -> Option<RawRayHit<Self::BodyHandle>>;
 
     /// Sweeps a sphere of `radius` from `origin` along `direction` and returns the first body it touches, skipping `ignore`.
@@ -206,7 +220,7 @@ pub trait PhysicsBackend: Send + Sync + Sized {
         radius: f32,
         direction: Vec3,
         ignore: &[Self::BodyHandle],
-        ragdolls: RagdollQuery,
+        layers: Layers,
     ) -> Option<RawShapeHit<Self::BodyHandle>>;
 
     /// Collides `body`'s shape against the world (ignoring `body` itself)
@@ -232,13 +246,6 @@ pub trait PhysicsBackend: Send + Sync + Sized {
 
     /// Removes the ragdoll's bodies and joints from the simulation and destroys them.
     fn destroy_ragdoll(&mut self, ragdoll: Self::RagdollHandle);
-
-    /// Stops every part of the ragdoll colliding with `body`, or with nothing in particular when it is `None`.
-    fn set_ragdoll_ignored_body(
-        &mut self,
-        ragdoll: Self::RagdollHandle,
-        body: Option<Self::BodyHandle>,
-    );
 
     /// The body of each part, in part order.
     fn ragdoll_bodies(&self, ragdoll: Self::RagdollHandle) -> Vec<Self::BodyHandle>;
@@ -273,6 +280,8 @@ pub trait PhysicsBackend: Send + Sync + Sized {
         part: usize,
         motion: MotionType,
     );
+
+    fn set_ragdoll_frozen(&mut self, ragdoll: Self::RagdollHandle, frozen: bool);
 
     fn ragdoll_joint_motor_impulse(&self, ragdoll: Self::RagdollHandle, part: usize) -> Vec3;
 

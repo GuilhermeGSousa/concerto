@@ -121,562 +121,42 @@ impl Importer for GltfImporter {
         let source_dir = source_path.parent().unwrap_or_else(|| Path::new(""));
         let buffers = gltf::import_buffers(&document, Some(source_dir), blob)
             .map_err(|e| malformed(e.to_string()))?;
+        let source = GltfSource {
+            path: source_path,
+            dir: source_dir,
+            document: &document,
+            buffers: &buffers,
+        };
 
-        // Track every external `.bin`/image `uri` the document pulls in, so
-        // editing one and re-running `import` regenerates instead of shipping
-        // stale imported output. Embedded `data:` URIs need no tracking — a
-        // change there changes the `.gltf`'s own hash.
-        for buffer in document.buffers() {
-            if let gltf::buffer::Source::Uri(uri) = buffer.source() {
-                track_external(ctx, source_dir, uri);
-            }
-        }
-        for image in document.images() {
-            if let gltf::image::Source::Uri { uri, .. } = image.source() {
-                track_external(ctx, source_dir, uri);
-            }
-        }
+        track_externals(&source, ctx);
 
-        // Color textures (base color, emissive) are sRGB-encoded while data
-        // textures (normal, metallic-roughness, occlusion) are linear. An
-        // image can be referenced in both roles, so texture sub-assets are
-        // keyed per (image, color space) pair.
-        let mut needed_textures: BTreeMap<TextureKey, TextureRole> = BTreeMap::new();
-        let mut materials: Vec<StandardMaterial> = Vec::new();
-        {
-            let mut texture_ref =
-                |texture: gltf::Texture<'_>, role: TextureRole| -> AssetHandle<Texture> {
-                    let image_index = texture.source().index();
-                    let srgb = role == TextureRole::Color;
-                    let kept = needed_textures
-                        .entry(TextureKey { image_index, srgb })
-                        .or_insert(role);
-                    if role == TextureRole::Data {
-                        *kept = role;
-                    }
-                    AssetHandle::weak(ctx.sub_asset_id(&texture_name(image_index, srgb)))
-                };
-
-            for gltf_material in document.materials() {
-                let pbr = gltf_material.pbr_metallic_roughness();
-                let mut material = StandardMaterial::new(
-                    pbr.base_color_texture()
-                        .map(|info| texture_ref(info.texture(), TextureRole::Color)),
-                    gltf_material
-                        .normal_texture()
-                        .map(|info| texture_ref(info.texture(), TextureRole::Normal)),
-                );
-
-                material.set_base_color_factor(Color::from(pbr.base_color_factor()));
-                material.set_metallic_factor(pbr.metallic_factor());
-                material.set_roughness_factor(pbr.roughness_factor());
-                material.set_emissive_factor(Vec3::from_array(gltf_material.emissive_factor()));
-
-                if let Some(info) = pbr.metallic_roughness_texture() {
-                    material.set_metallic_roughness_texture(texture_ref(
-                        info.texture(),
-                        TextureRole::Data,
-                    ));
-                }
-                if let Some(info) = gltf_material.emissive_texture() {
-                    material.set_emissive_texture(texture_ref(info.texture(), TextureRole::Color));
-                }
-                if let Some(info) = gltf_material.occlusion_texture() {
-                    material.set_occlusion_strength(info.strength());
-                    material.set_occlusion_texture(texture_ref(info.texture(), TextureRole::Data));
-                }
-
-                material.set_alpha_mode(match gltf_material.alpha_mode() {
-                    gltf::material::AlphaMode::Opaque => AlphaMode::Opaque,
-                    gltf::material::AlphaMode::Mask => AlphaMode::Mask {
-                        cutoff: gltf_material.alpha_cutoff().unwrap_or(0.5),
-                    },
-                    gltf::material::AlphaMode::Blend => AlphaMode::Blend,
-                });
-
-                materials.push(material);
-            }
-        }
-
-        let images: Vec<gltf::Image<'_>> = document.images().collect();
-        for (key, role) in &needed_textures {
-            let unkept = |message: String| {
-                malformed(format!(
-                    "failed to keep GLTF image {}: {message}",
-                    key.image_index
-                ))
-            };
-            let bytes =
-                image_bytes(&images[key.image_index], &buffers, source_dir).map_err(unkept)?;
-            let name = texture_name(key.image_index, key.srgb);
-            let ImportedTexture { texture, source } =
-                imported_texture(ctx, &name, *role, bytes, None).map_err(unkept)?;
-            ctx.emit_with(&name, &texture, &source)?;
-        }
+        let SourceMaterials {
+            needed_textures,
+            materials,
+        } = read_materials(&document, ctx);
+        emit_textures(&source, &needed_textures, ctx)?;
 
         for (index, material) in materials.iter().enumerate() {
             ctx.emit(&format!("material/{index}"), material)?;
         }
 
-        // Primitives with no material index share one default `StandardMaterial`
-        // emitted after the real ones (index == document.materials().count()).
-        let default_material_index = materials.len();
-        let mut default_material_used = false;
+        let mesh_prims = emit_meshes(&source, materials.len(), ctx)?;
 
-        let mut mesh_counter: usize = 0;
-        let mut mesh_prims: Vec<Vec<PrimRef>> = Vec::new();
-        for mesh in document.meshes() {
-            let mut prims = Vec::new();
-            for gltf_primitive in mesh.primitives() {
-                let m = load_primitive(source_path, mesh.name(), &buffers, &gltf_primitive)?;
-                ctx.emit(&format!("mesh/{mesh_counter}"), &m)?;
+        let hierarchy = NodeHierarchy::of(&document);
+        let EmittedSkins { skins, roots } = emit_skeletons(&source, &hierarchy, ctx)?;
+        emit_animations(&source, settings, &hierarchy.paths, roots, ctx)?;
 
-                let material_sub_asset = match gltf_primitive.material().index() {
-                    Some(material_index) => material_index,
-                    None => {
-                        default_material_used = true;
-                        default_material_index
-                    }
-                };
-                prims.push(PrimRef {
-                    mesh_sub_asset: mesh_counter,
-                    material_sub_asset,
-                });
-                mesh_counter += 1;
-            }
-            mesh_prims.push(prims);
-        }
+        let mut scene = SceneBuild {
+            nodes: Vec::new(),
+            referenced_assets: Vec::new(),
+        };
+        build_scene_nodes(&document, &skins, ctx, &mut scene)?;
+        attach_meshes(&document, &mesh_prims, &skins, ctx, &mut scene)?;
 
-        if default_material_used {
-            ctx.emit(
-                &format!("material/{default_material_index}"),
-                &StandardMaterial::default(),
-            )?;
-        }
-
-        // Name path per node, from every scene root. Bone ids are hashed from
-        // these paths, so a skeleton and the animation clips that drive it
-        // must both resolve bone identity through this one map.
-        let mut node_paths: HashMap<usize, NodePathInfo> = HashMap::new();
-        for scene in document.scenes() {
-            for root_node in scene.nodes() {
-                collect_paths(&root_node, &[], &mut node_paths, &mut HashSet::new());
-            }
-        }
-
-        let mut node_parents: HashMap<usize, usize> = HashMap::new();
-        for node in document.nodes() {
-            for child in node.children() {
-                node_parents.insert(child.index(), node.index());
-            }
-        }
-
-        // Skins -> `skeleton/N` sub-assets. A skin with no inverse bind
-        // matrices is unusable, so it is skipped and its node gets no
-        // `SkeletonComponent`. `SkinInfo` is looked up by `skeleton_index`, not
-        // vector position, so a skipped skin cannot misalign the rest.
-        let mut skins: Vec<SkinInfo> = Vec::new();
-        let mut roots: BTreeSet<Uuid> = BTreeSet::new();
-        for (skin_index, skin) in document.skins().enumerate() {
-            let Some(inverse_bind_matrices) = skin
-                .reader(|buffer| Some(&buffers[buffer.index()]))
-                .read_inverse_bind_matrices()
-                .map(|iter| {
-                    iter.map(|pose| Mat4::from_cols_array_2d(&pose))
-                        .collect::<Vec<_>>()
-                })
-            else {
-                continue;
-            };
-
-            let bones: Vec<SceneEntityRef> = skin
-                .joints()
-                .map(|joint| SceneEntityRef::Index(joint.index()))
-                .collect();
-
-            // A joint node unreachable from every scene root has no path entry,
-            // so it has no stable bone id. A skeleton with a partial bone-id
-            // list is worse than none: skip the whole skin, matching the
-            // animation-channel loop's warn-and-skip.
-            let mut bone_ids: Vec<Uuid> = Vec::with_capacity(bones.len());
-            let mut missing_joint_path = false;
-            for joint in skin.joints() {
-                match node_paths.get(&joint.index()) {
-                    Some(node_path_info) => bone_ids.push(paths_to_uuid(&node_path_info.node_path)),
-                    None => {
-                        warn!("Missing an node name for node {}.", joint.index());
-                        missing_joint_path = true;
-                        break;
-                    }
-                }
-            }
-            if missing_joint_path {
-                continue;
-            }
-
-            let mut joint_positions: HashMap<usize, usize> = HashMap::new();
-            for (position, joint) in skin.joints().enumerate() {
-                joint_positions.entry(joint.index()).or_insert(position);
-            }
-            let mut parents: Vec<Option<u16>> = Vec::with_capacity(bones.len());
-            let mut names: Vec<Name> = Vec::with_capacity(bones.len());
-            let mut rest_pose: Vec<JointPose> = Vec::with_capacity(bones.len());
-            for (position, joint) in skin.joints().enumerate() {
-                let parent_position = node_parents
-                    .get(&joint.index())
-                    .and_then(|parent| joint_positions.get(parent).map(|at| (*parent, *at)));
-                if let Some((parent_node, parent_position)) = parent_position
-                    && parent_position >= position
-                {
-                    return Err(ImportError::MalformedSource {
-                        source_path: source_path.to_path_buf(),
-                        message: format!(
-                            "skin {skin_index}: joint {} is listed before its parent joint {parent_node}; joints must be ordered parents first",
-                            joint.index()
-                        ),
-                    });
-                }
-                let parent = parent_position
-                    .map(|(_, at)| {
-                        u16::try_from(at).map_err(|_| ImportError::MalformedSource {
-                            source_path: source_path.to_path_buf(),
-                            message: format!(
-                                "skin {skin_index}: joint {} has a parent at position {at}, past the {} bones a skeleton can address",
-                                joint.index(),
-                                u16::MAX as usize + 1
-                            ),
-                        })
-                    })
-                    .transpose()?;
-                parents.push(parent);
-                names.push(
-                    joint
-                        .name()
-                        .map(Name::new)
-                        .unwrap_or_else(|| Name::new(&format!("joint_{}", joint.index()))),
-                );
-                let (translation, rotation, scale) = joint.transform().decomposed();
-                rest_pose.push(JointPose {
-                    translation: Vec3::from_array(translation),
-                    rotation: Quat::from_array(rotation),
-                    scale: Vec3::from_array(scale),
-                });
-            }
-
-            let skeleton =
-                Skeleton::new(inverse_bind_matrices, parents, names, rest_pose, bone_ids).map_err(
-                    |err| ImportError::MalformedSource {
-                        source_path: source_path.to_path_buf(),
-                        message: format!("skin {skin_index}: {err}"),
-                    },
-                )?;
-            ctx.emit(&format!("skeleton/{skin_index}"), &skeleton)?;
-            roots.extend(
-                skeleton
-                    .parents
-                    .iter()
-                    .zip(skeleton.bone_ids.iter())
-                    .filter(|(parent, _)| parent.is_none())
-                    .map(|(_, id)| *id),
-            );
-
-            skins.push(SkinInfo {
-                skeleton_index: skin_index,
-                bones,
-            });
-        }
-
-        // Animations -> `animation/{name}` sub-assets. Channel targets are keyed by
-        // the same path hash as the skeleton bones, so clips and skeletons
-        // agree on identity. Clip ids are not recorded in `referenced_assets`:
-        // nothing in the imported scene points at a clip yet (a later task wires
-        // that), and the import's reference-integrity pass only checks that
-        // recorded references resolve, not that every sub-asset is referenced.
-        let requested_clip_names: Vec<Option<&str>> =
-            document.animations().map(|a| a.name()).collect();
-        let animation_names = clip_names(&requested_clip_names);
-        if let Some(name) = settings
-            .events
-            .keys()
-            .find(|name| !animation_names.contains(name))
-        {
-            return Err(malformed(format!(
-                "events are set for clip `{name}`, which this file does not emit; its clips are {animation_names:?}"
-            )));
-        }
-        if let Some(name) = settings
-            .additive
-            .keys()
-            .find(|name| !animation_names.contains(name))
-        {
-            return Err(malformed(format!(
-                "additive is set for clip `{name}`, which this file does not emit; its clips are {animation_names:?}"
-            )));
-        }
-        let roots: Vec<Uuid> = roots.into_iter().collect();
-        for (animation_index, (animation, animation_name)) in
-            document.animations().zip(&animation_names).enumerate()
-        {
-            let mut animation_clip = AnimationClip::default();
-
-            for channel in animation.channels() {
-                let target = channel.target();
-                let target_node_idx = target.node().index();
-                let channel_reader = channel.reader(|buffer| Some(&buffers[buffer.index()]));
-
-                let time_samples = channel_reader
-                    .read_inputs()
-                    .map(|inputs| inputs.collect::<Vec<_>>());
-
-                let output_samples = channel_reader.read_outputs().map(|outputs| match outputs {
-                    gltf::animation::util::ReadOutputs::Translations(iter) => {
-                        AnimationChanelOutput::from_translation(iter)
-                    }
-                    gltf::animation::util::ReadOutputs::Rotations(rotations) => match rotations {
-                        gltf::animation::util::Rotations::I8(_) => todo!(),
-                        gltf::animation::util::Rotations::U8(_) => todo!(),
-                        gltf::animation::util::Rotations::I16(_) => todo!(),
-                        gltf::animation::util::Rotations::U16(_) => todo!(),
-                        gltf::animation::util::Rotations::F32(iter) => {
-                            AnimationChanelOutput::from_rotation(iter)
-                        }
-                    },
-                    gltf::animation::util::ReadOutputs::Scales(iter) => {
-                        AnimationChanelOutput::from_scale(iter)
-                    }
-                    gltf::animation::util::ReadOutputs::MorphTargetWeights(_) => todo!(),
-                });
-
-                let Some((time_samples, outputs)) = time_samples.zip(output_samples) else {
-                    continue;
-                };
-
-                if time_samples.is_empty() {
-                    warn!(
-                        "No time samples found for animation channel of index {}",
-                        channel.index()
-                    );
-                    continue;
-                }
-
-                let animation_channel = AnimationChannel::new(time_samples, outputs);
-
-                if let Some(node_path_info) = node_paths.get(&target_node_idx) {
-                    let target_id = paths_to_uuid(&node_path_info.node_path);
-                    animation_clip.add_channel(target_id, animation_channel);
-                } else {
-                    warn!("Missing an node name for node {}.", target_node_idx);
-                }
-            }
-
-            if let Some(events) = settings.events.get(animation_name) {
-                animation_clip
-                    .add_animation_events(events)
-                    .map_err(|message| malformed(format!("clip `{animation_name}`: {message}")))?;
-            }
-
-            if let Some(additive) = settings.additive.get(animation_name) {
-                let additive = additive
-                    .additive(animation_clip.duration(), roots.clone())
-                    .map_err(|message| malformed(format!("clip `{animation_name}`: {message}")))?;
-                animation_clip.set_additive(additive);
-            }
-
-            let index_name = animation_index.to_string();
-            if !animation_names.contains(&index_name) {
-                ctx.renamed_from(
-                    &format!("animation/{animation_name}"),
-                    &format!("animation/{index_name}"),
-                );
-            }
-            ctx.emit(&format!("animation/{animation_name}"), &animation_clip)?;
-        }
-
-        // Node walk. `document.nodes()` yields nodes in index order, so the
-        // first `document.nodes().count()` entries of `nodes` line up 1:1 with
-        // glTF node indices and every `children` index into that prefix stays
-        // valid. Extra primitive child-nodes (for multi-primitive meshes) are
-        // appended afterwards. Every runtime concern is emitted as a
-        // `SerializedComponent`; referenced ids are recorded as we go.
-        let mut nodes: Vec<SceneNode> = Vec::new();
-        let mut referenced_assets: Vec<AssetId> = Vec::new();
-        for gltf_node in document.nodes() {
-            let mut scene_node = SceneNode {
-                id: NodeId::default(),
-                name: gltf_node.name().map(str::to_string).unwrap_or_default(),
-                children: gltf_node.children().map(|c| c.index()).collect(),
-                components: Vec::new(),
-                link: None,
-            };
-            push_node_component(
-                &mut scene_node,
-                &Transform::from_matrix(&gltf_node.transform().matrix()),
-            )?;
-
-            // A skinned node carries the whole binding: which `skeleton/N`
-            // sub-asset to load, the joint nodes, their stable ids, and the
-            // root bone. This goes on the skinned node itself, which owns the
-            // `AnimationPlayer`. When that node is a multi-primitive mesh its
-            // drawable geometry lives on appended primitive children; the
-            // second node-walk loop gives each of those a rootless
-            // `SkeletonComponent`
-            // so they skin from the same bone entities without a second player.
-            if let Some(skin) = gltf_node.skin() {
-                let skin_index = skin.index();
-                if let Some(bones) = skins
-                    .iter()
-                    .find(|info| info.skeleton_index == skin_index)
-                    .map(|info| info.bones.clone())
-                {
-                    let skeleton_id = ctx.sub_asset_id(&format!("skeleton/{skin_index}"));
-                    let root = skin
-                        .skeleton()
-                        .map(|node| SceneEntityRef::Index(node.index()))
-                        .or_else(|| {
-                            skin.joints()
-                                .next()
-                                .map(|j| SceneEntityRef::Index(j.index()))
-                        });
-
-                    push_node_component(
-                        &mut scene_node,
-                        &SkeletonComponent {
-                            skeleton: AssetHandle::weak(skeleton_id),
-                            bones,
-                            root,
-                        },
-                    )?;
-                    referenced_assets.push(skeleton_id);
-                }
-            }
-
-            if let Some(camera) = gltf_node.camera() {
-                let lens = match camera.projection() {
-                    gltf::camera::Projection::Perspective(perspective) => Lens {
-                        fovy: perspective.yfov(),
-                        znear: perspective.znear(),
-                        zfar: perspective.zfar().unwrap_or(Lens::default().zfar),
-                    },
-                    gltf::camera::Projection::Orthographic(_) => {
-                        warn!(
-                            "Orthographic camera '{}' is not supported, using the default lens",
-                            camera.name().unwrap_or("<unnamed>")
-                        );
-                        Lens::default()
-                    }
-                };
-                push_node_component(
-                    &mut scene_node,
-                    &VirtualCamera::new(0).disabled().with_lens(lens),
-                )?;
-            }
-
-            // A `KHR_lights_punctual` light becomes a `Light` (+ render-world
-            // sync). Intensity is divided by `LUMINOUS_EFFICACY` to undo
-            // Blender's watt->photometric conversion. `shadowmaps_enabled` was
-            // previously supplied per-spawn by `GLTFSpawnerComponent`, which no
-            // longer exists; per-scene shadow control is a follow-up.
-            if let Some(light) = gltf_node.light() {
-                let [r, g, b] = light.color();
-                let light_type = match light.kind() {
-                    gltf::khr_lights_punctual::Kind::Directional => LightType::Directional,
-                    gltf::khr_lights_punctual::Kind::Point => LightType::Point,
-                    gltf::khr_lights_punctual::Kind::Spot {
-                        outer_cone_angle, ..
-                    } => LightType::Spot {
-                        cone_angle: outer_cone_angle,
-                    },
-                };
-                push_node_component(
-                    &mut scene_node,
-                    &Light {
-                        color: Color::rgba(r, g, b, 1.0),
-                        intensity: light.intensity() / LUMINOUS_EFFICACY,
-                        shadowmaps_enabled: false,
-                        light_type,
-                        range: light.range().unwrap_or(0.0),
-                    },
-                )?;
-            }
-
-            nodes.push(scene_node);
-        }
-
-        for gltf_node in document.nodes() {
-            let Some(gltf_mesh) = gltf_node.mesh() else {
-                continue;
-            };
-            let node_index = gltf_node.index();
-            let prims = &mesh_prims[gltf_mesh.index()];
-
-            match prims.len() {
-                0 => {}
-                1 => {
-                    let p = &prims[0];
-                    let mesh_id = ctx.sub_asset_id(&format!("mesh/{}", p.mesh_sub_asset));
-                    let material_id =
-                        ctx.sub_asset_id(&format!("material/{}", p.material_sub_asset));
-
-                    push_mesh_components(&mut nodes[node_index], mesh_id, material_id)?;
-                    referenced_assets.push(mesh_id);
-                    referenced_assets.push(material_id);
-                }
-                _ => {
-                    let node_name = nodes[node_index].name.clone();
-
-                    // The rooted `SkeletonComponent` sits on the owning
-                    // node; each drawable primitive child gets the binding half
-                    // so it skins from the same bone entities.
-                    let skin_binding = gltf_node.skin().and_then(|skin| {
-                        let skin_index = skin.index();
-                        skins
-                            .iter()
-                            .find(|info| info.skeleton_index == skin_index)
-                            .map(|info| {
-                                (
-                                    ctx.sub_asset_id(&format!("skeleton/{skin_index}")),
-                                    info.bones.clone(),
-                                )
-                            })
-                    });
-
-                    for (k, p) in prims.iter().enumerate() {
-                        let child_index = nodes.len();
-                        let mesh_id = ctx.sub_asset_id(&format!("mesh/{}", p.mesh_sub_asset));
-                        let material_id =
-                            ctx.sub_asset_id(&format!("material/{}", p.material_sub_asset));
-
-                        let mut child = SceneNode {
-                            id: NodeId::default(),
-                            name: format!("{node_name}.primitive{k}"),
-                            children: Vec::new(),
-                            components: Vec::new(),
-                            link: None,
-                        };
-                        push_node_component(&mut child, &Transform::IDENTITY)?;
-                        push_mesh_components(&mut child, mesh_id, material_id)?;
-                        referenced_assets.push(mesh_id);
-                        referenced_assets.push(material_id);
-
-                        if let Some((skeleton_id, bones)) = &skin_binding {
-                            push_node_component(
-                                &mut child,
-                                &SkeletonComponent {
-                                    skeleton: AssetHandle::weak(*skeleton_id),
-                                    bones: bones.clone(),
-                                    root: None,
-                                },
-                            )?;
-                            referenced_assets.push(*skeleton_id);
-                        }
-
-                        nodes.push(child);
-                        nodes[node_index].children.push(child_index);
-                    }
-                }
-            }
-        }
-
+        let SceneBuild {
+            mut nodes,
+            referenced_assets,
+        } = scene;
         derive_ids(&mut nodes);
         ctx.emit(
             "scene",
@@ -688,6 +168,756 @@ impl Importer for GltfImporter {
 
         Ok(())
     }
+}
+
+struct GltfSource<'a> {
+    path: &'a Path,
+    dir: &'a Path,
+    document: &'a gltf::Document,
+    buffers: &'a [Data],
+}
+
+impl GltfSource<'_> {
+    fn malformed(&self, message: String) -> ImportError {
+        ImportError::MalformedSource {
+            source_path: self.path.to_path_buf(),
+            message,
+        }
+    }
+}
+
+struct SourceMaterials {
+    needed_textures: BTreeMap<TextureKey, TextureRole>,
+    materials: Vec<StandardMaterial>,
+}
+
+struct NodeHierarchy {
+    paths: HashMap<usize, NodePathInfo>,
+    parents: HashMap<usize, usize>,
+}
+
+struct EmittedSkins {
+    skins: Vec<SkinInfo>,
+    roots: BTreeSet<Uuid>,
+}
+
+struct JointLayout {
+    parents: Vec<Option<u16>>,
+    names: Vec<Name>,
+    rest_pose: Vec<JointPose>,
+}
+
+struct SkinBinding {
+    skeleton_id: AssetId,
+    bones: Vec<SceneEntityRef>,
+}
+
+struct SceneBuild {
+    nodes: Vec<SceneNode>,
+    referenced_assets: Vec<AssetId>,
+}
+
+fn track_externals(source: &GltfSource, ctx: &mut ImportContext) {
+    // Track every external `.bin`/image `uri` the document pulls in, so
+    // editing one and re-running `import` regenerates instead of shipping
+    // stale imported output. Embedded `data:` URIs need no tracking — a
+    // change there changes the `.gltf`'s own hash.
+    for buffer in source.document.buffers() {
+        if let gltf::buffer::Source::Uri(uri) = buffer.source() {
+            track_external(ctx, source.dir, uri);
+        }
+    }
+    for image in source.document.images() {
+        if let gltf::image::Source::Uri { uri, .. } = image.source() {
+            track_external(ctx, source.dir, uri);
+        }
+    }
+}
+
+fn read_materials(document: &gltf::Document, ctx: &ImportContext) -> SourceMaterials {
+    // Color textures (base color, emissive) are sRGB-encoded while data
+    // textures (normal, metallic-roughness, occlusion) are linear. An
+    // image can be referenced in both roles, so texture sub-assets are
+    // keyed per (image, color space) pair.
+    let mut needed_textures: BTreeMap<TextureKey, TextureRole> = BTreeMap::new();
+    let mut materials: Vec<StandardMaterial> = Vec::new();
+    {
+        let mut texture_ref =
+            |texture: gltf::Texture<'_>, role: TextureRole| -> AssetHandle<Texture> {
+                let image_index = texture.source().index();
+                let srgb = role == TextureRole::Color;
+                let kept = needed_textures
+                    .entry(TextureKey { image_index, srgb })
+                    .or_insert(role);
+                if role == TextureRole::Data {
+                    *kept = role;
+                }
+                AssetHandle::weak(ctx.sub_asset_id(&texture_name(image_index, srgb)))
+            };
+
+        for gltf_material in document.materials() {
+            materials.push(standard_material(&gltf_material, &mut texture_ref));
+        }
+    }
+    SourceMaterials {
+        needed_textures,
+        materials,
+    }
+}
+
+fn standard_material(
+    gltf_material: &gltf::Material<'_>,
+    texture_ref: &mut impl FnMut(gltf::Texture<'_>, TextureRole) -> AssetHandle<Texture>,
+) -> StandardMaterial {
+    let pbr = gltf_material.pbr_metallic_roughness();
+    let mut material = StandardMaterial::new(
+        pbr.base_color_texture()
+            .map(|info| texture_ref(info.texture(), TextureRole::Color)),
+        gltf_material
+            .normal_texture()
+            .map(|info| texture_ref(info.texture(), TextureRole::Normal)),
+    );
+
+    material.set_base_color_factor(Color::from(pbr.base_color_factor()));
+    material.set_metallic_factor(pbr.metallic_factor());
+    material.set_roughness_factor(pbr.roughness_factor());
+    material.set_emissive_factor(Vec3::from_array(gltf_material.emissive_factor()));
+
+    if let Some(info) = pbr.metallic_roughness_texture() {
+        material.set_metallic_roughness_texture(texture_ref(info.texture(), TextureRole::Data));
+    }
+    if let Some(info) = gltf_material.emissive_texture() {
+        material.set_emissive_texture(texture_ref(info.texture(), TextureRole::Color));
+    }
+    if let Some(info) = gltf_material.occlusion_texture() {
+        material.set_occlusion_strength(info.strength());
+        material.set_occlusion_texture(texture_ref(info.texture(), TextureRole::Data));
+    }
+
+    material.set_alpha_mode(match gltf_material.alpha_mode() {
+        gltf::material::AlphaMode::Opaque => AlphaMode::Opaque,
+        gltf::material::AlphaMode::Mask => AlphaMode::Mask {
+            cutoff: gltf_material.alpha_cutoff().unwrap_or(0.5),
+        },
+        gltf::material::AlphaMode::Blend => AlphaMode::Blend,
+    });
+
+    material
+}
+
+fn emit_textures(
+    source: &GltfSource,
+    needed_textures: &BTreeMap<TextureKey, TextureRole>,
+    ctx: &mut ImportContext,
+) -> Result<(), ImportError> {
+    let images: Vec<gltf::Image<'_>> = source.document.images().collect();
+    for (key, role) in needed_textures {
+        let unkept = |message: String| {
+            source.malformed(format!(
+                "failed to keep GLTF image {}: {message}",
+                key.image_index
+            ))
+        };
+        let bytes =
+            image_bytes(&images[key.image_index], source.buffers, source.dir).map_err(unkept)?;
+        let name = texture_name(key.image_index, key.srgb);
+        let ImportedTexture {
+            texture,
+            source: texture_source,
+        } = imported_texture(ctx, &name, *role, bytes, None).map_err(unkept)?;
+        ctx.emit_with(&name, &texture, &texture_source)?;
+    }
+    Ok(())
+}
+
+fn emit_meshes(
+    source: &GltfSource,
+    default_material_index: usize,
+    ctx: &mut ImportContext,
+) -> Result<Vec<Vec<PrimRef>>, ImportError> {
+    // Primitives with no material index share one default `StandardMaterial`
+    // emitted after the real ones (index == document.materials().count()).
+    let mut default_material_used = false;
+
+    let mut mesh_counter: usize = 0;
+    let mut mesh_prims: Vec<Vec<PrimRef>> = Vec::new();
+    for mesh in source.document.meshes() {
+        let mut prims = Vec::new();
+        for gltf_primitive in mesh.primitives() {
+            let m = load_primitive(source.path, mesh.name(), source.buffers, &gltf_primitive)?;
+            ctx.emit(&format!("mesh/{mesh_counter}"), &m)?;
+
+            let material_sub_asset = match gltf_primitive.material().index() {
+                Some(material_index) => material_index,
+                None => {
+                    default_material_used = true;
+                    default_material_index
+                }
+            };
+            prims.push(PrimRef {
+                mesh_sub_asset: mesh_counter,
+                material_sub_asset,
+            });
+            mesh_counter += 1;
+        }
+        mesh_prims.push(prims);
+    }
+
+    if default_material_used {
+        ctx.emit(
+            &format!("material/{default_material_index}"),
+            &StandardMaterial::default(),
+        )?;
+    }
+    Ok(mesh_prims)
+}
+
+impl NodeHierarchy {
+    fn of(document: &gltf::Document) -> Self {
+        // Name path per node, from every scene root. Bone ids are hashed from
+        // these paths, so a skeleton and the animation clips that drive it
+        // must both resolve bone identity through this one map.
+        let mut paths: HashMap<usize, NodePathInfo> = HashMap::new();
+        for scene in document.scenes() {
+            for root_node in scene.nodes() {
+                collect_paths(&root_node, &[], &mut paths, &mut HashSet::new());
+            }
+        }
+
+        let mut parents: HashMap<usize, usize> = HashMap::new();
+        for node in document.nodes() {
+            for child in node.children() {
+                parents.insert(child.index(), node.index());
+            }
+        }
+        Self { paths, parents }
+    }
+}
+
+fn emit_skeletons(
+    source: &GltfSource,
+    hierarchy: &NodeHierarchy,
+    ctx: &mut ImportContext,
+) -> Result<EmittedSkins, ImportError> {
+    // Skins -> `skeleton/N` sub-assets. A skin with no inverse bind
+    // matrices is unusable, so it is skipped and its node gets no
+    // `SkeletonComponent`. `SkinInfo` is looked up by `skeleton_index`, not
+    // vector position, so a skipped skin cannot misalign the rest.
+    let mut skins: Vec<SkinInfo> = Vec::new();
+    let mut roots: BTreeSet<Uuid> = BTreeSet::new();
+    for (skin_index, skin) in source.document.skins().enumerate() {
+        let Some(skeleton) = skeleton_of(source, hierarchy, skin_index, &skin)? else {
+            continue;
+        };
+        ctx.emit(&format!("skeleton/{skin_index}"), &skeleton)?;
+        roots.extend(
+            skeleton
+                .parents
+                .iter()
+                .zip(skeleton.bone_ids.iter())
+                .filter(|(parent, _)| parent.is_none())
+                .map(|(_, id)| *id),
+        );
+
+        skins.push(SkinInfo {
+            skeleton_index: skin_index,
+            bones: skin
+                .joints()
+                .map(|joint| SceneEntityRef::Index(joint.index()))
+                .collect(),
+        });
+    }
+    Ok(EmittedSkins { skins, roots })
+}
+
+fn skeleton_of(
+    source: &GltfSource,
+    hierarchy: &NodeHierarchy,
+    skin_index: usize,
+    skin: &gltf::Skin<'_>,
+) -> Result<Option<Skeleton>, ImportError> {
+    let buffers = source.buffers;
+    let Some(inverse_bind_matrices) = skin
+        .reader(|buffer| Some(&buffers[buffer.index()]))
+        .read_inverse_bind_matrices()
+        .map(|iter| {
+            iter.map(|pose| Mat4::from_cols_array_2d(&pose))
+                .collect::<Vec<_>>()
+        })
+    else {
+        return Ok(None);
+    };
+
+    let Some(bone_ids) = joint_bone_ids(skin, &hierarchy.paths) else {
+        return Ok(None);
+    };
+
+    let JointLayout {
+        parents,
+        names,
+        rest_pose,
+    } = joint_layout(source, &hierarchy.parents, skin_index, skin)?;
+
+    let skeleton = Skeleton::new(inverse_bind_matrices, parents, names, rest_pose, bone_ids)
+        .map_err(|err| ImportError::MalformedSource {
+            source_path: source.path.to_path_buf(),
+            message: format!("skin {skin_index}: {err}"),
+        })?;
+    Ok(Some(skeleton))
+}
+
+fn joint_bone_ids(
+    skin: &gltf::Skin<'_>,
+    node_paths: &HashMap<usize, NodePathInfo>,
+) -> Option<Vec<Uuid>> {
+    // A joint node unreachable from every scene root has no path entry,
+    // so it has no stable bone id. A skeleton with a partial bone-id
+    // list is worse than none: skip the whole skin, matching the
+    // animation-channel loop's warn-and-skip.
+    let mut bone_ids: Vec<Uuid> = Vec::with_capacity(skin.joints().count());
+    for joint in skin.joints() {
+        match node_paths.get(&joint.index()) {
+            Some(node_path_info) => bone_ids.push(paths_to_uuid(&node_path_info.node_path)),
+            None => {
+                warn!("Missing an node name for node {}.", joint.index());
+                return None;
+            }
+        }
+    }
+    Some(bone_ids)
+}
+
+fn joint_layout(
+    source: &GltfSource,
+    node_parents: &HashMap<usize, usize>,
+    skin_index: usize,
+    skin: &gltf::Skin<'_>,
+) -> Result<JointLayout, ImportError> {
+    let source_path = source.path;
+    let bone_count = skin.joints().count();
+    let mut joint_positions: HashMap<usize, usize> = HashMap::new();
+    for (position, joint) in skin.joints().enumerate() {
+        joint_positions.entry(joint.index()).or_insert(position);
+    }
+    let mut parents: Vec<Option<u16>> = Vec::with_capacity(bone_count);
+    let mut names: Vec<Name> = Vec::with_capacity(bone_count);
+    let mut rest_pose: Vec<JointPose> = Vec::with_capacity(bone_count);
+    for (position, joint) in skin.joints().enumerate() {
+        let parent_position = node_parents
+            .get(&joint.index())
+            .and_then(|parent| joint_positions.get(parent).map(|at| (*parent, *at)));
+        if let Some((parent_node, parent_position)) = parent_position
+            && parent_position >= position
+        {
+            return Err(ImportError::MalformedSource {
+                source_path: source_path.to_path_buf(),
+                message: format!(
+                    "skin {skin_index}: joint {} is listed before its parent joint {parent_node}; joints must be ordered parents first",
+                    joint.index()
+                ),
+            });
+        }
+        let parent = parent_position
+            .map(|(_, at)| {
+                u16::try_from(at).map_err(|_| ImportError::MalformedSource {
+                    source_path: source_path.to_path_buf(),
+                    message: format!(
+                        "skin {skin_index}: joint {} has a parent at position {at}, past the {} bones a skeleton can address",
+                        joint.index(),
+                        u16::MAX as usize + 1
+                    ),
+                })
+            })
+            .transpose()?;
+        parents.push(parent);
+        names.push(
+            joint
+                .name()
+                .map(Name::new)
+                .unwrap_or_else(|| Name::new(&format!("joint_{}", joint.index()))),
+        );
+        let (translation, rotation, scale) = joint.transform().decomposed();
+        rest_pose.push(JointPose {
+            translation: Vec3::from_array(translation),
+            rotation: Quat::from_array(rotation),
+            scale: Vec3::from_array(scale),
+        });
+    }
+    Ok(JointLayout {
+        parents,
+        names,
+        rest_pose,
+    })
+}
+
+fn check_clip_settings(
+    source: &GltfSource,
+    settings: &GltfSettings,
+    animation_names: &[String],
+) -> Result<(), ImportError> {
+    if let Some(name) = settings
+        .events
+        .keys()
+        .find(|name| !animation_names.contains(name))
+    {
+        return Err(source.malformed(format!(
+            "events are set for clip `{name}`, which this file does not emit; its clips are {animation_names:?}"
+        )));
+    }
+    if let Some(name) = settings
+        .additive
+        .keys()
+        .find(|name| !animation_names.contains(name))
+    {
+        return Err(source.malformed(format!(
+            "additive is set for clip `{name}`, which this file does not emit; its clips are {animation_names:?}"
+        )));
+    }
+    Ok(())
+}
+
+fn emit_animations(
+    source: &GltfSource,
+    settings: &GltfSettings,
+    node_paths: &HashMap<usize, NodePathInfo>,
+    roots: BTreeSet<Uuid>,
+    ctx: &mut ImportContext,
+) -> Result<(), ImportError> {
+    // Animations -> `animation/{name}` sub-assets. Channel targets are keyed by
+    // the same path hash as the skeleton bones, so clips and skeletons
+    // agree on identity. Clip ids are not recorded in `referenced_assets`:
+    // nothing in the imported scene points at a clip yet (a later task wires
+    // that), and the import's reference-integrity pass only checks that
+    // recorded references resolve, not that every sub-asset is referenced.
+    let document = source.document;
+    let requested_clip_names: Vec<Option<&str>> = document.animations().map(|a| a.name()).collect();
+    let animation_names = clip_names(&requested_clip_names);
+    check_clip_settings(source, settings, &animation_names)?;
+    let roots: Vec<Uuid> = roots.into_iter().collect();
+    for (animation_index, (animation, animation_name)) in
+        document.animations().zip(&animation_names).enumerate()
+    {
+        let mut animation_clip = AnimationClip::default();
+
+        for channel in animation.channels() {
+            add_channel(&mut animation_clip, &channel, source.buffers, node_paths);
+        }
+
+        if let Some(events) = settings.events.get(animation_name) {
+            animation_clip
+                .add_animation_events(events)
+                .map_err(|message| {
+                    source.malformed(format!("clip `{animation_name}`: {message}"))
+                })?;
+        }
+
+        if let Some(additive) = settings.additive.get(animation_name) {
+            let additive = additive
+                .additive(animation_clip.duration(), roots.clone())
+                .map_err(|message| {
+                    source.malformed(format!("clip `{animation_name}`: {message}"))
+                })?;
+            animation_clip.set_additive(additive);
+        }
+
+        let index_name = animation_index.to_string();
+        if !animation_names.contains(&index_name) {
+            ctx.renamed_from(
+                &format!("animation/{animation_name}"),
+                &format!("animation/{index_name}"),
+            );
+        }
+        ctx.emit(&format!("animation/{animation_name}"), &animation_clip)?;
+    }
+    Ok(())
+}
+
+fn add_channel(
+    animation_clip: &mut AnimationClip,
+    channel: &gltf::animation::Channel<'_>,
+    buffers: &[Data],
+    node_paths: &HashMap<usize, NodePathInfo>,
+) {
+    let target = channel.target();
+    let target_node_idx = target.node().index();
+    let channel_reader = channel.reader(|buffer| Some(&buffers[buffer.index()]));
+
+    let time_samples = channel_reader
+        .read_inputs()
+        .map(|inputs| inputs.collect::<Vec<_>>());
+
+    let output_samples = channel_reader.read_outputs().map(|outputs| match outputs {
+        gltf::animation::util::ReadOutputs::Translations(iter) => {
+            AnimationChanelOutput::from_translation(iter)
+        }
+        gltf::animation::util::ReadOutputs::Rotations(rotations) => match rotations {
+            gltf::animation::util::Rotations::I8(_) => todo!(),
+            gltf::animation::util::Rotations::U8(_) => todo!(),
+            gltf::animation::util::Rotations::I16(_) => todo!(),
+            gltf::animation::util::Rotations::U16(_) => todo!(),
+            gltf::animation::util::Rotations::F32(iter) => {
+                AnimationChanelOutput::from_rotation(iter)
+            }
+        },
+        gltf::animation::util::ReadOutputs::Scales(iter) => AnimationChanelOutput::from_scale(iter),
+        gltf::animation::util::ReadOutputs::MorphTargetWeights(_) => todo!(),
+    });
+
+    let Some((time_samples, outputs)) = time_samples.zip(output_samples) else {
+        return;
+    };
+
+    if time_samples.is_empty() {
+        warn!(
+            "No time samples found for animation channel of index {}",
+            channel.index()
+        );
+        return;
+    }
+
+    let animation_channel = AnimationChannel::new(time_samples, outputs);
+
+    if let Some(node_path_info) = node_paths.get(&target_node_idx) {
+        let target_id = paths_to_uuid(&node_path_info.node_path);
+        animation_clip.add_channel(target_id, animation_channel);
+    } else {
+        warn!("Missing an node name for node {}.", target_node_idx);
+    }
+}
+
+fn build_scene_nodes(
+    document: &gltf::Document,
+    skins: &[SkinInfo],
+    ctx: &ImportContext,
+    scene: &mut SceneBuild,
+) -> Result<(), ImportError> {
+    // Node walk. `document.nodes()` yields nodes in index order, so the
+    // first `document.nodes().count()` entries of `nodes` line up 1:1 with
+    // glTF node indices and every `children` index into that prefix stays
+    // valid. Extra primitive child-nodes (for multi-primitive meshes) are
+    // appended afterwards. Every runtime concern is emitted as a
+    // `SerializedComponent`; referenced ids are recorded as we go.
+    for gltf_node in document.nodes() {
+        let mut scene_node = SceneNode {
+            id: NodeId::default(),
+            name: gltf_node.name().map(str::to_string).unwrap_or_default(),
+            children: gltf_node.children().map(|c| c.index()).collect(),
+            components: Vec::new(),
+            link: None,
+        };
+        push_node_component(
+            &mut scene_node,
+            &Transform::from_matrix(&gltf_node.transform().matrix()),
+        )?;
+
+        if let Some(skin) = gltf_node.skin() {
+            push_skeleton(
+                &mut scene_node,
+                &skin,
+                skins,
+                ctx,
+                &mut scene.referenced_assets,
+            )?;
+        }
+
+        if let Some(camera) = gltf_node.camera() {
+            push_node_component(
+                &mut scene_node,
+                &VirtualCamera::new(0)
+                    .disabled()
+                    .with_lens(camera_lens(&camera)),
+            )?;
+        }
+
+        if let Some(light) = gltf_node.light() {
+            push_node_component(&mut scene_node, &punctual_light(&light))?;
+        }
+
+        scene.nodes.push(scene_node);
+    }
+    Ok(())
+}
+
+fn skin_binding(
+    skin: &gltf::Skin<'_>,
+    skins: &[SkinInfo],
+    ctx: &ImportContext,
+) -> Option<SkinBinding> {
+    let skin_index = skin.index();
+    skins
+        .iter()
+        .find(|info| info.skeleton_index == skin_index)
+        .map(|info| SkinBinding {
+            skeleton_id: ctx.sub_asset_id(&format!("skeleton/{skin_index}")),
+            bones: info.bones.clone(),
+        })
+}
+
+fn push_skeleton(
+    scene_node: &mut SceneNode,
+    skin: &gltf::Skin<'_>,
+    skins: &[SkinInfo],
+    ctx: &ImportContext,
+    referenced_assets: &mut Vec<AssetId>,
+) -> Result<(), ImportError> {
+    // A skinned node carries the whole binding: which `skeleton/N`
+    // sub-asset to load, the joint nodes, their stable ids, and the
+    // root bone. This goes on the skinned node itself, which owns the
+    // `AnimationPlayer`. When that node is a multi-primitive mesh its
+    // drawable geometry lives on appended primitive children; the
+    // second node-walk loop gives each of those a rootless
+    // `SkeletonComponent`
+    // so they skin from the same bone entities without a second player.
+    if let Some(SkinBinding { skeleton_id, bones }) = skin_binding(skin, skins, ctx) {
+        let root = skin
+            .skeleton()
+            .map(|node| SceneEntityRef::Index(node.index()))
+            .or_else(|| {
+                skin.joints()
+                    .next()
+                    .map(|j| SceneEntityRef::Index(j.index()))
+            });
+
+        push_node_component(
+            scene_node,
+            &SkeletonComponent {
+                skeleton: AssetHandle::weak(skeleton_id),
+                bones,
+                root,
+            },
+        )?;
+        referenced_assets.push(skeleton_id);
+    }
+    Ok(())
+}
+
+fn camera_lens(camera: &gltf::Camera<'_>) -> Lens {
+    match camera.projection() {
+        gltf::camera::Projection::Perspective(perspective) => Lens {
+            fovy: perspective.yfov(),
+            znear: perspective.znear(),
+            zfar: perspective.zfar().unwrap_or(Lens::default().zfar),
+        },
+        gltf::camera::Projection::Orthographic(_) => {
+            warn!(
+                "Orthographic camera '{}' is not supported, using the default lens",
+                camera.name().unwrap_or("<unnamed>")
+            );
+            Lens::default()
+        }
+    }
+}
+
+fn punctual_light(light: &gltf::khr_lights_punctual::Light<'_>) -> Light {
+    // A `KHR_lights_punctual` light becomes a `Light` (+ render-world
+    // sync). Intensity is divided by `LUMINOUS_EFFICACY` to undo
+    // Blender's watt->photometric conversion. `shadowmaps_enabled` was
+    // previously supplied per-spawn by `GLTFSpawnerComponent`, which no
+    // longer exists; per-scene shadow control is a follow-up.
+    let [r, g, b] = light.color();
+    let light_type = match light.kind() {
+        gltf::khr_lights_punctual::Kind::Directional => LightType::Directional,
+        gltf::khr_lights_punctual::Kind::Point => LightType::Point,
+        gltf::khr_lights_punctual::Kind::Spot {
+            outer_cone_angle, ..
+        } => LightType::Spot {
+            cone_angle: outer_cone_angle,
+        },
+    };
+    Light {
+        color: Color::rgba(r, g, b, 1.0),
+        intensity: light.intensity() / LUMINOUS_EFFICACY,
+        shadowmaps_enabled: false,
+        light_type,
+        range: light.range().unwrap_or(0.0),
+    }
+}
+
+fn attach_meshes(
+    document: &gltf::Document,
+    mesh_prims: &[Vec<PrimRef>],
+    skins: &[SkinInfo],
+    ctx: &ImportContext,
+    scene: &mut SceneBuild,
+) -> Result<(), ImportError> {
+    for gltf_node in document.nodes() {
+        let Some(gltf_mesh) = gltf_node.mesh() else {
+            continue;
+        };
+        let node_index = gltf_node.index();
+        let prims = &mesh_prims[gltf_mesh.index()];
+
+        match prims.len() {
+            0 => {}
+            1 => {
+                let p = &prims[0];
+                let mesh_id = ctx.sub_asset_id(&format!("mesh/{}", p.mesh_sub_asset));
+                let material_id = ctx.sub_asset_id(&format!("material/{}", p.material_sub_asset));
+
+                push_mesh_components(&mut scene.nodes[node_index], mesh_id, material_id)?;
+                scene.referenced_assets.push(mesh_id);
+                scene.referenced_assets.push(material_id);
+            }
+            _ => push_primitive_children(&gltf_node, prims, skins, ctx, scene)?,
+        }
+    }
+    Ok(())
+}
+
+fn push_primitive_children(
+    gltf_node: &Node,
+    prims: &[PrimRef],
+    skins: &[SkinInfo],
+    ctx: &ImportContext,
+    scene: &mut SceneBuild,
+) -> Result<(), ImportError> {
+    let node_index = gltf_node.index();
+    let SceneBuild {
+        nodes,
+        referenced_assets,
+    } = scene;
+    let node_name = nodes[node_index].name.clone();
+
+    // The rooted `SkeletonComponent` sits on the owning
+    // node; each drawable primitive child gets the binding half
+    // so it skins from the same bone entities.
+    let skin_binding = gltf_node
+        .skin()
+        .and_then(|skin| skin_binding(&skin, skins, ctx));
+
+    for (k, p) in prims.iter().enumerate() {
+        let child_index = nodes.len();
+        let mesh_id = ctx.sub_asset_id(&format!("mesh/{}", p.mesh_sub_asset));
+        let material_id = ctx.sub_asset_id(&format!("material/{}", p.material_sub_asset));
+
+        let mut child = SceneNode {
+            id: NodeId::default(),
+            name: format!("{node_name}.primitive{k}"),
+            children: Vec::new(),
+            components: Vec::new(),
+            link: None,
+        };
+        push_node_component(&mut child, &Transform::IDENTITY)?;
+        push_mesh_components(&mut child, mesh_id, material_id)?;
+        referenced_assets.push(mesh_id);
+        referenced_assets.push(material_id);
+
+        if let Some(SkinBinding { skeleton_id, bones }) = &skin_binding {
+            push_node_component(
+                &mut child,
+                &SkeletonComponent {
+                    skeleton: AssetHandle::weak(*skeleton_id),
+                    bones: bones.clone(),
+                    root: None,
+                },
+            )?;
+            referenced_assets.push(*skeleton_id);
+        }
+
+        nodes.push(child);
+        nodes[node_index].children.push(child_index);
+    }
+    Ok(())
 }
 
 /// Stores `component` onto `node`, mapping a failure into an `ImportError`

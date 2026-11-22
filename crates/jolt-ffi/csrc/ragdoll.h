@@ -45,6 +45,8 @@ extern "C"
         float shape_position[3];
         float shape_rotation[4];
         float mass;
+        /* The part's friction coefficient. */
+        float friction;
         float twist_axis[3];
         float plane_axis[3];
         float normal_half_cone;
@@ -60,10 +62,18 @@ extern "C"
     /* Builds the settings, stabilizes their masses and disables collisions
      * between each part and its parent. Returns null when a parent index is
      * not an earlier part, a shape is degenerate, or stabilizing fails. No
-     * part ever moves faster than `max_linear_velocity`, in m/s. */
+     * part ever moves faster than `max_linear_velocity`, in m/s. Every part is
+     * in the collision layers `memberships` and collides with `filter`. The
+     * solver runs at least `velocity_steps` velocity and `position_steps`
+     * position iterations on any island holding the ragdoll; 0 keeps the
+     * world's own. */
     JoltRagdollSettings *jolt_ragdoll_settings_create(const JoltRagdollPart *parts,
                                                       uint32_t count,
-                                                      float max_linear_velocity);
+                                                      float max_linear_velocity,
+                                                      uint32_t memberships,
+                                                      uint32_t filter,
+                                                      uint32_t velocity_steps,
+                                                      uint32_t position_steps);
     void jolt_ragdoll_settings_destroy(JoltRagdollSettings *settings);
     uint32_t jolt_ragdoll_settings_part_count(const JoltRagdollSettings *settings);
 
@@ -79,15 +89,6 @@ extern "C"
     /* Removes the ragdoll's bodies and constraints from the world and destroys
      * them, waking what touched them. */
     void jolt_ragdoll_destroy(JoltWorld *world, JoltRagdoll *ragdoll);
-
-    /* Stops every part of the ragdoll colliding with `body`, a character's
-     * own capsule, or lets them collide again when `ignored` is false. A
-     * ragdoll ignores one body at a time. Must not be called while the world
-     * steps. */
-    void jolt_ragdoll_set_ignored_body(JoltWorld *world,
-                                       JoltRagdoll *ragdoll,
-                                       JoltBodyId body,
-                                       bool ignored);
 
     uint32_t jolt_ragdoll_part_count(const JoltRagdoll *ragdoll);
     JoltBodyId jolt_ragdoll_part_body(const JoltRagdoll *ragdoll, uint32_t part);
@@ -109,12 +110,15 @@ extern "C"
 
     /* Turns the motor of the joint between `part` and its parent off, or on
      * towards `target_rotation`, the part's rotation relative to its parent,
-     * with the given spring and torque limit. Does nothing for the root. */
+     * with the given spring and torque limit. `spring` is a frequency in Hz
+     * and `damping` a ratio, or with `by_stiffness` a stiffness in N·m/rad and
+     * a damping in N·m·s/rad. Does nothing for the root. */
     void jolt_ragdoll_set_joint_motor(JoltRagdoll *ragdoll,
                                       uint32_t part,
                                       bool enabled,
                                       const float target_rotation[4],
-                                      float frequency,
+                                      bool by_stiffness,
+                                      float spring,
                                       float damping,
                                       float torque_limit);
 
@@ -123,6 +127,10 @@ extern "C"
                                            JoltRagdoll *ragdoll,
                                            uint32_t part,
                                            JoltMotionType motion_type);
+
+    /* Frozen: every part becomes static where it is and leaves the
+     * simulation. Not frozen: every part becomes dynamic again and wakes. */
+    void jolt_ragdoll_set_frozen(JoltWorld *world, JoltRagdoll *ragdoll, bool frozen);
 
     /* The angular impulse the joint's motor applied in the last collision
      * step, about the joint's three axes. Zero for the root. */

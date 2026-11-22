@@ -1593,6 +1593,7 @@ dependencies = [
  "concerto-foundation",
  "concerto-mesh",
  "concerto-physics",
+ "concerto-ragdoll",
  "concerto-render",
  "glam 0.33.12",
 ]
@@ -1657,6 +1658,7 @@ dependencies = [
  "concerto-ecs",
  "concerto-foundation",
  "concerto-mesh",
+ "concerto-motion-matching",
  "concerto-name",
  "concerto-physics",
  "concerto-ragdoll",
@@ -1675,16 +1677,25 @@ dependencies = [
  "anyhow",
  "concerto",
  "concerto-animation",
+ "concerto-animation-editor",
  "concerto-app",
+ "concerto-color",
+ "concerto-debug-gizmos",
  "concerto-ecs",
  "concerto-editor",
  "concerto-foundation",
  "concerto-mcp",
  "concerto-mesh",
+ "concerto-name",
+ "concerto-physics",
+ "concerto-physics-gizmos",
  "concerto-ragdoll",
+ "concerto-reflect",
  "concerto-render",
+ "concerto-scene",
  "concerto-ui",
  "concerto-window",
+ "glam 0.33.12",
  "rmcp",
  "schemars",
  "serde",
@@ -5330,11 +5341,24 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 
 [[package]]
-name = "ragdoll-test"
+name = "ragdoll-behaviours"
 version = "0.1.0"
 dependencies = [
  "concerto",
  "concerto-physics-gizmos",
+ "concerto-ragdoll",
+ "env_logger",
+ "glam 0.33.12",
+]
+
+[[package]]
+name = "ragdoll-test"
+version = "0.1.0"
+dependencies = [
+ "concerto",
+ "concerto-debug-gizmos",
+ "concerto-physics-gizmos",
+ "concerto-ragdoll",
  "env_logger",
  "glam 0.33.12",
 ]

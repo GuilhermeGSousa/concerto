@@ -25,16 +25,43 @@
 
 JPH_SUPPRESS_WARNINGS
 
-// Object layers: statics collide with dynamics and ragdoll parts; sensors
-// only with dynamics; dynamics with everything; ragdoll parts with
-// everything but sensors.
+// An object layer packs a body's collision layers and what kind of body it
+// is: bits 0-13 are the layers it is in, bit 14 marks a static body, bit 15 a
+// sensor, bits 16-29 are the layers it collides with. Two bodies collide when
+// each is in a layer the other collides with; two statics never do, two
+// sensors never do, and a sensor never detects a static.
 namespace Layers
 {
-	constexpr JPH::ObjectLayer NON_MOVING = 0;
-	constexpr JPH::ObjectLayer MOVING = 1;
-	constexpr JPH::ObjectLayer SENSOR = 2;
-	constexpr JPH::ObjectLayer RAGDOLL = 3;
-	constexpr JPH::uint NUM_LAYERS = 4;
+	constexpr JPH::ObjectLayer MASK = 0x3fff;
+	constexpr JPH::ObjectLayer STATIC = 1u << 14;
+	constexpr JPH::ObjectLayer SENSOR = 1u << 15;
+	constexpr JPH::uint FILTER_SHIFT = 16;
+
+	inline JPH::ObjectLayer Make(uint32_t memberships, uint32_t filter, bool is_static, bool is_sensor)
+	{
+		return (memberships & MASK) | ((filter & MASK) << FILTER_SHIFT) | (is_static ? STATIC : 0) |
+			   (is_sensor ? SENSOR : 0);
+	}
+
+	inline JPH::ObjectLayer Memberships(JPH::ObjectLayer layer)
+	{
+		return layer & MASK;
+	}
+
+	inline JPH::ObjectLayer Filter(JPH::ObjectLayer layer)
+	{
+		return (layer >> FILTER_SHIFT) & MASK;
+	}
+
+	inline bool IsStatic(JPH::ObjectLayer layer)
+	{
+		return (layer & STATIC) != 0;
+	}
+
+	inline bool IsSensor(JPH::ObjectLayer layer)
+	{
+		return (layer & SENSOR) != 0;
+	}
 } // namespace Layers
 
 namespace BroadPhaseLayers
@@ -50,34 +77,22 @@ class ObjectLayerPairFilterImpl final : public JPH::ObjectLayerPairFilter
 public:
 	bool ShouldCollide(JPH::ObjectLayer inObject1, JPH::ObjectLayer inObject2) const override
 	{
-		switch (inObject1)
-		{
-		case Layers::NON_MOVING:
-			return inObject2 == Layers::MOVING || inObject2 == Layers::RAGDOLL;
-		case Layers::MOVING:
-			return true;
-		case Layers::SENSOR:
-			return inObject2 == Layers::MOVING;
-		case Layers::RAGDOLL:
-			return inObject2 != Layers::SENSOR;
-		default:
-			JPH_ASSERT(false);
+		bool sensor1 = Layers::IsSensor(inObject1);
+		bool sensor2 = Layers::IsSensor(inObject2);
+		bool static1 = Layers::IsStatic(inObject1);
+		bool static2 = Layers::IsStatic(inObject2);
+		if ((static1 && static2) || (sensor1 && sensor2))
 			return false;
-		}
+		if ((sensor1 && static2) || (sensor2 && static1))
+			return false;
+		return (Layers::Memberships(inObject1) & Layers::Filter(inObject2)) != 0 &&
+			   (Layers::Memberships(inObject2) & Layers::Filter(inObject1)) != 0;
 	}
 };
 
 class BPLayerInterfaceImpl final : public JPH::BroadPhaseLayerInterface
 {
 public:
-	BPLayerInterfaceImpl()
-	{
-		mObjectToBroadPhase[Layers::NON_MOVING] = BroadPhaseLayers::NON_MOVING;
-		mObjectToBroadPhase[Layers::MOVING] = BroadPhaseLayers::MOVING;
-		mObjectToBroadPhase[Layers::SENSOR] = BroadPhaseLayers::SENSOR;
-		mObjectToBroadPhase[Layers::RAGDOLL] = BroadPhaseLayers::MOVING;
-	}
-
 	JPH::uint GetNumBroadPhaseLayers() const override
 	{
 		return BroadPhaseLayers::NUM_LAYERS;
@@ -85,8 +100,11 @@ public:
 
 	JPH::BroadPhaseLayer GetBroadPhaseLayer(JPH::ObjectLayer inLayer) const override
 	{
-		JPH_ASSERT(inLayer < Layers::NUM_LAYERS);
-		return mObjectToBroadPhase[inLayer];
+		if (Layers::IsSensor(inLayer))
+			return BroadPhaseLayers::SENSOR;
+		if (Layers::IsStatic(inLayer))
+			return BroadPhaseLayers::NON_MOVING;
+		return BroadPhaseLayers::MOVING;
 	}
 
 #if defined(JPH_EXTERNAL_PROFILE) || defined(JPH_PROFILE_ENABLED)
@@ -106,9 +124,6 @@ public:
 		}
 	}
 #endif
-
-private:
-	JPH::BroadPhaseLayer mObjectToBroadPhase[Layers::NUM_LAYERS];
 };
 
 class ObjectVsBroadPhaseLayerFilterImpl final : public JPH::ObjectVsBroadPhaseLayerFilter
@@ -116,20 +131,9 @@ class ObjectVsBroadPhaseLayerFilterImpl final : public JPH::ObjectVsBroadPhaseLa
 public:
 	bool ShouldCollide(JPH::ObjectLayer inLayer1, JPH::BroadPhaseLayer inLayer2) const override
 	{
-		switch (inLayer1)
-		{
-		case Layers::NON_MOVING:
+		if (Layers::IsSensor(inLayer1) || Layers::IsStatic(inLayer1))
 			return inLayer2 == BroadPhaseLayers::MOVING;
-		case Layers::MOVING:
-			return true;
-		case Layers::SENSOR:
-			return inLayer2 == BroadPhaseLayers::MOVING;
-		case Layers::RAGDOLL:
-			return inLayer2 != BroadPhaseLayers::SENSOR;
-		default:
-			JPH_ASSERT(false);
-			return false;
-		}
+		return true;
 	}
 };
 
@@ -154,33 +158,27 @@ public:
 
 	bool ShouldCollide(JPH::ObjectLayer inLayer) const override
 	{
-		return inLayer != Layers::SENSOR && inner.ShouldCollide(inLayer);
+		return !Layers::IsSensor(inLayer) && inner.ShouldCollide(inLayer);
 	}
 
 private:
 	const JPH::ObjectLayerFilter &inner;
 };
 
-// Passes solid layers a scene query asked for: ragdoll parts are skipped,
-// included or the only thing seen.
+// Passes the solid bodies that are in any of the layers a scene query asked
+// for.
 class QueryObjectLayerFilter final : public JPH::ObjectLayerFilter
 {
 public:
-	explicit QueryObjectLayerFilter(JoltRagdollQuery ragdolls) : ragdolls(ragdolls) {}
+	explicit QueryObjectLayerFilter(uint32_t layers) : layers(layers) {}
 
 	bool ShouldCollide(JPH::ObjectLayer inLayer) const override
 	{
-		if (inLayer == Layers::SENSOR)
-			return false;
-		if (ragdolls == JOLT_RAGDOLL_QUERY_SKIP)
-			return inLayer != Layers::RAGDOLL;
-		if (ragdolls == JOLT_RAGDOLL_QUERY_ONLY)
-			return inLayer == Layers::RAGDOLL;
-		return true;
+		return !Layers::IsSensor(inLayer) && (Layers::Memberships(inLayer) & layers) != 0;
 	}
 
 private:
-	JoltRagdollQuery ragdolls;
+	uint32_t layers;
 };
 
 struct SensorPair
@@ -208,20 +206,9 @@ class SensorContactListener final : public JPH::ContactListener
 {
 public:
 	SensorContactListener(const std::unordered_set<JPH::BodyID> &sensors,
-						  const std::unordered_set<JPH::BodyID> &reporting,
-						  const std::unordered_map<JPH::BodyID, JPH::BodyID> &ragdoll_ignores)
-		: sensors(sensors), reporting(reporting), ragdoll_ignores(ragdoll_ignores)
+						  const std::unordered_set<JPH::BodyID> &reporting)
+		: sensors(sensors), reporting(reporting)
 	{
-	}
-
-	JPH::ValidateResult OnContactValidate(const JPH::Body &inBody1,
-										  const JPH::Body &inBody2,
-										  JPH::RVec3Arg,
-										  const JPH::CollideShapeResult &) override
-	{
-		if (Ignores(inBody1, inBody2) || Ignores(inBody2, inBody1))
-			return JPH::ValidateResult::RejectAllContactsForThisBodyPair;
-		return JPH::ValidateResult::AcceptAllContactsForThisBodyPair;
 	}
 
 	void OnContactAdded(const JPH::Body &inBody1,
@@ -357,14 +344,6 @@ public:
 	}
 
 private:
-	bool Ignores(const JPH::Body &part, const JPH::Body &other) const
-	{
-		if (part.GetObjectLayer() != Layers::RAGDOLL)
-			return false;
-		auto found = ragdoll_ignores.find(part.GetID());
-		return found != ragdoll_ignores.end() && found->second == other.GetID();
-	}
-
 	void ReportSolid(const JPH::Body &inBody1,
 					 const JPH::Body &inBody2,
 					 const JPH::ContactManifold &inManifold,
@@ -423,7 +402,6 @@ private:
 
 	const std::unordered_set<JPH::BodyID> &sensors;
 	const std::unordered_set<JPH::BodyID> &reporting;
-	const std::unordered_map<JPH::BodyID, JPH::BodyID> &ragdoll_ignores;
 	std::mutex mutex;
 	std::unordered_map<SensorPair, uint32_t, SensorPairHash> counts;
 	std::vector<JoltSensorContact> queued;
@@ -441,8 +419,7 @@ struct JoltWorld
 	ObjectLayerPairFilterImpl object_layer_pair_filter;
 	std::unordered_set<JPH::BodyID> sensors;
 	std::unordered_set<JPH::BodyID> reporting;
-	std::unordered_map<JPH::BodyID, JPH::BodyID> ragdoll_ignores;
-	SensorContactListener sensor_contact_listener{sensors, reporting, ragdoll_ignores};
+	SensorContactListener sensor_contact_listener{sensors, reporting};
 	JPH::PhysicsSystem system;
 };
 
@@ -456,6 +433,10 @@ struct JoltBodyCreationSettings
 	// Applied inside the offset wrap, so the offset stays in body space
 	// rather than being scaled along with the geometry.
 	JPH::Vec3 shape_scale = JPH::Vec3::sReplicate(1.0f);
+	// Composed into the object layer by jolt_body_create, with the motion
+	// type and sensor flag as they are then.
+	uint32_t memberships = 1;
+	uint32_t filter = Layers::MASK;
 };
 
 // Holds a reference rather than owning the allocation: Jolt shapes are

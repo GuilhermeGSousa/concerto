@@ -1,5 +1,11 @@
 mod asset;
+mod balance;
+mod behaviour;
 mod character;
 mod common;
+mod dying;
+mod fall;
 mod generate;
+mod shot;
 mod stability;
+mod stagger;

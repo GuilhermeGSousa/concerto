@@ -11,6 +11,7 @@ use crate::body::{BodyActivity, BodyId};
 use crate::collider::{Collider, ColliderOffset};
 use crate::contact::{Contact, ContactChange};
 use crate::ground::{GroundContact, GroundState};
+use crate::layers::CollisionLayers;
 use crate::query::{QueryFilter, ShapeHit};
 use crate::ragdoll::{BodyPose, BuiltRagdoll, JointDrive, RagdollId, RagdollSettings};
 use crate::ray::RayHit;
@@ -181,14 +182,6 @@ impl PhysicsState {
         self.backend.body_activity(body.0)
     }
 
-    /// Stops every part of the ragdoll colliding with `body`, a character's own capsule; `None` lets them collide with everything again.
-    pub fn set_ragdoll_ignored_body(&mut self, ragdoll: RagdollId, body: Option<BodyId>) {
-        if self.ragdolls.contains_key(&ragdoll) {
-            self.backend
-                .set_ragdoll_ignored_body(ragdoll.0, body.map(|body| body.0));
-        }
-    }
-
     /// The body of each part of the ragdoll, in part order; empty for a destroyed ragdoll.
     pub fn ragdoll_bodies(&self, ragdoll: RagdollId) -> &[BodyId] {
         self.ragdolls
@@ -227,6 +220,7 @@ impl PhysicsState {
         offset: Option<&ColliderOffset>,
         sensor: bool,
         gravity_scale: f32,
+        layers: CollisionLayers,
     ) -> BodyId {
         BodyId(self.backend.create_body(
             collider,
@@ -235,6 +229,7 @@ impl PhysicsState {
             offset,
             sensor,
             gravity_scale,
+            layers,
         ))
     }
 
@@ -268,6 +263,13 @@ impl PhysicsState {
         if self.ragdolls.contains_key(&ragdoll) {
             self.backend
                 .set_ragdoll_part_motion(ragdoll.0, part, motion);
+        }
+    }
+
+    /// Freezes a ragdoll where it lies, or lets it go again. A frozen ragdoll's parts are static: they block bodies and are found by queries, but nothing moves them and they cost the solver nothing. Letting it go makes every part dynamic and awake.
+    pub fn set_ragdoll_frozen(&mut self, ragdoll: RagdollId, frozen: bool) {
+        if self.ragdolls.contains_key(&ragdoll) {
+            self.backend.set_ragdoll_frozen(ragdoll.0, frozen);
         }
     }
 
@@ -356,7 +358,8 @@ impl PhysicsState {
         }
     }
 
-    pub(crate) fn set_contact_reporting(&mut self, body: BodyId, enabled: bool) {
+    /// Turns the reporting of `body`'s contacts with solid bodies on or off. A `Contacts` component does this for its entity's body; call it for a body that has no entity of its own, such as a ragdoll part, and read the contacts with [`contacts_of`](Self::contacts_of).
+    pub fn set_contact_reporting(&mut self, body: BodyId, enabled: bool) {
         self.backend.set_contact_reporting(body.0, enabled);
         if enabled {
             self.reporting.insert(body);
@@ -451,7 +454,8 @@ impl PhysicsState {
         std::mem::take(&mut self.contact_changes)
     }
 
-    pub(crate) fn contacts_of(&self, body: BodyId) -> Vec<Contact> {
+    /// The solid bodies touching `body` after the last fixed step, when its contacts are reported.
+    pub fn contacts_of(&self, body: BodyId) -> Vec<Contact> {
         self.touching
             .iter()
             .filter(|(pair, _)| pair.holds(body))
@@ -497,12 +501,33 @@ impl PhysicsState {
         }
     }
 
+    /// Gives the body its collision layers, as a `CollisionLayers` beside its `Collider` does when the body is created. `CollisionLayers::NONE` makes it collide with nothing and hides it from every query.
+    pub fn set_body_layers(&mut self, body: BodyId, layers: CollisionLayers) {
+        self.backend.set_body_layers(body.0, layers);
+    }
+
+    /// Sets the body's velocities so that it reaches `pose` at the end of the next fixed step; a kinematic body follows it exactly and pushes dynamic bodies aside.
+    pub fn move_body_kinematic(&mut self, body: BodyId, pose: BodyPose) {
+        self.backend
+            .move_body_kinematic(body.0, pose, Time::fixed_delta_time().as_secs_f32());
+    }
+
+    /// Moves the body's origin at once, keeping its rotation and velocity.
+    pub fn set_body_translation(&mut self, body: BodyId, translation: Vec3) {
+        self.backend.set_body_translation(body.0, translation);
+    }
+
     pub fn set_linear_velocity(&mut self, body: BodyId, velocity: Vec3) {
         self.backend.set_linear_velocity(body.0, velocity);
     }
 
     pub fn linear_velocity(&self, body: BodyId) -> Vec3 {
         self.backend.linear_velocity(body.0)
+    }
+
+    /// The body's angular velocity, in rad/s about the world axes.
+    pub fn angular_velocity(&self, body: BodyId) -> Vec3 {
+        self.backend.angular_velocity(body.0)
     }
 
     /// Reads a body's current world transform out of the simulation.
@@ -516,7 +541,7 @@ impl PhysicsState {
     pub fn cast_ray(&self, origin: Vec3, direction: Vec3, filter: QueryFilter) -> Option<RayHit> {
         let ignore: Vec<_> = filter.ignore.iter().map(|body| body.0).collect();
         self.backend
-            .cast_ray(origin, direction, &ignore, filter.ragdolls)
+            .cast_ray(origin, direction, &ignore, filter.layers)
             .map(|hit| {
                 let body = BodyId(hit.body);
 
@@ -546,7 +571,7 @@ impl PhysicsState {
                 radius.max(MIN_SPHERE_CAST_RADIUS),
                 direction,
                 &ignore,
-                filter.ragdolls,
+                filter.layers,
             )
             .map(|hit| {
                 let body = BodyId(hit.body);
@@ -572,6 +597,11 @@ impl PhysicsState {
 
     pub fn add_force(&mut self, body: BodyId, force: Vec3) {
         self.backend.add_force(body.0, force);
+    }
+
+    /// Adds a torque, in N·m about the world axes, for the next step.
+    pub fn add_torque(&mut self, body: BodyId, torque: Vec3) {
+        self.backend.add_torque(body.0, torque);
     }
 
     pub fn add_force_at(&mut self, body: BodyId, force: Vec3, position: Vec3) {

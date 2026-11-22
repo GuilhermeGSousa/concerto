@@ -78,6 +78,7 @@ pub struct JoltRagdollPart {
     pub shape_position: [f32; 3],
     pub shape_rotation: [f32; 4],
     pub mass: f32,
+    pub friction: f32,
     pub twist_axis: [f32; 3],
     pub plane_axis: [f32; 3],
     pub normal_half_cone: f32,
@@ -93,8 +94,7 @@ pub struct JoltRagdollPart {
 /// A Jolt body id (`JPH::BodyID::GetIndexAndSequenceNumber()`).
 pub type JoltBodyId = u32;
 
-/// Mirrors `JPH::EMotionType`. Static bodies live on the NON_MOVING collision
-/// layer, kinematic and dynamic bodies on MOVING.
+/// Mirrors `JPH::EMotionType`.
 pub type JoltMotionType = u32;
 pub const JOLT_MOTION_TYPE_STATIC: JoltMotionType = 0;
 pub const JOLT_MOTION_TYPE_KINEMATIC: JoltMotionType = 1;
@@ -160,12 +160,6 @@ pub struct JoltSensorContact {
     pub other: JoltBodyId,
     pub entered: u8,
 }
-
-/// Whether a scene query sees the bodies of ragdoll parts (mirrors `JoltRagdollQuery` in `body.h`).
-pub type JoltRagdollQuery = u32;
-pub const JOLT_RAGDOLL_QUERY_SKIP: JoltRagdollQuery = 0;
-pub const JOLT_RAGDOLL_QUERY_INCLUDE: JoltRagdollQuery = 1;
-pub const JOLT_RAGDOLL_QUERY_ONLY: JoltRagdollQuery = 2;
 
 /// Mirrors the `JoltContactKind` constants in `body.h`.
 pub type JoltContactKind = u8;
@@ -289,6 +283,13 @@ extern "C" {
         gravity_factor: f32,
     );
 
+    /// The collision layers the body is in and the ones it collides with, each a mask of bits 0 to 13; by default in layer 0 and colliding with every layer.
+    pub fn jolt_body_creation_settings_set_layers(
+        settings: *mut JoltBodyCreationSettings,
+        memberships: u32,
+        filter: u32,
+    );
+
     /// Makes the body a kinematic, always active sensor on the sensor layer.
     pub fn jolt_body_creation_settings_set_is_sensor(
         settings: *mut JoltBodyCreationSettings,
@@ -342,6 +343,32 @@ extern "C" {
         out: *mut JoltSensorContact,
         capacity: u32,
     ) -> u32;
+
+    /// Puts the body in the layers `memberships` and makes it collide with the layers `filter`; with no memberships it collides with nothing and no query sees it.
+    pub fn jolt_body_set_layers(
+        world: *mut JoltWorld,
+        body: JoltBodyId,
+        memberships: u32,
+        filter: u32,
+    );
+
+    pub fn jolt_body_get_angular_velocity(
+        world: *const JoltWorld,
+        body: JoltBodyId,
+        out_velocity: *mut f32,
+    );
+
+    /// Sets the body's velocities so that it reaches `position` and `rotation` (xyzw) after `delta_time`.
+    pub fn jolt_body_move_kinematic(
+        world: *mut JoltWorld,
+        body: JoltBodyId,
+        position: *const f32,
+        rotation: *const f32,
+        delta_time: f32,
+    );
+
+    /// Moves the body's origin at once, keeping its rotation and velocity.
+    pub fn jolt_body_set_position(world: *mut JoltWorld, body: JoltBodyId, position: *const f32);
 
     /// The body's current motion type; static for an id that is not in the world.
     pub fn jolt_body_get_motion_type(world: *const JoltWorld, body: JoltBodyId) -> JoltMotionType;
@@ -403,7 +430,7 @@ extern "C" {
         direction: *const f32,
         ignore: *const JoltBodyId,
         ignore_count: u32,
-        ragdolls: JoltRagdollQuery,
+        layers: u32,
         out_hit: *mut JoltRayHit,
     ) -> bool;
 
@@ -415,7 +442,7 @@ extern "C" {
         direction: *const f32,
         ignore: *const JoltBodyId,
         ignore_count: u32,
-        ragdolls: JoltRagdollQuery,
+        layers: u32,
         out_hit: *mut JoltShapeHit,
     ) -> bool;
 
@@ -430,6 +457,9 @@ extern "C" {
 
     pub fn jolt_body_add_force(world: *const JoltWorld, body: JoltBodyId, force: *const f32);
 
+    /// Adds a torque, in N·m about the world axes, for the next step.
+    pub fn jolt_body_add_torque(world: *mut JoltWorld, body: JoltBodyId, torque: *const f32);
+
     pub fn jolt_body_add_force_at(
         world: *const JoltWorld,
         body: JoltBodyId,
@@ -442,6 +472,10 @@ extern "C" {
         parts: *const JoltRagdollPart,
         count: u32,
         max_linear_velocity: f32,
+        memberships: u32,
+        filter: u32,
+        velocity_steps: u32,
+        position_steps: u32,
     ) -> *mut JoltRagdollSettings;
 
     pub fn jolt_ragdoll_settings_destroy(settings: *mut JoltRagdollSettings);
@@ -458,14 +492,6 @@ extern "C" {
 
     /// Removes the ragdoll from the world and destroys it.
     pub fn jolt_ragdoll_destroy(world: *mut JoltWorld, ragdoll: *mut JoltRagdoll);
-
-    /// Stops every part of the ragdoll colliding with `body`, or lets them collide again when `ignored` is false.
-    pub fn jolt_ragdoll_set_ignored_body(
-        world: *mut JoltWorld,
-        ragdoll: *mut JoltRagdoll,
-        body: JoltBodyId,
-        ignored: bool,
-    );
 
     pub fn jolt_ragdoll_part_count(ragdoll: *const JoltRagdoll) -> u32;
 
@@ -491,13 +517,14 @@ extern "C" {
     /// Turns every joint's motor on and aims it at the rotation the part has relative to its parent in `poses`.
     pub fn jolt_ragdoll_drive_motors(ragdoll: *mut JoltRagdoll, poses: *const f32);
 
-    /// Turns the motor of the joint between `part` and its parent off, or on towards `target_rotation` (xyzw, the part relative to its parent).
+    /// Turns the motor of the joint between `part` and its parent off, or on towards `target_rotation` (xyzw, the part relative to its parent); `spring` and `damping` are a frequency in Hz and a ratio, or with `by_stiffness` N·m/rad and N·m·s/rad.
     pub fn jolt_ragdoll_set_joint_motor(
         ragdoll: *mut JoltRagdoll,
         part: u32,
         enabled: bool,
         target_rotation: *const f32,
-        frequency: f32,
+        by_stiffness: bool,
+        spring: f32,
         damping: f32,
         torque_limit: f32,
     );
@@ -509,6 +536,9 @@ extern "C" {
         part: u32,
         motion_type: JoltMotionType,
     );
+
+    /// Frozen makes every part static where it is; not frozen makes every part dynamic again and wakes it.
+    pub fn jolt_ragdoll_set_frozen(world: *mut JoltWorld, ragdoll: *mut JoltRagdoll, frozen: bool);
 
     /// The angular impulse the joint's motor applied in the last collision step; zero for the root.
     pub fn jolt_ragdoll_get_joint_motor_impulse(

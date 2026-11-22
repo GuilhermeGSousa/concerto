@@ -96,7 +96,11 @@ extern "C"
 
 	JoltRagdollSettings *jolt_ragdoll_settings_create(const JoltRagdollPart *parts,
 													  uint32_t count,
-													  float max_linear_velocity)
+													  float max_linear_velocity,
+													  uint32_t memberships,
+													  uint32_t filter,
+													  uint32_t velocity_steps,
+													  uint32_t position_steps)
 	{
 		jolt_global_init();
 		if (count == 0)
@@ -123,10 +127,11 @@ extern "C"
 			part.mPosition = JPH::RVec3(ToVec3(source.position));
 			part.mRotation = ToQuat(source.rotation);
 			part.mMotionType = JPH::EMotionType::Dynamic;
-			part.mObjectLayer = Layers::RAGDOLL;
+			part.mObjectLayer = Layers::Make(memberships, filter, false, false);
 			part.mOverrideMassProperties = JPH::EOverrideMassProperties::CalculateInertia;
 			part.mMassPropertiesOverride.mMass = source.mass;
 			part.mMaxLinearVelocity = max_linear_velocity;
+			part.mFriction = source.friction;
 
 			if (source.parent < 0)
 				continue;
@@ -151,6 +156,8 @@ extern "C"
 			joint->mTwistMinAngle = source.twist_min;
 			joint->mTwistMaxAngle = source.twist_max;
 			joint->mMaxFrictionTorque = source.max_friction_torque;
+			joint->mNumVelocityStepsOverride = velocity_steps;
+			joint->mNumPositionStepsOverride = position_steps;
 			JPH::MotorSettings motor(source.motor_frequency, source.motor_damping);
 			motor.SetTorqueLimit(source.motor_torque_limit);
 			joint->mSwingMotorSettings = motor;
@@ -208,7 +215,6 @@ extern "C"
 		for (JPH::BodyID id : ragdoll->ragdoll->GetBodyIDs())
 		{
 			world->reporting.erase(id);
-			world->ragdoll_ignores.erase(id);
 			world->sensor_contact_listener.Forget(id);
 		}
 		if (bounds.IsValid())
@@ -217,20 +223,6 @@ extern "C"
 			bi.ActivateBodiesInAABox(bounds, JPH::BroadPhaseLayerFilter(), JPH::ObjectLayerFilter());
 		}
 		delete ragdoll;
-	}
-
-	void jolt_ragdoll_set_ignored_body(JoltWorld *world,
-									   JoltRagdoll *ragdoll,
-									   JoltBodyId body,
-									   bool ignored)
-	{
-		for (JPH::BodyID id : ragdoll->ragdoll->GetBodyIDs())
-		{
-			if (ignored)
-				world->ragdoll_ignores[id] = JPH::BodyID(body);
-			else
-				world->ragdoll_ignores.erase(id);
-		}
 	}
 
 	uint32_t jolt_ragdoll_part_count(const JoltRagdoll *ragdoll)
@@ -293,7 +285,8 @@ extern "C"
 									  uint32_t part,
 									  bool enabled,
 									  const float target_rotation[4],
-									  float frequency,
+									  bool by_stiffness,
+									  float spring,
 									  float damping,
 									  float torque_limit)
 	{
@@ -302,7 +295,11 @@ extern "C"
 			return;
 		if (enabled)
 		{
-			JPH::MotorSettings motor(frequency, damping);
+			JPH::MotorSettings motor;
+			motor.mSpringSettings = JPH::SpringSettings(by_stiffness ? JPH::ESpringMode::StiffnessAndDamping
+																	 : JPH::ESpringMode::FrequencyAndDamping,
+														spring,
+														damping);
 			motor.SetTorqueLimit(torque_limit);
 			joint->GetSwingMotorSettings() = motor;
 			joint->GetTwistMotorSettings() = motor;
@@ -328,6 +325,15 @@ extern "C"
 		world->system.GetBodyInterface().SetMotionType(ragdoll->ragdoll->GetBodyID(static_cast<int>(part)),
 													   static_cast<JPH::EMotionType>(motion_type),
 													   JPH::EActivation::Activate);
+	}
+
+	void jolt_ragdoll_set_frozen(JoltWorld *world, JoltRagdoll *ragdoll, bool frozen)
+	{
+		JPH::BodyInterface &bodies = world->system.GetBodyInterface();
+		for (JPH::BodyID body : ragdoll->ragdoll->GetBodyIDs())
+			bodies.SetMotionType(body,
+								 frozen ? JPH::EMotionType::Static : JPH::EMotionType::Dynamic,
+								 frozen ? JPH::EActivation::DontActivate : JPH::EActivation::Activate);
 	}
 
 	void jolt_ragdoll_get_joint_motor_impulse(const JoltRagdoll *ragdoll,

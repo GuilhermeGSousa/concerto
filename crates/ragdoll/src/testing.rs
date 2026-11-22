@@ -4,22 +4,16 @@ use concerto_animation::retarget::{RetargetChain, RetargetRig};
 use concerto_ecs::component::scene::SceneEntityRef;
 use concerto_ecs::entity::Entity;
 use concerto_ecs::entity::hierarchy::ChildOf;
-use concerto_ecs::system::executor::single_thread::SingleThreadedExecutor;
-use concerto_ecs::system::schedule::Schedule;
 use concerto_ecs::world::World;
 use concerto_foundation::assets::handle::AssetHandle;
-use concerto_foundation::time::Time;
 use concerto_foundation::transform::Transform;
 use concerto_mesh::{JointPose, Skeleton, SkeletonComponent};
-use concerto_physics::collider::{Collider, register_colliders};
-use concerto_physics::physics_pipeline::PhysicsPipeline;
-use concerto_physics::physics_state::PhysicsState;
-use concerto_physics::ragdoll::{BodyPose, RagdollId};
 use glam::{Mat4, Quat, Vec3};
 
 use crate::asset::Ragdoll;
 use crate::generate::{HumanoidSettings, generate_humanoid};
 use crate::resolve::ResolvedRagdoll;
+pub use crate::sandbox::{PlacedRagdoll, RagdollWorld, joint_gaps};
 
 struct Bone {
     name: &'static str,
@@ -153,147 +147,6 @@ pub fn reference_humanoid() -> ReferenceHumanoid {
         ragdoll,
         resolved,
     }
-}
-
-/// A physics world with a floor whose top is at y = 0, to stand ragdolls in without an `App`.
-pub struct RagdollWorld {
-    pub world: World,
-    pipeline: PhysicsPipeline,
-}
-
-/// A ragdoll placed in a [`RagdollWorld`].
-#[derive(Clone, Copy, Debug)]
-pub struct PlacedRagdoll {
-    pub id: RagdollId,
-    pub owner: Entity,
-}
-
-impl RagdollWorld {
-    /// A world holding only the floor, 400 m across.
-    pub fn new() -> Self {
-        let mut world = World::new();
-        world.register_component::<Collider>();
-        world.register_component::<Transform>();
-        world.insert_resource(PhysicsState::new());
-        world.spawn((
-            Collider::cuboid(200.0, 0.5, 200.0),
-            Transform::from_translation(Vec3::new(0.0, -0.5, 0.0)),
-        ));
-        let mut world = Self {
-            world,
-            pipeline: PhysicsPipeline::new(),
-        };
-        world.register_bodies();
-        world
-    }
-
-    /// Creates the bodies of the colliders spawned since the last call.
-    pub fn register_bodies(&mut self) {
-        let mut schedule = Schedule::new();
-        schedule.add_system(register_colliders);
-        schedule
-            .compile::<SingleThreadedExecutor>(&mut self.world)
-            .run(&mut self.world);
-    }
-
-    pub fn state(&mut self) -> &mut PhysicsState {
-        self.world
-            .get_resource_mut::<PhysicsState>()
-            .expect("the world was built with a PhysicsState")
-    }
-
-    /// Places `ragdoll` in its rest pose moved by `root`, owned by a new entity.
-    pub fn place(&mut self, ragdoll: &ResolvedRagdoll, root: BodyPose) -> PlacedRagdoll {
-        let owner = self.world.spawn(Transform::default());
-        let pose: Vec<BodyPose> = ragdoll
-            .settings()
-            .parts
-            .iter()
-            .map(|part| root.then(part.pose))
-            .collect();
-        let id = self
-            .state()
-            .create_ragdoll(ragdoll.built(), owner, &pose)
-            .expect("the physics backend creates ragdolls");
-        PlacedRagdoll { id, owner }
-    }
-
-    /// Applies `impulse`, in N·s, at the centre of mass of the part on the bone called `bone`.
-    pub fn impulse(
-        &mut self,
-        ragdoll: &ResolvedRagdoll,
-        placed: PlacedRagdoll,
-        bone: &str,
-        impulse: Vec3,
-    ) {
-        let part = ragdoll
-            .part_of(bone)
-            .unwrap_or_else(|| panic!("the ragdoll has no part on `{bone}`"));
-        let body = self.state().ragdoll_bodies(placed.id)[part];
-        self.state().add_impulse(body, impulse);
-    }
-
-    /// Steps the simulation once.
-    pub fn step(&mut self) {
-        let Self { world, pipeline } = self;
-        pipeline.step(
-            world
-                .get_resource_mut::<PhysicsState>()
-                .expect("the world was built with a PhysicsState"),
-        );
-    }
-
-    /// Steps the simulation for `seconds` of fixed steps.
-    pub fn step_for(&mut self, seconds: f32) {
-        let steps = (seconds / Time::fixed_delta_time().as_secs_f32()).round() as usize;
-        for _ in 0..steps {
-            self.step();
-        }
-    }
-
-    /// The world pose of every part of `placed`.
-    pub fn pose(&mut self, placed: PlacedRagdoll) -> Vec<BodyPose> {
-        let mut pose = Vec::new();
-        self.state().ragdoll_pose(placed.id, &mut pose);
-        pose
-    }
-
-    /// The speed of each part of `placed`, in m/s.
-    pub fn speeds(&mut self, placed: PlacedRagdoll) -> Vec<f32> {
-        let state = self.state();
-        state
-            .ragdoll_bodies(placed.id)
-            .iter()
-            .map(|body| state.linear_velocity(*body).length())
-            .collect()
-    }
-}
-
-impl Default for RagdollWorld {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// How far each part of `pose` but the root is from where its joint holds it on its parent, in metres, in part order.
-pub fn joint_gaps(ragdoll: &ResolvedRagdoll, pose: &[BodyPose]) -> Vec<f32> {
-    let parts = &ragdoll.settings().parts;
-    parts
-        .iter()
-        .enumerate()
-        .filter_map(|(index, part)| {
-            let parent = part.parent?;
-            let anchor = parts[parent]
-                .pose
-                .inverse()
-                .transform_point(part.pose.translation);
-            Some(
-                pose[parent]
-                    .transform_point(anchor)
-                    .distance(pose[index].translation),
-            )
-        })
-        .collect()
 }
 
 /// The reference humanoid's skeleton as entities: one per bone under a skeleton entity that holds the `SkeletonComponent`.

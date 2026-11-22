@@ -58,6 +58,39 @@ A `MeshComponent` with no material is drawn plain grey, so a `MeshCollider`
 entity like the floor above is visible. Give it a material to choose how it
 looks.
 
+### Collision layers
+
+A `CollisionLayers` beside a `Collider` says which layers the body is in
+(`memberships`) and which it collides with (`filter`). Two bodies collide when
+each is in a layer the other collides with. Without the component a body is in
+`Layers::DEFAULT` and collides with every layer.
+
+```rust
+use concerto::physics::layers::{CollisionLayers, Layers};
+
+const FOLIAGE: Layers = Layers::bit(Layers::FIRST_FREE);
+
+cmd.spawn((Collider::cuboid(1.0, 2.0, 1.0), CollisionLayers::new(FOLIAGE, Layers::ALL), transform));
+cmd.spawn((RigidBody::default(), Collider::sphere(0.1), CollisionLayers::new(Layers::DEFAULT, Layers::ALL.without(FOLIAGE)), transform));
+```
+
+There are fourteen layers. The engine names three: `Layers::DEFAULT`,
+`Layers::CHARACTER` for character capsules and `Layers::RAGDOLL` for ragdoll
+parts; `Layers::bit(n)` from `Layers::FIRST_FREE` up are a game's own.
+`CollisionLayers::character()` and `CollisionLayers::ragdoll()` are the two
+that never collide with each other. Two static bodies never collide whatever
+their layers, and a sensor detects only the moving bodies its layers match;
+without a `CollisionLayers` a sensor ignores ragdoll parts, so a character
+entering it is reported once.
+
+Changing the component changes the live body. `CollisionLayers::NONE` takes a
+body out of every layer: it collides with nothing.
+
+A scene query sees the bodies in any of `QueryFilter::layers`. The default is
+every layer but `Layers::RAGDOLL`; `QueryFilter::default().with_layers(FOLIAGE)`
+sees only foliage, and `Layers::ALL.without(FOLIAGE)` lets a camera boom pass
+through it.
+
 ### Collision steps
 
 The fixed step is 33 ms. Physics divides it into the fewest equal collision
@@ -178,11 +211,16 @@ let built = RagdollSettings::new()
 ```
 
 Each part has a pose in one shared reference pose, a shape with its offset
-from the part, a mass, and the joint to its parent, which sits at the part's
-origin. The first part is the root; every other part names an earlier one as
+from the part, a mass, a friction coefficient, and the joint to its parent,
+which sits at the part's origin. Two bodies in contact slide by the geometric
+mean of their coefficients; a part has 0.5 unless `with_friction` says
+otherwise, and bodies that are not ragdoll parts have 0.2. The first part is the root; every other part names an earlier one as
 its parent. `build` balances the masses so the joints stay stable and stops
 each part colliding with its parent. No part ever moves faster than the settings'
-`max_speed`, 50 m/s by default, however hard it is hit.
+`max_speed`, 50 m/s by default, however hard it is hit. The solver runs at least
+`velocity_steps` iterations, 20 by default, on anything joined to a ragdoll:
+the 10 it gives other bodies cannot carry a heavy trunk through a chain of
+light parts, and powered joints then give under the load.
 
 `PhysicsState::create_ragdoll(&built, owner, &pose)` adds one to the world with
 each part at its world pose and returns a `RagdollId`; `destroy_ragdoll`
@@ -209,6 +247,9 @@ A ragdoll hangs from its joints until something drives it:
 - `drive_ragdoll_kinematic(id, &pose)` sets each part's velocity so it reaches
   `pose` at the end of the next fixed step. Kinematic parts follow it exactly
   and push dynamic bodies aside.
+- `set_ragdoll_frozen(id, true)` makes every part static where it is: the
+  ragdoll blocks bodies and is found by queries, and costs the solver nothing.
+  `false` makes every part dynamic and awake again.
 
 Ragdolls exist on Jolt only. On Rapier, and so in the browser, `build`
 succeeds and `create_ragdoll` returns `None`.
@@ -217,7 +258,7 @@ succeeds and `create_ragdoll` returns `None`.
 
 The `concerto-physics-gizmos` crate, which a game adds itself, draws what the
 physics holds. Register `PhysicsGizmosPlugin` after `DefaultPlugins`; the
-`PhysicsGizmos` resource turns three layers on, all off by default:
+`PhysicsGizmos` resource turns four layers on, all off by default:
 
 - `colliders` outlines every `Collider`: a sphere, a box, a capsule, or the
   bounds of a mesh shape, carried by the entity's transform and its
@@ -229,11 +270,15 @@ physics holds. Register `PhysicsGizmosPlugin` after `DefaultPlugins`; the
   see how close the joint is to a limit.
 - `contacts` draws a red cross at each contact of a body that holds
   `Contacts`, with a line along its normal.
+- `sensing` draws what a `BodySense` perceives: the centre of mass with a line
+  down to the ground, the support outline, the capture point (green when the
+  body is balanced, red when not), the centre's velocity and any predicted
+  impact.
 
 In the editor the layers are component gizmo kinds, once the game lists
 `concerto-physics-editor`: `Collider`, `Ragdoll` (on the entity that holds the
 `RagdollId`), `Contacts`, and, drawn from the authored components where no body
-exists yet, `Box collider`, `Mesh collider` and `Sensor`. The viewport's Gizmos
+exists yet, `Box collider`, `Mesh collider` and `Sensor`, plus `Body sense` for a `BodySense`. The viewport's Gizmos
 menu and the `gizmos` tool turn each on by name, for the selection or for every
 entity. In a game without the editor, use the `PhysicsGizmos` resource. Both
 need `DebugGizmosPlugin`, which the plugin adds when the `App` has a renderer.
@@ -424,7 +469,10 @@ inspector's form.
 
 Typing fifteen parts by hand is an afternoon of guessing. `generate_humanoid`
 gives a first draft to adjust: a pelvis, up to three spine parts, a head, upper
-and lower arms, hands, thighs, shins and feet.
+and lower arms, hands, thighs, shins and feet. Each foot is a flat box whose
+underside is the sole, so a standing body rests on two faces and not on two
+rolling capsules. A part whose segment is `Foot` is built with a friction of 4,
+which holds a planted foot where it is; every other part has 0.5.
 
 ```rust
 use concerto::ragdoll::{HumanoidSettings, generate_humanoid};
@@ -456,6 +504,37 @@ at an `address` you give. The tool takes `rig`, and optionally `address`,
 and mass. It reads no skinned mesh, so part radii follow the bones'
 proportions. Given a skeleton, it says to create a rig first.
 
+A `Ragdoll` opens in its own tab, from the same crate. The left panel is the
+part tree, each part under the part of its nearest ancestor bone, labelled with
+its bone; the selected part's shape, offset, rotation, mass and joint (axes,
+swing, twist, friction, motor) are the **Part** form, written with the
+inspector's usual number fields, radians for angles. **Add part** lists the
+bones that have none, and **Remove part** drops the selected one. The preview
+stands the skeleton's character, with its skinned mesh when the skeleton's
+folder has a `scene`, on a floor, with `concerto-physics-gizmos` drawing each
+part and each joint's limits over it, and the buttons **Drop**, **Poke**,
+**Play** and **Reset** act on it: Drop lifts the body to `drop_height` and lets
+it go limp, Poke hits the part on `poke_bone` with `poke_impulse` (making the
+body limp first), Play plays the `clip` of the **Preview** value with the
+ragdoll following it kinematically, and Reset stands it in its rest pose again.
+Powered playback, where the body pulls itself toward the clip, does not exist
+yet. Drop and Poke also run the headless trial `run_trial` on the tab's current
+value and print its report under the buttons.
+
+The tools do the same without a screenshot. `ragdoll_parts` lists the parts:
+bone, parent part, shape and sizes, mass, and the joint's limits. `set_ragdoll_part`
+sets one bone's shape, `radius`, `half_height`, `half_extents`, `mass`,
+`offset`, swing and twist limits and `friction`, adds a part on a bone that has
+none, or `remove`s one, on the ragdoll open in a tab; the tab becomes unsaved,
+and `save` writes it. `test_ragdoll` runs a drop (`height`, 0.5 m by default)
+or a poke (`bone`, `impulse`) for `seconds` (5 by default) in a physics world of
+its own and answers whether the body came to rest and when, its peak speed, the
+widest its joints opened and which pairs of parts interpenetrate in the rest
+pose, by bone with the depth in metres. It reads the tab's value, saved or not,
+so a loop of `set_ragdoll_part` and `test_ragdoll` finds an overlap and fixes it
+before anything is written. `preview_ragdoll` is the buttons' other half: it
+sends the tab's preview a drop, poke, play or reset.
+
 With the `test-support` feature, `concerto::ragdoll::testing` has a reference
 humanoid built in code (`reference_humanoid`) and a `RagdollWorld` to stand it
 in, hit a named part and step, without a GPU.
@@ -478,26 +557,421 @@ current pose and the entity gets a `RagdollId` and a `RagdollBody`. Removing
 rebuilds it. An asset that does not fit the skeleton is reported once and the
 entity is marked `RagdollRefused`.
 
-Its `mode` is `RagdollMode::FollowsAnimation`: every part is kinematic, and
+Its `mode` starts as `RagdollMode::FollowsAnimation`: every part is kinematic, and
 each fixed step, before physics steps, it is driven to its bone's pose. The
 parts trail the drawn pose by up to one frame. They push dynamic props, so an
 arm swing knocks a bottle over, and they are already in the right place at the
 right speed the moment something disturbs the character. The animation is not
 changed.
 
-Ragdoll parts are on a collision layer of their own:
+`RagdollMode::Limp` lets the body go: every part turns dynamic with its motors
+off and keeps the linear and angular velocity it had while it followed the
+animation, so a running character that goes limp keeps travelling.
 
-- they never collide with the character's own `capsule`;
-- a scene query skips them unless it asks: `QueryFilter::ragdolls` is
-  `RagdollQuery::Skip` by default, so foot placement and the camera boom never
-  meet a limb. `RagdollQuery::Include` sees them with everything else and
-  `RagdollQuery::Only` sees nothing else, which is what a shot uses;
-- the ground probe and sensors ignore them.
+`RagdollMode::Powered` is the state between the two: the body tries to do what
+the animation says and physics decides how well it manages. Each part is held
+as the character's strength `profile` says, one of the `StrengthProfile`s in
+the ragdoll asset:
+
+- `PartStrength::Kinematic`: the part follows its bone exactly;
+- `PartStrength::Powered { stiffness, damping, torque_limit }`: the part is
+  dynamic and its joint's motor pulls it towards its bone's rotation under its
+  parent's, with a spring of `stiffness` N·m/rad and `damping` N·m·s/rad, and
+  no more than `torque_limit` N·m. The target leads the bone by the
+  animation's own angular speed, so a fast clip is tracked without lag;
+- `PartStrength::Limp`: dynamic with the motor off.
+
+```rust
+ragdoll.power("flinch");
+```
+
+`power` sets the mode, the profile and a weight of 1. A generated humanoid has
+three profiles: `flinch`, with the pelvis and legs kinematic and everything
+above powered, which takes a hit without needing balance; `braced`, with every
+part powered; and `limp`. A change of profile takes hold over the component's
+`blend` seconds, except to and from kinematic, which is a step.
+
+Strength is a stiffness and not a frequency: a frequency scales the spring by
+the two parts a joint joins, so an upper arm's motor would be too weak to hold
+the forearm and hand that hang from it. A torque limit of half a newton metre
+makes a muscle that cannot hold its limb up at all.
+
+When the root part is not kinematic and has been further than `lost_distance`
+from its animated place for `lost_seconds`, the character is sent `PoseLost`,
+once, until it is back: it can no longer hold the pose, and something should
+catch it or let it fall.
+
+#### A hit
+
+`BodyHit { character, part, point, impulse, kind }` says a character's body was hit:
+on this part of its ragdoll, at this world point, with this impulse in N·s. It
+says nothing about damage or death; the game decides those. Trigger it from
+the ray that found the part:
+
+```rust
+let hit = physics.cast_ray(muzzle, aim, QueryFilter::default().with_layers(Layers::RAGDOLL))?;
+cmd.trigger(BodyHit::new(hit.entity?, hit.part?, hit.point, aim.normalize() * 30.0));
+```
+
+It is triggered for every listener, so the engine and the game both hear it. A
+9 mm bullet carries about 3 N·s, which barely moves a 75 kg body; games scale
+it up for the look, and the signal carries whatever the game sends.
+
+A character with a `HitReaction` flinches when it is hit while its ragdoll
+follows its animation:
+
+1. the body is powered with the reaction's `profile`, `flinch` by default, so
+   the pelvis and legs keep following the animation and need no balance;
+2. the part takes the impulse at the point;
+3. the hit part's strength drops to `dip` of itself and its neighbours' to
+   `neighbour_dip`, and comes back over `recover` seconds;
+4. the simulated body is drawn in full for `hold` seconds after the last hit,
+   then returns to the animation over `settle` seconds, after which the parts
+   are kinematic again.
+
+A second hit during a flinch restarts the recovery and adds its impulse. A hit
+on a part the profile keeps kinematic, a leg, moves nothing. Without a
+`HitReaction`, or when the ragdoll is limp or powered by something else, the
+part only takes the impulse. `FlinchRecord` on the character holds what its
+last flinch did: the part, how far it got from its animated place, and how long
+the flinch lasted.
+
+What is drawn is a separate matter, set by weights. `weight` runs from 0, the
+animated pose, to 1, the ragdoll's; `part_weights` gives single parts a weight
+of their own by bone name. `go_limp()` sets the mode and a weight of 1:
+
+```rust
+fn die(characters: Query<&mut CharacterRagdoll, With<Dead>>) {
+    for mut ragdoll in characters.iter() {
+        ragdoll.go_limp();
+    }
+}
+```
+
+Each frame, after the animation has written the bones and before transforms
+propagate, the bones of parts with a weight above 0 are moved towards the
+ragdoll's pose, interpolated between the last two fixed steps so the body does
+not judder at the fixed rate. A bone with no part keeps its animated pose under
+its parent, so fingers and a face still animate on a limp body. Bones are
+placed in world terms, so the mesh stays on the body wherever the character's
+own entity is. Changing a weight over time is how animation and physics are
+blended. While a character whose parts have weight is itself moving, the drawn
+body trails it by one frame's motion.
+
+While the character's root part, its pelvis, has any weight, the character is
+a body and not a walker, and its `capsule` follows the body instead of driving
+it:
+
+- the capsule gets a `Carried` component, and whatever drives it leaves it
+  alone: the motion-matching springs, and so nav steering and root motion, and
+  the first-person walker. Held input moves nothing;
+- each fixed step it is put on the ground under the ragdoll's pelvis, so when
+  the character returns to animation it is already there and nothing teleports;
+- it is in no collision layer while it is carried, so it collides with nothing
+  and no query sees it; it gets its own layers back when it is let go;
+- when every weight at the pelvis is back at 0 it is let go where it stands,
+  and the springs restart from the body's velocity and facing, which `Carried`
+  holds, so the first animated frame does not snap.
+
+The capsule is not checked for a clear standing spot when it is let go; a body
+that came to rest inside a wall's reach is pushed out by the solver.
+
+#### What the body senses
+
+A `BodySense` beside a `CharacterRagdoll` is rewritten after each fixed step
+with what a behaviour needs to know to keep the body on its feet:
+
+- `centre`: the centre of mass, the body's mass and the centre's velocity;
+- `supporting` and `support`: the feet that are on the ground and the convex
+  outline under them. A simulated foot is on the ground by its contacts, a
+  kinematic one when the ground is within 5 cm under it;
+- `capture_point`: where the body would have to step to come to rest, the
+  ground under the centre of mass plus its horizontal velocity times
+  `sqrt(h / g)`. `balanced()` says it is inside the support, so the body can
+  recover without a step; `off_balance` is how far outside it is and which way;
+- `lean`, the angle of the pelvis-to-chest axis from upright, and `trunk_spin`;
+- `airborne`, the seconds since any part last touched something else;
+- `chest_impact` and `head_impact`, while no foot supports the body: where and
+  when each will meet something on its current path;
+- `at_rest`: every part slower than 0.2 m/s for half a second.
+
+Each part of the ragdoll asset says what `segment` of the body it is and which
+`side`; the generator fills them in. `ResolvedRagdoll::landmarks()` names the
+pelvis, the spine parts, the chest, the head and each side's arm and leg parts
+from them. While a body has a `BodySense`, its parts report their contacts.
+
+#### Behaviours
+
+A body knocked off balance needs targets no clip contains: a foot placed where
+it stops the fall, arms thrown out, hands reaching for the ground. A behaviour
+computes them. Every behaviour writes the same thing, to the character's
+`BodyDrive`: for each part it claims, a `PartCommand` with a target rotation
+relative to the parent part, a `PartStrength`, and optionally a world-space
+force and torque.
+
+```rust
+fn raise_arms(characters: Query<(&RaiseArms, &RagdollBody, &mut BodyDrive)>) {
+    for (_, body, mut drive) in characters.iter() {
+        let Some(arm) = body.resolved().landmarks().left.upper_arm else { continue };
+        let command = PartCommand::held(PartStrength::powered(500.0, 120.0))
+            .with_target(Quat::from_rotation_z(1.0));
+        drive.claim("raise_arms", arm, 1, 1.0, command);
+    }
+}
+
+app.add_system(FixedUpdate, raise_arms.in_set(BehaviourSet));
+```
+
+A behaviour is a plugin: a component that holds its parameters and state, and
+a system in `BehaviourSet`, in `FixedUpdate`, that claims parts every step it
+runs. Adding the component starts it and removing it stops it, by a signal of
+the behaviour's own or directly. For each part the claim with the highest
+priority wins, blended by its weight over what is below it; a behaviour fades
+in or out through its weight. The animated pose with the character's mode and
+strength profile is below every claim. A part pinned between kinematic
+neighbours cannot move, so a behaviour that moves an arm claims the whole arm.
+When a behaviour ends by itself it triggers `BehaviourEnded` with
+`Outcome::Succeeded` or `Outcome::GaveUp`, so the next can start.
+
+`PhysicalState` on the character says what it is doing:
+
+- `Animated`: its parts follow the animation;
+- `Reacting`: on its feet and powered, flinching or driven by behaviours;
+- `Falling`: no longer supported. A behaviour that gives up its balance sets it;
+- `Down`: a falling or limp body lying at rest;
+- `Dead`: limp for good. A game or `Dying` sets it, and nothing the
+  engine does moves a character out of it.
+
+The engine moves it between `Animated` and `Reacting` and to `Down`. While
+anything claims a part the simulated body is drawn in full, and the drawn body
+returns to the animation when the state returns to `Animated`. Every change
+triggers `BodyStateChanged { character, from, to }` for every listener; react
+to that instead of polling.
+
+`describe_body` gives the state, the running behaviours with their priorities
+and parts, and the sensing values as text, which is what the editor's
+`body_report` tool replies with.
+
+#### Balance
+
+`Balance` is the behaviour that keeps a pushed body on its own feet. Add it to
+a character that has a `BodyDrive`, a `BodySense` and a `PhysicalState`:
+
+```rust
+cmd.entity(character).insert(Balance::default());
+```
+
+It powers the body with its `profile`, `braced` by default, and from then on,
+each fixed step:
+
+- it holds the hips, knees and ankles with `leg_stiffness`, and claims the
+  pelvis and legs at `BALANCE_PRIORITY`, so a flinch still moves the trunk
+  and arms above them;
+- it assists the pelvis, since joint torques alone do not hold up a body that
+  has no ankle strategy: a torque towards the animated orientation, a force
+  towards the animated height, a force against the sway of the centre of mass,
+  and, only while the capture point is outside the feet, a force that pushes
+  it back. Each is capped (`max_upright_torque`, `max_lift`, `max_centring`),
+  so a hard push still overwhelms them. `with_assist(0.0, 0.0, 0.0)` leaves
+  the joints alone, and the body falls easily;
+- when the capture point is more than `step_margin` outside the feet, it
+  steps: the foot further from the point lifts and lands `step_beyond` past
+  it, at most `max_step` of the leg's length away, in `step_seconds`, bent
+  there by two-bone IK. A point to the side is caught by the foot on that
+  side, so the legs never cross. Both feet rest `step_rest` before the next.
+
+It ends by itself, removing the component and triggering `BehaviourEnded`:
+with `Outcome::Succeeded` once the body has been balanced and slower than
+`settle_speed` for `settle_seconds`, and the character returns to following
+its animation; with `Outcome::GaveUp` when the trunk leans past `max_lean`, the
+feet leave the ground, a step has no ground to land on, or `max_steps` steps
+did not bring the point back, and
+`PhysicalState` becomes `Falling`. A fall behaviour starts from that signal.
+
+With the defaults the reference humanoid, 75 kg, absorbs a 12 N·s push on the
+chest without a step, catches a 70 N·s push in one or two steps, and gives up
+under 300 N·s.
+
+#### Stagger
+
+Balance recovers as well as it can, which reads as a robot. `Stagger` makes
+the same push a stumble. Add it when a character is shoved or hit, with the
+way it was sent and a severity from 0 to 1:
+
+```rust
+cmd.entity(character).insert(Stagger::new(push_direction, 0.5));
+```
+
+It requires a `Balance`, so the character gets one if it has none, and it runs
+on top of it instead of placing the feet itself:
+
+- **Legs.** Each step it calls `Balance::hinder` with a `Hindrance`: steps
+  cover less of the distance balance wants (`short_steps`), take longer
+  (`slow_steps`), the legs and balance's assists are weaker (`weak_legs`), and
+  the knees lose strength for a quarter of a second after each landing, and
+  the body may take `more_steps` steps on top of balance's `max_steps`. All of
+  it scales with the severity and wears off over `seconds`. Any behaviour can
+  hinder balance the same way.
+- **Trunk.** The spine bends towards the direction, by `bend` radians at
+  severity 1, and straightens as the stagger wears off.
+- **Arms.** Both arms circle about the shoulders in the sense the trunk is
+  tipping, which slows it, as wide as the chest's angular velocity is fast
+  (`full_spin`). As the body steadies they come down. The cycle is authored,
+  not solved from the angular momentum.
+
+It claims the spine and the arms at `STAGGER_PRIORITY`, above balance and
+below nothing the engine has yet. It ends when balance ends and triggers
+`BehaviourEnded` for `stagger` with the same outcome. On the reference
+humanoid a 70 N·s push with severity 0.3 takes more steps than balance alone
+and ends standing; with severity 1 it ends `Falling`. Between those the
+outcome is in doubt, as it should be: do not build game logic on a stagger of
+a given severity surviving.
+
+#### Shot
+
+A flinch bends the upper body over legs that never move. A character with a
+`ShotReaction` answers a gunshot with its whole body, and differently by where
+the bullet struck. The game marks the hit:
+
+```rust
+cmd.trigger(BodyHit::new(character, part, point, impulse).shot());
+```
+
+`HitKind::Shot` on a character that has a `ShotReaction` and is `Animated` or
+`Reacting` starts a `Shot` beside it, which brings a `Balance`; the flinch
+does not run for that hit. Any other character, and a blow, flinches as
+before. While the shot runs:
+
+- **Snap.** The bullet's impulse lands on the struck part. The muscles of that
+  part and the parts joined to it are `spike` times stronger for
+  `snap_seconds`, then drop to `slack` and come back to `wounded` over
+  `recover`.
+- **Wound reach.** After `reach_delay` the nearer hand goes to the newest
+  wound by two-bone IK, the elbow turned onto its hinge, and stays. A hand
+  does not reach for the head, a hand, or with an arm that was itself shot.
+- **Look.** The head turns to the wound for `look_seconds`, then to where the
+  shot came from, never more than `max_look` from the animation.
+- **By region**, which is the `segment` of the struck part:
+  - pelvis or spine: the spine folds over the wound by `fold` and straightens
+    over `fold_seconds`; balance takes the momentum;
+  - arm or hand: that arm hangs at `hanging_arm` of its strength;
+  - thigh, shin or foot: that leg keeps `lame_leg` of its strength through
+    `Hindrance::left_leg` or `right_leg`. Balance sags the knee of a leg under
+    a half, so its foot leaves the ground, and never stands on it. With both
+    legs shot the knees fold, the pelvis sinks under `Balance::min_height` of
+    its standing height and balance gives up;
+  - head: nothing but the impulse. A game that kills on a head shot sends the
+    dying signal.
+- **Repeat hits.** Each hit adds a wound with its own snap and region effect;
+  the hand goes to the newest.
+
+It claims parts at `SHOT_PRIORITY`, above stagger. It ends when balance ends
+and triggers `BehaviourEnded` for `shot` with the same outcome: standing and
+`Animated`, or `Falling`. `Wounds` stays on the character afterwards:
+`strength_of(part)` is the share of its strength each part kept, for the game
+to turn into a limp or a guarded arm. The engine does not apply it outside the
+reaction.
+
+A body standing on one leg may take a long time to settle or never settle;
+the reaction then lasts until the game ends it by removing `Shot` and
+`Balance`, or the character dies.
+
+#### Fall
+
+A body that goes limp the moment it loses its balance falls like a dropped
+puppet. `Fall` is what a person does instead. Give the character a
+`FallReaction` and a `Fall` starts whenever its state becomes `Falling`, which
+is what balance sets when it gives up:
+
+```rust
+cmd.entity(character).insert(FallReaction { strength: 1.0 });
+```
+
+`strength` is how conscious the fall is: 1 is fully braced, 0 is the limp
+fall, and everything between is a weaker version of the same motion, so the
+game sets it from the wound. Inserting a `Fall` directly starts one on a
+standing character too. While it runs:
+
+- **Arms.** Each hand goes towards where the chest will land, from
+  `BodySense::chest_impact`, `spread` to its own side, by two-bone IK that
+  stops at `reach` of the arm's length so the elbow stays bent. When the hand
+  touches something its arm drops to `buckled` of its strength over
+  `buckle_seconds`, and gives under the weight.
+- **Bracing.** When the predicted impact is on something upright and less than
+  `brace_seconds` away, the hands go to it at chest height instead.
+- **Head.** The neck holds the head `tuck` radians away from the way the body
+  travels: chin up falling forward, chin in falling backward.
+- **Trunk.** The spine curls by `curl`, and twists by `twist` when the fall is
+  backward, so one shoulder leads.
+- **Legs.** The knees bend by `knee_bend` at `legs` of the strength, so they
+  fold.
+- **Landing.** Once the chest or pelvis touches something and the body is
+  slower than 0.5 m/s the state is `Down`. The strength then drains to
+  `resting` over `relax_seconds`, the ragdoll goes limp, and the behaviour
+  ends with `BehaviourEnded` for `fall`.
+
+It claims at `FALL_PRIORITY`. Hands are held to the ground by friction, not by
+a constraint. A fall from a height, where a roll is the right answer, is not
+handled. On the reference humanoid pushed over with 300 N·s, forward or
+backward, the braced fall's peak contact impulse on the head is under half the
+limp fall's, and falling forward both hands land before the chest.
+
+#### Dying
+
+The engine has no health. When the game decides a character dies it says so,
+with the seconds the strength takes to leave the body:
+
+```rust
+cmd.trigger(Die { character, seconds: 1.0 });
+```
+
+Adding a `Dying` component does the same, which is how an editor tool starts
+it. While it is on the character:
+
+- every part's strength falls to zero, from the outside in: hands and feet
+  are spent at 40% of the time, forearms and shins at 60%, upper arms, thighs
+  and the head at 80%, the trunk at the end (`Dying::left`). The drive scales
+  whatever holds each part, the strength profile or a behaviour's claim with
+  its forces, so a behaviour still running loses its grip and a fall that
+  began braced ends limp. A character that was following its animation is
+  simulated in full from the first step;
+- when nothing is left the ragdoll is limp, `PhysicalState` is `Dead`, and
+  `Balance`, `Stagger`, `Shot`, `Fall` and `Flinch` are removed. Nothing the
+  engine does moves a character out of `Dead`;
+- `Die` with zero seconds does all of that at once, which a head shot wants. A
+  second `Die` never slows a death down.
+
+When a dead body lies at rest it settles: its parts become static where they
+lie (`PhysicsState::set_ragdoll_frozen`), it gets a `Settled` component, and
+`BodySettled { character }` is triggered. A settled body is no longer driven
+or sensed and its capsule is no longer carried, so it costs its static shapes
+and the pose write-back and nothing in the solver. Its shapes still block
+doors and stop bullets. The bones keep the pose it lies in.
+
+A `BodyHit` of at least `Settled::wake_impulse`, 50 N·s by default, wakes it:
+the parts are simulated again, the struck part takes the impulse, and the body
+settles again, with another `BodySettled`. A lighter hit does nothing. A
+dynamic body pushed into a settled one is stopped by it and does not wake it;
+send a `BodyHit` for an explosion or a door that should.
+
+The capsule is not removed. It stays where the body left it, in no collision
+layer; despawn it, or the character, when the game no longer needs the entity.
+A settled body is not saved as such: a scene or a save game that wants the
+corpse writes the bones' pose.
+
+Ragdoll parts are in `Layers::RAGDOLL` and collide with everything but
+`Layers::CHARACTER` (`CollisionLayers::ragdoll()`, or `RagdollSettings::layers`
+to change it). Give the character's capsule `CollisionLayers::character()`:
+then no ragdoll part ever touches a capsule, its own or another character's, a
+default scene query sees the capsule and never a limb, and a shot asks for the
+limbs with `QueryFilter::default().with_layers(Layers::RAGDOLL)`. A capsule left
+on the default layer is pushed around by its own body; the engine warns when a
+`CharacterRagdoll` names one.
 
 A hit on a part reports the character and the bone:
 
 ```rust
-let hit = physics.cast_ray(origin, direction, QueryFilter::default().with_ragdolls(RagdollQuery::Only))?;
+let hit = physics.cast_ray(origin, direction, QueryFilter::default().with_layers(Layers::RAGDOLL))?;
 let body = bodies.get_entity(hit.entity?)?;
 let bone = body.bone(hit.part?);
 ```

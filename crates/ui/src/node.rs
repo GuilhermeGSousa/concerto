@@ -802,6 +802,339 @@ pub(crate) struct RenderUIMaterial {
     signature: [u32; 27],
 }
 
+struct TreeSync {
+    examined: bool,
+    updated: HashSet<Entity>,
+    created: Vec<Entity>,
+    layers_changed: bool,
+}
+
+fn sync_node_style(
+    engine: &mut UILayoutEngine,
+    entity: Entity,
+    nodes: &Query<(Entity, &UINode, Option<&Children>)>,
+    texts: &Query<&crate::text::UIText>,
+    extents: &Query<&UIIntrinsicHeight>,
+    sync: &mut TreeSync,
+) {
+    let Some((_, node, _)) = nodes.get_entity(entity) else {
+        return;
+    };
+    let extent = extents.get_entity(entity).map(|extent| extent.0);
+    let text = match extent {
+        Some(_) => None,
+        None => texts.get_entity(entity),
+    };
+    let style = match text {
+        Some(text) => leaf_style(node, text.ellipsis, text.wrap),
+        None => node.style(),
+    };
+    let measure_key = match (extent, text) {
+        (Some(extent), _) => Some(extent_measure_signature(extent)),
+        (None, Some(text)) if sized_by_style(node, text) => Some(FIXED_TEXT_MEASURE),
+        (None, Some(text)) => Some(text_measure_signature(text)),
+        (None, None) => None,
+    };
+    let Some(existing) = engine.nodes.get_mut(&entity) else {
+        let id = match leaf_context(text, extent) {
+            Some(context) => engine.taffy.new_leaf_with_context(style, context),
+            None => engine.taffy.new_leaf(style),
+        };
+        let Ok(id) = id else {
+            warn!("Error adding UI node {entity:?} to the layout tree");
+            return;
+        };
+        engine.nodes.insert(
+            entity,
+            TaffyNode {
+                id,
+                measure_key,
+                z_index: node.z_index,
+            },
+        );
+        sync.created.push(entity);
+        sync.updated.insert(entity);
+        return;
+    };
+    if engine
+        .taffy
+        .style(existing.id)
+        .is_ok_and(|current| *current != style)
+    {
+        let _ = engine.taffy.set_style(existing.id, style);
+        sync.updated.insert(entity);
+    }
+    if existing.measure_key != measure_key {
+        let _ = engine
+            .taffy
+            .set_node_context(existing.id, leaf_context(text, extent));
+        existing.measure_key = measure_key;
+        sync.updated.insert(entity);
+    }
+    if existing.z_index != node.z_index {
+        existing.z_index = node.z_index;
+        sync.layers_changed = true;
+    }
+    if sync.updated.contains(&entity) {
+        let id = existing.id;
+        engine.mark_dirty_upwards(id);
+    }
+}
+
+fn sync_node_children(
+    engine: &mut UILayoutEngine,
+    entity: Entity,
+    nodes: &Query<(Entity, &UINode, Option<&Children>)>,
+    culled: &Query<&UICulled>,
+    shown: &mut Vec<NodeId>,
+    updated: &mut HashSet<Entity>,
+) {
+    let Some(id) = engine.nodes.get(&entity).map(|node| node.id) else {
+        return;
+    };
+    shown.clear();
+    if let Some((_, _, Some(children))) = nodes.get_entity(entity) {
+        shown.extend(
+            children
+                .iter()
+                .filter(|child| !culled.contains_entity(**child))
+                .filter_map(|child| engine.nodes.get(child).map(|node| node.id)),
+        );
+    }
+    if engine
+        .taffy
+        .children(id)
+        .is_ok_and(|current| current != *shown)
+    {
+        let _ = engine.taffy.set_children(id, shown);
+        engine.mark_dirty_upwards(id);
+        updated.insert(entity);
+    }
+}
+
+struct RootsChange {
+    resized: bool,
+    changed: bool,
+    previous: Vec<Entity>,
+}
+
+fn replace_roots(
+    engine: &mut UILayoutEngine,
+    roots: &Query<Entity, (With<UINode>, Without<ChildOf>, Without<UICulled>)>,
+    logical_size: Vec2,
+) -> RootsChange {
+    let resized = engine.logical_size != logical_size;
+    engine.logical_size = logical_size;
+    let changed = !roots.iter().eq(engine.roots.iter().copied());
+    let previous = if changed {
+        let previous = std::mem::replace(&mut engine.roots, roots.iter().collect());
+        engine
+            .areas
+            .retain(|entity, _| engine.roots.contains(entity));
+        previous
+    } else {
+        Vec::new()
+    };
+    RootsChange {
+        resized,
+        changed,
+        previous,
+    }
+}
+
+fn compute_dirty_roots(
+    engine: &mut UILayoutEngine,
+    change: &RootsChange,
+    targets: &Query<&UITargetCamera>,
+    cameras: &Query<&Camera>,
+    window: &Window,
+    measurer: &mut ResMut<UITextMeasure>,
+) -> bool {
+    let mut computed = false;
+    for root in &engine.roots {
+        let Some(id) = engine.nodes.get(root).map(|node| node.id) else {
+            continue;
+        };
+        let area = root_area(*root, targets, cameras, window);
+        let moved = engine.areas.insert(*root, area) != Some(area);
+        let new_root = change.changed && !change.previous.contains(root);
+        if !change.resized && !moved && !new_root && !engine.taffy.dirty(id).unwrap_or(true) {
+            continue;
+        }
+        let available = Size {
+            width: AvailableSpace::Definite(area.size.x),
+            height: AvailableSpace::Definite(area.size.y),
+        };
+        let measurer = &mut **measurer;
+        let result = engine.taffy.compute_layout_with_measure(
+            id,
+            available,
+            |known, available, _id, context, _style| {
+                measure_node(measurer, known, available, context)
+            },
+        );
+        if let Err(error) = result {
+            warn!("Error computing UI layout: {}", error);
+        }
+        computed = true;
+    }
+    computed
+}
+
+struct LayoutWalk {
+    logical_size: Vec2,
+    window_clip: UIBox,
+    sequence: i64,
+    anchor_rects: HashMap<Entity, UIBox>,
+}
+
+fn place_roots(
+    engine: &UILayoutEngine,
+    panel_stack: &UIPanelStack,
+    nodes: &Query<(Entity, &UINode, Option<&Children>)>,
+    culled: &Query<&UICulled>,
+    scroll_areas: &Query<&UIScrollArea>,
+    widget_parts: &Query<&UIWidgetPart>,
+    layouts: &mut Query<&mut UILayout>,
+    cmd: &mut CommandQueue,
+    walk: &mut LayoutWalk,
+) {
+    for &entity in &engine.roots {
+        if panel_stack.open().contains(&entity) {
+            continue;
+        }
+        let Some((_, root_node, children)) = nodes.get_entity(entity) else {
+            continue;
+        };
+        let Some(layout) = engine
+            .nodes
+            .get(&entity)
+            .and_then(|node| engine.taffy.layout(node.id).ok())
+        else {
+            continue;
+        };
+
+        let area = engine
+            .areas
+            .get(&entity)
+            .copied()
+            .unwrap_or(walk.window_clip);
+        let abs_pos = area.min + Vec2::new(layout.location.x, layout.location.y);
+        let size = Vec2::new(layout.size.width, layout.size.height);
+
+        let rect = UIBox { min: abs_pos, size };
+        let clip_rect = node_clip(rect, area, root_node);
+        write_layout(
+            layouts,
+            cmd,
+            entity,
+            UILayout {
+                rect,
+                content_rect: root_node.padding.inset_box(rect),
+                clip_rect,
+                paint_order: paint_order(root_node.z_index, walk.sequence),
+            },
+        );
+        if root_node.visible {
+            walk.anchor_rects.insert(entity, rect);
+        }
+        walk.sequence += 1;
+
+        if let Some(children) = children {
+            write_absolute_positions(
+                engine,
+                (abs_pos, scroll_offset(scroll_areas, entity)),
+                clip_rect,
+                root_node.z_index,
+                root_node.visible,
+                children,
+                (nodes, culled, scroll_areas, widget_parts),
+                layouts,
+                cmd,
+                &mut walk.sequence,
+                &mut walk.anchor_rects,
+            );
+        }
+    }
+}
+
+fn place_panels(
+    engine: &UILayoutEngine,
+    panel_stack: &UIPanelStack,
+    panels: &mut Query<(Entity, &mut UIAnchoredPanel)>,
+    nodes: &Query<(Entity, &UINode, Option<&Children>)>,
+    culled: &Query<&UICulled>,
+    scroll_areas: &Query<&UIScrollArea>,
+    widget_parts: &Query<&UIWidgetPart>,
+    layouts: &mut Query<&mut UILayout>,
+    cmd: &mut CommandQueue,
+    walk: &mut LayoutWalk,
+) {
+    for panel_entity in panel_stack.open() {
+        let Some((_, mut panel)) = panels.get_entity_mut(*panel_entity) else {
+            continue;
+        };
+        if !engine.roots.contains(panel_entity) {
+            continue;
+        }
+        let Some((entity, root_node, children)) = nodes.get_entity(*panel_entity) else {
+            continue;
+        };
+        let Some(layout) = engine
+            .nodes
+            .get(&entity)
+            .and_then(|node| engine.taffy.layout(node.id).ok())
+        else {
+            continue;
+        };
+        let size = Vec2::new(layout.size.width, layout.size.height);
+
+        let Some(anchor) = panel.target.anchor_box(&walk.anchor_rects) else {
+            continue;
+        };
+
+        let placement = crate::anchor::place(anchor, size, walk.logical_size, &panel);
+        if panel.resolved_side != placement.side {
+            panel.resolved_side = placement.side;
+        }
+        let rect = UIBox {
+            min: placement.origin,
+            size,
+        };
+        let clip_rect = node_clip(rect, walk.window_clip, root_node);
+        let layer = root_node.z_index;
+        write_layout(
+            layouts,
+            cmd,
+            entity,
+            UILayout {
+                rect,
+                content_rect: root_node.padding.inset_box(rect),
+                clip_rect,
+                paint_order: paint_order(layer, walk.sequence),
+            },
+        );
+        walk.anchor_rects.insert(entity, rect);
+        walk.sequence += 1;
+
+        if let Some(children) = children {
+            write_absolute_positions(
+                engine,
+                (placement.origin, scroll_offset(scroll_areas, entity)),
+                clip_rect,
+                layer,
+                root_node.visible,
+                children,
+                (nodes, culled, scroll_areas, widget_parts),
+                layouts,
+                cmd,
+                &mut walk.sequence,
+                &mut walk.anchor_rects,
+            );
+        }
+    }
+}
+
 pub(crate) fn compute_ui_nodes(
     (nodes, roots, changed, changed_children): (
         Query<(Entity, &UINode, Option<&Children>)>,
@@ -843,77 +1176,18 @@ pub(crate) fn compute_ui_nodes(
 ) {
     let engine = &mut *engine;
     let mut stale = std::mem::take(&mut engine.stale);
-    let mut examined = false;
-    let mut updated = HashSet::new();
-    let mut created = Vec::new();
-    let mut layers_changed = false;
+    let mut sync = TreeSync {
+        examined: false,
+        updated: HashSet::new(),
+        created: Vec::new(),
+        layers_changed: false,
+    };
 
     for entity in changed.iter().chain(stale.iter().copied()) {
-        examined = true;
-        let Some((_, node, _)) = nodes.get_entity(entity) else {
-            continue;
-        };
-        let extent = extents.get_entity(entity).map(|extent| extent.0);
-        let text = match extent {
-            Some(_) => None,
-            None => texts.get_entity(entity),
-        };
-        let style = match text {
-            Some(text) => leaf_style(node, text.ellipsis, text.wrap),
-            None => node.style(),
-        };
-        let measure_key = match (extent, text) {
-            (Some(extent), _) => Some(extent_measure_signature(extent)),
-            (None, Some(text)) if sized_by_style(node, text) => Some(FIXED_TEXT_MEASURE),
-            (None, Some(text)) => Some(text_measure_signature(text)),
-            (None, None) => None,
-        };
-        let Some(existing) = engine.nodes.get_mut(&entity) else {
-            let id = match leaf_context(text, extent) {
-                Some(context) => engine.taffy.new_leaf_with_context(style, context),
-                None => engine.taffy.new_leaf(style),
-            };
-            let Ok(id) = id else {
-                warn!("Error adding UI node {entity:?} to the layout tree");
-                continue;
-            };
-            engine.nodes.insert(
-                entity,
-                TaffyNode {
-                    id,
-                    measure_key,
-                    z_index: node.z_index,
-                },
-            );
-            created.push(entity);
-            updated.insert(entity);
-            continue;
-        };
-        if engine
-            .taffy
-            .style(existing.id)
-            .is_ok_and(|current| *current != style)
-        {
-            let _ = engine.taffy.set_style(existing.id, style);
-            updated.insert(entity);
-        }
-        if existing.measure_key != measure_key {
-            let _ = engine
-                .taffy
-                .set_node_context(existing.id, leaf_context(text, extent));
-            existing.measure_key = measure_key;
-            updated.insert(entity);
-        }
-        if existing.z_index != node.z_index {
-            existing.z_index = node.z_index;
-            layers_changed = true;
-        }
-        if updated.contains(&entity) {
-            let id = existing.id;
-            engine.mark_dirty_upwards(id);
-        }
+        sync.examined = true;
+        sync_node_style(engine, entity, &nodes, &texts, &extents, &mut sync);
     }
-    for entity in created {
+    for entity in sync.created.drain(..) {
         stale.insert(entity);
         if let Some(parent) = parents.get_entity(entity) {
             stale.insert(parent.parent());
@@ -922,71 +1196,27 @@ pub(crate) fn compute_ui_nodes(
 
     let mut shown = Vec::new();
     for entity in changed_children.iter().chain(stale.iter().copied()) {
-        examined = true;
-        let Some(id) = engine.nodes.get(&entity).map(|node| node.id) else {
-            continue;
-        };
-        shown.clear();
-        if let Some((_, _, Some(children))) = nodes.get_entity(entity) {
-            shown.extend(
-                children
-                    .iter()
-                    .filter(|child| !culled.contains_entity(**child))
-                    .filter_map(|child| engine.nodes.get(child).map(|node| node.id)),
-            );
-        }
-        if engine
-            .taffy
-            .children(id)
-            .is_ok_and(|current| current != shown)
-        {
-            let _ = engine.taffy.set_children(id, &shown);
-            engine.mark_dirty_upwards(id);
-            updated.insert(entity);
-        }
+        sync.examined = true;
+        sync_node_children(
+            engine,
+            entity,
+            &nodes,
+            &culled,
+            &mut shown,
+            &mut sync.updated,
+        );
     }
 
     let logical_size = window.logical_size();
-    let resized = engine.logical_size != logical_size;
-    engine.logical_size = logical_size;
-    let roots_changed = !roots.iter().eq(engine.roots.iter().copied());
-    let previous_roots = if roots_changed {
-        let previous = std::mem::replace(&mut engine.roots, roots.iter().collect());
-        engine
-            .areas
-            .retain(|entity, _| engine.roots.contains(entity));
-        previous
-    } else {
-        Vec::new()
-    };
-    let mut computed = false;
-    for root in &engine.roots {
-        let Some(id) = engine.nodes.get(root).map(|node| node.id) else {
-            continue;
-        };
-        let area = root_area(*root, &targets, &cameras, &window);
-        let moved = engine.areas.insert(*root, area) != Some(area);
-        let new_root = roots_changed && !previous_roots.contains(root);
-        if !resized && !moved && !new_root && !engine.taffy.dirty(id).unwrap_or(true) {
-            continue;
-        }
-        let available = Size {
-            width: AvailableSpace::Definite(area.size.x),
-            height: AvailableSpace::Definite(area.size.y),
-        };
-        let measurer = &mut *measurer;
-        let result = engine.taffy.compute_layout_with_measure(
-            id,
-            available,
-            |known, available, _id, context, _style| {
-                measure_node(measurer, known, available, context)
-            },
-        );
-        if let Err(error) = result {
-            warn!("Error computing UI layout: {}", error);
-        }
-        computed = true;
-    }
+    let roots_change = replace_roots(engine, &roots, logical_size);
+    let computed = compute_dirty_roots(
+        engine,
+        &roots_change,
+        &targets,
+        &cameras,
+        &window,
+        &mut measurer,
+    );
     if computed {
         diagnostics.layout_passes += 1;
     }
@@ -998,137 +1228,47 @@ pub(crate) fn compute_ui_nodes(
                 .is_some_and(|(_, panel)| panel.is_changed())
         });
     let scrolling = scrolled.iter().next().is_some();
-    let walk = computed || roots_changed || layers_changed || panels_changed || scrolling;
-    if examined || walk {
-        diagnostics.nodes_updated = updated.len() as u64;
+    let walk =
+        computed || roots_change.changed || sync.layers_changed || panels_changed || scrolling;
+    if sync.examined || walk {
+        diagnostics.nodes_updated = sync.updated.len() as u64;
     }
     if !walk {
         return;
     }
 
-    let window_clip = UIBox {
-        min: Vec2::ZERO,
-        size: logical_size,
+    let mut walk = LayoutWalk {
+        logical_size,
+        window_clip: UIBox {
+            min: Vec2::ZERO,
+            size: logical_size,
+        },
+        sequence: 0,
+        anchor_rects: HashMap::new(),
     };
-    let mut sequence = 0_i64;
-    let mut anchor_rects: HashMap<Entity, UIBox> = HashMap::new();
-    for &entity in &engine.roots {
-        if panel_stack.open().contains(&entity) {
-            continue;
-        }
-        let Some((_, root_node, children)) = nodes.get_entity(entity) else {
-            continue;
-        };
-        let Some(layout) = engine
-            .nodes
-            .get(&entity)
-            .and_then(|node| engine.taffy.layout(node.id).ok())
-        else {
-            continue;
-        };
-
-        let area = engine.areas.get(&entity).copied().unwrap_or(window_clip);
-        let abs_pos = area.min + Vec2::new(layout.location.x, layout.location.y);
-        let size = Vec2::new(layout.size.width, layout.size.height);
-
-        let rect = UIBox { min: abs_pos, size };
-        let clip_rect = node_clip(rect, area, root_node);
-        write_layout(
-            &mut layouts,
-            &mut cmd,
-            entity,
-            UILayout {
-                rect,
-                content_rect: root_node.padding.inset_box(rect),
-                clip_rect,
-                paint_order: paint_order(root_node.z_index, sequence),
-            },
-        );
-        if root_node.visible {
-            anchor_rects.insert(entity, rect);
-        }
-        sequence += 1;
-
-        if let Some(children) = children {
-            write_absolute_positions(
-                engine,
-                (abs_pos, scroll_offset(&scroll_areas, entity)),
-                clip_rect,
-                root_node.z_index,
-                root_node.visible,
-                children,
-                (&nodes, &culled, &scroll_areas, &widget_parts),
-                &mut layouts,
-                &mut cmd,
-                &mut sequence,
-                &mut anchor_rects,
-            );
-        }
-    }
-
-    for panel_entity in panel_stack.open() {
-        let Some((_, mut panel)) = panels.get_entity_mut(*panel_entity) else {
-            continue;
-        };
-        if !engine.roots.contains(panel_entity) {
-            continue;
-        }
-        let Some((entity, root_node, children)) = nodes.get_entity(*panel_entity) else {
-            continue;
-        };
-        let Some(layout) = engine
-            .nodes
-            .get(&entity)
-            .and_then(|node| engine.taffy.layout(node.id).ok())
-        else {
-            continue;
-        };
-        let size = Vec2::new(layout.size.width, layout.size.height);
-
-        let Some(anchor) = panel.target.anchor_box(&anchor_rects) else {
-            continue;
-        };
-
-        let placement = crate::anchor::place(anchor, size, logical_size, &panel);
-        if panel.resolved_side != placement.side {
-            panel.resolved_side = placement.side;
-        }
-        let rect = UIBox {
-            min: placement.origin,
-            size,
-        };
-        let clip_rect = node_clip(rect, window_clip, root_node);
-        let layer = root_node.z_index;
-        write_layout(
-            &mut layouts,
-            &mut cmd,
-            entity,
-            UILayout {
-                rect,
-                content_rect: root_node.padding.inset_box(rect),
-                clip_rect,
-                paint_order: paint_order(layer, sequence),
-            },
-        );
-        anchor_rects.insert(entity, rect);
-        sequence += 1;
-
-        if let Some(children) = children {
-            write_absolute_positions(
-                engine,
-                (placement.origin, scroll_offset(&scroll_areas, entity)),
-                clip_rect,
-                layer,
-                root_node.visible,
-                children,
-                (&nodes, &culled, &scroll_areas, &widget_parts),
-                &mut layouts,
-                &mut cmd,
-                &mut sequence,
-                &mut anchor_rects,
-            );
-        }
-    }
+    place_roots(
+        engine,
+        &panel_stack,
+        &nodes,
+        &culled,
+        &scroll_areas,
+        &widget_parts,
+        &mut layouts,
+        &mut cmd,
+        &mut walk,
+    );
+    place_panels(
+        engine,
+        &panel_stack,
+        &mut panels,
+        &nodes,
+        &culled,
+        &scroll_areas,
+        &widget_parts,
+        &mut layouts,
+        &mut cmd,
+        &mut walk,
+    );
 }
 
 fn root_area(
