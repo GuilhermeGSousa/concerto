@@ -210,7 +210,7 @@ pub fn drive_main_camera(
     mut director: ResMut<CameraDirector>,
     time: Res<Time>,
     vcams: Query<(&VirtualCamera, &GlobalTransform)>,
-    main_cameras: Query<
+    mut main_cameras: Query<
         (
             &mut Transform,
             &GlobalTransform,
@@ -224,7 +224,8 @@ pub fn drive_main_camera(
     let Some(main_camera) = director.main_camera() else {
         return;
     };
-    let Some((mut transform, global, mut camera, mut focus)) = main_cameras.get_entity(main_camera)
+    let Some((mut transform, global, mut camera, mut focus)) =
+        main_cameras.get_entity_mut(main_camera)
     else {
         return;
     };

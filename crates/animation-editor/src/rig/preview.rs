@@ -241,19 +241,27 @@ fn show_rig_stage(on: On<ShowRigStage>, mut sides: ResMut<RigSides>, mut cmd: Co
 fn place_rig_sides(
     on: On<PlaceRigSides>,
     mut sides: ResMut<RigSides>,
-    transforms: Query<&mut Transform>,
+    mut transforms: Query<&mut Transform>,
 ) {
     let place = on.signal();
-    place_side(sides.side_mut(RigSide::Source), place.source, &transforms);
-    place_side(sides.side_mut(RigSide::Target), place.target, &transforms);
+    place_side(
+        sides.side_mut(RigSide::Source),
+        place.source,
+        &mut transforms,
+    );
+    place_side(
+        sides.side_mut(RigSide::Target),
+        place.target,
+        &mut transforms,
+    );
 }
 
-fn place_side(side: &mut ShownSide, offset: f32, transforms: &Query<&mut Transform>) {
+fn place_side(side: &mut ShownSide, offset: f32, transforms: &mut Query<&mut Transform>) {
     side.offset = offset;
     let Some(stage) = &side.stage else {
         return;
     };
-    if let Some(mut transform) = transforms.get_entity(stage.root) {
+    if let Some(mut transform) = transforms.get_entity_mut(stage.root) {
         transform.translation.x = offset;
     }
 }
@@ -371,7 +379,7 @@ fn pose_side(
     side: &ShownSide,
     pose: &[JointPose],
     root_motion: bool,
-    transforms: &Query<&mut Transform>,
+    transforms: &mut Query<&mut Transform>,
     globals: &Query<&GlobalTransform>,
 ) {
     let Some(stage) = &side.stage else {
@@ -381,7 +389,7 @@ fn pose_side(
         return;
     };
     for (bone, joint) in bones.entities.iter().zip(pose) {
-        if let Some(mut transform) = transforms.get_entity(*bone) {
+        if let Some(mut transform) = transforms.get_entity_mut(*bone) {
             transform.translation = joint.translation;
             transform.rotation = joint.rotation;
             transform.scale = joint.scale;
@@ -397,7 +405,7 @@ fn pose_side(
             .map_or(moved, |space| space.matrix().transform_vector3(moved));
         at -= Vec3::new(moved.x, 0.0, moved.z);
     }
-    if let Some(mut transform) = transforms.get_entity(stage.root) {
+    if let Some(mut transform) = transforms.get_entity_mut(stage.root) {
         transform.translation = at;
     }
 }
@@ -406,7 +414,7 @@ fn pose_rig_sides(
     playback: Res<ClipPlayback>,
     mut posing: ResMut<RigPosing>,
     sides: Res<RigSides>,
-    transforms: Query<&mut Transform>,
+    mut transforms: Query<&mut Transform>,
     globals: Query<&GlobalTransform>,
 ) {
     let clip = playback
@@ -433,7 +441,7 @@ fn pose_rig_sides(
             &sides.source,
             pose,
             posing.root_motion,
-            &transforms,
+            &mut transforms,
             &globals,
         );
     }
@@ -442,7 +450,7 @@ fn pose_rig_sides(
             &sides.target,
             pose,
             posing.root_motion,
-            &transforms,
+            &mut transforms,
             &globals,
         );
     }
@@ -503,7 +511,7 @@ impl FromWorld for FollowedRoots {
 fn follow_rig_roots(
     sides: Res<RigSides>,
     globals: Query<&GlobalTransform>,
-    cameras: Query<&mut OrbitCamera>,
+    mut cameras: Query<&mut OrbitCamera>,
     mut followed: SystemLocal<FollowedRoots>,
 ) {
     let roots: Vec<Entity> = [&sides.source, &sides.target]
@@ -523,7 +531,7 @@ fn follow_rig_roots(
         roots: roots.clone(),
         at,
     });
-    for mut orbit in cameras.iter() {
+    for mut orbit in cameras.iter_mut() {
         match &last {
             Some(last) if last.roots == roots => {
                 let moved = at - last.at;

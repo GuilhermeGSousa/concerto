@@ -68,8 +68,11 @@ impl Default for GroundProbe {
     }
 }
 
-pub(crate) fn probe_ground(query: Query<(&mut GroundProbe, &BodyId)>, state: Res<PhysicsState>) {
-    for (mut probe, body_id) in query.iter() {
+pub(crate) fn probe_ground(
+    mut query: Query<(&mut GroundProbe, &BodyId)>,
+    state: Res<PhysicsState>,
+) {
+    for (mut probe, body_id) in query.iter_mut() {
         probe.state = state.probe_ground(*body_id, probe.max_separation, probe.max_slope_angle);
     }
 }

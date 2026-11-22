@@ -88,7 +88,7 @@ impl SystemInput for PreviewSignals<'_> {
 pub(crate) fn deliver_preview_signals(
     _: NonSendMarker,
     mut queue: ResMut<PreviewSignalQueue>,
-    hosted: Query<&mut HostedApp>,
+    mut hosted: Query<&mut HostedApp>,
     pending: Query<&PendingApp>,
     unbuilt: Query<&EditorDocument, Without<PreviewFailed>>,
     editors: Res<AssetEditorRegistry>,
@@ -98,7 +98,7 @@ pub(crate) fn deliver_preview_signals(
     }
     let mut waiting = Vec::new();
     for (document, signal) in std::mem::take(&mut queue.0) {
-        if let Some(mut app) = hosted.get_entity(document) {
+        if let Some(mut app) = hosted.get_entity_mut(document) {
             if app.role() == HostRole::Preview {
                 signal(&mut app);
             }
@@ -154,11 +154,11 @@ pub(crate) fn open_previews(
 }
 
 pub(crate) fn report_preview_failures(
-    building: Query<(Entity, &mut EditorDocument, &PendingApp), Without<HostedApp>>,
+    mut building: Query<(Entity, &mut EditorDocument, &PendingApp), Without<HostedApp>>,
     editors: Res<AssetEditorRegistry>,
     mut cmd: CommandQueue,
 ) {
-    for (document, mut doc, pending) in building.iter() {
+    for (document, mut doc, pending) in building.iter_mut() {
         if editors.preview(doc.asset_type).is_none() {
             continue;
         }
@@ -174,8 +174,10 @@ pub(crate) fn report_preview_failures(
     }
 }
 
-pub(crate) fn keep_preview_failures_shown(failed: Query<(&mut EditorDocument, &PreviewFailed)>) {
-    for (mut doc, failure) in failed.iter() {
+pub(crate) fn keep_preview_failures_shown(
+    mut failed: Query<(&mut EditorDocument, &PreviewFailed)>,
+) {
+    for (mut doc, failure) in failed.iter_mut() {
         if doc.status.is_empty() {
             doc.status = failure.0.clone();
         }
@@ -316,7 +318,7 @@ fn wheel_notches(delta: &ScrollDelta) -> f32 {
 fn orbit_camera(
     input: Res<Input>,
     mut events: EventReader<WindowEvent>,
-    cameras: Query<(&mut OrbitCamera, &mut Transform), With<Camera>>,
+    mut cameras: Query<(&mut OrbitCamera, &mut Transform), With<Camera>>,
 ) {
     let notches: f32 = events
         .read()
@@ -328,7 +330,7 @@ fn orbit_camera(
     let delta = input.mouse_delta();
     let orbiting = input.is_mouse_button_held(MouseButton::Left);
     let panning = input.is_mouse_button_held(MouseButton::Middle);
-    for (mut orbit, mut transform) in cameras.iter() {
+    for (mut orbit, mut transform) in cameras.iter_mut() {
         let mut next = **orbit;
         if orbiting {
             next = next.orbited(delta);

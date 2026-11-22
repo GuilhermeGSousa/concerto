@@ -209,10 +209,10 @@ impl AssetEditor for AnimationClipEditor {
 
 pub(crate) fn sync_clip_preview(
     mut bones: EventReader<Hosted<ClipPreviewBones>>,
-    documents: Query<&mut ClipDocument>,
+    mut documents: Query<&mut ClipDocument>,
 ) {
     for Hosted { document, event } in bones.read() {
-        if let Some(mut state) = documents.get_entity(*document) {
+        if let Some(mut state) = documents.get_entity_mut(*document) {
             state.facts.skeleton_bones = event.bones;
             state.facts.driven = event.driven;
             if state.skeleton != event.skeleton {
@@ -298,7 +298,7 @@ fn scene_signal(
 }
 
 pub(crate) fn load_clip(
-    documents: Query<(
+    mut documents: Query<(
         Entity,
         &mut EditorDocument,
         &mut ClipDocument,
@@ -311,7 +311,7 @@ pub(crate) fn load_clip(
     let Some(root) = project.project.as_ref().map(|project| project.root.clone()) else {
         return;
     };
-    for (entity, mut document, mut state, mut transport) in documents.iter() {
+    for (entity, mut document, mut state, mut transport) in documents.iter_mut() {
         let Some(asset) = document.pending.clone() else {
             continue;
         };

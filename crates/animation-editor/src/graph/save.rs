@@ -55,7 +55,7 @@ fn save_document(
 }
 
 pub(crate) fn save_graphs(
-    requested: Query<(Entity, &mut EditorDocument, &mut GraphDocument), With<SaveRequested>>,
+    mut requested: Query<(Entity, &mut EditorDocument, &mut GraphDocument), With<SaveRequested>>,
     project: Res<ProjectState>,
     mut assets: ResMut<AssetRegistry>,
     mut saved: EventWriter<SceneSaved>,
@@ -66,7 +66,7 @@ pub(crate) fn save_graphs(
         .project
         .as_ref()
         .map(|project| project.root.as_path());
-    for (entity, mut document, mut state) in requested.iter() {
+    for (entity, mut document, mut state) in requested.iter_mut() {
         cmd.remove::<SaveRequested>(entity);
         let written = root
             .context("Open a project before saving")

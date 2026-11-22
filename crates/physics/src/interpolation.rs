@@ -49,11 +49,11 @@ impl TransformInterpolation {
 /// frame-rate systems (transform propagation, rendering) see smooth motion
 /// instead of the raw once-per-step jumps.
 pub fn interpolate_body_transforms(
-    bodies: Query<(&TransformInterpolation, &mut Transform)>,
+    mut bodies: Query<(&TransformInterpolation, &mut Transform)>,
     time: Res<Time>,
 ) {
     let alpha = time.fixed_alpha();
-    for (interpolation, mut transform) in bodies.iter() {
+    for (interpolation, mut transform) in bodies.iter_mut() {
         let (translation, rotation) = interpolation.sample(alpha);
         transform.translation = translation;
         transform.rotation = rotation;

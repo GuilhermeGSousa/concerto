@@ -172,8 +172,8 @@ fn forget_scene(
     _: On<Remove<EditTarget>>,
     mut state: ResMut<HierarchyState>,
     looks: Option<ResMut<RowLooks>>,
-    menus: Query<&mut RowMenu>,
-    views: Query<&mut UIScrollArea, With<TreeView>>,
+    mut menus: Query<&mut RowMenu>,
+    mut views: Query<&mut UIScrollArea, With<TreeView>>,
     parents: Query<&ChildOf>,
     mut cmd: CommandQueue,
 ) {
@@ -186,10 +186,10 @@ fn forget_scene(
     {
         looks.0.clear();
     }
-    for mut menu in menus.iter() {
+    for mut menu in menus.iter_mut() {
         menu.scene_target = None;
     }
-    for mut area in views.iter() {
+    for mut area in views.iter_mut() {
         if area.offset != 0.0 {
             area.offset = 0.0;
         }
@@ -415,7 +415,7 @@ fn add_entity(
 fn press_row_menu_item(
     on: On<UIClick>,
     items: Query<&RowMenuItem>,
-    menus: Query<(&RowMenu, &mut UIAnchoredPanel)>,
+    mut menus: Query<(&RowMenu, &mut UIAnchoredPanel)>,
     mut focus_name: ResMut<FocusNameField>,
     mut scene: EditWorldSignals,
 ) {
@@ -425,7 +425,7 @@ fn press_row_menu_item(
     let Some(item) = items.get_entity(on.entity()) else {
         return;
     };
-    for (menu, mut panel) in menus.iter() {
+    for (menu, mut panel) in menus.iter_mut() {
         if let Some(scene_target) = menu.scene_target.filter(|_| panel.open) {
             match *item {
                 RowMenuItem::AddChild => scene.trigger(EntityEdit::Create {
@@ -490,14 +490,14 @@ fn select_item(on: On<UIItemSelected>, items: Query<&HierarchyItem>, mut scene: 
 fn open_row_menu(
     on: On<UIItemContextMenu>,
     items: Query<&HierarchyItem>,
-    menus: Query<(&mut RowMenu, &mut UIAnchoredPanel)>,
+    mut menus: Query<(&mut RowMenu, &mut UIAnchoredPanel)>,
     mut scene: EditWorldSignals,
 ) {
     let Some(item) = items.get_entity(on.entity()) else {
         return;
     };
     scene.trigger(Select(Some(item.scene_entity)));
-    for (mut menu, mut panel) in menus.iter() {
+    for (mut menu, mut panel) in menus.iter_mut() {
         menu.scene_target = Some(item.scene_entity);
         panel.target = UIAnchorTarget::from_point(on.signal().position);
         panel.owner = Some(on.entity());
@@ -713,7 +713,7 @@ pub(crate) fn reconcile_content(
         Query<(Entity, Ref<HierarchyItem>, Option<&UISelected>)>,
         Query<Entity, Added<HierarchyItem>>,
     ),
-    texts: Query<&mut UIText>,
+    mut texts: Query<&mut UIText>,
     theme: Res<UITheme>,
     mut cmd: CommandQueue,
 ) {
@@ -743,7 +743,7 @@ pub(crate) fn reconcile_content(
     let selected = selection.entity();
     let mut update = |row| {
         update_row(
-            row, selected, address, scene, &looks, &texts, &theme, &mut cmd,
+            row, selected, address, scene, &looks, &mut texts, &theme, &mut cmd,
         )
     };
     if every_row {
@@ -774,7 +774,7 @@ fn update_row(
         &Query<(Option<&Camera>, Option<&Light>, Option<&MeshComponent>)>,
     ),
     looks: &RowLooks,
-    texts: &Query<&mut UIText>,
+    texts: &mut Query<&mut UIText>,
     theme: &UITheme,
     cmd: &mut CommandQueue,
 ) {
@@ -817,7 +817,7 @@ fn update_row(
         (item.marker, Some(marker)),
     ] {
         if let Some(value) = value
-            && let Some(mut text) = texts.get_entity(text)
+            && let Some(mut text) = texts.get_entity_mut(text)
             && text.text != *value
         {
             text.text = value.into_owned();
@@ -828,13 +828,13 @@ fn update_row(
     } else {
         theme.text
     };
-    if let Some(mut text) = texts.get_entity(item.label)
+    if let Some(mut text) = texts.get_entity_mut(item.label)
         && text.color != label_color
     {
         text.color = label_color;
     }
     let wanted = selection == Some(scene_entity);
-    if let Some(mut text) = texts.get_entity(item.mark) {
+    if let Some(mut text) = texts.get_entity_mut(item.mark) {
         draw_row_icon(&mut text, theme, mark, wanted);
     }
     if wanted && selected.is_none() {
@@ -848,12 +848,12 @@ fn filter_tree(
     mut events: EventReader<UITextInputChanged>,
     filters: Query<&Filter>,
     mut state: ResMut<HierarchyState>,
-    views: Query<&mut UIScrollArea, With<TreeView>>,
+    mut views: Query<&mut UIScrollArea, With<TreeView>>,
 ) {
     for event in events.read() {
         if filters.get_entity(event.entity).is_some() {
             state.filter = event.value.clone();
-            for mut area in views.iter() {
+            for mut area in views.iter_mut() {
                 area.offset = 0.0;
             }
         }
@@ -864,12 +864,12 @@ fn filter_items(
     state: Res<HierarchyState>,
     names: EditWorld<Query<&Name>>,
     items: Query<(Entity, &HierarchyItem, Option<&UIHidden>)>,
-    views: Query<&mut UITree, With<TreeView>>,
+    mut views: Query<&mut UITree, With<TreeView>>,
     mut cmd: CommandQueue,
 ) {
     let filter = state.filter.to_lowercase();
     let filtering = !filter.is_empty();
-    for mut tree in views.iter() {
+    for mut tree in views.iter_mut() {
         if tree.filtering != filtering {
             tree.filtering = filtering;
         }
@@ -906,9 +906,9 @@ fn sync_tree_context(
 fn show_header(
     state: Res<HierarchyState>,
     scenes: Res<SceneState>,
-    labels: Query<(&Label, &mut UIText)>,
+    mut labels: Query<(&Label, &mut UIText)>,
 ) {
-    for (label, mut text) in labels.iter() {
+    for (label, mut text) in labels.iter_mut() {
         let value = match label {
             Label::Title => format!("WORLD · {} entities", state.items.len()),
             Label::Footer if scenes.loading() => "Loading…".to_string(),

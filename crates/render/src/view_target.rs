@@ -203,9 +203,9 @@ impl ViewTarget {
 pub(crate) fn prepare_view_targets(
     device: Res<RenderDevice>,
     context: Res<RenderContext>,
-    render_cameras: Query<&mut RenderCamera>,
+    mut render_cameras: Query<&mut RenderCamera>,
 ) {
-    for mut render_camera in render_cameras.iter() {
+    for mut render_camera in render_cameras.iter_mut() {
         let size = render_camera.target_size(&context).max(UVec2::ONE);
         let msaa = render_camera.msaa;
         let view_target = &render_camera.view_target;

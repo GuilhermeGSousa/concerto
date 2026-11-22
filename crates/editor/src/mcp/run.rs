@@ -180,18 +180,18 @@ fn answer_plays(
     mut started: EventReader<PlayStarted>,
     mut failed: EventReader<PlayFailed>,
     documents: Query<&EditorDocument>,
-    waiting: Query<(Entity, &mut PendingCall, &mut Starting)>,
+    mut waiting: Query<(Entity, &mut PendingCall, &mut Starting)>,
     mut cmd: CommandQueue,
 ) {
     for event in saved.read() {
-        for (_, _, mut starting) in waiting.iter() {
+        for (_, _, mut starting) in waiting.iter_mut() {
             if starting.document == event.document {
                 starting.saved = true;
             }
         }
     }
     for event in started.read() {
-        for (_, mut pending, mut starting) in waiting.iter() {
+        for (_, mut pending, mut starting) in waiting.iter_mut() {
             if starting.document != event.document {
                 continue;
             }
@@ -215,7 +215,7 @@ fn answer_plays(
         }
     }
     for event in failed.read() {
-        for (entity, pending, starting) in waiting.iter() {
+        for (entity, pending, starting) in waiting.iter_mut() {
             if starting.document == event.document {
                 pending
                     .reply

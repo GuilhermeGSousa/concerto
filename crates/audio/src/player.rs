@@ -188,14 +188,14 @@ pub(crate) fn fail_sounds(
 }
 
 pub(crate) fn update_sounds(
-    players: Query<(Entity, &AudioPlayer, &mut PlayingSound), Changed<AudioPlayer>>,
+    mut players: Query<(Entity, &AudioPlayer, &mut PlayingSound), Changed<AudioPlayer>>,
     audio: Option<ResMut<Audio>>,
     mut cmd: CommandQueue,
 ) {
     if audio.is_none() {
         return;
     }
-    for (entity, player, mut playing) in players.iter() {
+    for (entity, player, mut playing) in players.iter_mut() {
         if player.clip.id() != playing.clip || player.bus != playing.bus {
             playing.handle.stop(FADE);
             cmd.remove::<PlayingSound>(entity);
@@ -227,11 +227,11 @@ pub(crate) fn finish_sounds(
 
 fn stop(
     entity: Entity,
-    sounds: &Query<&mut PlayingSound>,
+    sounds: &mut Query<&mut PlayingSound>,
     done: &Query<&SoundDone>,
     cmd: &mut CommandQueue,
 ) {
-    if let Some(mut playing) = sounds.get_entity(entity) {
+    if let Some(mut playing) = sounds.get_entity_mut(entity) {
         playing.handle.stop(FADE);
         cmd.remove::<PlayingSound>(entity);
     }
@@ -242,18 +242,18 @@ fn stop(
 
 pub(crate) fn stop_removed_player(
     on: On<Remove<AudioPlayer>>,
-    sounds: Query<&mut PlayingSound>,
+    mut sounds: Query<&mut PlayingSound>,
     done: Query<&SoundDone>,
     mut cmd: CommandQueue,
 ) {
-    stop(on.signal().entity, &sounds, &done, &mut cmd);
+    stop(on.signal().entity, &mut sounds, &done, &mut cmd);
 }
 
 pub(crate) fn stop_replaced_player(
     on: On<Replace<AudioPlayer>>,
-    sounds: Query<&mut PlayingSound>,
+    mut sounds: Query<&mut PlayingSound>,
     done: Query<&SoundDone>,
     mut cmd: CommandQueue,
 ) {
-    stop(on.signal().entity, &sounds, &done, &mut cmd);
+    stop(on.signal().entity, &mut sounds, &done, &mut cmd);
 }

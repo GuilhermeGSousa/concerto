@@ -453,7 +453,7 @@ pub(crate) fn extract_lights(
             &RenderEntity,
         )>,
     >,
-    render_lights: Query<(
+    mut render_lights: Query<(
         &mut RenderLight,
         &mut RenderShadowsEnabled,
         &mut RenderShadowCascades,
@@ -465,7 +465,7 @@ pub(crate) fn extract_lights(
         let render_cascades = RenderShadowCascades(cascades.copied().unwrap_or_default());
 
         if let Some((mut render_light, mut shadows_enabled, mut current_cascades)) =
-            render_lights.get_entity(render_entity)
+            render_lights.get_entity_mut(render_entity)
         {
             let synced = render_light.synced_with(light, tint, cascades, transform);
             render_light.set_if_neq(synced);

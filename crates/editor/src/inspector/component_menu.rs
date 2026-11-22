@@ -29,9 +29,9 @@ pub(super) struct RemoveComponentItem;
 
 pub(super) fn forget_scene(
     _: On<Remove<EditTarget>>,
-    menus: Query<(&mut ComponentMenu, &mut UIAnchoredPanel)>,
+    mut menus: Query<(&mut ComponentMenu, &mut UIAnchoredPanel)>,
 ) {
-    for (mut menu, mut panel) in menus.iter() {
+    for (mut menu, mut panel) in menus.iter_mut() {
         if menu.scene_target.is_some() {
             menu.scene_target = None;
         }
@@ -97,7 +97,7 @@ pub(super) fn ensure_component_menu(
 fn toggle_component_menu(
     on: On<UIClick>,
     buttons: Query<&ComponentMenuButton>,
-    menus: Query<(&mut ComponentMenu, &mut UIAnchoredPanel)>,
+    mut menus: Query<(&mut ComponentMenu, &mut UIAnchoredPanel)>,
 ) {
     if on.signal().button != MouseButton::Left {
         return;
@@ -105,7 +105,7 @@ fn toggle_component_menu(
     let Some(button) = buttons.get_entity(on.entity()) else {
         return;
     };
-    for (mut menu, mut panel) in menus.iter() {
+    for (mut menu, mut panel) in menus.iter_mut() {
         let closing = panel.open && panel.owner == Some(on.entity());
         menu.scene_target = Some(*button);
         panel.target = UIAnchorTarget::from_node(on.entity());
@@ -116,13 +116,13 @@ fn toggle_component_menu(
 
 fn remove_component(
     on: On<UIClick>,
-    menus: Query<(&ComponentMenu, &mut UIAnchoredPanel)>,
+    mut menus: Query<(&ComponentMenu, &mut UIAnchoredPanel)>,
     mut edits: ResMut<ComponentEdits>,
 ) {
     if on.signal().button != MouseButton::Left {
         return;
     }
-    for (menu, mut panel) in menus.iter() {
+    for (menu, mut panel) in menus.iter_mut() {
         if let Some(target) = menu.scene_target.filter(|_| panel.open) {
             edits.0.push(ComponentEdit::Remove {
                 entity: target.scene_entity,

@@ -70,7 +70,7 @@ impl<'w, E: Event + 'static> HostedAppEvents<'w, '_, E> {
     pub fn read(&mut self) -> Vec<(Entity, &'w E)> {
         let mut read = Vec::new();
         let mut live = Vec::new();
-        for (document, hosted) in self.shown.iter() {
+        for (document, hosted) in self.shown.iter_inner() {
             let world = hosted.world();
             live.push(world.id());
             read.extend(

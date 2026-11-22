@@ -84,7 +84,7 @@ fn scene_of(shown: &mut ShownSkeleton, root: &Path, assets: &AssetRegistry) -> S
 }
 
 pub(crate) fn follow_skeleton(
-    documents: Query<(Entity, &mut DefinitionDocument, &mut DocumentBones)>,
+    mut documents: Query<(Entity, &mut DefinitionDocument, &mut DocumentBones)>,
     project: Res<ProjectState>,
     assets: Res<AssetRegistry>,
     mut previews: PreviewSignals,
@@ -92,7 +92,7 @@ pub(crate) fn follow_skeleton(
     let Some(project) = project.project.as_ref() else {
         return;
     };
-    for (document, mut state, mut bones) in documents.iter() {
+    for (document, mut state, mut bones) in documents.iter_mut() {
         let id = state.skeleton.id();
         if state
             .shown_skeleton
@@ -167,14 +167,14 @@ fn start_facts_job(
 }
 
 pub(crate) fn read_entry_facts(
-    documents: Query<&mut DefinitionDocument>,
+    mut documents: Query<&mut DefinitionDocument>,
     project: Res<ProjectState>,
     assets: Res<AssetRegistry>,
 ) {
     let Some(project) = project.project.as_ref() else {
         return;
     };
-    for mut state in documents.iter() {
+    for mut state in documents.iter_mut() {
         if state
             .facts_job
             .as_ref()

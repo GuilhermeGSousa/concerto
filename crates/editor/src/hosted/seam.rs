@@ -28,7 +28,7 @@ unsafe fn edit_target<'w>(
     // SAFETY: the query reads only what `read_edit_target` declares, which the caller holds.
     let targets = unsafe { Query::new(world, targets, ticks) };
     targets
-        .iter()
+        .iter_inner()
         .next()
         .map(|(document, hosted)| (document, hosted.world()))
 }
@@ -436,8 +436,8 @@ mod tests {
     fn touch_marker(world: &mut World, document: concerto_ecs::Entity, value: u32) {
         run(
             scene_of(world, document),
-            move |markers: Query<&mut Marker>| {
-                for mut marker in markers.iter() {
+            move |mut markers: Query<&mut Marker>| {
+                for mut marker in markers.iter_mut() {
                     if marker.0 == value {
                         marker.0 = value;
                     }

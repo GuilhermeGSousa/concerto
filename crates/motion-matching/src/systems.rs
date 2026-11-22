@@ -15,11 +15,11 @@ use crate::{
 
 /// Advances the springs one fixed step towards the desired motion and sets the body's horizontal velocity to the spring's, plus half of any pull, at no more than `max_pull_speed` or the spring's own speed, whichever is higher.
 pub fn drive_body(
-    query: Query<(&mut CharacterSimulation, &DesiredMotion, &BodyId)>,
+    mut query: Query<(&mut CharacterSimulation, &DesiredMotion, &BodyId)>,
     mut physics: ResMut<PhysicsState>,
 ) {
     let dt = Time::fixed_delta_time().as_secs_f32();
-    for (mut simulation, desired, body_id) in query.iter() {
+    for (mut simulation, desired, body_id) in query.iter_mut() {
         simulation.previous_facing = simulation.facing.value;
         let velocity = simulation.advance(desired, dt);
         let pull = std::mem::take(&mut simulation.pull) / (2.0 * dt);
@@ -33,7 +33,7 @@ pub fn drive_body(
 /// Predicts each linked character's path from where its body ended the step and writes it to the blackboard of the animation player on its skeleton.
 pub fn publish_trajectory(
     links: Query<&CharacterLink>,
-    players: Query<&mut AnimationPlayer>,
+    mut players: Query<&mut AnimationPlayer>,
     simulations: Query<(&CharacterSimulation, &DesiredMotion, &BodyId)>,
     physics: Res<PhysicsState>,
 ) {
@@ -42,7 +42,7 @@ pub fn publish_trajectory(
         else {
             continue;
         };
-        let Some(mut player) = players.get_entity(skeleton) else {
+        let Some(mut player) = players.get_entity_mut(skeleton) else {
             continue;
         };
         let Some((simulation, desired, body_id)) = simulations.get_entity(capsule) else {
@@ -83,8 +83,8 @@ pub fn apply_character_displacement(
     characters: Query<(Entity, &CharacterDisplacement, &CharacterLink)>,
     skeletons: Query<(&SkeletonComponent, &GlobalTransform)>,
     root_bones: Query<&AnimationRootBone>,
-    simulations: Query<&mut CharacterSimulation>,
-    transforms: Query<&mut Transform>,
+    mut simulations: Query<&mut CharacterSimulation>,
+    mut transforms: Query<&mut Transform>,
     time: Res<Time>,
 ) {
     let dt = time.delta().as_secs_f32();
@@ -93,16 +93,16 @@ pub fn apply_character_displacement(
         let Some(capsule) = link.capsule.entity() else {
             continue;
         };
-        let Some(mut simulation) = simulations.get_entity(capsule) else {
+        let Some(mut simulation) = simulations.get_entity_mut(capsule) else {
             continue;
         };
         let Some(position) = transforms
-            .get_entity(capsule)
+            .get_entity_mut(capsule)
             .map(|capsule| capsule.translation)
         else {
             continue;
         };
-        let Some(mut character) = transforms.get_entity(entity) else {
+        let Some(mut character) = transforms.get_entity_mut(entity) else {
             continue;
         };
         let rotation = simulation.interpolated_facing(alpha);

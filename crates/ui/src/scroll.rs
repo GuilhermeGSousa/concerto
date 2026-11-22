@@ -76,7 +76,7 @@ pub struct UISplitHandle {
 pub(crate) fn update_scroll_areas(
     mut events: EventReader<WindowEvent>,
     hovered: Res<HoveredNode>,
-    areas: Query<(Entity, &mut UIScrollArea, &UILayout)>,
+    mut areas: Query<(Entity, &mut UIScrollArea, &UILayout)>,
     parents: Query<&ChildOf>,
 ) {
     let Some(hovered) = **hovered else { return };
@@ -94,7 +94,7 @@ pub(crate) fn update_scroll_areas(
     }
     let mut candidate = Some(hovered);
     while let Some(entity) = candidate {
-        if let Some((_, mut area, layout)) = areas.get_entity(entity) {
+        if let Some((_, mut area, layout)) = areas.get_entity_mut(entity) {
             let max = (area.content_extent - layout.content_rect.size.y).max(0.0);
             let offset = (area.offset + delta).clamp(0.0, max);
             if offset != area.offset {
@@ -106,12 +106,12 @@ pub(crate) fn update_scroll_areas(
     }
 }
 
-pub(crate) fn sync_scroll_content(areas: Query<&UIScrollArea>, nodes: Query<&mut UINode>) {
+pub(crate) fn sync_scroll_content(areas: Query<&UIScrollArea>, mut nodes: Query<&mut UINode>) {
     for area in areas.iter() {
         let Some(content) = area.content else {
             continue;
         };
-        let Some(mut node) = nodes.get_entity(content) else {
+        let Some(mut node) = nodes.get_entity_mut(content) else {
             continue;
         };
         if node.position != Position::Absolute {
@@ -133,7 +133,7 @@ pub(crate) fn sync_scroll_content(areas: Query<&UIScrollArea>, nodes: Query<&mut
 pub fn drag_split_handle(
     on: On<UIDrag>,
     handles: Query<(&UISplitHandle, &UILayout)>,
-    panes: Query<(&mut UISplitPane, &UILayout)>,
+    mut panes: Query<(&mut UISplitPane, &UILayout)>,
 ) {
     let drag = on.signal();
     if drag.button != MouseButton::Left {
@@ -145,7 +145,7 @@ pub fn drag_split_handle(
     else {
         return;
     };
-    let Some((mut pane, layout)) = panes.get_entity(pane_entity) else {
+    let Some((mut pane, layout)) = panes.get_entity_mut(pane_entity) else {
         return;
     };
     if pane.collapsed.is_some() {
@@ -166,7 +166,7 @@ pub fn drag_split_handle(
 pub(crate) fn sync_split_panes(
     panes: Query<(Entity, &UISplitPane, &UILayout)>,
     handles: Query<(&UISplitHandle, &UILayout)>,
-    nodes: Query<&mut UINode>,
+    mut nodes: Query<&mut UINode>,
 ) {
     for (entity, pane, layout) in panes.iter() {
         let (Some(first), Some(second)) = (pane.first, pane.second) else {
@@ -174,14 +174,14 @@ pub(crate) fn sync_split_panes(
         };
         let available = available_extent(pane, layout, entity, &handles);
         {
-            let Some(mut first_node) = nodes.get_entity(first) else {
+            let Some(mut first_node) = nodes.get_entity_mut(first) else {
                 continue;
             };
             let mut next = UINode::clone(&first_node);
             apply_first_split(pane, available, &mut next);
             first_node.set_if_neq(next);
         }
-        let Some(mut second_node) = nodes.get_entity(second) else {
+        let Some(mut second_node) = nodes.get_entity_mut(second) else {
             continue;
         };
         let mut next = UINode::clone(&second_node);
@@ -450,9 +450,9 @@ pub(crate) fn setup_scrollbars(
 /// Pins each track to the right edge of its area and hides it when there is nothing to scroll.
 pub(crate) fn sync_scrollbar_tracks(
     areas: Query<(&UIScrollArea, &UILayout)>,
-    tracks: Query<(&UIScrollBar, &mut UINode)>,
+    mut tracks: Query<(&UIScrollBar, &mut UINode)>,
 ) {
-    for (bar, mut node) in tracks.iter() {
+    for (bar, mut node) in tracks.iter_mut() {
         let Some((area, layout)) = areas.get_entity(bar.area) else {
             continue;
         };
@@ -479,9 +479,9 @@ pub(crate) fn sync_scrollbar_tracks(
 
 pub(crate) fn sync_scrollbar_thumbs(
     areas: Query<(&UIScrollArea, &UILayout)>,
-    thumbs: Query<(&UIScrollThumb, &mut UINode)>,
+    mut thumbs: Query<(&UIScrollThumb, &mut UINode)>,
 ) {
-    for (thumb, mut node) in thumbs.iter() {
+    for (thumb, mut node) in thumbs.iter_mut() {
         let Some((area, layout)) = areas.get_entity(thumb.area) else {
             continue;
         };
@@ -505,7 +505,7 @@ pub(crate) fn sync_scrollbar_thumbs(
 fn drag_scrollbar_thumb(
     on: On<UIDrag>,
     thumbs: Query<&UIScrollThumb>,
-    areas: Query<(&mut UIScrollArea, &UILayout)>,
+    mut areas: Query<(&mut UIScrollArea, &UILayout)>,
 ) {
     let drag = on.signal();
     if drag.button != MouseButton::Left {
@@ -514,7 +514,7 @@ fn drag_scrollbar_thumb(
     let Some(thumb) = thumbs.get_entity(on.entity()) else {
         return;
     };
-    let Some((mut area, layout)) = areas.get_entity(thumb.area) else {
+    let Some((mut area, layout)) = areas.get_entity_mut(thumb.area) else {
         return;
     };
     let viewport = layout.content_rect.size.y;

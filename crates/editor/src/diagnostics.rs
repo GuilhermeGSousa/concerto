@@ -77,7 +77,7 @@ fn refresh_panel(
     render: Res<UIRenderDiagnostics>,
     time: Res<Time>,
     mut sampler: ResMut<Sampler>,
-    readouts: Query<(&Readout, &mut UIText)>,
+    mut readouts: Query<(&Readout, &mut UIText)>,
 ) {
     sampler.elapsed += time.delta().as_secs_f32();
     sampler.frames += 1;
@@ -95,7 +95,7 @@ fn refresh_panel(
         render.geometry_rebuilds(),
         render.text_reshapes(),
     );
-    for (_, mut component) in readouts.iter() {
+    for (_, mut component) in readouts.iter_mut() {
         if component.text != value {
             component.text = value.clone();
         }

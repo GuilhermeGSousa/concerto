@@ -22,7 +22,7 @@ pub(crate) fn handle_terminal_resize(
     device: Res<RenderDevice>,
     context: Res<RenderContext>,
     terminal_cameras: Query<&RenderEntity, With<TerminalOutput>>,
-    render_cameras: Query<&mut RenderCamera>,
+    mut render_cameras: Query<&mut RenderCamera>,
 ) {
     // Only care about the last resize event this frame
     let Some(ev) = events.read().last() else {
@@ -40,7 +40,7 @@ pub(crate) fn handle_terminal_resize(
     let Some(render_entity) = terminal_cameras.iter().next() else {
         return;
     };
-    let Some(mut camera) = render_cameras.get_entity(**render_entity) else {
+    let Some(mut camera) = render_cameras.get_entity_mut(**render_entity) else {
         return;
     };
 

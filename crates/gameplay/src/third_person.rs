@@ -227,14 +227,14 @@ impl ThirdPersonCamera {
 
 /// Eases each rig toward its stance and writes the framing onto its children's booms and lenses when it differs.
 pub fn update_third_person_cameras(
-    rigs: Query<(&mut ThirdPersonCamera, &Children)>,
-    booms: Query<&mut CameraBoom>,
-    cameras: Query<&mut VirtualCamera>,
+    mut rigs: Query<(&mut ThirdPersonCamera, &Children)>,
+    mut booms: Query<&mut CameraBoom>,
+    mut cameras: Query<&mut VirtualCamera>,
     time: Res<Time>,
 ) {
     let dt = time.delta().as_secs_f32();
 
-    for (mut rig, children) in rigs.iter() {
+    for (mut rig, children) in rigs.iter_mut() {
         let next = rig.stepped(dt);
         if rig.current != Some(next) {
             rig.current = Some(next);
@@ -242,7 +242,7 @@ pub fn update_third_person_cameras(
         let framing = rig.current();
 
         for child in children.iter() {
-            if let Some(mut boom) = booms.get_entity(*child) {
+            if let Some(mut boom) = booms.get_entity_mut(*child) {
                 let direction = boom.offset.try_normalize().unwrap_or(Vec3::NEG_Z);
                 let right = Vec3::Y.cross(direction).normalize_or_zero();
                 let distance = framing.distance.max(MIN_BOOM_DISTANCE);
@@ -261,7 +261,7 @@ pub fn update_third_person_cameras(
                 boom.set_if_neq(framed);
             }
 
-            if let Some(mut camera) = cameras.get_entity(*child)
+            if let Some(mut camera) = cameras.get_entity_mut(*child)
                 && camera.lens.is_none_or(|lens| lens.fovy != framing.fovy)
             {
                 let base = camera.lens.unwrap_or_default();

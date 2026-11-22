@@ -110,7 +110,7 @@ pub fn spawn_panel(cmd: &mut CommandQueue, parent: Entity, theme: &UITheme) -> E
 fn show_active_picture(
     active: Res<ActiveEditor>,
     hosted: Query<&HostedApp>,
-    viewports: Query<(&ViewportRegion, &mut UISharedViewport, &mut UIMaterial)>,
+    mut viewports: Query<(&ViewportRegion, &mut UISharedViewport, &mut UIMaterial)>,
 ) {
     let picture = active
         .0
@@ -120,7 +120,7 @@ fn show_active_picture(
         .as_ref()
         .is_some_and(|picture| picture.get().is_some());
     let colour = if drawn { Color::WHITE } else { SKY }.to_linear();
-    for (_, mut viewport, mut material) in viewports.iter() {
+    for (_, mut viewport, mut material) in viewports.iter_mut() {
         let unchanged = match (&viewport.picture, &picture) {
             (Some(shown), Some(wanted)) => shown.is_same(wanted),
             (None, None) => true,
@@ -164,8 +164,8 @@ fn show_input_owner(
     active: Res<ActiveEditor>,
     theme: Res<UITheme>,
     owners: Query<&InputOwner>,
-    viewports: Query<(&ViewportRegion, &mut UIMaterial)>,
-    hints: Query<(&InputHint, &mut UINode, &mut UIText)>,
+    mut viewports: Query<(&ViewportRegion, &mut UIMaterial)>,
+    mut hints: Query<(&InputHint, &mut UINode, &mut UIText)>,
 ) {
     let owner = active
         .0
@@ -178,7 +178,7 @@ fn show_input_owner(
     };
     let width = if border.is_some() { INPUT_BORDER } else { 0.0 };
     let colour = border.unwrap_or(Color::TRANSPARENT).to_linear();
-    for (_, mut material) in viewports.iter() {
+    for (_, mut material) in viewports.iter_mut() {
         if material.border_width != width {
             material.border_width = width;
         }
@@ -186,7 +186,7 @@ fn show_input_owner(
             material.border_color = colour;
         }
     }
-    for (_, mut node, mut text) in hints.iter() {
+    for (_, mut node, mut text) in hints.iter_mut() {
         if node.visible != owner.is_some() {
             node.visible = owner.is_some();
         }

@@ -179,14 +179,14 @@ pub(crate) fn hold_texture(tab: &mut TextureTab, opened: OpenedTexture) {
 }
 
 pub(crate) fn load_textures(
-    documents: Query<(Entity, &mut EditorDocument, &mut TextureTab)>,
+    mut documents: Query<(Entity, &mut EditorDocument, &mut TextureTab)>,
     project: Res<ProjectState>,
     mut cmd: CommandQueue,
 ) {
     let Some(root) = project.project.as_ref().map(|project| project.root.clone()) else {
         return;
     };
-    for (entity, mut document, mut tab) in documents.iter() {
+    for (entity, mut document, mut tab) in documents.iter_mut() {
         let Some(asset) = document.pending.clone() else {
             continue;
         };
@@ -207,12 +207,12 @@ pub(crate) fn load_textures(
 
 pub(crate) fn follow_texture_edits(
     mut committed: EventReader<Hosted<PropertyCommitted>>,
-    documents: Query<&mut TextureTab>,
+    mut documents: Query<&mut TextureTab>,
     mut cmd: CommandQueue,
 ) {
     for hosted in committed.read() {
         if hosted.event.result.is_ok()
-            && let Some(mut tab) = documents.get_entity(hosted.document)
+            && let Some(mut tab) = documents.get_entity_mut(hosted.document)
         {
             tab.derive_wanted = true;
             cmd.insert(Unsaved, hosted.document);
@@ -222,9 +222,9 @@ pub(crate) fn follow_texture_edits(
 
 pub(crate) fn clear_status_on_edit(
     on: On<Add<Unsaved>>,
-    documents: Query<&mut EditorDocument, With<TextureTab>>,
+    mut documents: Query<&mut EditorDocument, With<TextureTab>>,
 ) {
-    if let Some(mut document) = documents.get_entity(on.signal().entity)
+    if let Some(mut document) = documents.get_entity_mut(on.signal().entity)
         && !document.status.is_empty()
     {
         document.status.clear();
@@ -233,10 +233,10 @@ pub(crate) fn clear_status_on_edit(
 
 pub(crate) fn restore_discarded_edits(
     on: On<DiscardEdits>,
-    documents: Query<&mut TextureTab>,
+    mut documents: Query<&mut TextureTab>,
     mut cmd: CommandQueue,
 ) {
-    let Some(mut tab) = documents.get_entity(on.signal().0) else {
+    let Some(mut tab) = documents.get_entity_mut(on.signal().0) else {
         return;
     };
     if tab.loaded.is_some() && tab.value != tab.loaded {

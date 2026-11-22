@@ -190,7 +190,12 @@ when a component appears or disappears, listen for its lifecycle signals,
 `On<Add<T>>`, `On<Replace<T>>`, `On<Remove<T>>` and `On<Despawn<T>>`. A system
 whose `Res<T>` or `ResMut<T>` names a missing resource is skipped with a warning
 on every run until the resource exists; take `Option<Res<T>>` or
-`Option<ResMut<T>>` when absence is normal.
+`Option<ResMut<T>>` when absence is normal. A system whose own parameters alias
+panics when it is initialized, naming itself and the conflict: two parameters
+on one resource where one is `ResMut`, one query that writes a component and
+names it again, or two queries on one component where one writes it (a
+`Changed<T>` or `Added<T>` filter reads `T`). Two such queries are accepted
+when one requires a component the other excludes with `Without`.
 
 **Listeners carry their own data.** What a listener needs to know about the
 widget it sits on is captured by its closure, not put in a component that the

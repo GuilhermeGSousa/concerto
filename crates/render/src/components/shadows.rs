@@ -307,22 +307,22 @@ fn layer_of(slots: &[Entity], entity: Entity) -> i32 {
         .map_or(-1, |layer| layer as i32)
 }
 
-fn cameras_in_order(cameras: &Query<(Entity, &mut RenderCamera)>) -> Vec<Entity> {
-    let mut entities: Vec<Entity> = cameras.iter().map(|(entity, _)| entity).collect();
+fn cameras_in_order(cameras: &mut Query<(Entity, &mut RenderCamera)>) -> Vec<Entity> {
+    let mut entities: Vec<Entity> = cameras.iter_mut().map(|(entity, _)| entity).collect();
     entities.sort_by_key(entity_order);
     entities
 }
 
 pub(crate) fn assign_shadow_layers(
-    lights: Query<(Entity, &mut RenderLight, &RenderShadowsEnabled)>,
-    cameras: Query<(Entity, &mut RenderCamera)>,
+    mut lights: Query<(Entity, &mut RenderLight, &RenderShadowsEnabled)>,
+    mut cameras: Query<(Entity, &mut RenderCamera)>,
     visible: Res<VisibleLights>,
     mut spot_directional_shadow_maps: ResMut<RenderSpotDirectionalShadowMaps>,
     mut point_shadow_maps: ResMut<RenderPointShadowMaps>,
     queue: Res<RenderQueue>,
 ) {
-    let views = cameras_in_order(&cameras);
-    for (entity, mut camera) in cameras.iter() {
+    let views = cameras_in_order(&mut cameras);
+    for (entity, mut camera) in cameras.iter_mut() {
         let shadow_view = views.iter().position(|&view| view == entity).unwrap_or(0) as u32;
         if camera.camera_uniform.shadow_view != shadow_view {
             camera.camera_uniform.shadow_view = shadow_view;
@@ -331,7 +331,7 @@ pub(crate) fn assign_shadow_layers(
     }
 
     let candidates: Vec<ShadowCandidate> = lights
-        .iter()
+        .iter_mut()
         .filter(|(entity, _, _)| visible.contains(*entity))
         .map(|(entity, light, enabled)| ShadowCandidate {
             entity,
@@ -353,7 +353,7 @@ pub(crate) fn assign_shadow_layers(
     spot_directional_shadow_maps.slots = assigned.spot_directional;
     point_shadow_maps.slots = assigned.point;
 
-    for (entity, mut light, _) in lights.iter() {
+    for (entity, mut light, _) in lights.iter_mut() {
         let slots = if light.light_type == LightType::Point.index() {
             &point_shadow_maps.slots
         } else {

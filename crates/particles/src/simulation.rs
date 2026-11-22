@@ -71,10 +71,10 @@ impl Particles {
 
 pub(crate) fn simulate_particles(
     time: Res<Time>,
-    emitters: Query<(&ParticleEmitter, &GlobalTransform, &mut Particles)>,
+    mut emitters: Query<(&ParticleEmitter, &GlobalTransform, &mut Particles)>,
 ) {
     let seconds = time.delta().as_secs_f32();
-    for (emitter, transform, mut particles) in emitters.iter() {
+    for (emitter, transform, mut particles) in emitters.iter_mut() {
         particles.advance(emitter, transform.matrix(), seconds);
     }
 }

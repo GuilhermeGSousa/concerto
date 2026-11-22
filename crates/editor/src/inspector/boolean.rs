@@ -80,9 +80,9 @@ fn commit_bool_field(
 /// Writes each row's value into its checkbox.
 pub(crate) fn refresh_bool_fields(
     rows: Query<&PropertyRowValue>,
-    fields: Query<(&BoolField, &mut UICheckbox)>,
+    mut fields: Query<(&BoolField, &mut UICheckbox)>,
 ) {
-    for (field, mut checkbox) in fields.iter() {
+    for (field, mut checkbox) in fields.iter_mut() {
         let Some(value) = rows
             .get_entity(field.row)
             .and_then(|value| value.downcast::<bool>().copied())

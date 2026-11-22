@@ -368,7 +368,7 @@ pub(crate) fn adapt_exposure(
     mut views: ResMut<AutoExposureViews>,
     mut device: ResMut<RenderDevice>,
     queue: Res<RenderQueue>,
-    render_cameras: Query<(Entity, &mut RenderCamera)>,
+    mut render_cameras: Query<(Entity, &mut RenderCamera)>,
     context: Res<RenderContext>,
 ) {
     let Some(pipelines) = pipelines else {
@@ -378,7 +378,7 @@ pub(crate) fn adapt_exposure(
         .cameras
         .retain(|camera, _| extracted.cameras.contains_key(camera));
 
-    for (camera, mut render_camera) in render_cameras.iter() {
+    for (camera, mut render_camera) in render_cameras.iter_mut() {
         let Some(settings) = extracted.cameras.get(&camera) else {
             if render_camera.adapted_exposure.is_some() {
                 render_camera.adapted_exposure = None;

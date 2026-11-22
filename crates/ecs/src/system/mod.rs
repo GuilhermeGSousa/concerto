@@ -193,6 +193,14 @@ where
     fn initialize(&mut self, world: &mut World) {
         self.system_state = Some(F::Inputs::init_state(world));
         self.last_run = world.change_tick().relative_to(Tick::MAX);
+        let mut access = SystemAccess::default();
+        self.fill_access(&mut SystemMetadata::default(), &mut access);
+        if let Some(conflict) = access.conflict() {
+            panic!(
+                "System `{}` has parameters that conflict: {conflict}.",
+                self.name()
+            );
+        }
     }
 
     fn apply(&mut self, world: &mut World) {

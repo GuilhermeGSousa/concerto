@@ -450,7 +450,7 @@ pub(crate) fn extract_cameras(
             &RenderEntity,
         )>,
     >,
-    render_cameras: Query<&mut RenderCamera>,
+    mut render_cameras: Query<&mut RenderCamera>,
     mut cmd: CommandQueue,
     device: Res<RenderDevice>,
     context: Res<RenderContext>,
@@ -488,7 +488,7 @@ pub(crate) fn extract_cameras(
         camera_uniform.set_display(tonemapping, exposure);
         let clear_color = scene_clear_color(camera.clear_color, tonemapping, exposure);
 
-        if let Some(mut render_camera) = render_cameras.get_entity(render_entity) {
+        if let Some(mut render_camera) = render_cameras.get_entity_mut(render_entity) {
             render_camera.camera_uniform = camera_uniform;
             render_camera.clear_color = clear_color;
             render_camera.viewport = camera.viewport;
@@ -615,7 +615,7 @@ fn camera_bind_group(
 
 pub(crate) fn rebind_sky_radiance(
     sky_radiance: Res<SkyRadianceMap>,
-    render_cameras: Query<&mut RenderCamera>,
+    mut render_cameras: Query<&mut RenderCamera>,
     device: Res<RenderDevice>,
     camera_layouts: Res<CameraLayout>,
     fallbacks: Res<FallbackTextures>,
@@ -623,7 +623,7 @@ pub(crate) fn rebind_sky_radiance(
     if !sky_radiance.is_changed() {
         return;
     }
-    for mut render_camera in render_cameras.iter() {
+    for mut render_camera in render_cameras.iter_mut() {
         render_camera.rebind(&device, &camera_layouts, &sky_radiance, &fallbacks);
     }
 }
@@ -678,9 +678,9 @@ pub fn create_rtt(
 /// Runs in the main world, where [`Camera`] lives. The window is the
 /// authoritative size source; the render world's surface is reconfigured
 /// downstream of it, so there's no need to reach across worlds for it.
-pub(crate) fn sync_camera_aspect(cameras: Query<&mut Camera>, window: Res<Window>) {
+pub(crate) fn sync_camera_aspect(mut cameras: Query<&mut Camera>, window: Res<Window>) {
     let target = UVec2::from(window.size());
-    for mut camera in cameras.iter() {
+    for mut camera in cameras.iter_mut() {
         if !matches!(camera.render_target, RenderTarget::MainWindow) {
             continue;
         }

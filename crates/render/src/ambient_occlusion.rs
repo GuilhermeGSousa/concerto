@@ -466,7 +466,7 @@ pub(crate) fn prepare_ambient_occlusion(
     pipelines: Option<Res<AmbientOcclusionPipelines>>,
     extracted: Res<ExtractedAmbientOcclusion>,
     mut views: ResMut<AmbientOcclusionViews>,
-    render_cameras: Query<(Entity, &mut RenderCamera)>,
+    mut render_cameras: Query<(Entity, &mut RenderCamera)>,
     device: Res<RenderDevice>,
     camera_layout: Res<CameraLayout>,
     sky_radiance: Res<SkyRadianceMap>,
@@ -479,7 +479,7 @@ pub(crate) fn prepare_ambient_occlusion(
         .cameras
         .retain(|camera, _| render_cameras.contains_entity(*camera));
 
-    for (camera, mut render_camera) in render_cameras.iter() {
+    for (camera, mut render_camera) in render_cameras.iter_mut() {
         let wanted = extracted
             .cameras
             .get(&camera)
