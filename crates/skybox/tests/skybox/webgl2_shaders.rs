@@ -83,6 +83,10 @@ fn sky_shaders_compose_for_webgl2() {
             label: "sky.wgsl",
             source: include_str!("../../src/shaders/sky.wgsl"),
         },
+        Shader {
+            label: "sky_radiance_mip.wgsl",
+            source: include_str!("../../src/shaders/sky_radiance_mip.wgsl"),
+        },
     ];
     for defs in &def_sets {
         for shader in &shaders {
