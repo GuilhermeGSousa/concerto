@@ -12,14 +12,18 @@ pub struct PartOverlap {
     pub depth: f32,
 }
 
-struct Rounded {
-    start: Vec3,
-    end: Vec3,
-    radius: f32,
+pub(crate) struct Rounded {
+    pub(crate) start: Vec3,
+    pub(crate) end: Vec3,
+    pub(crate) radius: f32,
 }
 
 fn rounded(part: &PartSettings) -> Rounded {
-    let pose: BodyPose = part.pose.then(part.shape_offset);
+    rounded_at(part, part.pose)
+}
+
+pub(crate) fn rounded_at(part: &PartSettings, pose: BodyPose) -> Rounded {
+    let pose: BodyPose = pose.then(part.shape_offset);
     let along = |axis: Vec3, half: f32, radius: f32| Rounded {
         start: pose.transform_point(-axis * half),
         end: pose.transform_point(axis * half),

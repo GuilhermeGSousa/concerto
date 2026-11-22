@@ -187,6 +187,8 @@ pub trait PhysicsBackend: Send + Sync + Sized {
 
     fn linear_velocity(&self, body: Self::BodyHandle) -> Vec3;
 
+    fn angular_velocity(&self, body: Self::BodyHandle) -> Vec3;
+
     /// Also wakes the body, so a sleeping body picks the velocity up.
     fn set_linear_velocity(&mut self, body: Self::BodyHandle, velocity: Vec3);
 

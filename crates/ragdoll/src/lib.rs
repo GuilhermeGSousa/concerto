@@ -8,22 +8,23 @@ pub mod overlap;
 pub mod plugin;
 pub mod resolve;
 pub mod sandbox;
+pub mod sensing;
 #[cfg(feature = "test-support")]
 pub mod testing;
 
 pub use asset::{
     BoneStrength, PartStrength, Ragdoll, RagdollJoint, RagdollMotor, RagdollPart, RagdollShape,
-    StrengthProfile,
+    Segment, Side, StrengthProfile,
 };
 pub use character::{
     CharacterRagdoll, PartWeight, PoseLost, RagdollBody, RagdollMode, RagdollRefused,
 };
 pub use generate::{
-    BRACED, FLINCH, GenerateError, HumanoidChains, HumanoidSettings, LIMP, Segment,
-    generate_humanoid,
+    BRACED, FLINCH, GenerateError, HumanoidChains, HumanoidSettings, LIMP, generate_humanoid,
 };
 pub use hit::{BodyHit, Flinch, FlinchRecord, HitReaction};
 pub use overlap::PartOverlap;
 pub use plugin::RagdollPlugin;
-pub use resolve::{RagdollError, ResolvedRagdoll};
+pub use resolve::{Landmarks, Limbs, RagdollError, ResolvedRagdoll};
 pub use sandbox::{Trial, TrialReport, run_trial};
+pub use sensing::{BodySense, Impact, MassPoint};

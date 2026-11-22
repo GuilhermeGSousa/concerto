@@ -20,6 +20,7 @@ use crate::{
         write_ragdoll_poses,
     },
     hit::{HitReaction, flinch_when_hit, update_flinches},
+    sensing::sense_bodies,
 };
 
 /// Registers the ragdoll asset and gives every `CharacterRagdoll` a physical body that follows its animation, is powered towards it or falls limp, drawn on its skeleton by weight; register it after `PhysicsPlugin`. Its systems also run in a preview `App`, where they do nothing until the preview has a `PhysicsPipeline`.
@@ -40,6 +41,10 @@ impl Plugin for RagdollPlugin {
                     .before(step_simulation)
                     .at_preview_time(),
             );
+        app.add_system(
+            LateFixedUpdate,
+            sense_bodies.after(step_simulation).at_preview_time(),
+        );
         app.add_listener(drop_removed_ragdoll.at_preview_time())
             .add_listener(drop_replaced_ragdoll.at_preview_time())
             .add_system(

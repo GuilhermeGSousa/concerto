@@ -603,6 +603,10 @@ impl PhysicsBackend for RapierBackend {
         from_rapier_vec(self.bodies[body].linvel())
     }
 
+    fn angular_velocity(&self, body: Self::BodyHandle) -> Vec3 {
+        from_rapier_vec(self.bodies[body].angvel())
+    }
+
     fn set_linear_velocity(&mut self, body: Self::BodyHandle, velocity: Vec3) {
         self.bodies[body].set_linvel(to_rapier_vec(velocity), true);
     }

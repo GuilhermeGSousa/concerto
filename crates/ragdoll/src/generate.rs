@@ -7,7 +7,7 @@ use concerto_name::Name;
 use glam::{Mat4, Quat, Vec3};
 
 use crate::asset::{
-    PartStrength, Ragdoll, RagdollJoint, RagdollPart, RagdollShape, StrengthProfile,
+    PartStrength, Ragdoll, RagdollJoint, RagdollPart, RagdollShape, Segment, Side, StrengthProfile,
 };
 
 /// The names a retarget rig gives the chains a humanoid ragdoll is generated from.
@@ -97,20 +97,6 @@ impl fmt::Display for GenerateError {
 
 impl std::error::Error for GenerateError {}
 
-/// A kind of body segment, which decides a part's share of the mass, its fallback thickness and its joint limits.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Segment {
-    Pelvis,
-    Spine,
-    Head,
-    UpperArm,
-    LowerArm,
-    Hand,
-    Thigh,
-    Shin,
-    Foot,
-}
-
 const TORSO_ABOVE_PELVIS: f32 = 0.355;
 
 /// The generated profile with the pelvis and legs kinematic and everything above powered: a body that takes a hit without needing balance.
@@ -133,6 +119,7 @@ impl Segment {
             Segment::Thigh => 0.1,
             Segment::Shin => 0.0465,
             Segment::Foot => 0.0145,
+            Segment::Other => 0.0,
         }
     }
 
@@ -148,6 +135,7 @@ impl Segment {
             Segment::Thigh => 300.0,
             Segment::Shin => 250.0,
             Segment::Foot => 150.0,
+            Segment::Other => 50.0,
         }
     }
 
@@ -162,6 +150,7 @@ impl Segment {
             Segment::UpperArm => 500.0,
             Segment::LowerArm => 200.0,
             Segment::Hand => 40.0,
+            Segment::Other => 100.0,
         }
     }
 
@@ -183,6 +172,7 @@ impl Segment {
             Segment::Thigh => 0.17,
             Segment::Shin => 0.12,
             Segment::Foot => 0.3,
+            Segment::Other => 0.2,
         }
     }
 }
@@ -196,6 +186,7 @@ struct Frame {
 struct Planned {
     bone: usize,
     segment: Segment,
+    side: Side,
     start: Vec3,
     end: Vec3,
     mass: f32,
@@ -275,6 +266,7 @@ pub fn generate_humanoid(
     planned.push(Planned {
         bone: rig.root,
         segment: Segment::Pelvis,
+        side: Side::Centre,
         start: hip_centre - frame.left * hip_width / 2.0,
         end: hip_centre + frame.left * hip_width / 2.0,
         mass: mass * Segment::Pelvis.mass_fraction(),
@@ -307,6 +299,7 @@ pub fn generate_humanoid(
         planned.push(Planned {
             bone: *bone,
             segment: Segment::Spine,
+            side: Side::Centre,
             start: at(*bone),
             end,
             mass: mass * Segment::Spine.mass_fraction() / spine_bones.len() as f32,
@@ -331,6 +324,7 @@ pub fn generate_humanoid(
     planned.push(Planned {
         bone: head,
         segment: Segment::Head,
+        side: Side::Centre,
         start: at(head),
         end: at(head) + head_direction * head_length,
         mass: mass * Segment::Head.mass_fraction(),
@@ -342,7 +336,10 @@ pub fn generate_humanoid(
         max_radius: f32::MAX,
     });
 
-    for arm in [left_arm, right_arm] {
+    for (arm, side) in [left_arm, right_arm]
+        .into_iter()
+        .zip([Side::Left, Side::Right])
+    {
         let count = arm.bones.len();
         let upper = arm.bones[count - 3];
         let lower = arm.bones[count - 2];
@@ -355,6 +352,7 @@ pub fn generate_humanoid(
         planned.push(Planned {
             bone: upper,
             segment: Segment::UpperArm,
+            side,
             start: at(upper),
             end: at(lower),
             mass: mass * Segment::UpperArm.mass_fraction(),
@@ -368,6 +366,7 @@ pub fn generate_humanoid(
         planned.push(Planned {
             bone: lower,
             segment: Segment::LowerArm,
+            side,
             start: at(lower),
             end: at(hand),
             mass: mass * Segment::LowerArm.mass_fraction(),
@@ -382,6 +381,7 @@ pub fn generate_humanoid(
         planned.push(Planned {
             bone: hand,
             segment: Segment::Hand,
+            side,
             start: at(hand),
             end: at(hand) + lower_direction * lower_vector.length().max(0.05) * 0.4,
             mass: mass * Segment::Hand.mass_fraction(),
@@ -394,7 +394,10 @@ pub fn generate_humanoid(
         });
     }
 
-    for leg in [left_leg, right_leg] {
+    for (leg, side) in [left_leg, right_leg]
+        .into_iter()
+        .zip([Side::Left, Side::Right])
+    {
         let thigh = leg.bones[0];
         let shin = leg.bones[1];
         let foot = leg.bones[2];
@@ -406,6 +409,7 @@ pub fn generate_humanoid(
         planned.push(Planned {
             bone: thigh,
             segment: Segment::Thigh,
+            side,
             start: at(thigh),
             end: at(shin),
             mass: mass * Segment::Thigh.mass_fraction(),
@@ -419,6 +423,7 @@ pub fn generate_humanoid(
         planned.push(Planned {
             bone: shin,
             segment: Segment::Shin,
+            side,
             start: at(shin),
             end: at(foot),
             mass: mass * Segment::Shin.mass_fraction(),
@@ -433,6 +438,7 @@ pub fn generate_humanoid(
         planned.push(Planned {
             bone: foot,
             segment: Segment::Foot,
+            side,
             start: at(foot),
             end: foot_end,
             mass: mass * Segment::Foot.mass_fraction(),
@@ -599,5 +605,6 @@ fn part(
         .with_offset(to_bone * (centre - bone_position))
         .with_rotation((to_bone * Quat::from_rotation_arc(Vec3::Y, direction)).normalize())
         .with_mass(plan.mass)
+        .with_segment(plan.segment, plan.side)
         .with_joint(joint.with_friction((plan.mass * FRICTION_PER_KG).clamp(0.3, 5.0)))
 }

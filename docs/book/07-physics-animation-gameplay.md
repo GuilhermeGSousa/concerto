@@ -253,7 +253,7 @@ succeeds and `create_ragdoll` returns `None`.
 
 The `concerto-physics-gizmos` crate, which a game adds itself, draws what the
 physics holds. Register `PhysicsGizmosPlugin` after `DefaultPlugins`; the
-`PhysicsGizmos` resource turns three layers on, all off by default:
+`PhysicsGizmos` resource turns four layers on, all off by default:
 
 - `colliders` outlines every `Collider`: a sphere, a box, a capsule, or the
   bounds of a mesh shape, carried by the entity's transform and its
@@ -265,11 +265,15 @@ physics holds. Register `PhysicsGizmosPlugin` after `DefaultPlugins`; the
   see how close the joint is to a limit.
 - `contacts` draws a red cross at each contact of a body that holds
   `Contacts`, with a line along its normal.
+- `sensing` draws what a `BodySense` perceives: the centre of mass with a line
+  down to the ground, the support outline, the capture point (green when the
+  body is balanced, red when not), the centre's velocity and any predicted
+  impact.
 
 In the editor the layers are component gizmo kinds, once the game lists
 `concerto-physics-editor`: `Collider`, `Ragdoll` (on the entity that holds the
 `RagdollId`), `Contacts`, and, drawn from the authored components where no body
-exists yet, `Box collider`, `Mesh collider` and `Sensor`. The viewport's Gizmos
+exists yet, `Box collider`, `Mesh collider` and `Sensor`, plus `Body sense` for a `BodySense`. The viewport's Gizmos
 menu and the `gizmos` tool turn each on by name, for the selection or for every
 entity. In a game without the editor, use the `PhysicsGizmos` resource. Both
 need `DebugGizmosPlugin`, which the plugin adds when the `App` has a renderer.
@@ -663,6 +667,30 @@ it:
 
 The capsule is not checked for a clear standing spot when it is let go; a body
 that came to rest inside a wall's reach is pushed out by the solver.
+
+#### What the body senses
+
+A `BodySense` beside a `CharacterRagdoll` is rewritten after each fixed step
+with what a behaviour needs to know to keep the body on its feet:
+
+- `centre`: the centre of mass, the body's mass and the centre's velocity;
+- `supporting` and `support`: the feet that are on the ground and the convex
+  outline under them. A simulated foot is on the ground by its contacts, a
+  kinematic one when the ground is within 5 cm under it;
+- `capture_point`: where the body would have to step to come to rest, the
+  ground under the centre of mass plus its horizontal velocity times
+  `sqrt(h / g)`. `balanced()` says it is inside the support, so the body can
+  recover without a step; `off_balance` is how far outside it is and which way;
+- `lean`, the angle of the pelvis-to-chest axis from upright, and `trunk_spin`;
+- `airborne`, the seconds since any part last touched something else;
+- `chest_impact` and `head_impact`, while no foot supports the body: where and
+  when each will meet something on its current path;
+- `at_rest`: every part slower than 0.2 m/s for half a second.
+
+Each part of the ragdoll asset says what `segment` of the body it is and which
+`side`; the generator fills them in. `ResolvedRagdoll::landmarks()` names the
+pelvis, the spine parts, the chest, the head and each side's arm and leg parts
+from them. While a body has a `BodySense`, its parts report their contacts.
 
 Ragdoll parts are in `Layers::RAGDOLL` and collide with everything but
 `Layers::CHARACTER` (`CollisionLayers::ragdoll()`, or `RagdollSettings::layers`

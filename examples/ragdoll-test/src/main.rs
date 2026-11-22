@@ -39,7 +39,7 @@ use concerto::{
 };
 use concerto_debug_gizmos::DebugGizmos;
 use concerto_physics_gizmos::{PhysicsGizmos, PhysicsGizmosPlugin};
-use concerto_ragdoll::{CharacterRagdoll, RagdollMode, testing::reference_humanoid};
+use concerto_ragdoll::{BodySense, CharacterRagdoll, RagdollMode, testing::reference_humanoid};
 use glam::{Quat, Vec3};
 
 const LINK: f32 = 0.5;
@@ -238,6 +238,7 @@ fn spawn_humanoid(cmd: &mut CommandQueue, assets: &AssetServer) {
             bones.first().copied().map(SceneEntityRef::Entity),
         ),
         CharacterRagdoll::new(ragdoll),
+        BodySense::default(),
     ));
     let limp_after = std::env::var("RAGDOLL_TEST_LIMP_AFTER")
         .ok()

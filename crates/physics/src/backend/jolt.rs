@@ -470,6 +470,19 @@ impl PhysicsBackend for JoltBackend {
         Vec3::from(velocity)
     }
 
+    fn angular_velocity(&self, body: Self::BodyHandle) -> Vec3 {
+        let mut velocity = [0.0f32; 3];
+        // SAFETY: `body` is a body in this world and the out-buffer is a valid xyz triple.
+        unsafe {
+            concerto_jolt_ffi::jolt_body_get_angular_velocity(
+                self.world,
+                body,
+                velocity.as_mut_ptr(),
+            );
+        }
+        Vec3::from(velocity)
+    }
+
     fn set_linear_velocity(&mut self, body: Self::BodyHandle, velocity: Vec3) {
         if self.static_sensors.contains(&body) {
             return;
