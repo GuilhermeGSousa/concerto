@@ -1,9 +1,56 @@
-use std::{any::TypeId, collections::HashSet};
+use std::{
+    any::TypeId,
+    collections::{HashMap, HashSet},
+};
 
 use crate::{component::Component, resource::Resource};
 
+/// The components a query's matches must have and must not have.
+#[derive(Default, Clone)]
+pub struct QueryShape {
+    with: HashSet<TypeId>,
+    without: HashSet<TypeId>,
+}
+
+impl QueryShape {
+    pub fn require(&mut self, component: TypeId) {
+        self.with.insert(component);
+    }
+
+    pub fn exclude(&mut self, component: TypeId) {
+        self.without.insert(component);
+    }
+
+    fn is_disjoint_from(&self, other: &Self) -> bool {
+        !self.with.is_disjoint(&other.without) || !other.with.is_disjoint(&self.without)
+    }
+}
+
+#[derive(Default, Clone)]
+struct QueryAccess {
+    reads: HashSet<TypeId>,
+    writes: HashSet<TypeId>,
+    shape: QueryShape,
+}
+
+impl QueryAccess {
+    fn conflict_with(&self, other: &Self) -> Option<TypeId> {
+        if self.shape.is_disjoint_from(&other.shape) {
+            return None;
+        }
+        self.writes
+            .iter()
+            .find(|id| other.reads.contains(id) || other.writes.contains(id))
+            .or_else(|| other.writes.iter().find(|id| self.reads.contains(id)))
+            .copied()
+    }
+}
+
 #[derive(Default, Clone)]
 pub struct SystemAccess {
+    queries: Vec<QueryAccess>,
+    names: HashMap<TypeId, &'static str>,
+    conflict: Option<String>,
     component_reads: HashSet<TypeId>,
     component_writes: HashSet<TypeId>,
     resource_reads: HashSet<TypeId>,
@@ -16,18 +63,22 @@ pub struct SystemAccess {
 
 impl SystemAccess {
     pub fn read_component<T: Component>(&mut self) {
+        self.name::<T>();
         self.component_reads.insert(TypeId::of::<T>());
     }
 
     pub fn write_component<T: Component>(&mut self) {
+        self.name::<T>();
         self.component_writes.insert(TypeId::of::<T>());
     }
 
     pub fn read_resource<T: Resource>(&mut self) {
+        self.name::<T>();
         self.resource_reads.insert(TypeId::of::<T>());
     }
 
     pub fn write_resource<T: Resource>(&mut self) {
+        self.name::<T>();
         self.resource_writes.insert(TypeId::of::<T>());
     }
 
@@ -114,7 +165,140 @@ impl SystemAccess {
         true
     }
 
+    fn name<T: 'static>(&mut self) {
+        self.names
+            .insert(TypeId::of::<T>(), std::any::type_name::<T>());
+    }
+
+    fn named(&self, other: &Self, id: TypeId) -> &'static str {
+        self.names
+            .get(&id)
+            .or_else(|| other.names.get(&id))
+            .copied()
+            .unwrap_or("an unnamed type")
+    }
+
+    /// The first conflict found between two parameters of the system, or inside one query.
+    pub fn conflict(&self) -> Option<&str> {
+        self.conflict.as_deref()
+    }
+
+    /// Records a conflict inside one parameter, such as a query that reads and writes one component.
+    pub fn report_conflict(&mut self, conflict: String) {
+        self.conflict.get_or_insert(conflict);
+    }
+
+    /// Whether `other`, the data of the same query, reads or writes a component this writes, or writes one this reads.
+    pub fn data_conflict(&self, other: &Self) -> Option<&'static str> {
+        self.component_writes
+            .iter()
+            .find(|id| other.component_reads.contains(id) || other.component_writes.contains(id))
+            .or_else(|| {
+                other
+                    .component_writes
+                    .iter()
+                    .find(|id| self.component_reads.contains(id))
+            })
+            .map(|id| self.named(other, *id))
+    }
+
+    /// Adds one query's access: what its data reads and writes, what its filter reads, and its shape.
+    pub fn add_query(&mut self, data: Self, filter: Self, shape: QueryShape) {
+        let mut reads = data.component_reads.clone();
+        reads.extend(filter.component_reads.iter().copied());
+        self.queries.push(QueryAccess {
+            reads,
+            writes: data.component_writes.clone(),
+            shape,
+        });
+        self.combine(data);
+        self.combine(filter);
+    }
+
+    /// Adds the access of one more parameter of the same system, recording a conflict with the ones before it.
+    pub fn add_parameter(&mut self, parameter: Self) {
+        if self.conflict.is_none() {
+            self.conflict = self.parameter_conflict(&parameter);
+        }
+        self.combine(parameter);
+    }
+
+    fn touches_anything(&self) -> bool {
+        self.reads_all
+            || self.writes_all
+            || self.reads_all_components
+            || !self.component_reads.is_empty()
+            || !self.component_writes.is_empty()
+            || !self.resource_reads.is_empty()
+            || !self.resource_writes.is_empty()
+    }
+
+    fn writes_anything(&self) -> bool {
+        self.writes_all || !self.component_writes.is_empty() || !self.resource_writes.is_empty()
+    }
+
+    fn as_queries(&self) -> Vec<QueryAccess> {
+        if !self.queries.is_empty() {
+            return self.queries.clone();
+        }
+        vec![QueryAccess {
+            reads: self.component_reads.clone(),
+            writes: self.component_writes.clone(),
+            shape: QueryShape::default(),
+        }]
+    }
+
+    fn parameter_conflict(&self, other: &Self) -> Option<String> {
+        if (self.writes_all && other.touches_anything())
+            || (other.writes_all && self.touches_anything())
+        {
+            return Some("exclusive access to the world beside another parameter".into());
+        }
+        if (self.reads_all && other.writes_anything())
+            || (other.reads_all && self.writes_anything())
+        {
+            return Some("a read of the whole world beside a parameter that writes".into());
+        }
+        let resource = self
+            .resource_writes
+            .iter()
+            .find(|id| other.resource_reads.contains(id) || other.resource_writes.contains(id))
+            .or_else(|| {
+                other
+                    .resource_writes
+                    .iter()
+                    .find(|id| self.resource_reads.contains(id))
+            });
+        if let Some(id) = resource {
+            return Some(format!(
+                "two parameters access the resource `{}` and at least one writes it",
+                self.named(other, *id)
+            ));
+        }
+        if (self.reads_all_components && !other.component_writes.is_empty())
+            || (other.reads_all_components && !self.component_writes.is_empty())
+        {
+            return Some("a read of every component beside a query that writes".into());
+        }
+        let theirs = other.as_queries();
+        self.as_queries().iter().find_map(|mine| {
+            theirs.iter().find_map(|their| {
+                mine.conflict_with(their).map(|id| {
+                    format!(
+                        "two queries access the component `{}`, at least one writes it, and no `With`/`Without` pair keeps them apart",
+                        self.named(other, id)
+                    )
+                })
+            })
+        })
+    }
+
     pub fn combine(&mut self, other: Self) {
+        self.queries.extend(other.queries);
+        self.names.extend(other.names);
+        if self.conflict.is_none() {
+            self.conflict = other.conflict;
+        }
         self.component_reads.extend(other.component_reads);
         self.component_writes.extend(other.component_writes);
         self.resource_reads.extend(other.resource_reads);

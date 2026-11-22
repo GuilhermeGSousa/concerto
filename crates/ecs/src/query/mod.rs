@@ -19,7 +19,7 @@ use crate::{
         world_query::WorldQuery,
     },
     system::{
-        access::SystemAccess,
+        access::{QueryShape, SystemAccess},
         input::{ReadOnlySystemInput, SystemInput, ValidationError},
         meta::SystemMetadata,
     },
@@ -262,8 +262,16 @@ where
     }
 
     fn fill_access(meta: &mut SystemMetadata, access: &mut crate::system::access::SystemAccess) {
-        T::fill_access(meta, access);
-        F::fill_access(access);
+        let mut data = SystemAccess::default();
+        T::fill_access(meta, &mut data);
+        let mut filter = SystemAccess::default();
+        F::fill_access(&mut filter);
+        let mut shape = QueryShape::default();
+        for component in T::component_ids() {
+            shape.require(component);
+        }
+        F::fill_shape(&mut shape);
+        access.add_query(data, filter, shape);
     }
 }
 
@@ -505,7 +513,14 @@ where
 
     fn fill_access(meta: &mut SystemMetadata, access: &mut SystemAccess) {
         for typle_index!(i) in 0..T::LEN {
-            <T<{ i }>>::fill_access(meta, access);
+            let mut element = SystemAccess::default();
+            <T<{ i }>>::fill_access(meta, &mut element);
+            if let Some(component) = access.data_conflict(&element) {
+                access.report_conflict(format!(
+                    "one query both writes the component `{component}` and accesses it again"
+                ));
+            }
+            access.combine(element);
         }
     }
 }

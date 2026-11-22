@@ -4,7 +4,7 @@ use std::{
 };
 
 use concerto_ecs::{
-    IntoSystem, Res, Resource, System, World,
+    Component, IntoSystem, Res, Resource, System, World,
     component::SystemTicks,
     system::{
         access::SystemAccess,
@@ -99,4 +99,51 @@ fn a_missing_resource_warns_on_every_skipped_run_and_a_skip_logs_nothing() {
     run_times(skipped, 3);
 
     assert_eq!(warnings().len() - before, 3);
+}
+
+#[derive(Component)]
+struct Left;
+
+#[derive(Component)]
+struct Right;
+
+#[derive(Resource)]
+struct Shared;
+
+fn initializes<Marker>(system: impl IntoSystem<(), Marker>) -> bool {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let mut world = World::default();
+        system.into_system().initialize(&mut world);
+    }))
+    .is_ok()
+}
+
+#[test]
+fn a_system_whose_parameters_conflict_panics_when_it_is_initialized() {
+    use concerto_ecs::{Changed, Entity, Query, ResMut, With, Without};
+
+    assert!(!initializes(|_: ResMut<Shared>, _: ResMut<Shared>| {}));
+    assert!(!initializes(|_: Res<Shared>, _: ResMut<Shared>| {}));
+    assert!(!initializes(|_: Query<(&mut Left, &Left)>| {}));
+    assert!(!initializes(|_: Query<&mut Left>, _: Query<&Left>| {}));
+    assert!(!initializes(|_: Query<&mut Left>, _: Query<&mut Left>| {}));
+    assert!(!initializes(
+        |_: Query<&mut Left>, _: Query<Entity, Changed<Left>>| {}
+    ));
+    assert!(!initializes(
+        |_: Query<&mut Left, With<Right>>, _: Query<&mut Left>| {}
+    ));
+
+    assert!(initializes(|_: Res<Shared>, _: Res<Shared>| {}));
+    assert!(initializes(|_: Query<&Left>, _: Query<&Left>| {}));
+    assert!(initializes(|_: Query<&mut Left, Changed<Left>>| {}));
+    assert!(initializes(
+        |_: Query<(&mut Left, &Right)>, _: Query<&Right>| {}
+    ));
+    assert!(initializes(
+        |_: Query<&mut Left, With<Right>>, _: Query<&mut Left, Without<Right>>| {}
+    ));
+    assert!(initializes(
+        |_: Query<(&mut Left, &Right)>, _: Query<&mut Left, Without<Right>>| {}
+    ));
 }
