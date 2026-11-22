@@ -34,7 +34,7 @@ use crate::{
         RenderAssetPlugin,
     },
     resources::RenderContext,
-    sets::{BackgroundSet, RenderSet},
+    sets::{BackgroundSet, PostProcessSet, RenderSet},
     sky_light::SkyRadianceMap,
     systems::{
         render::{finish_render, present_window},
@@ -168,6 +168,10 @@ impl Plugin for RenderPlugin {
             RenderSet::Prepass
                 .after(RenderSet::Shadows)
                 .before(RenderSet::Background),
+        )
+        .configure_render_sets(
+            Render,
+            PostProcessSet::DepthOfField.before(PostProcessSet::Bloom),
         )
         .configure_render_sets(
             Render,
@@ -318,6 +322,7 @@ impl Plugin for RenderPlugin {
                 target,
                 surface_config: config,
                 view_target_format: capabilities.view_target_format(),
+                multisampled_depth_sampled: capabilities.multisampled_depth_sampling(),
             })
             .insert_resource(RenderDevice {
                 device,

@@ -24,7 +24,7 @@ use crate::{
     queue::RenderQueue,
     render_asset::render_texture::RenderTexture,
     resources::RenderContext,
-    sets::RenderSet,
+    sets::{PostProcessSet, RenderSet},
     shader::create_shader_module,
 };
 
@@ -74,7 +74,12 @@ impl Plugin for BloomPlugin {
             .insert_resource(ExtractedBloom::default())
             .insert_resource(BloomChains::default());
         app.add_render_system(Extract, extract_bloom)
-            .add_render_system(Render, render_bloom.in_set(RenderSet::PostProcess));
+            .add_render_system(
+                Render,
+                render_bloom
+                    .in_set(RenderSet::PostProcess)
+                    .in_set(PostProcessSet::Bloom),
+            );
     }
 
     fn finish(&self, app: &mut concerto_app::App) {

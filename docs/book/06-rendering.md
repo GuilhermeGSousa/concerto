@@ -180,6 +180,37 @@ cmd.spawn((Camera::default(), Msaa::Off, Transform::IDENTITY));
 - A pass of your own that draws into a view target needs a pipeline for each
   sample count; `ViewPipelines` builds and picks them.
 
+### Depth of field
+
+`DepthOfField` on a camera keeps what is at one distance sharp and softens what
+is nearer and farther, as a lens does. `DepthOfFieldPlugin` draws it, before
+bloom, and `DefaultPlugins` registers it.
+
+```rust
+use concerto::render::DepthOfField;
+
+cmd.spawn((
+    Camera::default(),
+    DepthOfField::at(3.0).with_f_stop(1.4),
+    Transform::IDENTITY,
+));
+```
+
+- `focus_distance` is the distance in focus, in world units.
+- `f_stop` is the aperture: a lower number blurs more and narrows the range in
+  focus. The blur follows a real lens of that aperture on a 24 mm tall sensor
+  with the camera's field of view, so a long lens blurs more than a wide one.
+- `max_blur`, 0.015 by default, caps the blur as a fraction of the picture's
+  height; at 0 the pass is skipped.
+- A virtual camera carries one in `VirtualCamera::focus`. While it is live the
+  main camera takes it, and the director blends it with the rest of the pose:
+  between two focuses, or opening the blur from nothing when the outgoing
+  camera has none. `None` keeps whatever focus the main camera has.
+- A sharp surface in front of a blurred one keeps its edge. A blurred surface
+  in front of a sharp one does not yet spread over it.
+- It needs float render targets, and on GL it needs `Msaa::Off` on the camera,
+  where multisampled depth can't be read; the plugin says so once.
+
 ### Bloom
 
 `Bloom` on a camera makes the bright parts of its scene glow: the HDR frame is

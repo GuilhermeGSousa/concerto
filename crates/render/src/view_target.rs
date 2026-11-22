@@ -74,6 +74,7 @@ fn attachment(
     format: wgpu::TextureFormat,
     size: UVec2,
     samples: u32,
+    usage: wgpu::TextureUsages,
 ) -> wgpu::Texture {
     device.create_texture(&wgpu::TextureDescriptor {
         label: Some(label),
@@ -86,7 +87,7 @@ fn attachment(
         sample_count: samples,
         dimension: wgpu::TextureDimension::D2,
         format,
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        usage,
         view_formats: &[],
     })
 }
@@ -95,13 +96,9 @@ impl ViewTarget {
     /// The format of every view target's depth texture.
     pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
-    /// Creates the textures at `size`, at least one texel each way, with colour textures of `format`.
-    pub fn new(
-        device: &wgpu::Device,
-        format: wgpu::TextureFormat,
-        size: UVec2,
-        msaa: Msaa,
-    ) -> Self {
+    /// Creates the textures at `size`, at least one texel each way, in the formats `context` names.
+    pub fn new(device: &wgpu::Device, context: &RenderContext, size: UVec2, msaa: Msaa) -> Self {
+        let format = context.view_target_format;
         let size = size.max(UVec2::ONE);
         let samples = msaa.samples();
         let main = create_rtt(device, format, size.x, size.y);
@@ -124,6 +121,11 @@ impl ViewTarget {
             Self::DEPTH_FORMAT,
             size,
             samples,
+            if context.multisampled_depth_sampled {
+                wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING
+            } else {
+                wgpu::TextureUsages::RENDER_ATTACHMENT
+            },
         );
         let color = attachment(
             device,
@@ -131,6 +133,7 @@ impl ViewTarget {
             format,
             size,
             samples,
+            wgpu::TextureUsages::RENDER_ATTACHMENT,
         );
         Self {
             depth: RenderTexture {
@@ -207,8 +210,7 @@ pub(crate) fn prepare_view_targets(
         let msaa = render_camera.msaa;
         let view_target = &render_camera.view_target;
         if view_target.size() != size || view_target.sample_count() != msaa.samples() {
-            render_camera.view_target =
-                ViewTarget::new(&device, context.view_target_format, size, msaa);
+            render_camera.view_target = ViewTarget::new(&device, &context, size, msaa);
         }
     }
 }
