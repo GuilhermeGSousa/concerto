@@ -177,7 +177,7 @@ fn picker_panel(swatch: Entity) -> UIAnchoredPanel {
 fn toggle_color_picker(row: Entity) -> Listener<UIClick> {
     (move |on: On<UIClick>,
            values: Query<&PropertyRowValue>,
-           popups: Query<(Entity, &mut ColorPickerPopup, &mut UIAnchoredPanel)>,
+           mut popups: Query<(Entity, &mut ColorPickerPopup, &mut UIAnchoredPanel)>,
            theme: Res<UITheme>,
            mut cmd: CommandQueue| {
         if on.signal().button != MouseButton::Left {
@@ -190,7 +190,7 @@ fn toggle_color_picker(row: Entity) -> Listener<UIClick> {
             return;
         };
         let current = *current;
-        let mut popup = match popups.iter().next() {
+        let mut popup = match popups.iter_mut().next() {
             Some((entity, mut popup, mut panel)) => {
                 if panel.open && panel.owner == Some(on.entity()) {
                     panel.open = false;
@@ -234,9 +234,9 @@ fn commit_picked(row: Entity) -> Listener<UIColorChanged> {
 /// Closes the color popup once the row it was opened for is gone.
 pub(crate) fn close_color_picker(
     rows: Query<&PropertyRow>,
-    popups: Query<(&ColorPickerPopup, &mut UIAnchoredPanel)>,
+    mut popups: Query<(&ColorPickerPopup, &mut UIAnchoredPanel)>,
 ) {
-    for (popup, mut panel) in popups.iter() {
+    for (popup, mut panel) in popups.iter_mut() {
         if panel.open && rows.get_entity(popup.row).is_none() {
             panel.open = false;
         }
@@ -245,9 +245,9 @@ pub(crate) fn close_color_picker(
 
 pub(super) fn forget_scene(
     _: On<Remove<EditTarget>>,
-    panels: Query<&mut UIAnchoredPanel, With<ColorPickerPopup>>,
+    mut panels: Query<&mut UIAnchoredPanel, With<ColorPickerPopup>>,
 ) {
-    for mut panel in panels.iter() {
+    for mut panel in panels.iter_mut() {
         if panel.open {
             panel.open = false;
         }

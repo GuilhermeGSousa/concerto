@@ -112,8 +112,10 @@ impl EntitySignal for UIColorChanged {}
 
 /// A listener for the picker's popup that restores the color the picker opened with when Escape closes the popup.
 pub fn restore_on_escape(picker: Entity) -> Listener<UIPanelEscaped> {
-    (move |_on: On<UIPanelEscaped>, pickers: Query<&mut UIColorPicker>, mut cmd: CommandQueue| {
-        let Some(mut state) = pickers.get_entity(picker) else {
+    (move |_on: On<UIPanelEscaped>,
+           mut pickers: Query<&mut UIColorPicker>,
+           mut cmd: CommandQueue| {
+        let Some(mut state) = pickers.get_entity_mut(picker) else {
             return;
         };
         let original = state.original;
@@ -315,11 +317,11 @@ fn picked(shown: Shown, area: Area, at: Vec2) -> Shown {
 
 fn change(
     picker: Entity,
-    pickers: &Query<&mut UIColorPicker>,
+    pickers: &mut Query<&mut UIColorPicker>,
     cmd: &mut CommandQueue,
     next: Shown,
 ) {
-    let Some(mut state) = pickers.get_entity(picker) else {
+    let Some(mut state) = pickers.get_entity_mut(picker) else {
         return;
     };
     if state.shown == next {
@@ -340,7 +342,7 @@ fn pick_at(
     button: MouseButton,
     position: Vec2,
     layouts: &Query<&UILayout>,
-    pickers: &Query<&mut UIColorPicker>,
+    pickers: &mut Query<&mut UIColorPicker>,
     cmd: &mut CommandQueue,
 ) {
     if button != MouseButton::Left {
@@ -354,7 +356,7 @@ fn pick_at(
         return;
     }
     let at = ((position - layout.rect.min) / size).clamp(Vec2::ZERO, Vec2::ONE);
-    let Some(shown) = pickers.get_entity(picker).map(|state| state.shown) else {
+    let Some(shown) = pickers.get_entity_mut(picker).map(|state| state.shown) else {
         return;
     };
     change(picker, pickers, cmd, picked(shown, area, at));
@@ -363,7 +365,7 @@ fn pick_at(
 fn press_area(picker: Entity, area: Area) -> Listener<UIPointerDown> {
     (move |on: On<UIPointerDown>,
            layouts: Query<&UILayout>,
-           pickers: Query<&mut UIColorPicker>,
+           mut pickers: Query<&mut UIColorPicker>,
            mut cmd: CommandQueue| {
         let signal = on.signal();
         pick_at(
@@ -373,7 +375,7 @@ fn press_area(picker: Entity, area: Area) -> Listener<UIPointerDown> {
             signal.button,
             signal.position,
             &layouts,
-            &pickers,
+            &mut pickers,
             &mut cmd,
         );
     })
@@ -383,7 +385,7 @@ fn press_area(picker: Entity, area: Area) -> Listener<UIPointerDown> {
 fn drag_area(picker: Entity, area: Area) -> Listener<UIDrag> {
     (move |on: On<UIDrag>,
            layouts: Query<&UILayout>,
-           pickers: Query<&mut UIColorPicker>,
+           mut pickers: Query<&mut UIColorPicker>,
            mut cmd: CommandQueue| {
         let signal = on.signal();
         pick_at(
@@ -393,7 +395,7 @@ fn drag_area(picker: Entity, area: Area) -> Listener<UIDrag> {
             signal.button,
             signal.position,
             &layouts,
-            &pickers,
+            &mut pickers,
             &mut cmd,
         );
     })
@@ -608,16 +610,19 @@ pub(crate) fn commit_color_picker_fields(
     mut submitted: EventReader<UITextInputSubmitted>,
     mut lost: EventReader<UIFocusLost>,
     mut cancelled: EventReader<UITextInputCancelled>,
-    fields: Query<(&mut ColorPickerField, &mut UITextInput)>,
-    pickers: Query<&mut UIColorPicker>,
+    mut fields: Query<(&mut ColorPickerField, &mut UITextInput)>,
+    mut pickers: Query<&mut UIColorPicker>,
     mut focused: ResMut<FocusedWidget>,
     mut cmd: CommandQueue,
 ) {
     for event in cancelled.read() {
-        let Some((mut field, mut input)) = fields.get_entity(event.entity) else {
+        let Some((mut field, mut input)) = fields.get_entity_mut(event.entity) else {
             continue;
         };
-        let Some(shown) = pickers.get_entity(field.picker).map(|state| state.shown) else {
+        let Some(shown) = pickers
+            .get_entity_mut(field.picker)
+            .map(|state| state.shown)
+        else {
             continue;
         };
         let text = field_text(field.kind, shown);
@@ -632,18 +637,21 @@ pub(crate) fn commit_color_picker_fields(
         .chain(lost.read().map(|event| event.0))
         .collect();
     for entity in finished {
-        let Some((mut field, mut input)) = fields.get_entity(entity) else {
+        let Some((mut field, mut input)) = fields.get_entity_mut(entity) else {
             continue;
         };
         if input.value == field.displayed {
             continue;
         }
-        let Some(shown) = pickers.get_entity(field.picker).map(|state| state.shown) else {
+        let Some(shown) = pickers
+            .get_entity_mut(field.picker)
+            .map(|state| state.shown)
+        else {
             continue;
         };
         let shown = match entered(field.kind, &input.value, shown) {
             Some(next) => {
-                change(field.picker, &pickers, &mut cmd, next);
+                change(field.picker, &mut pickers, &mut cmd, next);
                 next
             }
             None => shown,
@@ -655,11 +663,11 @@ pub(crate) fn commit_color_picker_fields(
 
 pub(crate) fn sync_color_picker_parts(
     pickers: Query<&UIColorPicker>,
-    parts: Query<(&ColorPickerPart, &mut UINode, &mut UIMaterial)>,
-    fields: Query<(Entity, &mut ColorPickerField, &mut UITextInput)>,
+    mut parts: Query<(&ColorPickerPart, &mut UINode, &mut UIMaterial)>,
+    mut fields: Query<(Entity, &mut ColorPickerField, &mut UITextInput)>,
     focused: Res<FocusedWidget>,
 ) {
-    for (part, mut node, mut material) in parts.iter() {
+    for (part, mut node, mut material) in parts.iter_mut() {
         let Some(picker) = pickers.get_entity(part.picker) else {
             continue;
         };
@@ -687,7 +695,7 @@ pub(crate) fn sync_color_picker_parts(
             }
         }
     }
-    for (entity, mut field, mut input) in fields.iter() {
+    for (entity, mut field, mut input) in fields.iter_mut() {
         if **focused == Some(entity) {
             continue;
         }

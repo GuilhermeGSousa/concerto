@@ -705,12 +705,12 @@ fn toggle_color_menu(menu: Entity) -> Listener<UIClick> {
     (move |on: On<UIClick>,
            theme: Res<UITheme>,
            picked: Res<PickedColor>,
-           panels: Query<&mut UIAnchoredPanel>,
+           mut panels: Query<&mut UIAnchoredPanel>,
            mut cmd: CommandQueue| {
         if on.signal().button != MouseButton::Left {
             return;
         }
-        let Some(mut panel) = panels.get_entity(menu) else {
+        let Some(mut panel) = panels.get_entity_mut(menu) else {
             return;
         };
         panel.open = !panel.open;
