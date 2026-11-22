@@ -7,6 +7,7 @@
 //! engine↔Rapier math conversions go through arrays at this boundary, the
 //! same way the Jolt backend converts at the FFI boundary.
 
+use std::collections::HashSet;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use concerto_foundation::transform::Transform;
@@ -28,10 +29,13 @@ use rapier3d::prelude::{
 };
 
 use crate::backend::{
-    Aabb, MeshShapeCreationError, PhysicsBackend, RawGroundHit, RawRayHit, RawSensorContact,
-    RawShapeHit, SensorContactKind,
+    Aabb, MeshShapeCreationError, PhysicsBackend, RawContact, RawContactKind, RawGroundHit,
+    RawRayHit, RawSensorContact, RawShapeHit, SensorContactKind,
 };
+use crate::body::BodyActivity;
 use crate::collider::{Collider, ColliderOffset};
+use crate::query::RagdollQuery;
+use crate::ragdoll::{BodyPose, JointDrive, RagdollBuildError, RagdollSettings};
 use crate::rigid_body::{AllowedDofs, MotionType, RigidBody};
 
 /// Jolt's default gravity, so both backends simulate the same world.
@@ -139,7 +143,62 @@ pub struct RapierBackend {
     multibody_joints: MultibodyJointSet,
     ccd_solver: CCDSolver,
     collision_events: CollisionEventCollector,
+    reporting: HashSet<RigidBodyHandle>,
+    contact_changes: Vec<RawContact<RigidBodyHandle>>,
+    touches: Vec<RawContact<RigidBodyHandle>>,
 }
+
+impl RapierBackend {
+    fn gather_touches(&mut self) {
+        if self.reporting.is_empty() {
+            return;
+        }
+        for pair in self.narrow_phase.contact_pairs() {
+            let (Some(collider1), Some(collider2)) = (
+                self.colliders.get(pair.collider1),
+                self.colliders.get(pair.collider2),
+            ) else {
+                continue;
+            };
+            let (Some(first), Some(second)) = (collider1.parent(), collider2.parent()) else {
+                continue;
+            };
+            if !self.reporting.contains(&first) && !self.reporting.contains(&second) {
+                continue;
+            }
+            let Some(manifold) = pair
+                .manifolds
+                .iter()
+                .find(|manifold| !manifold.points.is_empty())
+            else {
+                continue;
+            };
+            let impulse = pair
+                .manifolds
+                .iter()
+                .flat_map(|manifold| manifold.points.iter())
+                .map(|point| point.data.impulse)
+                .sum();
+            self.touches.push(RawContact {
+                first,
+                second,
+                kind: RawContactKind::Touch {
+                    point: from_rapier_vec(
+                        collider1
+                            .position()
+                            .transform_point(manifold.points[0].local_p1),
+                    ),
+                    normal: from_rapier_vec(manifold.data.normal),
+                    impulse,
+                },
+            });
+        }
+    }
+}
+
+/// The handle of a ragdoll on a backend that has none; never created.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct NoRagdoll;
 
 /// Per-step scratch: Rapier's execution pipeline and the integration
 /// parameters fed to it each step.
@@ -164,6 +223,65 @@ impl PhysicsBackend for RapierBackend {
 
     type Stepper = Stepper;
 
+    type RagdollSettingsHandle = ();
+
+    type RagdollHandle = NoRagdoll;
+
+    fn build_ragdoll(_settings: &RagdollSettings) -> Result<(), RagdollBuildError> {
+        Ok(())
+    }
+
+    fn create_ragdoll(&mut self, _built: &(), _pose: &[BodyPose]) -> Option<Self::RagdollHandle> {
+        None
+    }
+
+    fn destroy_ragdoll(&mut self, _ragdoll: Self::RagdollHandle) {}
+
+    fn set_ragdoll_ignored_body(
+        &mut self,
+        _ragdoll: Self::RagdollHandle,
+        _body: Option<Self::BodyHandle>,
+    ) {
+    }
+
+    fn ragdoll_bodies(&self, _ragdoll: Self::RagdollHandle) -> Vec<Self::BodyHandle> {
+        Vec::new()
+    }
+
+    fn ragdoll_pose(&self, _ragdoll: Self::RagdollHandle, _out: &mut Vec<BodyPose>) {}
+
+    fn set_ragdoll_pose(&mut self, _ragdoll: Self::RagdollHandle, _pose: &[BodyPose]) {}
+
+    fn drive_ragdoll_kinematic(
+        &mut self,
+        _ragdoll: Self::RagdollHandle,
+        _pose: &[BodyPose],
+        _delta_time: f32,
+    ) {
+    }
+
+    fn drive_ragdoll_motors(&mut self, _ragdoll: Self::RagdollHandle, _pose: &[BodyPose]) {}
+
+    fn set_ragdoll_joint_drive(
+        &mut self,
+        _ragdoll: Self::RagdollHandle,
+        _part: usize,
+        _drive: JointDrive,
+    ) {
+    }
+
+    fn set_ragdoll_part_motion(
+        &mut self,
+        _ragdoll: Self::RagdollHandle,
+        _part: usize,
+        _motion: MotionType,
+    ) {
+    }
+
+    fn ragdoll_joint_motor_impulse(&self, _ragdoll: Self::RagdollHandle, _part: usize) -> Vec3 {
+        Vec3::ZERO
+    }
+
     fn new() -> Self {
         Self {
             bodies: RigidBodySet::new(),
@@ -175,6 +293,9 @@ impl PhysicsBackend for RapierBackend {
             multibody_joints: MultibodyJointSet::new(),
             ccd_solver: CCDSolver::new(),
             collision_events: CollisionEventCollector::default(),
+            reporting: HashSet::new(),
+            contact_changes: Vec::new(),
+            touches: Vec::new(),
         }
     }
 
@@ -203,6 +324,7 @@ impl PhysicsBackend for RapierBackend {
                 &(),
                 &self.collision_events,
             );
+            self.gather_touches();
         }
     }
 
@@ -303,6 +425,11 @@ impl PhysicsBackend for RapierBackend {
             &mut self.multibody_joints,
             true,
         );
+        self.reporting.remove(&body);
+        self.contact_changes
+            .retain(|change| change.first != body && change.second != body);
+        self.touches
+            .retain(|touch| touch.first != body && touch.second != body);
     }
 
     fn drain_sensor_contacts(&mut self, out: &mut Vec<RawSensorContact<Self::BodyHandle>>) {
@@ -321,14 +448,24 @@ impl PhysicsBackend for RapierBackend {
                     (handle1, handle2, flags, SensorContactKind::Exit)
                 }
             };
-            if !flags.contains(CollisionEventFlags::SENSOR) {
-                continue;
-            }
             let (Some(collider1), Some(collider2)) =
                 (self.colliders.get(handle1), self.colliders.get(handle2))
             else {
                 continue;
             };
+            if !flags.contains(CollisionEventFlags::SENSOR) {
+                if let (Some(first), Some(second)) = (collider1.parent(), collider2.parent()) {
+                    self.contact_changes.push(RawContact {
+                        first,
+                        second,
+                        kind: match kind {
+                            SensorContactKind::Enter => RawContactKind::Start,
+                            SensorContactKind::Exit => RawContactKind::End,
+                        },
+                    });
+                }
+                continue;
+            }
             let (sensor, other) = match (collider1.is_sensor(), collider2.is_sensor()) {
                 (true, false) => (collider1, collider2),
                 (false, true) => (collider2, collider1),
@@ -349,6 +486,58 @@ impl PhysicsBackend for RapierBackend {
                 other: other_body,
                 kind,
             });
+        }
+    }
+
+    fn set_contact_reporting(&mut self, body: Self::BodyHandle, enabled: bool) {
+        if enabled {
+            self.reporting.insert(body);
+        } else {
+            self.reporting.remove(&body);
+        }
+        let Some(rigid_body) = self.bodies.get_mut(body) else {
+            return;
+        };
+        if enabled {
+            rigid_body.wake_up(true);
+        }
+        for handle in rigid_body.colliders().to_vec() {
+            let Some(collider) = self.colliders.get_mut(handle) else {
+                continue;
+            };
+            if collider.is_sensor() {
+                continue;
+            }
+            collider.set_active_events(if enabled {
+                ActiveEvents::COLLISION_EVENTS
+            } else {
+                ActiveEvents::empty()
+            });
+        }
+    }
+
+    fn drain_contacts(&mut self, out: &mut Vec<RawContact<Self::BodyHandle>>) {
+        let (starts, ends): (Vec<_>, Vec<_>) = self
+            .contact_changes
+            .drain(..)
+            .partition(|change| change.kind == RawContactKind::Start);
+        out.extend(starts);
+        out.append(&mut self.touches);
+        out.extend(ends);
+    }
+
+    fn body_activity(&self, body: Self::BodyHandle) -> BodyActivity {
+        let Some(rigid_body) = self.bodies.get(body) else {
+            return BodyActivity::Static;
+        };
+        if rigid_body.is_fixed() {
+            BodyActivity::Static
+        } else if rigid_body.is_sleeping() {
+            BodyActivity::Asleep
+        } else if rigid_body.is_kinematic() {
+            BodyActivity::Kinematic
+        } else {
+            BodyActivity::Dynamic
         }
     }
 
@@ -394,6 +583,7 @@ impl PhysicsBackend for RapierBackend {
         origin: Vec3,
         direction: Vec3,
         ignore: &[Self::BodyHandle],
+        _ragdolls: RagdollQuery,
     ) -> Option<RawRayHit<Self::BodyHandle>> {
         // With an unnormalised direction, a time of impact of 1.0 is the tip
         // of `direction` — so the hit's time of impact is exactly the
@@ -436,6 +626,7 @@ impl PhysicsBackend for RapierBackend {
         radius: f32,
         direction: Vec3,
         ignore: &[Self::BodyHandle],
+        _ragdolls: RagdollQuery,
     ) -> Option<RawShapeHit<Self::BodyHandle>> {
         let ball = Ball::new(radius);
         let ball_pose = rapier3d::math::Pose::from_translation(to_rapier_vec(origin));

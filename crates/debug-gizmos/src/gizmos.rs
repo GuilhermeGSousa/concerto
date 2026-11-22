@@ -115,6 +115,48 @@ impl<'w> DebugGizmos<'w> {
         }
     }
 
+    /// Draws the arc that sweeps `angle` radians around `axis` through `center`, starting at the
+    /// point `center + from`; a positive angle turns counter-clockwise seen from the tip of `axis`.
+    pub fn arc(&mut self, center: Vec3, axis: Vec3, from: Vec3, angle: f32, color: Color) {
+        let Some(axis) = axis.try_normalize() else {
+            return;
+        };
+        let segments = ((angle.abs() / std::f32::consts::TAU) * DEFAULT_CIRCLE_SEGMENTS as f32)
+            .ceil()
+            .max(2.0) as usize;
+        let mut prev = center + from;
+        for i in 1..=segments {
+            let turn = Quat::from_axis_angle(axis, angle * i as f32 / segments as f32);
+            let next = center + turn * from;
+            self.line(prev, next, color);
+            prev = next;
+        }
+    }
+
+    /// Draws a wireframe capsule centred at `center`: a cylinder of `half_height` along the local
+    /// Y axis of `rotation`, closed by hemispheres of `radius`.
+    pub fn capsule(
+        &mut self,
+        center: Vec3,
+        rotation: Quat,
+        half_height: f32,
+        radius: f32,
+        color: Color,
+    ) {
+        let (x, y, z) = (rotation * Vec3::X, rotation * Vec3::Y, rotation * Vec3::Z);
+        let top = center + y * half_height;
+        let bottom = center - y * half_height;
+        self.circle(top, y, radius, color);
+        self.circle(bottom, y, radius, color);
+        for side in [x, -x, z, -z] {
+            self.line(top + side * radius, bottom + side * radius, color);
+        }
+        for (from, axis) in [(x, z), (z, -x)] {
+            self.arc(top, axis, from * radius, std::f32::consts::PI, color);
+            self.arc(bottom, axis, from * radius, -std::f32::consts::PI, color);
+        }
+    }
+
     /// Draws a wireframe sphere as three great circles aligned to the world axes.
     pub fn sphere(&mut self, center: Vec3, radius: f32, color: Color) {
         self.circle(center, Vec3::Z, radius, color);

@@ -35,6 +35,7 @@ impl PhysicsPipeline {
             settings.collision_steps(),
         );
         state.gather_sensor_contacts();
+        state.gather_contacts();
     }
 }
 

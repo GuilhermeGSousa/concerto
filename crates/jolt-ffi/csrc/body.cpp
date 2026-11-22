@@ -148,7 +148,42 @@ extern "C"
 		}
 		bi.DestroyBody(id);
 		world->sensors.erase(id);
+		world->reporting.erase(id);
 		world->sensor_contact_listener.Forget(id);
+	}
+
+	JoltMotionType jolt_body_get_motion_type(const JoltWorld *world, JoltBodyId body)
+	{
+		const JPH::BodyInterface &bi = const_cast<JoltWorld *>(world)->system.GetBodyInterface();
+		JPH::BodyID id(body);
+		if (!bi.IsAdded(id))
+			return JOLT_MOTION_TYPE_STATIC;
+		return static_cast<JoltMotionType>(bi.GetMotionType(id));
+	}
+
+	bool jolt_body_is_active(const JoltWorld *world, JoltBodyId body)
+	{
+		return const_cast<JoltWorld *>(world)->system.GetBodyInterface().IsActive(JPH::BodyID(body));
+	}
+
+	void jolt_body_set_contact_reporting(JoltWorld *world, JoltBodyId body, bool enabled)
+	{
+		JPH::BodyID id(body);
+		if (enabled)
+		{
+			world->reporting.insert(id);
+			world->system.GetBodyInterface().ActivateBody(id);
+		}
+		else
+		{
+			world->reporting.erase(id);
+			world->sensor_contact_listener.ForgetSolid(id);
+		}
+	}
+
+	uint32_t jolt_world_drain_contacts(JoltWorld *world, JoltContact *out, uint32_t capacity)
+	{
+		return world->sensor_contact_listener.DrainContacts(out, capacity);
 	}
 
 	uint32_t jolt_world_drain_sensor_contacts(JoltWorld *world,
@@ -228,7 +263,21 @@ extern "C"
 			system.GetDefaultBroadPhaseLayerFilter(layer);
 		JPH::DefaultObjectLayerFilter default_object_filter = system.GetDefaultLayerFilter(layer);
 		NonSensorBroadPhaseLayerFilter broadphase_filter(default_broadphase_filter);
-		NonSensorObjectLayerFilter object_filter(default_object_filter);
+		NonSensorObjectLayerFilter non_sensor_filter(default_object_filter);
+		class SolidGroundFilter final : public JPH::ObjectLayerFilter
+		{
+		public:
+			explicit SolidGroundFilter(const JPH::ObjectLayerFilter &inner) : inner(inner) {}
+
+			bool ShouldCollide(JPH::ObjectLayer inLayer) const override
+			{
+				return inLayer != Layers::RAGDOLL && inner.ShouldCollide(inLayer);
+			}
+
+		private:
+			const JPH::ObjectLayerFilter &inner;
+		};
+		SolidGroundFilter object_filter(non_sensor_filter);
 		JPH::IgnoreSingleBodyFilter body_filter(id);
 
 		Collector collector(position);

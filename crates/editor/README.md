@@ -1094,7 +1094,7 @@ it reads, and its kind's `NAME`, and draws one entity at a time. The scene
 tools (`src/tools/component_gizmos.rs`) register the engine's in every edit and
 play `App`: `Bounds` boxes each `Aabb`, `Skeleton` joins each bone to its
 parent, `Light` shows a light's reach (`range`, or 5 m when it is 0) and
-`Camera` a camera's frustum cut at 5 m. `app.register_component_gizmo::<G>()`
+`Camera` a camera's frustum cut at 5 m. A game that lists `concerto-physics-editor` adds `Collider`, `Ragdoll` (the entity holding a `RagdollId`), `Contacts`, `Box collider`, `Mesh collider` and `Sensor`, which draw the physics components; `gizmos kind=Collider always=true` draws every collider. `app.register_component_gizmo::<G>()`
 registers another in a hosted `App`; it lists the kind in that `App`'s
 `ComponentGizmos` resource, and draws it only when the `App` has
 `DebugGizmosPlugin`. Two gizmo types with one `NAME` panic. The
@@ -1621,6 +1621,13 @@ again and leave an error in the document's status. Removing the marker at
 capture means an edit made while a slow save is in flight marks the document
 again and is not lost.
 
+A save that finishes in the system that saw `SaveRequested` hands its result to
+`asset_editor::report_save`, which removes `SaveRequested`, sets the status to
+"Saved <addresses>" or "Save failed: <error>", writes `SceneSaved` or
+`SaveFailed`, and removes `Unsaved` after a success. Its result is a
+`SavedFiles { asset, written }`; an `AssetEntry` converts into one that wrote
+that file alone. The event is named `SceneSaved` for every kind of asset.
+
 A document that holds its own edits restores them on `DiscardEdits`, which the
 prompt sends when the user chooses Discard. The tab can outlive that choice, since
 the open that asked for it can fail.
@@ -1776,6 +1783,29 @@ inspected and saved, and plays the graph in view on a character in its preview,
 at the parameters set in the tab. In a game that doesn't list the crate a clip or a graph
 has no editor, so opening one opens no tab, and a rig opens in the generic
 inspector.
+
+### The ragdoll generator
+
+[`concerto-ragdoll-editor`](../ragdoll-editor/src/lib.rs) generates a humanoid
+`Ragdoll` from a retarget rig and saves it as a new asset in the open project,
+and the editor works without it. Its `install` registers the `CreateRagdoll`
+signal, whose one listener reads the rig, its skeleton and its reference clip,
+calls `generate_humanoid`, checks the result with `Ragdoll::resolve`, writes
+`ragdoll.gasset` next to the rig (or at `address`) and adds it to the asset
+registry, so the Asset Browser and `list_assets` show it at once. A rig that
+has no chain a humanoid needs, or an address that is taken, answers with what
+to change and writes nothing.
+
+The `create_ragdoll` tool sends the signal: `rig` is an address or id,
+`address`, `total_mass` (75 kg) and `chains` (names for the rig's chains where
+they are not `spine`, `neck`, `arm_l`, `arm_r`, `leg_l` and `leg_r`) are
+optional. It answers the new asset's address and one line per part with its
+bone, shape and mass. No skinned mesh is read, because a mesh names no
+skeleton, so part radii follow the bones' proportions. The Create ragdoll
+button on a rig tab sends the same signal for the tab's rig; it sits in the
+tab's inspector column, which the rig tab of `concerto-animation-editor` has,
+and a rig in the generic form tab has no button. A skeleton alone has no
+action: the tool answers that a rig comes first.
 
 ### The texture tab
 

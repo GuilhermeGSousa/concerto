@@ -7,7 +7,7 @@ use concerto_ecs::{
     signal::On,
 };
 use concerto_editor::{
-    asset_editor::{EditorDocument, SaveRequested, Unsaved},
+    asset_editor::{EditorDocument, SaveRequested, Unsaved, report_save},
     guard::DiscardEdits,
     preview::PreviewSignals,
     project::ProjectState,
@@ -115,31 +115,21 @@ pub(crate) fn save_clip(
         .as_ref()
         .map(|project| project.root.as_path());
     for (entity, mut document, mut state, mut transport) in requested.iter_mut() {
-        cmd.remove::<SaveRequested>(entity);
         let written = root
             .context("Open a project before saving")
             .and_then(|root| save_clip_document(&mut document, &mut state, root, &mut assets));
-        match written {
-            Ok(asset) => {
-                document.status = format!("Saved {}", asset.address);
-                measure_transport(&mut transport, &state.facts);
-                show_saved_clip(entity, &state, &transport, &mut previews);
-                saved.write(SceneSaved {
-                    document: entity,
-                    written: vec![asset.clone()],
-                    asset,
-                });
-                cmd.remove::<Unsaved>(entity);
-            }
-            Err(error) => {
-                let message = format!("Save failed: {error:#}");
-                document.status = message.clone();
-                failed.write(SaveFailed {
-                    document: entity,
-                    message,
-                });
-            }
+        if written.is_ok() {
+            measure_transport(&mut transport, &state.facts);
+            show_saved_clip(entity, &state, &transport, &mut previews);
         }
+        report_save(
+            entity,
+            &mut document,
+            written.map(Into::into),
+            &mut saved,
+            &mut failed,
+            &mut cmd,
+        );
     }
 }
 

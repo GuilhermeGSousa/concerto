@@ -12,6 +12,8 @@ pub struct RayHit {
     pub body: BodyId,
     /// The entity that corresponds to this body
     pub entity: Option<Entity>,
+    /// The index of the ragdoll part that was hit, when the body belongs to a ragdoll.
+    pub part: Option<usize>,
     /// Hit distance as a fraction `[0, 1]` of the ray's direction vector.
     pub fraction: f32,
     /// World-space position of the hit.
