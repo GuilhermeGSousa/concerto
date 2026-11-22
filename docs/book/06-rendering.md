@@ -516,8 +516,8 @@ every asset of the type in the type's one pass, unsorted and writing depth
 unless `depth_stencil` says otherwise, as the world grid does. Marking one field
 `#[alpha_mode]` lets each asset choose: the derive reads
 `Material::alpha_mode()` from that field, and an asset whose mode is `Blend` is
-drawn after the opaque surfaces of its type, back to front, without writing
-depth. The field is an `AlphaMode`, or any type `AlphaMode` converts from by
+drawn after every opaque surface, without writing depth, in one pass with the
+blended assets of every other material type, the farthest first. The field is an `AlphaMode`, or any type `AlphaMode` converts from by
 reference, as `StandardMaterial`'s uniform is. Only one field may carry it;
 without one, every asset is `Opaque`.
 
@@ -531,5 +531,30 @@ struct Tint {
     alpha_mode: AlphaMode,
 }
 ```
+
+### Drawing without a material plugin
+
+A material plugin draws nothing itself. Each frame it queues its meshes in the
+camera's `ViewPhase`, and the renderer draws each camera's phases in one pass
+each: `opaque` in `RenderSet::Draw`, in the order queued, and `transparent` in
+`RenderSet::Transparent`, sorted farthest first whoever queued the items. A
+plugin of your own that draws into a camera's scene, as the particles do,
+queues `PhaseItem`s the same way, from a render system in `RenderSet::Queue`
+ordered `.after(clear_view_phases)`:
+
+```rust
+use concerto::render::view_phase::{PhaseItem, ViewPhases};
+
+fn queue_trails(mut phases: ResMut<ViewPhases>, cameras: Query<(Entity, &RenderCamera)>) {
+    for (camera, render_camera) in cameras.iter() {
+        phases.view_mut(camera).transparent.push(PhaseItem { /* … */ });
+    }
+}
+```
+
+An item holds everything its draw needs: a pipeline for the view target's
+format, sample count and depth, its bind group for group 0, which of the
+camera, lighting and skeleton groups it takes, a mesh, and a range of an
+instance buffer bound at vertex slot 1.
 
 Next: [Physics, animation and gameplay](07-physics-animation-gameplay.md).

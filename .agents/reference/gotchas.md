@@ -129,6 +129,15 @@ fix the entry in the same commit as the change that made it false.
   camera's rect of the window, or its whole texture, so anything drawn on
   `RenderCamera::output_view` before `RenderSet::Tonemap` is lost. Passes in
   `Overlay` and the UI draw on the output, in `surface_config.format`.
+- **A material plugin owns no pass.** `queue_material_meshes<M>` pushes a
+  `PhaseItem` per batch into `ViewPhases`, and `render_opaque_phase` and
+  `render_transparent_phase` draw each camera's lists in one pass each, always
+  with the view target's depth attached: a full `MaterialPlugin` whose material
+  has no depth state gets one that always passes and never writes. An item
+  clones the wgpu handles it draws with, so nothing is looked up at draw time.
+  Opaque items draw in the order queued, which is plugin registration order, so
+  the world grid still blends over the standard material. Blended instances are
+  one item each and are sorted across material types by distance.
 - **A material's shader returns linear scene light.** The tonemapping pass
   applies exposure and the curve; a shader that tonemaps is tonemapped twice.
   `MaterialPlugin::pipeline_only` is the exception: its pipeline targets the
