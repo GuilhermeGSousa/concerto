@@ -118,6 +118,18 @@ fix the entry in the same commit as the change that made it false.
   mesh gets it only when `RenderPlugin` is built. An entity with none of these
   still needs it explicitly, for example one the editor creates. A scene that
   renders black is usually an entity that has none of them.
+- **A scene pass draws into the camera's `ViewTarget`, not its target.**
+  `RenderCamera::view_target` holds the HDR colour and depth textures, cleared
+  once by `clear_cameras`; passes in `Background`, `Draw` and `Transparent` take
+  their attachments from it with `LoadOp::Load` and a pipeline built for
+  `RenderContext::view_target_format`. `tonemap_cameras` then overwrites the
+  camera's rect of the window, or its whole texture, so anything drawn on
+  `RenderCamera::output_view` before `RenderSet::Tonemap` is lost. Passes in
+  `Overlay` and the UI draw on the output, in `surface_config.format`.
+- **A material's shader returns linear scene light.** The tonemapping pass
+  applies exposure and the curve; a shader that tonemaps is tonemapped twice.
+  `MaterialPlugin::pipeline_only` is the exception: its pipeline targets the
+  window's format, for passes that draw on the output, as the UI does.
 - **A light no camera sees is not sent to the GPU.** A point or spot light is
   culled by the sphere of its `range` against every camera's frustum. A
   `range` of 0 is unbounded, so that light is never culled and always takes one of the 128 light slots and, when

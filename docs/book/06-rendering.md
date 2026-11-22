@@ -84,7 +84,7 @@ cmd.spawn((
 
 - A window camera's aspect follows its viewport, so each half stays
   undistorted.
-- Each camera clears only its own rect, to its `clear_color`. The window
+- Each camera shows its `clear_color` only in its own rect. The window
   outside every viewport is black.
 - Window cameras must not overlap: where two do, which one shows is undefined.
   A camera without a viewport covers the whole window and overlaps every other
@@ -97,6 +97,39 @@ cmd.spawn((
 - Without a `MainCamera`, the director drives no camera: virtual cameras still
   stack, but nothing follows them. Move your cameras' `Transform`s yourself,
   from your own controllers.
+
+### HDR, exposure and tonemapping
+
+A camera draws its scene into its own HDR texture, its *view target*, in linear
+light with no upper limit, so a lamp can be many times brighter than a white
+wall. After the blended surfaces are drawn, the frame is multiplied by the
+camera's exposure, mapped to the displayable range by its tonemapping curve and
+written to the camera's target: the window, or its texture. Debug gizmos and
+the UI draw on the target afterwards, so neither is exposed or tonemapped.
+
+Both settings are components on the camera's entity, and both are optional:
+
+```rust
+use concerto::render::{Exposure, Tonemapping};
+
+cmd.spawn((
+    Camera::default(),
+    Tonemapping::Aces,
+    Exposure::new(-1.0),
+    Transform::IDENTITY,
+));
+```
+
+- `Tonemapping` is `Aces`, the default, or `None`, which clamps the light at 1
+  and shows it as it is.
+- `Exposure` is in photographic stops: `Exposure::new(1.0)` doubles the scene's
+  brightness before the curve and `-1.0` halves it. A camera without one shows
+  the scene unscaled.
+- `clear_color` is the colour shown, whatever the curve and exposure: the view
+  target is cleared to the scene light they display as that colour.
+- Where the adapter can't render to a float texture, as WebGL2 without
+  `EXT_color_buffer_float`, the view target is 8-bit and scene light is clamped
+  at 1 before exposure.
 
 ### Layers
 
@@ -388,7 +421,10 @@ app.register_plugin(MaterialPlugin::<Glow>::new());
 Entities then use `MaterialComponent::<Glow>`. The material's own bindings
 are in bind group 0; the camera, lighting and skeleton groups (1, 2 and 3) are
 added when the material asks for them. The comments at the top of
-`crates/render/src/material_plugin.rs` describe the convention.
+`crates/render/src/material_plugin.rs` describe the convention. The fragment
+shader returns linear scene light, which may exceed 1; the camera exposes and
+tonemaps it afterwards, so a shader must not tonemap or gamma-encode its
+result.
 
 Two settings blend a material. `blend = "alpha"` in `#[material(...)]` blends
 every asset of the type in the type's one pass, unsorted and writing depth

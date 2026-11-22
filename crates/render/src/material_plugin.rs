@@ -45,7 +45,6 @@ use crate::{
     resources::RenderContext,
     sets::RenderSet,
     shader::create_shader_module,
-    viewport_clear::ViewportClearPipeline,
     Material,
 };
 
@@ -355,31 +354,11 @@ fn wgpu_color(color: LinearRgba) -> wgpu::Color {
     }
 }
 
-fn clear_window(encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView) {
-    let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-        multiview_mask: None,
-        label: Some("Window Clear Pass"),
-        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-            depth_slice: None,
-            view,
-            resolve_target: None,
-            ops: wgpu::Operations {
-                load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                store: wgpu::StoreOp::Store,
-            },
-        })],
-        depth_stencil_attachment: None,
-        occlusion_query_set: None,
-        timestamp_writes: None,
-    });
-}
-
 pub(crate) fn clear_cameras(
     mut device: ResMut<RenderDevice>,
     render_cameras: Query<&RenderCamera>,
     render_window: Res<RenderWindow>,
     context: Res<RenderContext>,
-    viewport_clear: Res<ViewportClearPipeline>,
     mut overlap: SystemLocal<WindowOverlapWarned>,
 ) {
     let window_cameras = || {
@@ -398,7 +377,6 @@ pub(crate) fn clear_cameras(
         );
     }
 
-    let swapchain_view = render_window.get_view();
     let encoder = device.command_encoder();
     for render_camera in render_cameras.iter() {
         if render_camera
@@ -407,66 +385,36 @@ pub(crate) fn clear_cameras(
         {
             continue;
         }
-        let color_view: &wgpu::TextureView = match &render_camera.render_target {
-            Some(rt) => &rt.view,
-            None => match swapchain_view {
-                Some(v) => v,
-                None => continue,
-            },
-        };
-        let depth_stencil_attachment = Some(wgpu::RenderPassDepthStencilAttachment {
-            view: &render_camera.depth_texture.view,
-            depth_ops: Some(wgpu::Operations {
-                load: wgpu::LoadOp::Clear(1.0),
-                store: wgpu::StoreOp::Store,
-            }),
-            stencil_ops: None,
-        });
-        let color_attachment = wgpu::RenderPassColorAttachment {
-            depth_slice: None,
-            view: color_view,
-            resolve_target: None,
-            ops: wgpu::Operations {
-                load: wgpu::LoadOp::Clear(wgpu_color(render_camera.clear_color)),
-                store: wgpu::StoreOp::Store,
-            },
-        };
-        let in_window_viewport =
-            render_camera.render_target.is_none() && render_camera.viewport.is_some();
-        let color_attachments = [Some(color_attachment)];
-        let color_attachments = if in_window_viewport {
-            &color_attachments[..0]
-        } else {
-            &color_attachments[..]
-        };
+        let view_target = &render_camera.view_target;
         let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             multiview_mask: None,
-            label: Some("Clear Pass"),
-            color_attachments,
-            depth_stencil_attachment,
+            label: Some("View Target Clear Pass"),
+            color_attachments: &[Some(view_target.color_attachment(wgpu::LoadOp::Clear(
+                wgpu_color(render_camera.clear_color),
+            )))],
+            depth_stencil_attachment: Some(view_target.depth_attachment(wgpu::LoadOp::Clear(1.0))),
             occlusion_query_set: None,
             timestamp_writes: None,
         });
     }
 
-    let Some(window_view) = swapchain_view else {
-        return;
-    };
-    if any_with_viewport && !any_without_viewport {
-        clear_window(encoder, window_view);
-    }
-
-    for render_camera in window_cameras() {
-        let rect = render_camera.viewport_rect(render_camera.target_size(&context));
-        if render_camera.viewport.is_none() || rect.is_empty() {
-            continue;
-        }
-        viewport_clear.fill(
-            encoder,
-            window_view,
-            rect,
-            wgpu_color(render_camera.clear_color),
-        );
+    if let Some(window_view) = render_window.get_view() {
+        let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            multiview_mask: None,
+            label: Some("Window Clear Pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                depth_slice: None,
+                view: window_view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            occlusion_query_set: None,
+            timestamp_writes: None,
+        });
     }
 }
 
@@ -548,45 +496,18 @@ pub(crate) fn queue_material_meshes<M: Material>(
         .retain(|camera, _| render_cameras.contains_entity(*camera));
 }
 
-fn color_view<'a>(
-    render_camera: &'a RenderCamera,
-    render_window: &'a RenderWindow,
-) -> Option<&'a wgpu::TextureView> {
-    match &render_camera.render_target {
-        Some(rt) => Some(&rt.view),
-        None => render_window.get_view(),
-    }
-}
-
 fn begin_material_pass<'e, M: Material>(
     encoder: &'e mut wgpu::CommandEncoder,
     label: &'static str,
-    color_view: &wgpu::TextureView,
     render_camera: &RenderCamera,
-    depth_load: wgpu::LoadOp<f32>,
 ) -> wgpu::RenderPass<'e> {
+    let view_target = &render_camera.view_target;
     encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
         multiview_mask: None,
         label: Some(label),
-        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-            depth_slice: None,
-            view: color_view,
-            resolve_target: None,
-            ops: wgpu::Operations {
-                load: wgpu::LoadOp::Load,
-                store: wgpu::StoreOp::Store,
-            },
-        })],
-        depth_stencil_attachment: M::depth_stencil().map(|_| {
-            wgpu::RenderPassDepthStencilAttachment {
-                view: &render_camera.depth_texture.view,
-                depth_ops: Some(wgpu::Operations {
-                    load: depth_load,
-                    store: wgpu::StoreOp::Store,
-                }),
-                stencil_ops: None,
-            }
-        }),
+        color_attachments: &[Some(view_target.color_attachment(wgpu::LoadOp::Load))],
+        depth_stencil_attachment: M::depth_stencil()
+            .map(|_| view_target.depth_attachment(wgpu::LoadOp::Load)),
         occlusion_query_set: None,
         timestamp_writes: None,
     })
@@ -655,7 +576,6 @@ pub(crate) fn material_renderpass<M: Material>(
     render_cameras: Query<(Entity, &RenderCamera)>,
     render_meshes: Res<RenderAssets<RenderMesh>>,
     render_materials: Res<RenderAssets<RenderMaterial<M>>>,
-    render_window: Res<RenderWindow>,
     render_lighting: Res<RenderLighting>,
     skins: Res<SkinUniforms>,
     view_batches: Res<MaterialViewBatches<M>>,
@@ -674,24 +594,6 @@ pub(crate) fn material_renderpass<M: Material>(
         if rect.is_empty() {
             continue;
         }
-        let depth_load = if M::clear_depth() {
-            wgpu::LoadOp::Clear(1.0)
-        } else {
-            wgpu::LoadOp::Load
-        };
-        let Some(color_view) = color_view(render_camera, &render_window) else {
-            continue;
-        };
-
-        let mut render_pass = begin_material_pass::<M>(
-            encoder,
-            "Material Render Pass",
-            color_view,
-            render_camera,
-            depth_load,
-        );
-        rect.apply(&mut render_pass);
-
         let Some(batches) = view_batches
             .views
             .get(&camera)
@@ -699,6 +601,10 @@ pub(crate) fn material_renderpass<M: Material>(
         else {
             continue;
         };
+
+        let mut render_pass =
+            begin_material_pass::<M>(encoder, "Material Render Pass", render_camera);
+        rect.apply(&mut render_pass);
         draw.draw(&mut render_pass, &pipeline.pipeline, render_camera, batches);
     }
 }
@@ -709,7 +615,6 @@ pub(crate) fn material_transparent_renderpass<M: Material>(
     render_cameras: Query<(Entity, &RenderCamera)>,
     render_meshes: Res<RenderAssets<RenderMesh>>,
     render_materials: Res<RenderAssets<RenderMaterial<M>>>,
-    render_window: Res<RenderWindow>,
     render_lighting: Res<RenderLighting>,
     skins: Res<SkinUniforms>,
     view_batches: Res<MaterialViewBatches<M>>,
@@ -738,17 +643,8 @@ pub(crate) fn material_transparent_renderpass<M: Material>(
         if rect.is_empty() {
             continue;
         }
-        let Some(color_view) = color_view(render_camera, &render_window) else {
-            continue;
-        };
-
-        let mut render_pass = begin_material_pass::<M>(
-            encoder,
-            "Blended Material Render Pass",
-            color_view,
-            render_camera,
-            wgpu::LoadOp::Load,
-        );
+        let mut render_pass =
+            begin_material_pass::<M>(encoder, "Blended Material Render Pass", render_camera);
         rect.apply(&mut render_pass);
         draw.draw(&mut render_pass, blended_pipeline, render_camera, batches);
     }
@@ -795,7 +691,8 @@ impl<M: Material> MaterialPlugin<M> {
         Self::default()
     }
 
-    // Pipeline-only mode: only creates the [`MaterialPipeline<M>`] resource.
+    // Pipeline-only mode: only creates the [`MaterialPipeline<M>`] resource,
+    // whose pipeline targets the window's format rather than the view target's.
     //
     // Use this when the material has its own custom render pass (e.g. skybox,
     // UI) and you only need the wgpu pipeline to be built from the material's
@@ -842,12 +739,15 @@ impl<M: Material> Plugin for MaterialPlugin<M> {
             .render()
             .get_resource::<RenderDevice>()
             .expect("RenderDevice not found; register RenderPlugin before MaterialPlugin");
-        let surface_format = app
+        let context = app
             .render()
             .get_resource::<RenderContext>()
-            .expect("RenderContext not found")
-            .surface_config
-            .format;
+            .expect("RenderContext not found");
+        let target_format = if self.pipeline_only {
+            context.surface_config.format
+        } else {
+            context.view_target_format
+        };
 
         // Build the material's own @group(0) bind-group layout.
         let material_layout = M::bind_group_layout(device);
@@ -926,7 +826,7 @@ impl<M: Material> Plugin for MaterialPlugin<M> {
                         module: &fs_module,
                         entry_point: Some("fs_main"),
                         targets: &[Some(wgpu::ColorTargetState {
-                            format: surface_format,
+                            format: target_format,
                             blend,
                             write_mask: wgpu::ColorWrites::ALL,
                         })],
