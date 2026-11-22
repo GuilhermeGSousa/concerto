@@ -23,14 +23,14 @@ extern "C"
 
 	/* Casts a ray from `origin` along `direction` (whose length is the maximum
 	 * cast distance) against every body except the `ignore_count` ids at
-	 * `ignore`, seeing ragdoll parts as `ragdolls` says, writing the closest hit to `out_hit`. Returns false — leaving
+	 * `ignore`, that is in one of the layers in the mask `layers`, writing the closest hit to `out_hit`. Returns false — leaving
 	 * `out_hit` untouched — if nothing was hit. */
 	bool jolt_world_cast_ray(const JoltWorld *world,
 							 const float origin[3],
 							 const float direction[3],
 							 const JoltBodyId *ignore,
 							 uint32_t ignore_count,
-							 JoltRagdollQuery ragdolls,
+							 uint32_t layers,
 							 JoltRayHit *out_hit);
 
 #ifdef __cplusplus

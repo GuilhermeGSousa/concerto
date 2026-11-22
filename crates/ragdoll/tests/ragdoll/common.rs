@@ -95,6 +95,10 @@ pub fn spine_ragdoll() -> Ragdoll {
     .with_part(spine_part("Head"))
     .with_part(spine_part("Hips"))
     .with_part(spine_part("Spine"))
+    .with_profile(
+        concerto_ragdoll::StrengthProfile::new("flinch", concerto_ragdoll::PartStrength::Kinematic)
+            .with_part("Head", concerto_ragdoll::PartStrength::powered(300.0, 80.0)),
+    )
 }
 
 pub fn world_with_floor() -> World {

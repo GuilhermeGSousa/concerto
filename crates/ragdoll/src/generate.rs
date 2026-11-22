@@ -6,7 +6,9 @@ use concerto_mesh::{Mesh, Skeleton};
 use concerto_name::Name;
 use glam::{Mat4, Quat, Vec3};
 
-use crate::asset::{Ragdoll, RagdollJoint, RagdollPart, RagdollShape};
+use crate::asset::{
+    PartStrength, Ragdoll, RagdollJoint, RagdollPart, RagdollShape, Segment, Side, StrengthProfile,
+};
 
 /// The names a retarget rig gives the chains a humanoid ragdoll is generated from.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -95,21 +97,14 @@ impl fmt::Display for GenerateError {
 
 impl std::error::Error for GenerateError {}
 
-/// A kind of body segment, which decides a part's share of the mass, its fallback thickness and its joint limits.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Segment {
-    Pelvis,
-    Spine,
-    Head,
-    UpperArm,
-    LowerArm,
-    Hand,
-    Thigh,
-    Shin,
-    Foot,
-}
-
 const TORSO_ABOVE_PELVIS: f32 = 0.355;
+
+/// The generated profile with the pelvis and legs kinematic and everything above powered: a body that takes a hit without needing balance.
+pub const FLINCH: &str = "flinch";
+/// The generated profile with every part powered: a body on its own feet.
+pub const BRACED: &str = "braced";
+/// The generated profile with every part limp.
+pub const LIMP: &str = "limp";
 
 impl Segment {
     /// The share of the body's mass in one segment of this kind; the spine's share is split over its parts.
@@ -124,7 +119,46 @@ impl Segment {
             Segment::Thigh => 0.1,
             Segment::Shin => 0.0465,
             Segment::Foot => 0.0145,
+            Segment::Other => 0.0,
         }
+    }
+
+    /// The most torque the muscles holding a segment of this kind apply in the generated profiles, in N·m.
+    pub fn muscle_torque(self) -> f32 {
+        match self {
+            Segment::Pelvis => 400.0,
+            Segment::Spine => 400.0,
+            Segment::Head => 80.0,
+            Segment::UpperArm => 120.0,
+            Segment::LowerArm => 70.0,
+            Segment::Hand => 20.0,
+            Segment::Thigh => 300.0,
+            Segment::Shin => 250.0,
+            Segment::Foot => 150.0,
+            Segment::Other => 50.0,
+        }
+    }
+
+    /// The stiffness of the muscles holding a segment of this kind in the generated profiles, in N·m/rad: enough that the segment and what hangs from it sag only a little under their own weight.
+    pub fn muscle_stiffness(self) -> f32 {
+        match self {
+            Segment::Pelvis | Segment::Spine => 3000.0,
+            Segment::Thigh => 2500.0,
+            Segment::Shin => 1500.0,
+            Segment::Foot => 600.0,
+            Segment::Head => 300.0,
+            Segment::UpperArm => 500.0,
+            Segment::LowerArm => 200.0,
+            Segment::Hand => 40.0,
+            Segment::Other => 100.0,
+        }
+    }
+
+    fn above_the_pelvis(self) -> bool {
+        matches!(
+            self,
+            Segment::Spine | Segment::Head | Segment::UpperArm | Segment::LowerArm | Segment::Hand
+        )
     }
 
     fn thickness(self) -> f32 {
@@ -138,6 +172,7 @@ impl Segment {
             Segment::Thigh => 0.17,
             Segment::Shin => 0.12,
             Segment::Foot => 0.3,
+            Segment::Other => 0.2,
         }
     }
 }
@@ -151,6 +186,7 @@ struct Frame {
 struct Planned {
     bone: usize,
     segment: Segment,
+    side: Side,
     start: Vec3,
     end: Vec3,
     mass: f32,
@@ -230,6 +266,7 @@ pub fn generate_humanoid(
     planned.push(Planned {
         bone: rig.root,
         segment: Segment::Pelvis,
+        side: Side::Centre,
         start: hip_centre - frame.left * hip_width / 2.0,
         end: hip_centre + frame.left * hip_width / 2.0,
         mass: mass * Segment::Pelvis.mass_fraction(),
@@ -262,6 +299,7 @@ pub fn generate_humanoid(
         planned.push(Planned {
             bone: *bone,
             segment: Segment::Spine,
+            side: Side::Centre,
             start: at(*bone),
             end,
             mass: mass * Segment::Spine.mass_fraction() / spine_bones.len() as f32,
@@ -286,6 +324,7 @@ pub fn generate_humanoid(
     planned.push(Planned {
         bone: head,
         segment: Segment::Head,
+        side: Side::Centre,
         start: at(head),
         end: at(head) + head_direction * head_length,
         mass: mass * Segment::Head.mass_fraction(),
@@ -297,7 +336,10 @@ pub fn generate_humanoid(
         max_radius: f32::MAX,
     });
 
-    for arm in [left_arm, right_arm] {
+    for (arm, side) in [left_arm, right_arm]
+        .into_iter()
+        .zip([Side::Left, Side::Right])
+    {
         let count = arm.bones.len();
         let upper = arm.bones[count - 3];
         let lower = arm.bones[count - 2];
@@ -310,6 +352,7 @@ pub fn generate_humanoid(
         planned.push(Planned {
             bone: upper,
             segment: Segment::UpperArm,
+            side,
             start: at(upper),
             end: at(lower),
             mass: mass * Segment::UpperArm.mass_fraction(),
@@ -323,6 +366,7 @@ pub fn generate_humanoid(
         planned.push(Planned {
             bone: lower,
             segment: Segment::LowerArm,
+            side,
             start: at(lower),
             end: at(hand),
             mass: mass * Segment::LowerArm.mass_fraction(),
@@ -337,6 +381,7 @@ pub fn generate_humanoid(
         planned.push(Planned {
             bone: hand,
             segment: Segment::Hand,
+            side,
             start: at(hand),
             end: at(hand) + lower_direction * lower_vector.length().max(0.05) * 0.4,
             mass: mass * Segment::Hand.mass_fraction(),
@@ -349,7 +394,10 @@ pub fn generate_humanoid(
         });
     }
 
-    for leg in [left_leg, right_leg] {
+    for (leg, side) in [left_leg, right_leg]
+        .into_iter()
+        .zip([Side::Left, Side::Right])
+    {
         let thigh = leg.bones[0];
         let shin = leg.bones[1];
         let foot = leg.bones[2];
@@ -361,6 +409,7 @@ pub fn generate_humanoid(
         planned.push(Planned {
             bone: thigh,
             segment: Segment::Thigh,
+            side,
             start: at(thigh),
             end: at(shin),
             mass: mass * Segment::Thigh.mass_fraction(),
@@ -374,6 +423,7 @@ pub fn generate_humanoid(
         planned.push(Planned {
             bone: shin,
             segment: Segment::Shin,
+            side,
             start: at(shin),
             end: at(foot),
             mass: mass * Segment::Shin.mass_fraction(),
@@ -388,6 +438,7 @@ pub fn generate_humanoid(
         planned.push(Planned {
             bone: foot,
             segment: Segment::Foot,
+            side,
             start: at(foot),
             end: foot_end,
             mass: mass * Segment::Foot.mass_fraction(),
@@ -407,7 +458,23 @@ pub fn generate_humanoid(
     for (index, plan) in planned.iter().enumerate() {
         ragdoll = ragdoll.with_part(part(skeleton, model, plan, &skin[index], &frame));
     }
-    Ok(ragdoll)
+    let mut flinch = StrengthProfile::new(FLINCH, PartStrength::Kinematic);
+    let mut braced = StrengthProfile::new(BRACED, PartStrength::Kinematic);
+    for plan in &planned {
+        let bone = skeleton.names[plan.bone].as_ref();
+        let muscle = PartStrength::powered(
+            plan.segment.muscle_stiffness(),
+            plan.segment.muscle_torque(),
+        );
+        braced = braced.with_part(bone, muscle);
+        if plan.segment.above_the_pelvis() {
+            flinch = flinch.with_part(bone, muscle);
+        }
+    }
+    Ok(ragdoll
+        .with_profile(flinch)
+        .with_profile(braced)
+        .with_profile(StrengthProfile::new(LIMP, PartStrength::Limp)))
 }
 
 fn hinge_axis(bone_direction: Vec3, bend_towards: Vec3, fallback: Vec3) -> Vec3 {
@@ -481,6 +548,39 @@ fn skinned_radius(points: &[Vec3], start: Vec3, end: Vec3) -> Option<f32> {
     (count >= MIN_SKIN_POINTS).then(|| total / count as f32)
 }
 
+enum ShapeAxis {
+    Along(Vec3),
+    Forward(Vec3),
+}
+
+struct Sole {
+    centre: Vec3,
+    forward: Vec3,
+    half_extents: Vec3,
+}
+
+const HEEL: f32 = 0.06;
+const SOLE_UNDER_TOE: f32 = 0.02;
+
+impl Sole {
+    fn under(plan: &Planned, frame: &Frame, radius: f32) -> Option<Self> {
+        let reach = plan.end - plan.start;
+        let flat = reach - frame.up * reach.dot(frame.up);
+        let forward = flat.try_normalize()?;
+        let top = plan.start.dot(frame.up);
+        let toe = top + reach.dot(frame.up) / 1.5;
+        let bottom = top.min(toe) - SOLE_UNDER_TOE;
+        let length = flat.length() + HEEL;
+        let height = (top - bottom).max(0.02);
+        Some(Self {
+            centre: plan.start + forward * (length / 2.0 - HEEL)
+                - frame.up * (top - (top + bottom) / 2.0),
+            forward,
+            half_extents: Vec3::new(radius.max(0.03), height / 2.0, length / 2.0),
+        })
+    }
+}
+
 fn part(
     skeleton: &Skeleton,
     model: &[Mat4],
@@ -506,6 +606,17 @@ fn part(
             half_height: (length / 2.0 - radius).max(0.005),
             radius: radius.min(length / 2.0).max(0.02),
         }
+    };
+    let sole = Sole::under(plan, frame, radius);
+    let (shape, centre, direction_of_shape) = match (plan.segment, sole) {
+        (Segment::Foot, Some(sole)) => (
+            RagdollShape::Box {
+                half_extents: sole.half_extents,
+            },
+            sole.centre,
+            ShapeAxis::Forward(sole.forward),
+        ),
+        _ => (shape, centre, ShapeAxis::Along(direction)),
     };
     let joint = match plan.joint_model {
         JointModel::Ball {
@@ -536,7 +647,15 @@ fn part(
     };
     RagdollPart::new(skeleton.names[plan.bone].as_ref(), shape)
         .with_offset(to_bone * (centre - bone_position))
-        .with_rotation((to_bone * Quat::from_rotation_arc(Vec3::Y, direction)).normalize())
+        .with_rotation(
+            (to_bone
+                * match direction_of_shape {
+                    ShapeAxis::Along(direction) => Quat::from_rotation_arc(Vec3::Y, direction),
+                    ShapeAxis::Forward(forward) => Quat::from_rotation_arc(Vec3::Z, forward),
+                })
+            .normalize(),
+        )
         .with_mass(plan.mass)
+        .with_segment(plan.segment, plan.side)
         .with_joint(joint.with_friction((plan.mass * FRICTION_PER_KG).clamp(0.3, 5.0)))
 }

@@ -9,7 +9,9 @@ license.workspace = true
 
 [dependencies]
 concerto = { path = "../.." }
+concerto-debug-gizmos.workspace = true
 concerto-physics-gizmos.workspace = true
+concerto-ragdoll = { path = "../../crates/ragdoll", features = ["test-support"] }
 env_logger = "0.11.8"
 glam.workspace = true
 

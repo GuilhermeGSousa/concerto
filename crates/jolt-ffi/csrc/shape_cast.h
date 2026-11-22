@@ -25,7 +25,7 @@ extern "C"
 								const float direction[3],
 								const JoltBodyId *ignore,
 								uint32_t ignore_count,
-                                JoltRagdollQuery ragdolls,
+                                uint32_t layers,
 								JoltShapeHit *out_hit);
 
 #ifdef __cplusplus

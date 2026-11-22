@@ -11,10 +11,13 @@ use concerto_physics::{
     sensor::Sensor,
     shape::MeshCollider,
 };
+use concerto_ragdoll::BodySense;
 use glam::Vec3;
 
 use crate::{
-    gizmos::{SENSOR_COLOR, STATIC_COLOR, draw_collider, draw_contact_list, draw_ragdoll_of},
+    gizmos::{
+        SENSOR_COLOR, STATIC_COLOR, draw_collider, draw_contact_list, draw_ragdoll_of, draw_sense,
+    },
     shapes::LocalShape,
 };
 
@@ -35,6 +38,25 @@ pub struct ContactsGizmo;
 
 /// Draws the ragdoll an entity's `RagdollId` names: its parts and joint limits.
 pub struct RagdollGizmo;
+
+/// Draws what a `BodySense` perceives: its centre of mass, support, capture point, velocity and impacts.
+pub struct BodySenseGizmo;
+
+impl ComponentGizmo for BodySenseGizmo {
+    type Component = BodySense;
+    type Input = ();
+    const NAME: &'static str = "Body sense";
+
+    fn draw(
+        _entity: Entity,
+        component: &BodySense,
+        _transform: &GlobalTransform,
+        _input: &(),
+        gizmos: &mut DebugGizmos,
+    ) {
+        draw_sense(gizmos, component);
+    }
+}
 
 impl ComponentGizmo for ColliderGizmo {
     type Component = Collider;
