@@ -497,6 +497,12 @@ impl PhysicsState {
         self.backend.set_body_layers(body.0, layers);
     }
 
+    /// Sets the body's velocities so that it reaches `pose` at the end of the next fixed step; a kinematic body follows it exactly and pushes dynamic bodies aside.
+    pub fn move_body_kinematic(&mut self, body: BodyId, pose: BodyPose) {
+        self.backend
+            .move_body_kinematic(body.0, pose, Time::fixed_delta_time().as_secs_f32());
+    }
+
     /// Moves the body's origin at once, keeping its rotation and velocity.
     pub fn set_body_translation(&mut self, body: BodyId, translation: Vec3) {
         self.backend.set_body_translation(body.0, translation);

@@ -34,10 +34,7 @@ use concerto_physics::{
 use concerto_physics_gizmos::{PhysicsGizmos, draw_ragdolls};
 use concerto_ragdoll::{
     CharacterRagdoll, Ragdoll, RagdollBody, RagdollMode,
-    character::{
-        create_character_ragdolls, drive_character_ragdolls, drop_removed_ragdoll,
-        drop_replaced_ragdoll, record_ragdoll_poses, write_ragdoll_poses,
-    },
+    character::{create_character_ragdolls, drive_character_ragdolls},
 };
 use concerto_render::plugin::RenderPlugin;
 use concerto_scene::{
@@ -117,7 +114,7 @@ impl RagdollStage {
         let character = CharacterRagdoll::new(AssetHandle::weak(id));
         Some(match mode {
             RagdollMode::FollowsAnimation => character,
-            RagdollMode::Limp => character.with_mode(RagdollMode::Limp).with_weight(1.0),
+            RagdollMode::Limp | RagdollMode::Powered => character.with_mode(mode).with_weight(1.0),
         })
     }
 }
@@ -524,24 +521,6 @@ pub fn ragdoll_preview(app: &mut App) {
                 .at_preview_time(),
         )
         .add_system(
-            LateUpdate,
-            create_character_ragdolls
-                .after(propagate_global_transforms)
-                .at_preview_time(),
-        )
-        .add_system(
-            LateUpdate,
-            write_ragdoll_poses
-                .before(propagate_global_transforms)
-                .at_preview_time(),
-        )
-        .add_system(
-            LateFixedUpdate,
-            drive_character_ragdolls
-                .before(step_simulation)
-                .at_preview_time(),
-        )
-        .add_system(
             LateFixedUpdate,
             apply_poke
                 .after(drive_character_ragdolls)
@@ -549,14 +528,6 @@ pub fn ragdoll_preview(app: &mut App) {
                 .at_preview_time(),
         )
         .add_system(LateFixedUpdate, step_simulation.at_preview_time())
-        .add_system(
-            LateFixedUpdate,
-            record_ragdoll_poses
-                .after(step_simulation)
-                .at_preview_time(),
-        )
-        .add_listener(drop_removed_ragdoll.at_preview_time())
-        .add_listener(drop_replaced_ragdoll.at_preview_time())
         .add_listener(show_stage.at_preview_time())
         .add_listener(set_ragdoll.at_preview_time())
         .add_listener(reset_ragdoll.at_preview_time())

@@ -6,7 +6,9 @@ use concerto_mesh::{Mesh, Skeleton};
 use concerto_name::Name;
 use glam::{Mat4, Quat, Vec3};
 
-use crate::asset::{Ragdoll, RagdollJoint, RagdollPart, RagdollShape};
+use crate::asset::{
+    PartStrength, Ragdoll, RagdollJoint, RagdollPart, RagdollShape, StrengthProfile,
+};
 
 /// The names a retarget rig gives the chains a humanoid ragdoll is generated from.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -111,6 +113,13 @@ pub enum Segment {
 
 const TORSO_ABOVE_PELVIS: f32 = 0.355;
 
+/// The generated profile with the pelvis and legs kinematic and everything above powered: a body that takes a hit without needing balance.
+pub const FLINCH: &str = "flinch";
+/// The generated profile with every part powered: a body on its own feet.
+pub const BRACED: &str = "braced";
+/// The generated profile with every part limp.
+pub const LIMP: &str = "limp";
+
 impl Segment {
     /// The share of the body's mass in one segment of this kind; the spine's share is split over its parts.
     pub fn mass_fraction(self) -> f32 {
@@ -125,6 +134,42 @@ impl Segment {
             Segment::Shin => 0.0465,
             Segment::Foot => 0.0145,
         }
+    }
+
+    /// The most torque the muscles holding a segment of this kind apply in the generated profiles, in N·m.
+    pub fn muscle_torque(self) -> f32 {
+        match self {
+            Segment::Pelvis => 400.0,
+            Segment::Spine => 400.0,
+            Segment::Head => 80.0,
+            Segment::UpperArm => 120.0,
+            Segment::LowerArm => 70.0,
+            Segment::Hand => 20.0,
+            Segment::Thigh => 300.0,
+            Segment::Shin => 250.0,
+            Segment::Foot => 150.0,
+        }
+    }
+
+    /// The stiffness of the muscles holding a segment of this kind in the generated profiles, in N·m/rad: enough that the segment and what hangs from it sag only a little under their own weight.
+    pub fn muscle_stiffness(self) -> f32 {
+        match self {
+            Segment::Pelvis | Segment::Spine => 3000.0,
+            Segment::Thigh => 2500.0,
+            Segment::Shin => 1500.0,
+            Segment::Foot => 600.0,
+            Segment::Head => 300.0,
+            Segment::UpperArm => 500.0,
+            Segment::LowerArm => 200.0,
+            Segment::Hand => 40.0,
+        }
+    }
+
+    fn above_the_pelvis(self) -> bool {
+        matches!(
+            self,
+            Segment::Spine | Segment::Head | Segment::UpperArm | Segment::LowerArm | Segment::Hand
+        )
     }
 
     fn thickness(self) -> f32 {
@@ -407,7 +452,23 @@ pub fn generate_humanoid(
     for (index, plan) in planned.iter().enumerate() {
         ragdoll = ragdoll.with_part(part(skeleton, model, plan, &skin[index], &frame));
     }
-    Ok(ragdoll)
+    let mut flinch = StrengthProfile::new(FLINCH, PartStrength::Kinematic);
+    let mut braced = StrengthProfile::new(BRACED, PartStrength::Kinematic);
+    for plan in &planned {
+        let bone = skeleton.names[plan.bone].as_ref();
+        let muscle = PartStrength::powered(
+            plan.segment.muscle_stiffness(),
+            plan.segment.muscle_torque(),
+        );
+        braced = braced.with_part(bone, muscle);
+        if plan.segment.above_the_pelvis() {
+            flinch = flinch.with_part(bone, muscle);
+        }
+    }
+    Ok(ragdoll
+        .with_profile(flinch)
+        .with_profile(braced)
+        .with_profile(StrengthProfile::new(LIMP, PartStrength::Limp)))
 }
 
 fn hinge_axis(bone_direction: Vec3, bend_towards: Vec3, fallback: Vec3) -> Vec3 {

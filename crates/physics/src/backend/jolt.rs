@@ -17,7 +17,9 @@ use crate::backend::{
 use crate::body::BodyActivity;
 use crate::collider::{Collider, ColliderOffset};
 use crate::layers::{CollisionLayers, Layers};
-use crate::ragdoll::{BodyPose, JointDrive, PartShape, RagdollBuildError, RagdollSettings};
+use crate::ragdoll::{
+    BodyPose, JointDrive, MotorSettings, PartShape, RagdollBuildError, RagdollSettings,
+};
 use crate::rigid_body::{AllowedDofs, MotionType, RigidBody};
 
 const MAX_BODIES: u32 = 10_240;
@@ -398,6 +400,21 @@ impl PhysicsBackend for JoltBackend {
         }
     }
 
+    fn move_body_kinematic(&mut self, body: Self::BodyHandle, pose: BodyPose, delta_time: f32) {
+        let position = pose.translation.to_array();
+        let rotation = pose.rotation.to_array();
+        // SAFETY: `body` is a body in this world; the arrays are a valid xyz triple and xyzw quaternion.
+        unsafe {
+            concerto_jolt_ffi::jolt_body_move_kinematic(
+                self.world,
+                body,
+                position.as_ptr(),
+                rotation.as_ptr(),
+                delta_time,
+            );
+        }
+    }
+
     fn set_body_translation(&mut self, body: Self::BodyHandle, translation: Vec3) {
         let translation = translation.to_array();
         // SAFETY: `body` is a body in this world and `translation` is a valid xyz triple.
@@ -667,6 +684,8 @@ impl PhysicsBackend for JoltBackend {
                 settings.max_speed,
                 settings.layers.memberships.mask(),
                 settings.layers.filter.mask(),
+                settings.velocity_steps,
+                settings.position_steps,
             )
         };
         if built.is_null() {
@@ -781,9 +800,32 @@ impl PhysicsBackend for JoltBackend {
         part: usize,
         drive: JointDrive,
     ) {
-        let (enabled, rotation, motor) = match drive {
-            JointDrive::Off => (false, Quat::IDENTITY, Default::default()),
-            JointDrive::Target(target) => (true, target.rotation, target.motor),
+        let off = MotorSettings::default();
+        let (enabled, rotation, by_stiffness, spring, damping, torque_limit) = match drive {
+            JointDrive::Off => (
+                false,
+                Quat::IDENTITY,
+                false,
+                off.frequency,
+                off.damping,
+                off.torque_limit,
+            ),
+            JointDrive::Target(target) => (
+                true,
+                target.rotation,
+                false,
+                target.motor.frequency,
+                target.motor.damping,
+                target.motor.torque_limit,
+            ),
+            JointDrive::Spring(spring) => (
+                true,
+                spring.rotation,
+                true,
+                spring.stiffness,
+                spring.damping,
+                spring.torque_limit,
+            ),
         };
         let rotation = rotation.to_array();
         // SAFETY: `ragdoll` is a live ragdoll of this world, the shim ignores a part it does not have, and `rotation` is a valid xyzw quaternion.
@@ -793,9 +835,10 @@ impl PhysicsBackend for JoltBackend {
                 part as u32,
                 enabled,
                 rotation.as_ptr(),
-                motor.frequency,
-                motor.damping,
-                motor.torque_limit,
+                by_stiffness,
+                spring,
+                damping,
+                torque_limit,
             );
         }
     }

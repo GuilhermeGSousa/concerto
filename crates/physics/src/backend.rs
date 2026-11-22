@@ -173,6 +173,9 @@ pub trait PhysicsBackend: Send + Sync + Sized {
     /// Gives the body its collision layers; in no layer it collides with nothing and no query sees it.
     fn set_body_layers(&mut self, body: Self::BodyHandle, layers: CollisionLayers);
 
+    /// Sets the body's velocities so that it reaches `pose` after `delta_time`.
+    fn move_body_kinematic(&mut self, body: Self::BodyHandle, pose: BodyPose, delta_time: f32);
+
     /// Moves the body's origin at once, keeping its rotation and velocity.
     fn set_body_translation(&mut self, body: Self::BodyHandle, translation: Vec3);
 

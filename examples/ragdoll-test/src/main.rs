@@ -319,6 +319,12 @@ fn control_humanoid(
     if input.is_just_pressed(PhysicalKey::Code(KeyCode::KeyB)) {
         character.weight = 0.5;
     }
+    if input.is_just_pressed(PhysicalKey::Code(KeyCode::KeyP)) {
+        character.power(concerto_ragdoll::FLINCH);
+    }
+    if input.is_just_pressed(PhysicalKey::Code(KeyCode::KeyO)) {
+        character.power(concerto_ragdoll::BRACED);
+    }
 }
 
 fn draw_skeleton(
