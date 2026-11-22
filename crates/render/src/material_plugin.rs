@@ -46,11 +46,11 @@ use crate::{
     },
     resources::RenderContext,
     sets::{PrepassSet, RenderSet},
-    shader::create_shader_module,
+    shader::{create_shader_module, ALPHA_TO_COVERAGE},
     view_phase::{
         clear_view_phases, PhaseBindings, PhaseInstances, PhaseItem, PhaseMesh, ViewPhases,
     },
-    view_target::{ViewPipelines, ViewTarget},
+    view_target::{Msaa, ViewPipelines, ViewTarget},
     Material,
 };
 
@@ -105,6 +105,7 @@ pub(crate) const DEFAULT_SHADER_SOURCE: &str = include_str!("shaders/shader.wgsl
 pub struct MaterialPipeline<M: 'static> {
     pipelines: ViewPipelines,
     blended_pipelines: Option<ViewPipelines>,
+    masked_pipeline: Option<wgpu::RenderPipeline>,
     // The `@group(0)` bind-group layout for `M`'s own data.
     pub bind_group_layout: wgpu::BindGroupLayout,
     _marker: PhantomData<fn() -> M>,
@@ -119,8 +120,23 @@ impl<M: 'static> MaterialPipeline<M> {
         Self {
             pipelines,
             blended_pipelines,
+            masked_pipeline: None,
             bind_group_layout,
             _marker: PhantomData,
+        }
+    }
+
+    /// This pipeline set with `pipeline` drawing `AlphaMode::Mask` assets into a multisampled target with alpha to coverage.
+    pub fn with_masked_pipeline(mut self, pipeline: wgpu::RenderPipeline) -> Self {
+        self.masked_pipeline = Some(pipeline);
+        self
+    }
+
+    /// The pipeline that draws an asset of `alpha_mode` into the opaque phase of a target of `samples` samples: the alpha-to-coverage one for a masked asset on a multisampled target, when the material has one.
+    pub fn pipeline_for(&self, alpha_mode: AlphaMode, samples: u32) -> &wgpu::RenderPipeline {
+        match &self.masked_pipeline {
+            Some(masked) if samples > 1 && matches!(alpha_mode, AlphaMode::Mask { .. }) => masked,
+            _ => self.pipeline(samples),
         }
     }
 
@@ -489,7 +505,8 @@ pub(crate) fn queue_material_meshes<M: Material>(
         };
         let samples = render_camera.view_target.sample_count();
         let phase = phases.view_mut(camera);
-        let items = |batches: &ViewBatches<MaterialBinKey>, pipeline: &wgpu::RenderPipeline| {
+        let items = |batches: &ViewBatches<MaterialBinKey>,
+                     blended: Option<&wgpu::RenderPipeline>| {
             batches
                 .bins
                 .batches
@@ -498,7 +515,9 @@ pub(crate) fn queue_material_meshes<M: Material>(
                     let mesh = render_meshes.get(&batch.key.mesh)?;
                     let material = render_materials.get(&batch.key.material)?;
                     Some(PhaseItem {
-                        pipeline: pipeline.clone(),
+                        pipeline: blended
+                            .unwrap_or_else(|| pipeline.pipeline_for(material.alpha_mode, samples))
+                            .clone(),
                         bind_group: material.bind_group.clone(),
                         bindings: PhaseBindings {
                             camera: M::needs_camera(),
@@ -529,9 +548,7 @@ pub(crate) fn queue_material_meshes<M: Material>(
                 .bins
                 .rebuild(candidates(false), &frustum, &buffers.current_input_buffer);
         batches.upload(&device, &queue);
-        phase
-            .opaque
-            .extend(items(batches, pipeline.pipeline(samples)));
+        phase.opaque.extend(items(batches, None));
 
         let batches = view_batches
             .blended_views
@@ -545,7 +562,9 @@ pub(crate) fn queue_material_meshes<M: Material>(
         );
         batches.upload(&device, &queue);
         if let Some(blended_pipeline) = pipeline.blended_pipeline(samples) {
-            phase.transparent.extend(items(batches, blended_pipeline));
+            phase
+                .transparent
+                .extend(items(batches, Some(blended_pipeline)));
         }
 
         let total = draw_stats.cameras.entry(camera).or_default();
@@ -558,6 +577,15 @@ pub(crate) fn queue_material_meshes<M: Material>(
     view_batches
         .blended_views
         .retain(|camera, _| render_cameras.contains_entity(*camera));
+}
+
+struct PipelineVariant<'a> {
+    label: &'a str,
+    blend: Option<wgpu::BlendState>,
+    depth_stencil: Option<wgpu::DepthStencilState>,
+    samples: u32,
+    fragment: &'a wgpu::ShaderModule,
+    alpha_to_coverage: bool,
 }
 
 // ─── MaterialPlugin ───────────────────────────────────────────────────────────
@@ -724,10 +752,15 @@ impl<M: Material> Plugin for MaterialPlugin<M> {
         // Use the vertex layouts from the material trait.
         let vertex_layouts: Vec<_> = M::vertex_layouts().into_iter().map(Some).collect();
 
-        let create_pipeline = |label: &str,
-                               blend: Option<wgpu::BlendState>,
-                               depth_stencil: Option<wgpu::DepthStencilState>,
-                               samples: u32| {
+        let create_pipeline = |variant: PipelineVariant| {
+            let PipelineVariant {
+                label,
+                blend,
+                depth_stencil,
+                samples,
+                fragment,
+                alpha_to_coverage,
+            } = variant;
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some(label),
                 layout: Some(&pipeline_layout),
@@ -738,7 +771,7 @@ impl<M: Material> Plugin for MaterialPlugin<M> {
                     compilation_options: wgpu::PipelineCompilationOptions::default(),
                 },
                 fragment: Some(wgpu::FragmentState {
-                    module: &fs_module,
+                    module: fragment,
                     entry_point: Some("fs_main"),
                     targets: &[Some(wgpu::ColorTargetState {
                         format: target_format,
@@ -760,7 +793,7 @@ impl<M: Material> Plugin for MaterialPlugin<M> {
                 multisample: wgpu::MultisampleState {
                     count: samples,
                     mask: !0,
-                    alpha_to_coverage_enabled: false,
+                    alpha_to_coverage_enabled: alpha_to_coverage,
                 },
                 multiview_mask: None,
                 cache: None,
@@ -780,32 +813,50 @@ impl<M: Material> Plugin for MaterialPlugin<M> {
             }))
         };
         let pipeline = ViewPipelines::new(|samples| {
-            create_pipeline(
-                "Material Pipeline",
-                M::blend_state(),
-                phase_depth(),
+            create_pipeline(PipelineVariant {
+                label: "Material Pipeline",
+                blend: M::blend_state(),
+                depth_stencil: phase_depth(),
                 samples,
-            )
+                fragment: &fs_module,
+                alpha_to_coverage: false,
+            })
         });
         let blended_pipeline = (!self.pipeline_only).then(|| {
             ViewPipelines::new(|samples| {
-                create_pipeline(
-                    "Blended Material Pipeline",
-                    Some(wgpu::BlendState::ALPHA_BLENDING),
-                    phase_depth().map(|depth_stencil| wgpu::DepthStencilState {
+                create_pipeline(PipelineVariant {
+                    label: "Blended Material Pipeline",
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    depth_stencil: phase_depth().map(|depth_stencil| wgpu::DepthStencilState {
                         depth_write_enabled: Some(false),
                         ..depth_stencil
                     }),
                     samples,
-                )
+                    fragment: &fs_module,
+                    alpha_to_coverage: false,
+                })
+            })
+        });
+        let masked_pipeline = (!self.pipeline_only && M::alpha_to_coverage()).then(|| {
+            let mut defs = shader_defs.clone();
+            defs.define(ALPHA_TO_COVERAGE);
+            let fragment = create_shader_module(device, "Masked Material FS", fs_src, &defs);
+            create_pipeline(PipelineVariant {
+                label: "Masked Material Pipeline",
+                blend: M::blend_state(),
+                depth_stencil: phase_depth(),
+                samples: Msaa::Sample4.samples(),
+                fragment: &fragment,
+                alpha_to_coverage: true,
             })
         });
 
-        app.render_mut().insert_resource(MaterialPipeline::<M>::new(
-            pipeline,
-            blended_pipeline,
-            material_layout,
-        ));
+        let mut material_pipeline =
+            MaterialPipeline::<M>::new(pipeline, blended_pipeline, material_layout);
+        if let Some(masked_pipeline) = masked_pipeline {
+            material_pipeline = material_pipeline.with_masked_pipeline(masked_pipeline);
+        }
+        app.render_mut().insert_resource(material_pipeline);
         if !self.pipeline_only {
             app.render_mut()
                 .insert_resource(MaterialViewBatches::<M>::default());

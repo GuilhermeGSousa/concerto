@@ -174,9 +174,11 @@ cmd.spawn((Camera::default(), Msaa::Off, Transform::IDENTITY));
 - The view target's colour and depth are multisampled, and the colour is
   resolved into the single-sampled HDR texture after the blended surfaces,
   before bloom and tonemapping.
-- It smooths the edges of triangles only. An alpha-cutout edge, a specular
-  highlight and a line of debug gizmos, which are drawn after the resolve, stay
-  as they were.
+- It smooths the edges of triangles, and the cutout edge of a
+  `StandardMaterial` in `AlphaMode::Mask`, which is drawn with alpha to
+  coverage on a multisampled camera: each sample is kept or dropped by how far
+  the alpha is past the cutoff. A specular highlight and a line of debug
+  gizmos, which are drawn after the resolve, stay as they were.
 - Shadow maps and the ambient occlusion prepass are single-sampled.
 - A pass of your own that draws into a view target needs a pipeline for each
   sample count; `ViewPipelines` builds and picks them.
@@ -416,7 +418,7 @@ the base color's alpha does:
 - `Opaque`, the default, ignores it: the surface hides what is behind it;
 - `Mask { cutoff }` discards the fragments whose alpha is below `cutoff` and
   draws the rest opaque, for leaves and fences. Its shadow and its ambient
-  occlusion are cut to the same shape;
+  occlusion are cut to the same shape, and under MSAA its edge is smoothed;
 - `Blend` blends the surface over what is behind it by its alpha, for glass and
   decals.
 
@@ -693,6 +695,23 @@ fn fs_cutout(@location(0) tex_coords: vec2<f32>) {
         discard;
     }
 }
+```
+
+The edge of a masked asset of your own material is smoothed under MSAA when
+the material says `alpha_to_coverage = true` in `#[material(...)]`. Its `Mask`
+assets are then drawn on a multisampled camera by a pipeline with alpha to
+coverage on, from the fragment shader compiled with `ALPHA_TO_COVERAGE`
+defined; under that def the shader returns in its alpha how much of the pixel
+the surface covers instead of discarding, as `shader.wgsl` does:
+
+```wgsl
+#ifdef ALPHA_TO_COVERAGE
+    let coverage = clamp((alpha - cutoff) / max(fwidth(alpha), 0.0001) + 0.5, 0.0, 1.0);
+#else
+    if alpha < cutoff {
+        discard;
+    }
+#endif
 ```
 
 ### Drawing without a material plugin

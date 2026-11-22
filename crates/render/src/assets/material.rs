@@ -132,6 +132,7 @@ impl From<&AlphaMode> for AlphaMode {
     vertex_shader = include_str!("../shaders/shader.wgsl"),
     fragment_shader = include_str!("../shaders/shader.wgsl"),
     cutout_shader = include_str!("../shaders/standard_cutout.wgsl"),
+    alpha_to_coverage = true,
     lighting = true,
     skeleton = true,
 )]
@@ -620,6 +621,14 @@ pub trait Material: AsBindGroup + LoadableAsset + Send + Sync + 'static {
         Self: Sized,
     {
         None
+    }
+
+    /// Whether the fragment shader, compiled with `ALPHA_TO_COVERAGE` defined, returns in its alpha how much of the pixel an `AlphaMode::Mask` asset covers, so a multisampled camera smooths the cutout's edge. Defaults to `false`: the shader discards.
+    fn alpha_to_coverage() -> bool
+    where
+        Self: Sized,
+    {
+        false
     }
 
     /// How this asset's alpha is treated. `Blend` draws it in the transparent pass. Defaults to `Opaque`.

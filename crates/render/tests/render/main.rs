@@ -1,3 +1,4 @@
+mod alpha_to_coverage;
 mod ambient_occlusion;
 mod blended_materials;
 mod bloom;
