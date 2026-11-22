@@ -156,11 +156,16 @@ impl Plugin for RenderPlugin {
                 RenderSet::Background,
                 RenderSet::Draw,
                 RenderSet::Transparent,
-                RenderSet::PostProcess,
                 RenderSet::Tonemap,
                 RenderSet::Overlay,
             )
                 .chain(),
+        )
+        .configure_render_sets(
+            Render,
+            RenderSet::PostProcess
+                .after(RenderSet::Transparent)
+                .before(RenderSet::Tonemap),
         )
         .configure_render_sets(Render, (BackgroundSet::Clear, BackgroundSet::Draw).chain())
         .add_render_system(
