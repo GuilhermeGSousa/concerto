@@ -92,7 +92,7 @@ pub struct RagdollCreation {
     pub result: Result<CreatedRagdoll, String>,
 }
 
-fn read_asset<A: Asset>(
+pub(crate) fn read_asset<A: Asset>(
     root: &Path,
     registry: &AssetRegistry,
     id: AssetId,

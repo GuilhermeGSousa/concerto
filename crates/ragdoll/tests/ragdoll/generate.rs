@@ -4,7 +4,10 @@ use concerto_foundation::transform::Transform;
 use concerto_physics::physics_pipeline::PhysicsPipeline;
 use concerto_physics::physics_state::PhysicsState;
 use concerto_ragdoll::testing::{humanoid_rig, humanoid_skeleton};
-use concerto_ragdoll::{GenerateError, HumanoidSettings, Ragdoll, Segment, generate_humanoid};
+use concerto_ragdoll::{
+    GenerateError, HumanoidSettings, Ragdoll, RagdollShape, Segment, Trial, generate_humanoid,
+    run_trial,
+};
 use glam::{Quat, Vec3};
 
 use crate::common::world_with_floor;
@@ -136,4 +139,46 @@ fn a_generated_humanoid_has_its_mass_its_one_way_knees_and_a_body_that_rests_in_
             "part {part} should come to rest on the floor, moved at {speed} m/s"
         );
     }
+
+    let report = run_trial(&resolved, Trial::Drop { height: 0.5 }, 10.0).unwrap();
+    assert!(report.overlaps.is_empty(), "{:?}", report.overlaps);
+    assert!(
+        report.rested_after.is_some(),
+        "a dropped body comes to rest"
+    );
+    assert!(report.peak_speed > 1.0 && report.peak_speed < 20.0);
+    assert!(report.peak_joint_gap < 0.05);
+    let poked = Trial::Poke {
+        bone: "Head".into(),
+        impulse: Vec3::new(0.0, 0.0, 30.0),
+    };
+    assert!(
+        run_trial(&resolved, poked, 10.0)
+            .unwrap()
+            .rested_after
+            .is_some()
+    );
+    let nowhere = Trial::Poke {
+        bone: "tail".into(),
+        impulse: Vec3::Z,
+    };
+    assert_eq!(run_trial(&resolved, nowhere, 1.0), None);
+
+    let mut fat = ragdoll.clone();
+    fat.part_mut("thigh_l").unwrap().shape = RagdollShape::Capsule {
+        half_height: 0.15,
+        radius: 0.3,
+    };
+    let fat = fat.resolve(&skeleton).unwrap();
+    let overlaps = fat.overlapping_parts();
+    let thigh = fat.part_of("thigh_l").unwrap();
+    let other = fat.part_of("thigh_r").unwrap();
+    assert!(
+        overlaps
+            .iter()
+            .any(|pair| pair.first.min(pair.second) == thigh.min(other)
+                && pair.first.max(pair.second) == thigh.max(other)
+                && pair.depth > 0.1),
+        "a thigh as wide as the hips overlaps the other thigh: {overlaps:?}"
+    );
 }

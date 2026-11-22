@@ -47,7 +47,7 @@ game adds itself when it needs them.
 | | `animation-editor` | the editor's tab for an animation clip | list it in the game's `Cargo.toml` |
 | | `navigation-editor` | the editor's navmesh gizmo, drawn while a navmesh's entity is selected | list it in the game's `Cargo.toml` |
 | | `physics-editor` | the editor's gizmo kinds for colliders, sensors, contacts and ragdolls | list it in the game's `Cargo.toml` |
-| | `ragdoll-editor` | the `create_ragdoll` tool and the Create ragdoll button on a rig's tab, which generate a humanoid `Ragdoll` from a retarget rig | list it in the game's `Cargo.toml` |
+| | `ragdoll-editor` | the `Ragdoll` tab (a part tree, the selected part's form, and a preview that drops, pokes and plays the body), its tools `ragdoll_parts`, `set_ragdoll_part`, `test_ragdoll` and `preview_ragdoll`, and the `create_ragdoll` tool and Create ragdoll button that generate a humanoid `Ragdoll` from a retarget rig | list it in the game's `Cargo.toml` |
 | | `project` | `cargo concerto` | install with `cargo install --path crates/project` |
 | | `mcp` | an MCP server over any `App`, whose tools are systems; the editor's `--mcp` uses it | |
 

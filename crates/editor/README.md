@@ -1767,7 +1767,7 @@ at the parameters set in the tab. In a game that doesn't list the crate a clip o
 has no editor, so opening one opens no tab, and a rig opens in the generic
 inspector.
 
-### The ragdoll generator
+### The ragdoll tab and generator
 
 [`concerto-ragdoll-editor`](../ragdoll-editor/src/lib.rs) generates a humanoid
 `Ragdoll` from a retarget rig and saves it as a new asset in the open project,
@@ -1789,6 +1789,51 @@ button on a rig tab sends the same signal for the tab's rig; it sits in the
 tab's inspector column, which the rig tab of `concerto-animation-editor` has,
 and a rig in the generic form tab has no button. A skeleton alone has no
 action: the tool answers that a rig comes first.
+
+The same crate registers the tab of a `Ragdoll`, in place of the generic form.
+The left host is a tree of the parts, each under the part of its nearest
+ancestor bone and labelled with its bone; a row selects its part. The panel
+shows three values: `Ragdoll`, the whole asset; `Part`, the selected part, whose
+shape, offset, rotation, mass and joint the inspector's own property editors
+edit and whose edits mark the tab unsaved; and `Preview`, never saved, with the
+`drop_height`, `poke_bone`, `poke_impulse`, `seconds` and `clip` the buttons
+use. Above them are **Add part**, which lists the bones that have no part,
+**Remove part**, and the preview buttons **Drop**, **Poke**, **Play** and
+**Reset**; Drop and Poke print the headless trial's report under them. Limits
+are edited by number only.
+
+The tab's preview is built by `ragdoll_preview`, public so another tab can reuse
+it. It stands the skeleton's character in a physics world of its own: a floor
+collider, a `PhysicsPipeline` (a preview `App` has none, because
+`PhysicsPlugin` makes one only for a game), and the physics and ragdoll systems
+a game gets from `PhysicsPlugin` and `RagdollPlugin`, added again marked
+`.at_preview_time()` because the plugins' own are unmarked. A preview `App` runs
+`FixedUpdate` and `LateFixedUpdate` like a game's, so they step as the
+`MainSchedulePlugin` the recipe holds does. The character is the skeleton's
+`scene` when its folder has one, with the skinned mesh, and bare bones
+otherwise; it carries a `CharacterRagdoll` naming the ragdoll being edited, put
+into the preview's `AssetStore` as edited so far and inserted again when the
+value changes, which rebuilds the body. `concerto-physics-gizmos` draws the
+parts, coloured by whether they are kinematic, dynamic or asleep, and each
+joint's swing cone and twist range. The signals the tab sends through
+`PreviewSignals` are `ShowRagdollStage`, `SetRagdoll`, `DropRagdoll`,
+`PokeRagdoll`, `PlayRagdoll` and `ResetRagdoll`. Powered playback does not exist
+in the engine yet, so Play follows a clip kinematically.
+
+Four tools reach all of it. `ragdoll_parts` lists the parts of `asset`, or of
+the front tab, one line each under its parent part, from the open tab's value
+when there is one. `set_ragdoll_part` edits the ragdoll open in a tab by `bone`:
+`shape` (capsule, box or sphere), `radius`, `half_height`, `half_extents`,
+`mass`, `offset`, `swing_normal`, `swing_plane`, `twist_min`, `twist_max` and
+`friction`, a part added for a bone that has none, or `remove`. It sends the
+signal the buttons send, which replaces the tab's value and marks it unsaved;
+`save` writes it. `test_ragdoll` runs `run_trial` on the tab's current value,
+`action` drop (`height`) or poke (`bone`, `impulse`), for `seconds`, in a world
+of its own with no preview and no GPU, and answers whether the body came to
+rest and after how long, the peak speed, the widest joint gap, and the pairs of
+parts that overlap in the rest pose, by bone with the depth. `preview_ragdoll`
+sends the preview a drop, poke, play (`clip`) or reset, as the buttons do, and
+answers the report of a drop or a poke.
 
 ### The texture tab
 
