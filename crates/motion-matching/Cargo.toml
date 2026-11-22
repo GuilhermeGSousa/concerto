@@ -26,3 +26,6 @@ uuid = { version = "1.18.1", features = ["v4", "js", "serde"] }
 pollster = "0.4.0"
 proptest.workspace = true
 concerto-scene.workspace = true
+
+[lints]
+workspace = true

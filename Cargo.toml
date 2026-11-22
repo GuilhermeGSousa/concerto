@@ -85,8 +85,11 @@ parking_lot = "0.12"
 glam = "0.33.9"
 proptest = "1"
 
-[lints.rust]
+[workspace.lints.rust]
 warnings = "deny"
+
+[lints]
+workspace = true
 
 [dependencies]
 profiling = "1"

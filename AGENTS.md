@@ -219,8 +219,10 @@ Something to be done is a signal. If change detection cannot express the case,
 say so in the spec and propose the fix to change detection; do not work around
 it with a counter.
 
-**Warnings are errors.** `[lints.rust] warnings = "deny"` is set, so an unused
-import fails the build.
+**Warnings are errors.** `[workspace.lints.rust] warnings = "deny"` is set and
+every package inherits it with `[lints] workspace = true`, so an unused import
+fails the build of any crate. A new crate's `Cargo.toml` carries those two
+lines.
 
 **Match the code around you.** Naming, module layout, error handling, and test
 style follow the file you are in.

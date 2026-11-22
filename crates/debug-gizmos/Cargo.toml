@@ -22,3 +22,6 @@ wgpu = { version = "30.0.2", default-features = false, features = [
     "naga-ir",
     "fragile-send-sync-non-atomic-wasm",
 ] }
+
+[lints]
+workspace = true

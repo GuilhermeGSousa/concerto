@@ -37,3 +37,6 @@ rapier3d = { version = "0.34" }
 
 [dev-dependencies]
 concerto-scene.workspace = true
+
+[lints]
+workspace = true

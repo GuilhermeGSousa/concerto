@@ -21,3 +21,6 @@ glam.workspace = true
 [dev-dependencies]
 concerto-mesh.workspace = true
 uuid = { version = "1.18.1", features = ["v4", "js", "serde"] }
+
+[lints]
+workspace = true

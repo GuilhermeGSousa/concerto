@@ -13,3 +13,6 @@ proc-macro = true
 concerto-asset-format.workspace = true
 syn = "2.0.11"
 quote = "1.0.37"
+
+[lints]
+workspace = true

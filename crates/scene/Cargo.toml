@@ -21,3 +21,6 @@ bincode = "1.3"
 concerto-mesh.workspace = true
 concerto-render.workspace = true
 glam.workspace = true
+
+[lints]
+workspace = true
