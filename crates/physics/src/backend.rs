@@ -101,8 +101,8 @@ pub trait PhysicsBackend: Send + Sync + Sized {
 
     fn new_stepper() -> Self::Stepper;
 
-    /// Advances the world by `delta_time` seconds (one fixed timestep).
-    fn step(&mut self, stepper: &mut Self::Stepper, delta_time: f32);
+    /// Advances the world by `delta_time` seconds (one fixed timestep), in `collision_steps` equal collision steps.
+    fn step(&mut self, stepper: &mut Self::Stepper, delta_time: f32, collision_steps: u32);
 
     /// Creates a body from the shared descriptors and adds it to the
     /// simulation: static when `rigid_body` is `None`, otherwise dynamic or
@@ -112,7 +112,8 @@ pub trait PhysicsBackend: Send + Sync + Sized {
     /// [`body_transform`](Self::body_transform). A `sensor` body detects
     /// bodies without colliding with them, is never dynamic, and is skipped
     /// by [`cast_ray`](Self::cast_ray), [`cast_sphere`](Self::cast_sphere)
-    /// and [`probe_ground`](Self::probe_ground).
+    /// and [`probe_ground`](Self::probe_ground). `gravity_scale` multiplies
+    /// gravity for a dynamic body.
     fn create_body(
         &mut self,
         collider: &Collider,
@@ -120,6 +121,7 @@ pub trait PhysicsBackend: Send + Sync + Sized {
         rigid_body: Option<&RigidBody>,
         offset: Option<&ColliderOffset>,
         sensor: bool,
+        gravity_scale: f32,
     ) -> Self::BodyHandle;
 
     /// Removes `body` from the simulation and destroys it, waking any bodies

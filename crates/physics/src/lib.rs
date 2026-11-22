@@ -18,6 +18,7 @@ pub mod query;
 pub mod ray;
 pub mod rigid_body;
 pub mod sensor;
+pub mod settings;
 pub mod shape;
 
 mod simulation;

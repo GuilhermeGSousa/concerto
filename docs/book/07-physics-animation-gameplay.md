@@ -39,7 +39,10 @@ cmd.spawn((MeshCollider, MeshComponent { handle: floor_mesh }, floor_transform))
 `AllowedDofs::TRANSLATION | AllowedDofs::ROTATION_Y` so it never tips over. A
 `ColliderOffset` moves the shape relative to the entity;
 `ColliderOffset::bottom_origin(&collider)` puts the entity's origin at the
-bottom of a capsule, where a character's feet are.
+bottom of a capsule, where a character's feet are. A `GravityScale` beside the
+`Collider` multiplies gravity for the body; `GravityScale(0.0)` makes a body
+that moves only by the velocities it is given, as the first-person walker's
+is.
 
 A static collider's `Transform` is yours: the simulation writes poses back
 only to entities with a `RigidBody`. Moving the entity does not move its body,
@@ -54,6 +57,18 @@ entity that also has a `MeshCollider` wins over the mesh.
 A `MeshComponent` with no material is drawn plain grey, so a `MeshCollider`
 entity like the floor above is visible. Give it a material to choose how it
 looks.
+
+### Collision steps
+
+The fixed step is 33 ms. Physics divides it into the fewest equal collision
+steps of at most 1/60 s, two at 33 ms, so fast bodies, stacks and joints stay
+stable. `PhysicsSettings::max_collision_step` sets the limit:
+
+```rust
+app.insert_resource(PhysicsSettings { max_collision_step: 1.0 / 120.0 });
+```
+
+`FixedUpdate` still runs once per fixed step; only the simulation is divided.
 
 ### Sensors
 
