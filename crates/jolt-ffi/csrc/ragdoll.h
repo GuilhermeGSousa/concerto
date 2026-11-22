@@ -86,6 +86,38 @@ extern "C"
     /* Moves every part to its world pose in `poses` at once, keeping velocities. */
     void jolt_ragdoll_set_pose(JoltRagdoll *ragdoll, const float *poses);
 
+    /* Sets each part's velocity so that it reaches its world pose in `poses`
+     * after `delta_time`. Meant for kinematic parts, which then push dynamic
+     * bodies out of the way. */
+    void jolt_ragdoll_drive_kinematic(JoltRagdoll *ragdoll, const float *poses, float delta_time);
+
+    /* Turns every joint's motor on and aims it at the rotation the part has
+     * relative to its parent in `poses`. */
+    void jolt_ragdoll_drive_motors(JoltRagdoll *ragdoll, const float *poses);
+
+    /* Turns the motor of the joint between `part` and its parent off, or on
+     * towards `target_rotation`, the part's rotation relative to its parent,
+     * with the given spring and torque limit. Does nothing for the root. */
+    void jolt_ragdoll_set_joint_motor(JoltRagdoll *ragdoll,
+                                      uint32_t part,
+                                      bool enabled,
+                                      const float target_rotation[4],
+                                      float frequency,
+                                      float damping,
+                                      float torque_limit);
+
+    /* Makes one part kinematic or dynamic, keeping its velocity. */
+    void jolt_ragdoll_set_part_motion_type(JoltWorld *world,
+                                           JoltRagdoll *ragdoll,
+                                           uint32_t part,
+                                           JoltMotionType motion_type);
+
+    /* The angular impulse the joint's motor applied in the last collision
+     * step, about the joint's three axes. Zero for the root. */
+    void jolt_ragdoll_get_joint_motor_impulse(const JoltRagdoll *ragdoll,
+                                              uint32_t part,
+                                              float out_impulse[3]);
+
 #ifdef __cplusplus
 }
 #endif
