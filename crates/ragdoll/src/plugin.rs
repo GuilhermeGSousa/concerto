@@ -14,6 +14,7 @@ use concerto_physics::step_simulation;
 
 use crate::{
     asset::Ragdoll,
+    behaviour::{PhysicalState, update_physical_states},
     character::{
         CharacterRagdoll, carry_capsules, create_character_ragdolls, drive_character_ragdolls,
         drop_removed_ragdoll, drop_replaced_ragdoll, record_animated_poses, record_ragdoll_poses,
@@ -44,6 +45,11 @@ impl Plugin for RagdollPlugin {
         app.add_system(
             LateFixedUpdate,
             sense_bodies.after(step_simulation).at_preview_time(),
+        );
+        app.register_type::<PhysicalState>();
+        app.add_system(
+            LateFixedUpdate,
+            update_physical_states.after(sense_bodies).at_preview_time(),
         );
         app.add_listener(drop_removed_ragdoll.at_preview_time())
             .add_listener(drop_replaced_ragdoll.at_preview_time())

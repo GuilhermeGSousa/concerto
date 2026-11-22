@@ -30,6 +30,7 @@ use log::warn;
 
 use crate::{
     asset::{PartStrength, Ragdoll},
+    behaviour::BodyDrive,
     hit::Flinch,
     resolve::ResolvedRagdoll,
 };
@@ -463,6 +464,7 @@ pub fn drive_character_ragdolls(
         &RagdollId,
         &mut RagdollBody,
         Option<&Flinch>,
+        Option<&mut BodyDrive>,
     )>,
     ragdolls: Res<AssetStore<Ragdoll>>,
     mut state: ResMut<PhysicsState>,
@@ -470,8 +472,9 @@ pub fn drive_character_ragdolls(
 ) {
     let dt = Time::fixed_delta_time().as_secs_f32();
     let mut simulated = Vec::new();
-    for (entity, character, id, mut body, flinch) in characters.iter() {
+    for (entity, character, id, mut body, flinch, drive) in characters.iter() {
         let animated = body.animated.clone();
+        let claims = drive.map(|mut drive| drive.take()).unwrap_or_default();
         let mut wanted = wanted_strengths(character, &body, ragdolls.get(&character.ragdoll));
         if let Some(flinch) = flinch {
             for (held, scale) in wanted.iter_mut().zip(flinch.scales()) {
@@ -485,6 +488,39 @@ pub fn drive_character_ragdolls(
         } else {
             1.0
         };
+        let count = body.resolved.part_count();
+        let mut targets: Vec<Quat> = (0..count)
+            .map(|part| match body.resolved.settings().parts[part].parent {
+                Some(parent) => {
+                    (animated[parent].rotation.inverse() * animated[part].rotation).normalize()
+                }
+                None => Quat::IDENTITY,
+            })
+            .collect();
+        let mut forces = vec![Vec3::ZERO; count];
+        let mut torques = vec![Vec3::ZERO; count];
+        let mut claimed = vec![false; count];
+        for claim in &claims {
+            if claim.part >= count || claim.weight <= 0.0 {
+                continue;
+            }
+            let asked = Held::of(claim.command.strength);
+            wanted[claim.part] = if asked.kinematic || wanted[claim.part].kinematic {
+                if claim.weight >= 0.5 {
+                    asked
+                } else {
+                    wanted[claim.part]
+                }
+            } else {
+                wanted[claim.part].towards(asked, claim.weight)
+            };
+            if let Some(target) = claim.command.target {
+                targets[claim.part] = targets[claim.part].slerp(target, claim.weight).normalize();
+            }
+            forces[claim.part] += claim.command.force * claim.weight;
+            torques[claim.part] += claim.command.torque * claim.weight;
+            claimed[claim.part] = true;
+        }
         for (part, held) in wanted.iter().enumerate() {
             body.changing[part] = held.kinematic != body.held[part].kinematic;
         }
@@ -492,7 +528,7 @@ pub fn drive_character_ragdolls(
         let parts = &body.resolved.settings().parts;
         for part in 0..parts.len() {
             let before = body.held[part];
-            let held = before.towards(wanted[part], step);
+            let held = before.towards(wanted[part], if claimed[part] { 1.0 } else { step });
             body.held[part] = held;
             if before.kinematic != held.kinematic {
                 let motion = if held.kinematic {
@@ -509,9 +545,14 @@ pub fn drive_character_ragdolls(
                 body.aimed[part] = Quat::IDENTITY;
                 continue;
             }
-            let Some(parent) = parts[part].parent else {
+            if forces[part] != Vec3::ZERO || torques[part] != Vec3::ZERO {
+                let part_body = state.ragdoll_bodies(*id)[part];
+                state.add_force(part_body, forces[part]);
+                state.add_torque(part_body, torques[part]);
+            }
+            if parts[part].parent.is_none() {
                 continue;
-            };
+            }
             if held.slack() {
                 if !body.slack[part] {
                     state.set_ragdoll_joint_drive(*id, part, JointDrive::Off);
@@ -521,8 +562,7 @@ pub fn drive_character_ragdolls(
                 continue;
             }
             body.slack[part] = false;
-            let target =
-                (animated[parent].rotation.inverse() * animated[part].rotation).normalize();
+            let target = targets[part];
             let before_target = if before.kinematic || before.slack() {
                 target
             } else {

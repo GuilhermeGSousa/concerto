@@ -421,6 +421,12 @@ extern "C"
 		bi.AddForce(JPH::BodyID(body), JPH::Vec3Arg(force[0], force[1], force[2]));
 	}
 
+	void jolt_body_add_torque(JoltWorld *world, JoltBodyId body, const float torque[3])
+	{
+		world->system.GetBodyInterface().AddTorque(JPH::BodyID(body),
+												   JPH::Vec3(torque[0], torque[1], torque[2]));
+	}
+
 	void jolt_body_add_force_at(JoltWorld *world, JoltBodyId body, float force[3], float position[3])
 	{
 		JPH::BodyInterface &bi = world->system.GetBodyInterface();

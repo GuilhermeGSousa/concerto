@@ -4,6 +4,7 @@ mod create;
 mod hit;
 mod parts;
 mod preview;
+mod report;
 mod tab;
 mod tools;
 
@@ -19,6 +20,7 @@ pub use preview::{
     DropRagdoll, PlayRagdoll, PokeRagdoll, ResetRagdoll, SetRagdoll, ShowRagdollStage,
     ragdoll_preview,
 };
+pub use report::BodyReport;
 pub use tab::{RagdollEditor, RagdollPreview};
 pub use tools::{PreviewRagdoll, RagdollParts, SetRagdollPart, TestRagdoll};
 
@@ -39,6 +41,7 @@ impl Plugin for RagdollEditorPlugin {
             .add_system(LateUpdate, create::answer_creations)
             .add_tool::<HitCharacter, _>(hit::hit_tool(), hit::hit_character)
             .add_system(LateUpdate, hit::answer_hits)
+            .add_tool::<BodyReport, _>(report::report_tool(), report::body_report)
             .add_tool::<tools::RagdollParts, _>(tools::parts_tool(), tools::ragdoll_parts)
             .add_tool::<tools::SetRagdollPart, _>(tools::set_part_tool(), tools::set_ragdoll_part)
             .add_tool::<tools::TestRagdoll, _>(tools::test_tool(), tools::test_ragdoll)

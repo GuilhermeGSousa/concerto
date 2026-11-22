@@ -1,6 +1,7 @@
 //! A character's physical body: the ragdoll asset and what is built from it.
 
 pub mod asset;
+pub mod behaviour;
 pub mod character;
 pub mod generate;
 pub mod hit;
@@ -15,6 +16,10 @@ pub mod testing;
 pub use asset::{
     BoneStrength, PartStrength, Ragdoll, RagdollJoint, RagdollMotor, RagdollPart, RagdollShape,
     Segment, Side, StrengthProfile,
+};
+pub use behaviour::{
+    BehaviourEnded, BehaviourSet, BodyDrive, BodyState, BodyStateChanged, Claim, Outcome,
+    PartCommand, PhysicalState, RunningBehaviour, describe_body,
 };
 pub use character::{
     CharacterRagdoll, PartWeight, PoseLost, RagdollBody, RagdollMode, RagdollRefused,

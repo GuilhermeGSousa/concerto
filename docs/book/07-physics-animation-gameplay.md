@@ -692,6 +692,58 @@ Each part of the ragdoll asset says what `segment` of the body it is and which
 pelvis, the spine parts, the chest, the head and each side's arm and leg parts
 from them. While a body has a `BodySense`, its parts report their contacts.
 
+#### Behaviours
+
+A body knocked off balance needs targets no clip contains: a foot placed where
+it stops the fall, arms thrown out, hands reaching for the ground. A behaviour
+computes them. Every behaviour writes the same thing, to the character's
+`BodyDrive`: for each part it claims, a `PartCommand` with a target rotation
+relative to the parent part, a `PartStrength`, and optionally a world-space
+force and torque.
+
+```rust
+fn raise_arms(characters: Query<(&RaiseArms, &RagdollBody, &mut BodyDrive)>) {
+    for (_, body, mut drive) in characters.iter() {
+        let Some(arm) = body.resolved().landmarks().left.upper_arm else { continue };
+        let command = PartCommand::held(PartStrength::powered(500.0, 120.0))
+            .with_target(Quat::from_rotation_z(1.0));
+        drive.claim("raise_arms", arm, 1, 1.0, command);
+    }
+}
+
+app.add_system(FixedUpdate, raise_arms.in_set(BehaviourSet));
+```
+
+A behaviour is a plugin: a component that holds its parameters and state, and
+a system in `BehaviourSet`, in `FixedUpdate`, that claims parts every step it
+runs. Adding the component starts it and removing it stops it, by a signal of
+the behaviour's own or directly. For each part the claim with the highest
+priority wins, blended by its weight over what is below it; a behaviour fades
+in or out through its weight. The animated pose with the character's mode and
+strength profile is below every claim. A part pinned between kinematic
+neighbours cannot move, so a behaviour that moves an arm claims the whole arm.
+When a behaviour ends by itself it triggers `BehaviourEnded` with
+`Outcome::Succeeded` or `Outcome::GaveUp`, so the next can start.
+
+`PhysicalState` on the character says what it is doing:
+
+- `Animated`: its parts follow the animation;
+- `Reacting`: on its feet and powered, flinching or driven by behaviours;
+- `Falling`: no longer supported. A behaviour that gives up its balance sets it;
+- `Down`: a falling or limp body lying at rest;
+- `Dead`: limp for good. A game or the dying behaviour sets it, and nothing the
+  engine does moves a character out of it.
+
+The engine moves it between `Animated` and `Reacting` and to `Down`. While
+anything claims a part the simulated body is drawn in full, and the drawn body
+returns to the animation when the state returns to `Animated`. Every change
+triggers `BodyStateChanged { character, from, to }` for every listener; react
+to that instead of polling.
+
+`describe_body` gives the state, the running behaviours with their priorities
+and parts, and the sensing values as text, which is what the editor's
+`body_report` tool replies with.
+
 Ragdoll parts are in `Layers::RAGDOLL` and collide with everything but
 `Layers::CHARACTER` (`CollisionLayers::ragdoll()`, or `RagdollSettings::layers`
 to change it). Give the character's capsule `CollisionLayers::character()`:

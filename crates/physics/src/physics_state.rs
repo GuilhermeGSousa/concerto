@@ -592,6 +592,11 @@ impl PhysicsState {
         self.backend.add_force(body.0, force);
     }
 
+    /// Adds a torque, in N·m about the world axes, for the next step.
+    pub fn add_torque(&mut self, body: BodyId, torque: Vec3) {
+        self.backend.add_torque(body.0, torque);
+    }
+
     pub fn add_force_at(&mut self, body: BodyId, force: Vec3, position: Vec3) {
         self.backend.add_force_at(body.0, force, position);
     }
