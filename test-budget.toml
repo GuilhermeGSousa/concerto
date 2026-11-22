@@ -18,7 +18,7 @@
 "crates/import" = 25
 "crates/mcp" = 10
 "crates/mesh" = 12
-"crates/motion-matching" = 72
+"crates/motion-matching" = 73
 "crates/motion-matching-editor" = 11
 "crates/motion-matching-gizmos" = 1
 "crates/name" = 3

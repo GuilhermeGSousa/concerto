@@ -1101,6 +1101,7 @@ dependencies = [
  "criterion",
  "glam 0.33.12",
  "serde",
+ "uuid",
 ]
 
 [[package]]

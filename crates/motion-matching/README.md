@@ -529,7 +529,14 @@ searches when the timer runs out, when a settled change in the trajectory asks
 for it, or when the playhead is in the last `ignore_range_end` frames of its
 range, and on a better frame jumps with inertialization. The search is brute
 force: a squared distance over the normalised features of every frame, with an
-early out. The playhead's frame seeds the best, and a candidate replaces it only
+early out. Those normalised features are a copy held in memory beside the baked
+ones, as large as they are, built when the database loads, when its blob is
+applied and by `with_baked`, and never written to disk. The copy is
+`(feature - offset) / divisor` for the channel weights of that moment, so a
+search does one subtraction per value and no division, and finds the frame and
+cost the division would. A database whose channel weights are changed in place
+afterwards is searched by dividing each value again, with the same results,
+until it is loaded again. The playhead's frame seeds the best, and a candidate replaces it only
 when its cost is strictly lower. Frames within `ignore_surrounding` of the
 playhead and the last `ignore_range_end` of each range are not candidates, as
 in orangeduck's Motion-Matching. At the last frame of a range nothing seeds the
