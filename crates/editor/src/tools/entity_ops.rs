@@ -134,13 +134,17 @@ fn apply(world: &mut World, edit: &EntityEdit) -> anyhow::Result<Applied> {
                 parents.push(editable(world, *root)?);
                 refuse_linked(world, *root, LinkedEdit::Duplicate)?;
             }
-            let mut copies = Vec::new();
-            for (root, parent) in roots.into_iter().zip(parents) {
+            let mut captured = Vec::new();
+            for root in roots {
                 let mut scene = capture_subtree(world, root)?;
                 for node in &mut scene.nodes {
                     node.id = NodeId::fresh();
                 }
-                copies.extend(spawn_beside(world, &scene, parent));
+                captured.push(scene);
+            }
+            let mut copies = Vec::new();
+            for (scene, parent) in captured.iter().zip(parents) {
+                copies.extend(spawn_beside(world, scene, parent));
             }
             Ok(Applied::Changed(copies))
         }
@@ -458,15 +462,25 @@ mod tests {
         assert!(!f.valid(pair[0]) && !f.valid(pair[1]));
         assert_eq!(f.selection(), [root]);
 
+        let gone = f.edit(EntityEdit::Create { parent: Some(node) }).unwrap()[0];
+        f.world().despawn(gone);
+        let edits = f.edits();
+        let siblings = f.children(node);
+        assert!(f.edit(EntityEdit::Delete(vec![node, gone])).is_err());
+        assert!(f.edit(EntityEdit::Duplicate(vec![node, gone])).is_err());
+        assert!(f.valid(node));
+        assert_eq!(f.edits(), edits);
+        assert_eq!(f.children(node), siblings);
+
         f.edit(EntityEdit::Delete(vec![node])).unwrap();
         assert!(!f.valid(node) && !f.valid(child) && !f.valid(created));
         assert_eq!(f.selected(), Some(root));
-        assert_eq!(f.edits(), 8);
+        assert_eq!(f.edits(), 9);
 
         assert!(f.edit(EntityEdit::Delete(vec![root])).is_err());
         assert!(f.edit(EntityEdit::Create { parent: None }).is_err());
         assert!(f.valid(root));
-        assert_eq!(f.edits(), 8);
+        assert_eq!(f.edits(), 9);
 
         f.world().remove_component::<SceneRoot>(root);
         let top = f.edit(EntityEdit::Create { parent: None }).unwrap()[0];
@@ -474,6 +488,6 @@ mod tests {
         f.edit(EntityEdit::Delete(vec![root])).unwrap();
         assert!(!f.valid(root) && !f.valid(copy));
         assert!(f.valid(top));
-        assert_eq!(f.edits(), 10);
+        assert_eq!(f.edits(), 11);
     }
 }

@@ -2367,7 +2367,13 @@ fn the_entity_tools_create_rename_duplicate_and_delete() {
     assert_eq!(pair.matches(" Torch").count(), 2, "{pair}");
     assert_eq!(pair.matches(" Entity").count(), 2, "{pair}");
     assert_eq!(kept, after_failures);
-    assert!(deleted_pair.starts_with("Deleted "), "{deleted_pair}");
+    assert_eq!(
+        deleted_pair,
+        format!(
+            "Deleted {}; the selection is {hero} Hero.",
+            pair.trim_end_matches('.').split(" as ").nth(1).unwrap()
+        )
+    );
     assert!(!tree.contains(&pair_ids(&pair)[0]), "{tree}");
     let new = second_word(&top);
     assert!(
