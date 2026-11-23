@@ -24,10 +24,10 @@ use serde_json::Value;
 
 pub use crate::property::{EditContext, EditError, PropertyRow};
 use crate::{
-    links::{LinkedEdit, refusal},
     property::{ComponentTarget, ErasedEditor, PropertyAddress, PropertyTarget},
     tools::{
         entity_ops::in_open_scene,
+        links::{LinkedEdit, refusal},
         scene::{SceneRoot, SceneStatus, report_edit, write},
     },
 };

@@ -17,12 +17,10 @@ use concerto_scene::{
     spawner::{SpawnFilter, spawn_scene_in_world},
 };
 
-use crate::{
+use crate::tools::{
     links::{LinkedEdit, record_removal, refusal},
-    tools::{
-        scene::{RevealEntity, SceneRoot, SceneStatus, report_edit, write},
-        selection::Select,
-    },
+    scene::{RevealEntity, SceneRoot, SceneStatus, report_edit, write},
+    selection::Select,
 };
 
 /// A structural change to an open scene, or to a game's world, which has no scene root. Trigger it; one listener applies it.
