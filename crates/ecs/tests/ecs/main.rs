@@ -1,3 +1,4 @@
+mod archetype_moves;
 mod component_change_history;
 mod component_lifecycle;
 mod component_reflection;

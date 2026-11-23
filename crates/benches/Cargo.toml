@@ -77,6 +77,11 @@ harness = false
 required-features = ["run"]
 
 [[bench]]
+name = "archetype_moves"
+harness = false
+required-features = ["run"]
+
+[[bench]]
 name = "animation_graph"
 harness = false
 required-features = ["run"]
