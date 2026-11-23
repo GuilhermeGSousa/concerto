@@ -110,6 +110,10 @@ async fn tune(client: Client) {
     )
     .await;
     assert!(added.starts_with("Added index_l"), "{added}");
+    assert!(
+        added.contains("swing_normal 0.79 swing_plane 0.79 twist -0.52..0.52 friction 0.30"),
+        "an added part bends like a loose ball joint: {added}"
+    );
     let removed = ok(
         &client,
         "set_ragdoll_part",

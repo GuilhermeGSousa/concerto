@@ -5,6 +5,9 @@ use glam::{Quat, Vec3};
 
 const DEFAULT_RADIUS: f32 = 0.05;
 const DEFAULT_MASS: f32 = 1.0;
+const DEFAULT_SWING: f32 = std::f32::consts::FRAC_PI_4;
+const DEFAULT_TWIST: f32 = std::f32::consts::FRAC_PI_6;
+const DEFAULT_FRICTION: f32 = 0.3;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ShapeKind {
@@ -184,7 +187,8 @@ fn started_part(skeleton: &Skeleton, bone: usize) -> RagdollPart {
                 radius: DEFAULT_RADIUS,
             },
         )
-        .with_mass(DEFAULT_MASS);
+        .with_mass(DEFAULT_MASS)
+        .with_joint(loose_joint(Vec3::Y));
     };
     let length = along.length().max(2.0 * DEFAULT_RADIUS);
     let direction = if along.length_squared() > 1e-8 {
@@ -202,10 +206,14 @@ fn started_part(skeleton: &Skeleton, bone: usize) -> RagdollPart {
     .with_offset(along / 2.0)
     .with_rotation(Quat::from_rotation_arc(Vec3::Y, direction))
     .with_mass(DEFAULT_MASS)
-    .with_joint(RagdollJoint::new(
-        direction,
-        direction.any_orthonormal_vector(),
-    ))
+    .with_joint(loose_joint(direction))
+}
+
+fn loose_joint(twist_axis: Vec3) -> RagdollJoint {
+    RagdollJoint::new(twist_axis, twist_axis.any_orthonormal_vector())
+        .with_swing(DEFAULT_SWING, DEFAULT_SWING)
+        .with_twist(-DEFAULT_TWIST, DEFAULT_TWIST)
+        .with_friction(DEFAULT_FRICTION)
 }
 
 fn reshaped(old: &RagdollShape, edit: &PartEdit) -> RagdollShape {

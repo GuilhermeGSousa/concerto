@@ -509,7 +509,9 @@ part tree, each part under the part of its nearest ancestor bone, labelled with
 its bone; the selected part's shape, offset, rotation, mass and joint (axes,
 swing, twist, friction, motor) are the **Part** form, written with the
 inspector's usual number fields, radians for angles. **Add part** lists the
-bones that have none, and **Remove part** drops the selected one. The preview
+bones that have none and gives the chosen one a capsule to its first child bone
+on a loose ball joint, 45° of swing and 30° of twist each way, and **Remove
+part** drops the selected one. The preview
 stands the skeleton's character, with its skinned mesh when the skeleton's
 folder has a `scene`, on a floor, with `concerto-physics-gizmos` drawing each
 part and each joint's limits over it, and the buttons **Drop**, **Poke**,

@@ -32,7 +32,7 @@ pub struct RagdollParts {
     pub asset: Option<String>,
 }
 
-/// Edits the part on one bone of the Ragdoll open in a tab, as its form does, and leaves the tab unsaved; save writes it. A bone with no part gets one that runs to its first child bone, with a rigid joint until limits are set. Sizes are in metres, angles in radians.
+/// Edits the part on one bone of the Ragdoll open in a tab, as its form does, and leaves the tab unsaved; save writes it. A bone with no part gets one that runs to its first child bone, with a loose ball joint: 45° of swing each way, 30° of twist each way, and a little friction. Sizes are in metres, angles in radians.
 #[derive(Deserialize, JsonSchema)]
 pub struct SetRagdollPart {
     /// The bone, by name as ragdoll_parts shows it.
