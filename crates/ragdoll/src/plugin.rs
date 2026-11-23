@@ -1,4 +1,4 @@
-use concerto_animation::target::animate_targets;
+use concerto_animation::AnimationSet;
 use concerto_app::{
     App,
     edit_time::AtPreviewTime,
@@ -146,7 +146,7 @@ impl Plugin for RagdollPlugin {
             .add_system(
                 LateUpdate,
                 write_ragdoll_poses
-                    .after(animate_targets)
+                    .after(AnimationSet)
                     .before(propagate_global_transforms)
                     .at_preview_time(),
             );

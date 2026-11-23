@@ -658,6 +658,12 @@ own entity is. Changing a weight over time is how animation and physics are
 blended. While a character whose parts have weight is itself moving, the drawn
 body trails it by one frame's motion.
 
+"After the animation" means after `AnimationSet`, the `LateUpdate` set that
+`animate_targets` runs in. A system that poses bones some other way, as an
+editor's clip preview does, joins `AnimationSet` and runs before
+`propagate_global_transforms`; otherwise its pose can land after the ragdoll's
+and hide it.
+
 While the character's root part, its pelvis, has any weight, the character is
 a body and not a walker, and its `capsule` follows the body instead of driving
 it:

@@ -1,3 +1,4 @@
+use concerto_animation::AnimationSet;
 use concerto_app::{
     App,
     main_schedule::MainSchedulePlugin,
@@ -6,7 +7,9 @@ use concerto_app::{
 };
 use concerto_ecs::entity::Entity;
 use concerto_ecs::resource::Resource;
+use concerto_ecs::{IntoSystemConfig, Query, Res};
 use concerto_foundation::assets::asset_server::AssetServer;
+use concerto_foundation::transform::systems::propagate_global_transforms;
 use concerto_foundation::transform::{GlobalTransform, Transform};
 use concerto_physics::body::BodyId;
 use concerto_physics::collider::Collider;
@@ -218,6 +221,37 @@ fn edit(app: &mut App, humanoid: &SpawnedHumanoid, change: impl FnOnce(&mut Char
     );
 }
 
+#[derive(Resource)]
+struct Playing {
+    skeleton: Entity,
+    bones: Vec<Entity>,
+    root: Vec3,
+}
+
+fn play_rest_pose(playing: Option<Res<Playing>>, mut transforms: Query<&mut Transform>) {
+    let Some(playing) = playing else {
+        return;
+    };
+    let rest = humanoid_skeleton();
+    for (bone, local) in playing.bones.iter().zip(rest.rest_pose.iter()) {
+        if let Some(mut transform) = transforms.get_entity_mut(*bone) {
+            transform.translation = local.translation;
+            transform.rotation = local.rotation;
+        }
+    }
+    if let Some(mut transform) = transforms.get_entity_mut(playing.skeleton) {
+        transform.translation = playing.root;
+    }
+}
+
+fn play_at(app: &mut App, root: Vec3) {
+    app.main_mut()
+        .world_mut()
+        .get_resource_mut::<Playing>()
+        .unwrap()
+        .root = root;
+}
+
 #[test]
 fn a_walking_character_gone_limp_keeps_its_speed_falls_to_rest_and_is_drawn_by_weight() {
     let mut app = App::new();
@@ -227,6 +261,12 @@ fn a_walking_character_gone_limp_keeps_its_speed_falls_to_rest_and_is_drawn_by_w
         .register_plugin(TransformPlugin)
         .register_plugin(PhysicsPlugin)
         .register_plugin(RagdollPlugin);
+    app.add_system(
+        LateUpdate,
+        play_rest_pose
+            .in_set(AnimationSet)
+            .before(propagate_global_transforms),
+    );
     app.finish_plugin_build();
     let server = app.get_resource::<AssetServer>().unwrap().clone();
     let reference = reference_humanoid();
@@ -242,11 +282,16 @@ fn a_walking_character_gone_limp_keeps_its_speed_falls_to_rest_and_is_drawn_by_w
     ));
     let humanoid = spawn_humanoid(world, skeleton, Transform::default());
     world.insert(CharacterRagdoll::new(asset), humanoid.skeleton);
+    app.insert_resource(Playing {
+        skeleton: humanoid.skeleton,
+        bones: humanoid.bones.clone(),
+        root: Vec3::ZERO,
+    });
 
     let mut root = Vec3::new(0.0, 0.02, 0.0);
     for _ in 0..20 {
         root.x += 0.05;
-        pose_at_rest(&mut app, &humanoid, root);
+        play_at(&mut app, root);
         frame(&mut app);
     }
     let world = app.main().world();
@@ -265,7 +310,7 @@ fn a_walking_character_gone_limp_keeps_its_speed_falls_to_rest_and_is_drawn_by_w
 
     edit(&mut app, &humanoid, CharacterRagdoll::go_limp);
     for _ in 0..10 {
-        pose_at_rest(&mut app, &humanoid, root);
+        play_at(&mut app, root);
         frame(&mut app);
     }
     let state = app.get_resource::<PhysicsState>().unwrap();
@@ -277,7 +322,7 @@ fn a_walking_character_gone_limp_keeps_its_speed_falls_to_rest_and_is_drawn_by_w
     );
 
     for _ in 0..360 {
-        pose_at_rest(&mut app, &humanoid, root);
+        play_at(&mut app, root);
         frame(&mut app);
     }
     let state = app.get_resource::<PhysicsState>().unwrap();
@@ -323,7 +368,7 @@ fn a_walking_character_gone_limp_keeps_its_speed_falls_to_rest_and_is_drawn_by_w
     let fallen = pose[pelvis].translation;
     let animated = root + Vec3::new(0.0, 1.0, 0.0);
     edit(&mut app, &humanoid, |character| character.weight = 0.0);
-    pose_at_rest(&mut app, &humanoid, root);
+    play_at(&mut app, root);
     frame(&mut app);
     let shown = position(&app, humanoid.bone("pelvis"));
     assert!(
@@ -337,7 +382,7 @@ fn a_walking_character_gone_limp_keeps_its_speed_falls_to_rest_and_is_drawn_by_w
             .with_part_weight("Head", 1.0)
             .part_weights;
     });
-    pose_at_rest(&mut app, &humanoid, root);
+    play_at(&mut app, root);
     frame(&mut app);
     let shown = position(&app, humanoid.bone("pelvis"));
     assert!(
