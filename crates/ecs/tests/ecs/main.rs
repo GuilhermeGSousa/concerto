@@ -10,6 +10,7 @@ mod hierarchy;
 mod lifecycle_signals;
 mod missing_resources;
 mod ordering;
+mod query_results;
 mod reflect_component;
 mod required_external;
 mod required_lifecycle;

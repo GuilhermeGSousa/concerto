@@ -18,7 +18,7 @@ use crate::signal::listener::{GlobalListener, IntoListener, Listener, Listeners}
 use crate::signal::{EntitySignal, Signal};
 use crate::system::access::SystemAccess;
 use crate::system::schedule::{CompiledSchedules, ScheduleLabel};
-use crate::table::{CellAccessor, MutableCellAccessor, Table};
+use crate::table::{Column, MutableCellAccessor, Table};
 use crate::world_id::WorldId;
 use crate::{
     archetype::{Archetype, ArchetypeEdges},
@@ -468,17 +468,6 @@ impl World {
         self.archetypes
             .get(entity_location.archetype_index as usize)
             .and_then(|archetype| unsafe { archetype.get_component_unsafe(entity_location.row) })
-    }
-
-    pub(crate) fn get_component_for_entity_location_ticked<T: Component>(
-        &self,
-        entity_location: EntityLocation,
-    ) -> Option<CellAccessor<'_, T>> {
-        self.archetypes
-            .get(entity_location.archetype_index as usize)
-            .and_then(|archetype| unsafe {
-                archetype.get_component_unsafe_ticked(entity_location.row)
-            })
     }
 
     pub(crate) fn get_component_for_entity_location_mut<T: Component>(
@@ -1158,6 +1147,30 @@ impl<'w> UnsafeWorldCell<'w> {
         }
         // SAFETY: the operation that runs this hook holds the world exclusively.
         unsafe { signal(*self, entity) };
+    }
+
+    /// # Safety
+    /// The caller must hold read access to the component `id` for as long as `'w`.
+    pub(crate) unsafe fn column(&self, archetype: usize, id: ComponentId) -> Option<&'w Column> {
+        // SAFETY: the caller reads only this column, and archetypes change only under exclusive access.
+        unsafe { self.world() }
+            .archetypes()
+            .get(archetype)?
+            .column(id)
+    }
+
+    /// # Safety
+    /// The caller must hold write access to the component `id` for as long as `'w`, and no other borrow of its column may be alive.
+    pub(crate) unsafe fn column_mut(
+        &self,
+        archetype: usize,
+        id: ComponentId,
+    ) -> Option<&'w mut Column> {
+        // SAFETY: the caller touches only this column, which its write access leaves to it alone.
+        unsafe { self.world_mut() }
+            .get_archetypes_mut()
+            .get_mut(archetype)?
+            .column_mut(id)
     }
 
     pub(crate) fn archetypes(&self) -> &'w [Archetype] {
