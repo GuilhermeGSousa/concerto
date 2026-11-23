@@ -22,7 +22,7 @@ use crate::table::{CellAccessor, MutableCellAccessor, Table};
 use crate::world_id::WorldId;
 use crate::{
     archetype::{Archetype, ArchetypeEdges},
-    common::archetype_key,
+    common::ArchetypeType,
     component::{
         Component, ComponentId, ComponentLifecycleContext, RequiredComponent, RequiredComponents,
         components::Components,
@@ -62,8 +62,9 @@ pub struct World {
     archetypes: Vec<Archetype>,
     resources: TypeIdMap<ResourceData>,
     entity_store: EntityStore,
-    archetype_index: HashMap<Box<[ComponentId]>, usize, FixedHasher>,
+    archetype_index: HashMap<ArchetypeType, usize, FixedHasher>,
     spawn_edges: ArchetypeEdges,
+    move_key: Vec<ComponentId>,
     components: Components,
     listeners: Listeners,
     change_tick: AtomicU32,
@@ -82,6 +83,7 @@ impl Default for World {
             entity_store: EntityStore::default(),
             archetype_index: HashMap::default(),
             spawn_edges: ArchetypeEdges::default(),
+            move_key: Vec::new(),
             components: Components::default(),
             listeners: Listeners::default(),
             change_tick: AtomicU32::new(1),
@@ -130,14 +132,18 @@ impl World {
         let required = self.components.missing_required(&[], &type_ids);
         type_ids.extend(required.iter().map(RequiredComponent::id));
 
-        let archetype_index = match self.spawn_edges.after_adding(&type_ids) {
+        let mut move_key = std::mem::take(&mut self.move_key);
+        ArchetypeType::sort_into(&type_ids, &mut move_key);
+        let archetype_index = match self.spawn_edges.after_adding(&move_key) {
             Some(archetype_index) => archetype_index,
             None => {
                 let archetype_index = self.archetype_for_spawn::<T>(&type_ids, &required);
-                self.spawn_edges.remember_adding(&type_ids, archetype_index);
+                self.spawn_edges
+                    .remember_adding(ArchetypeType::of(&move_key), archetype_index);
                 archetype_index
             }
         };
+        self.move_key = move_key;
 
         let change_tick = *self.change_tick();
         let archetype: &mut Archetype = &mut self.archetypes[archetype_index];
@@ -210,7 +216,7 @@ impl World {
         component_ids: Vec<ComponentId>,
         build_table: impl FnOnce(&[Archetype]) -> Table,
     ) -> usize {
-        let key = archetype_key(&component_ids);
+        let key = ArchetypeType::of(&component_ids);
         if let Some(existing) = self.archetype_index.get(&key) {
             return *existing;
         }
@@ -315,9 +321,11 @@ impl World {
             .missing_required(self.archetypes[source_index].component_ids(), &added_ids);
         added_ids.extend(required.iter().map(RequiredComponent::id));
 
+        let mut move_key = std::mem::take(&mut self.move_key);
+        ArchetypeType::sort_into(&added_ids, &mut move_key);
         let destination_index = match self.archetypes[source_index]
             .edges()
-            .after_adding(&added_ids)
+            .after_adding(&move_key)
         {
             Some(destination_index) => destination_index,
             None => {
@@ -325,10 +333,11 @@ impl World {
                     self.archetype_after_insert::<T>(source_index, &added_ids, &required);
                 self.archetypes[source_index]
                     .edges_mut()
-                    .remember_adding(&added_ids, destination_index);
+                    .remember_adding(ArchetypeType::of(&move_key), destination_index);
                 destination_index
             }
         };
+        self.move_key = move_key;
 
         if destination_index == source_index {
             let change_tick = *self.change_tick();
@@ -388,14 +397,14 @@ impl World {
 
         let destination_index = match self.archetypes[source_index]
             .edges()
-            .after_removing(removed_id)
+            .after_removing(&[removed_id])
         {
             Some(destination_index) => destination_index,
             None => {
                 let destination_index = self.archetype_after_remove(source_index, removed_index);
                 self.archetypes[source_index]
                     .edges_mut()
-                    .remember_removing(removed_id, destination_index);
+                    .remember_removing(ArchetypeType::of(&[removed_id]), destination_index);
                 destination_index
             }
         };

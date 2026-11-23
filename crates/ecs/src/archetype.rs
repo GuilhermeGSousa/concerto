@@ -3,34 +3,34 @@ use std::collections::HashMap;
 use derive_more::{Deref, From};
 
 use crate::{
+    common::ArchetypeType,
     component::{CheckChangeTicks, Component, ComponentId, SystemTicks, Tick},
     entity::Entity,
     table::{CellAccessor, MutableCellAccessor, Table, TableRowIndex},
-    utilities::TypeIdMap,
     utils::fixed_hasher::FixedHasher,
 };
 
 #[derive(Default)]
 pub(crate) struct ArchetypeEdges {
-    added: HashMap<Box<[ComponentId]>, usize, FixedHasher>,
-    removed: TypeIdMap<usize>,
+    added: HashMap<ArchetypeType, usize, FixedHasher>,
+    removed: HashMap<ArchetypeType, usize, FixedHasher>,
 }
 
 impl ArchetypeEdges {
-    pub(crate) fn after_adding(&self, added_ids: &[ComponentId]) -> Option<usize> {
-        self.added.get(added_ids).copied()
+    pub(crate) fn after_adding(&self, added: &[ComponentId]) -> Option<usize> {
+        self.added.get(added).copied()
     }
 
-    pub(crate) fn remember_adding(&mut self, added_ids: &[ComponentId], destination: usize) {
-        self.added.insert(added_ids.into(), destination);
+    pub(crate) fn remember_adding(&mut self, added: ArchetypeType, destination: usize) {
+        self.added.insert(added, destination);
     }
 
-    pub(crate) fn after_removing(&self, removed_id: ComponentId) -> Option<usize> {
-        self.removed.get(&removed_id).copied()
+    pub(crate) fn after_removing(&self, removed: &[ComponentId]) -> Option<usize> {
+        self.removed.get(removed).copied()
     }
 
-    pub(crate) fn remember_removing(&mut self, removed_id: ComponentId, destination: usize) {
-        self.removed.insert(removed_id, destination);
+    pub(crate) fn remember_removing(&mut self, removed: ArchetypeType, destination: usize) {
+        self.removed.insert(removed, destination);
     }
 }
 
