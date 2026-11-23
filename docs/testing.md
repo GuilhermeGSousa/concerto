@@ -44,7 +44,11 @@ measures one `propagate_global_transforms` run over 100 hierarchies of 100
 entities when nothing changed, when one leaf moved and when every entity
 moved. The `archetype_moves` benchmark measures inserting and then removing a
 marker component on 10,000 entities, and spawning 10,000 entities of one
-shape into a new world. The `animation_graph` benchmark measures one frame of 16 players of a
+shape into a new world. The `query_iteration` benchmark measures one system run
+over 100,000 entities: reading one component and writing another, in one
+archetype and across 100, a `With` filter that half the archetypes pass, a
+`Changed` filter when nothing changed, and 10,000 `get_entity` lookups of
+random entities. The `animation_graph` benchmark measures one frame of 16 players of a
 graph with a 9-input 2D blend space over a 60-bone skeleton.
 
 Benchmarks do not run in CI, and without the `run` feature the crate builds

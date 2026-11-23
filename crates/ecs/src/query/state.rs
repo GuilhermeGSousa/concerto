@@ -57,6 +57,10 @@ impl<T: QueryData, F: QueryFilter> QueryState<T, F> {
         self.matched_archetypes.ones()
     }
 
+    pub(crate) fn matches_archetype(&self, archetype: usize) -> bool {
+        self.matched_archetypes.contains(archetype)
+    }
+
     pub fn iter<'world, 'state>(
         &'state mut self,
         world: &'world mut World,

@@ -91,6 +91,17 @@ reads whether the last frame prepared or deferred any render asset under the
   commands are applied with exclusive access to the world. The sync point sits
   at the system's registration position, not after it in the run order; see
   [gotchas.md](gotchas.md).
+- A query resolves its columns once per archetype. `QueryState` keeps a bitset
+  of the archetypes its data and filter match, extended as archetypes are
+  created. Iteration walks those archetypes in creation order and each one's
+  rows in order. On entering an archetype, each data term and each `Changed`
+  or `Added` filter resolves its column from the table
+  (`QueryData::set_archetype`, `QueryFilter::set_archetype`), and an entity
+  then costs an index by row: no location lookup, no column lookup, no
+  downcast. A filter built only from `With`, `Without` and `Or` of them is
+  decided by the bitset and is not evaluated per entity. `get_entity` looks the
+  entity's location up once, rejects an archetype outside the bitset, and
+  resolves that archetype for the one row.
 - A `Signal` is dispatched to listeners. `World::add_listener` registers a
   global one; an entity carries at most one `Listener<S>` per signal type.
   `cmd.trigger(signal)` queues the dispatch for the next sync point.

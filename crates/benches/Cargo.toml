@@ -82,6 +82,11 @@ harness = false
 required-features = ["run"]
 
 [[bench]]
+name = "query_iteration"
+harness = false
+required-features = ["run"]
+
+[[bench]]
 name = "animation_graph"
 harness = false
 required-features = ["run"]
