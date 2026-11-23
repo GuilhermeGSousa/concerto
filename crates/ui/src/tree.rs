@@ -48,6 +48,8 @@ pub struct UITree {
     pub selectable: bool,
     /// While true every item shows as if expanded, caret clicks are ignored and `expanded` is left untouched.
     pub filtering: bool,
+    /// Whether a click with Ctrl or Shift selects several items; the widget then sends `UIItemSelected` with a mode and leaves `UISelected` to its user.
+    pub multi_select: bool,
 }
 
 impl Default for UITree {
@@ -56,6 +58,7 @@ impl Default for UITree {
             row_height: None,
             selectable: true,
             filtering: false,
+            multi_select: false,
         }
     }
 }
@@ -666,13 +669,18 @@ mod tests {
     use concerto_ecs::{
         World,
         entity::{Entity, hierarchy::ChildOf},
+        resource::{ResMut, Resource},
+        signal::{On, listener::IntoListener},
     };
-    use concerto_window::input::MouseButton;
+    use concerto_window::input::{Input, KeyCode, MouseButton, PhysicalKey};
     use glam::Vec2;
 
     use super::*;
     use crate::{
-        items::{UIItem, UIListNext, UIReveal, UITreeCollapse, UITreeExpand},
+        items::{
+            UIItem, UIItemSelected, UIListNext, UIReveal, UISelectAnchor, UISelectMode, UISelected,
+            UITreeCollapse, UITreeExpand,
+        },
         list::tests::Harness,
         node::{FlexDirection, UINode},
         transform::UIValue,
@@ -815,6 +823,110 @@ mod tests {
                 row(d, 1, false, false, true, &[]),
             ]
         );
+    }
+
+    #[derive(Resource, Default)]
+    struct Modes(Vec<UISelectMode>);
+
+    fn listen_for_modes(harness: &mut Harness, rows: &[Entity]) {
+        harness.world.insert_resource(Modes::default());
+        for row in rows {
+            harness.world.insert(
+                (move |on: On<UIItemSelected>, mut modes: ResMut<Modes>| {
+                    modes.0.push(on.signal().mode.clone())
+                })
+                .into_listener(),
+                *row,
+            );
+        }
+    }
+
+    fn hold(harness: &mut Harness, key: Option<KeyCode>) {
+        let input = harness.world.get_resource_mut::<Input>().unwrap();
+        input.update();
+        for held in [KeyCode::ControlLeft, KeyCode::ShiftLeft] {
+            input.update_key_input(PhysicalKey::Code(held), key == Some(held));
+        }
+    }
+
+    fn click_with(harness: &mut Harness, key: Option<KeyCode>, row: Entity) -> Vec<UISelectMode> {
+        hold(harness, key);
+        harness.click(row, MouseButton::Left, Vec2::ZERO);
+        std::mem::take(&mut harness.world.get_resource_mut::<Modes>().unwrap().0)
+    }
+
+    fn anchor(harness: &Harness, tree: Entity) -> Option<Entity> {
+        harness
+            .world
+            .get_component_for_entity::<UISelectAnchor>(tree)
+            .map(|anchor| anchor.0)
+    }
+
+    #[test]
+    fn a_click_on_a_multi_select_tree_reports_its_mode_and_a_single_select_tree_ignores_modifiers()
+    {
+        let mut harness = Harness::new();
+        let tree = tree_of(&mut harness, 200.0);
+        harness
+            .world
+            .get_component_for_entity_mut::<UITree>(tree)
+            .unwrap()
+            .multi_select = true;
+        let rows: Vec<Entity> = (0..5).map(|_| item(&mut harness, tree, false)).collect();
+        listen_for_modes(&mut harness, &rows);
+        harness.settle();
+        let (ctrl, shift) = (Some(KeyCode::ControlLeft), Some(KeyCode::ShiftLeft));
+
+        assert_eq!(
+            click_with(&mut harness, None, rows[1]),
+            [UISelectMode::Replace]
+        );
+        assert_eq!(anchor(&harness, tree), Some(rows[1]));
+        assert!(harness.selected(&rows).is_empty());
+
+        assert_eq!(
+            click_with(&mut harness, ctrl, rows[3]),
+            [UISelectMode::Toggle]
+        );
+        assert_eq!(anchor(&harness, tree), Some(rows[3]));
+
+        assert_eq!(
+            click_with(&mut harness, shift, rows[4]),
+            [UISelectMode::Range(vec![rows[3], rows[4]])]
+        );
+        assert_eq!(
+            click_with(&mut harness, shift, rows[0]),
+            [UISelectMode::Range(vec![
+                rows[3], rows[2], rows[1], rows[0]
+            ])]
+        );
+        assert_eq!(anchor(&harness, tree), Some(rows[3]));
+
+        harness.world.remove_component::<UISelectAnchor>(tree);
+        assert_eq!(
+            click_with(&mut harness, shift, rows[2]),
+            [UISelectMode::Replace]
+        );
+        assert!(harness.selected(&rows).is_empty());
+
+        harness.world.insert(UISelected, rows[0]);
+        harness.world.insert(UISelected, rows[1]);
+        assert_eq!(harness.selected(&rows), [0, 1]);
+
+        let single = tree_of(&mut harness, 200.0);
+        let singles: Vec<Entity> = (0..3).map(|_| item(&mut harness, single, false)).collect();
+        listen_for_modes(&mut harness, &singles);
+        harness.settle();
+        assert_eq!(
+            click_with(&mut harness, ctrl, singles[0]),
+            [UISelectMode::Replace]
+        );
+        assert_eq!(
+            click_with(&mut harness, ctrl, singles[2]),
+            [UISelectMode::Replace]
+        );
+        assert_eq!(harness.selected(&singles), [2]);
+        assert_eq!(anchor(&harness, single), None);
     }
 
     #[test]

@@ -20,7 +20,10 @@ use concerto_ecs::{
 };
 use concerto_window::{
     define_action,
-    input::{MouseButton, actions::ActionFired},
+    input::{
+        Input, MouseButton,
+        actions::{ActionFired, Modifiers},
+    },
 };
 use glam::Vec2;
 
@@ -69,7 +72,7 @@ define_action!(
     UITreeCollapse
 );
 
-/// Marks the one selected item of a list or tree; inserting it on an item takes it from the others.
+/// Marks a selected item of a list or tree; in a single-select one, inserting it on an item takes it from the others.
 #[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct UISelected;
 
@@ -77,8 +80,26 @@ pub struct UISelected;
 #[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct UIHidden;
 
+/// How a click changed the selection of a multi-select tree.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum UISelectMode {
+    /// Only the clicked item is selected.
+    Replace,
+    /// The clicked item joins the selection or leaves it.
+    Toggle,
+    /// The shown items from the anchor to the clicked one, anchor first and clicked last, both included.
+    Range(Vec<Entity>),
+}
+
+/// The item a Shift-click on a multi-select tree ranges from; on the tree entity.
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct UISelectAnchor(pub Entity);
+
 /// Sent to an item when the user selects it, by a left click or a navigation action.
-pub struct UIItemSelected;
+pub struct UIItemSelected {
+    /// How the selection of a multi-select tree changes; always `Replace` for a list or a single-select tree.
+    pub mode: UISelectMode,
+}
 
 /// Sent to an item when the user activates it, by a double click or [`UIListActivate`].
 pub struct UIItemActivated;
@@ -113,20 +134,22 @@ fn keep_selection_unique(
     on: On<Add<UISelected>>,
     items: Query<&UIItem>,
     selected: Query<(Entity, &UIItem), With<UISelected>>,
+    trees: Query<&UITree>,
     mut cmd: CommandQueue,
 ) {
-    take_selection(on.signal().entity, &items, &selected, &mut cmd);
+    take_selection(on.signal().entity, &items, &selected, &trees, &mut cmd);
 }
 
 fn keep_new_item_selection_unique(
     on: On<Add<UIItem>>,
     items: Query<&UIItem>,
     selected: Query<(Entity, &UIItem), With<UISelected>>,
+    trees: Query<&UITree>,
     mut cmd: CommandQueue,
 ) {
     let entity = on.signal().entity;
     if selected.contains_entity(entity) {
-        take_selection(entity, &items, &selected, &mut cmd);
+        take_selection(entity, &items, &selected, &trees, &mut cmd);
     }
 }
 
@@ -134,11 +157,18 @@ fn take_selection(
     entity: Entity,
     items: &Query<&UIItem>,
     selected: &Query<(Entity, &UIItem), With<UISelected>>,
+    trees: &Query<&UITree>,
     cmd: &mut CommandQueue,
 ) {
     let Some(item) = items.get_entity(entity) else {
         return;
     };
+    if trees
+        .get_entity(item.owner)
+        .is_some_and(|tree| tree.multi_select)
+    {
+        return;
+    }
     for (other, other_item) in selected.iter() {
         if other != entity && other_item.owner == item.owner {
             cmd.remove::<UISelected>(other);
@@ -154,12 +184,15 @@ fn release_despawned_focus(on: On<Despawn<UIItem>>, mut focused: ResMut<FocusedW
 
 fn click_item(
     on: On<UIClick>,
-    items: Query<&UIItem>,
+    items: Query<(Entity, &UIItem)>,
     selected: Query<&UISelected>,
+    trees: Query<&UITree>,
+    anchors: Query<&UISelectAnchor>,
+    input: Option<Res<Input>>,
     mut cmd: CommandQueue,
 ) {
     let entity = on.entity();
-    let Some(item) = items.get_entity(entity) else {
+    let Some((_, &item)) = items.get_entity(entity) else {
         return;
     };
     let click = on.signal();
@@ -167,9 +200,53 @@ fn click_item(
         MouseButton::Right => cmd.entity(entity).trigger(UIItemContextMenu {
             position: click.position,
         }),
-        MouseButton::Left if item.selectable => select(entity, &selected, &mut cmd),
+        MouseButton::Left if item.selectable => {
+            let multi = trees
+                .get_entity(item.owner)
+                .is_some_and(|tree| tree.multi_select);
+            let modifiers = input.map_or(Modifiers::NONE, |input| Modifiers::from_input(&input));
+            let mode = if !multi {
+                UISelectMode::Replace
+            } else if modifiers.ctrl || modifiers.logo {
+                UISelectMode::Toggle
+            } else if modifiers.shift {
+                anchors
+                    .get_entity(item.owner)
+                    .and_then(|anchor| range_from(anchor.0, item, &items))
+                    .map_or(UISelectMode::Replace, UISelectMode::Range)
+            } else {
+                UISelectMode::Replace
+            };
+            select(entity, item, mode, multi, &selected, &mut cmd);
+        }
         _ => {}
     }
+}
+
+fn range_from(
+    anchor: Entity,
+    item: UIItem,
+    items: &Query<(Entity, &UIItem)>,
+) -> Option<Vec<Entity>> {
+    let (_, from) = items
+        .get_entity(anchor)
+        .filter(|(_, from)| from.owner == item.owner && from.shown)?;
+    let mut shown: Vec<(Entity, usize)> = items
+        .iter()
+        .filter(|(_, other)| other.owner == item.owner && other.shown)
+        .map(|(entity, other)| (entity, other.index))
+        .collect();
+    shown.sort_by_key(|row| row.1);
+    let (low, high) = (from.index.min(item.index), from.index.max(item.index));
+    let mut range: Vec<Entity> = shown
+        .into_iter()
+        .filter(|row| (low..=high).contains(&row.1))
+        .map(|row| row.0)
+        .collect();
+    if from.index > item.index {
+        range.reverse();
+    }
+    Some(range)
 }
 
 fn double_click_item(on: On<UIDoubleClick>, items: Query<&UIItem>, mut cmd: CommandQueue) {
@@ -233,11 +310,22 @@ fn reveal_item(
     }
 }
 
-fn select(entity: Entity, selected: &Query<&UISelected>, cmd: &mut CommandQueue) {
-    if !selected.contains_entity(entity) {
-        cmd.insert(UISelected, entity);
+fn select(
+    entity: Entity,
+    item: UIItem,
+    mode: UISelectMode,
+    multi: bool,
+    selected: &Query<&UISelected>,
+    cmd: &mut CommandQueue,
+) {
+    if !multi {
+        if !selected.contains_entity(entity) {
+            cmd.insert(UISelected, entity);
+        }
+    } else if !matches!(mode, UISelectMode::Range(_)) {
+        cmd.insert(UISelectAnchor(entity), item.owner);
     }
-    cmd.entity(entity).trigger(UIItemSelected);
+    cmd.entity(entity).trigger(UIItemSelected { mode });
 }
 
 pub(crate) fn keep_focus_on_shown_items(
@@ -346,7 +434,21 @@ pub(crate) fn navigate_items(
         **focused = Some(target);
         lost.write(UIFocusLost(current));
         gained.write(UIFocusGained(target));
-        select(target, &selected, &mut cmd);
+        let target_item = items
+            .get_entity(target)
+            .map(|(_, item)| *item)
+            .unwrap_or(item);
+        let multi = trees
+            .get_entity(item.owner)
+            .is_some_and(|tree| tree.multi_select);
+        select(
+            target,
+            target_item,
+            UISelectMode::Replace,
+            multi,
+            &selected,
+            &mut cmd,
+        );
         cmd.entity(target).trigger(UIReveal);
     }
 }

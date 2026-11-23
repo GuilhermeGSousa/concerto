@@ -932,7 +932,7 @@ mod tests {
         system::BoxedSystem,
     };
     use concerto_foundation::transform::Transform;
-    use concerto_ui::tree::update_trees_system;
+    use concerto_ui::{items::UISelectMode, tree::update_trees_system};
     use glam::Vec2;
 
     struct Fixture {
@@ -1180,7 +1180,12 @@ mod tests {
         f.expand(f.root);
         let item = f.item_of(f.node);
 
-        f.scene.world.trigger_on(item, UIItemSelected);
+        f.scene.world.trigger_on(
+            item,
+            UIItemSelected {
+                mode: UISelectMode::Replace,
+            },
+        );
         assert_eq!(f.selected(), Some(f.node));
 
         f.select(f.root);
