@@ -254,7 +254,11 @@ fn main() {
         },
         |_| {},
     );
-    trigger_on(editor.main_mut().world_mut(), document, Select(shadows));
+    trigger_on(
+        editor.main_mut().world_mut(),
+        document,
+        Select::Replace(shadows.into_iter().collect()),
+    );
     editor.update();
 
     let world = editor.main_mut().world_mut();

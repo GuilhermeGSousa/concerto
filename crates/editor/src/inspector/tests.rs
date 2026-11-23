@@ -38,7 +38,8 @@ impl Inspecting {
         self.scene().register_type::<T>();
     }
     fn select(&mut self, entity: Option<Entity>) {
-        self.scene().trigger(Select(entity));
+        self.scene()
+            .trigger(Select::Replace(entity.into_iter().collect()));
     }
     fn tick(&mut self) {
         self.f.world.tick();

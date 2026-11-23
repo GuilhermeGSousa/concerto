@@ -354,7 +354,7 @@ fn entity_answer(
             "internal",
             "The edit was applied but made no entity.",
         )),
-        (EntityEdit::Delete(_), _) => Ok(match selection.and_then(Selection::entity) {
+        (EntityEdit::Delete(_), _) => Ok(match selection.and_then(Selection::active) {
             Some(selected) => format!(
                 "Deleted {place}; the selection is {}.",
                 label(selected, names)

@@ -253,7 +253,7 @@ fn update_gizmo(
         state.captured = false;
     }
     let mode = state.mode;
-    let target = selection.entity().filter(|entity| {
+    let target = selection.active().filter(|entity| {
         roots.get_entity(*entity).is_none()
             && transforms.contains_entity(*entity)
             && linked_in_open_scene_by(*entity, &linked, &members).is_none()
@@ -420,6 +420,7 @@ mod tests {
         world.register_component::<Children>();
         world.insert_resource(GizmoState::default());
         world.insert_resource(Selection::default());
+        world.add_listener(crate::tools::selection::select);
         world.insert_resource(FlyCamera::default());
         world.insert_resource(GizmoStorage::default());
         world.insert_resource(EventChannel::<SceneEdited>::default());
@@ -473,9 +474,7 @@ mod tests {
         }
         fn select(&mut self, entity: Entity) {
             self.world
-                .get_resource_mut::<Selection>()
-                .unwrap()
-                .set(Some(entity));
+                .trigger(crate::tools::selection::Select::only(entity));
         }
         fn screen(&self, point: Vec3) -> Vec2 {
             let view_proj = self.camera.build_projection_matrix() * self.camera_matrix.inverse();

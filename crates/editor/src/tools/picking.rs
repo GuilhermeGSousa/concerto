@@ -181,10 +181,10 @@ pub(crate) fn pick_on_click(
         nodes.iter().filter(|(entity, ..)| scene.contains(entity)),
     ) {
         Some(entity) => {
-            cmd.trigger(Select(Some(entity)));
+            cmd.trigger(Select::only(entity));
             reveal.write(RevealEntity(entity));
         }
-        None => cmd.trigger(Select(None)),
+        None => cmd.trigger(Select::none()),
     }
 }
 
@@ -261,7 +261,7 @@ mod tests {
             entity
         }
         fn selected(&self) -> Option<Entity> {
-            self.world.get_resource::<Selection>().unwrap().entity()
+            self.world.get_resource::<Selection>().unwrap().active()
         }
         fn revealed(&self) -> Vec<Entity> {
             self.world

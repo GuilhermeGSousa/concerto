@@ -267,7 +267,7 @@ pub(crate) fn collect_inspector_data(
     mut current: ResMut<InspectorData>,
 ) {
     let mut data = InspectorData::default();
-    if let Some(entity) = selection.entity()
+    if let Some(entity) = selection.active()
         && let Some(root) = selected.get_entity(entity)
     {
         data.scene_entity = root.is_none().then_some(entity);

@@ -346,7 +346,7 @@ impl Editing {
 
     fn select_in_scene(&mut self, entity: Entity) {
         let scene = self.scene;
-        trigger_on(self.world(), scene, Select(Some(entity)));
+        trigger_on(self.world(), scene, Select::only(entity));
         self.editor.update();
     }
 

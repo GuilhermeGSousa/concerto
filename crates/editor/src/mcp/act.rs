@@ -851,12 +851,12 @@ fn select(
     for (arguments, reply) in calls.read() {
         match arguments.entity.as_deref().map(|id| resolve(id, &entities)) {
             Some(Ok(entity)) => {
-                scene.trigger(selection::Select(Some(entity)));
+                scene.trigger(selection::Select::only(entity));
                 reply.ok(format!("Selected {}.", label(entity, &names)));
             }
             Some(Err(error)) => reply.err(error),
             None => {
-                scene.trigger(selection::Select(None));
+                scene.trigger(selection::Select::none());
                 reply.ok("Selection cleared.");
             }
         }
@@ -889,7 +889,7 @@ fn frame(
         }
         let framed = match arguments.entity.as_deref().map(|id| resolve(id, &entities)) {
             Some(Ok(entity)) => {
-                scene.trigger(selection::Select(Some(entity)));
+                scene.trigger(selection::Select::only(entity));
                 scene.trigger(FrameSelection);
                 label(entity, &names)
             }

@@ -70,14 +70,14 @@ pub(crate) fn apply_entity_edit(on: On<EntityEdit>, world: &mut World) {
     let result = match apply(world, on.signal()) {
         Ok(Applied::Changed(selected)) => {
             if let Some(selected) = selected {
-                world.trigger(Select(Some(selected)));
+                world.trigger(Select::only(selected));
                 write(world, RevealEntity(selected));
             }
             report_edit(world);
             Ok(selected)
         }
         Ok(Applied::Removed(parent)) => {
-            world.trigger(Select(parent));
+            world.trigger(Select::Replace(parent.into_iter().collect()));
             if let Some(parent) = parent {
                 write(world, RevealEntity(parent));
             }
@@ -314,7 +314,7 @@ mod tests {
             written::<SceneEdited>(&self.app).len()
         }
         fn selected(&self) -> Option<Entity> {
-            self.app.get_resource::<Selection>().unwrap().entity()
+            self.app.get_resource::<Selection>().unwrap().active()
         }
         fn children(&mut self, entity: Entity) -> Vec<Entity> {
             self.world()

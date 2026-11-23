@@ -399,13 +399,13 @@ fn add_entity(
     if playing(&active, &states) {
         scene.trigger(EntityEdit::Create {
             parent: selection
-                .entity()
+                .active()
                 .filter(|entity| entities.get_entity(*entity).is_some()),
         });
         return;
     }
     let root = roots.iter().next().map(|(entity, _)| entity);
-    if let Some(parent) = selection.entity().or(root) {
+    if let Some(parent) = selection.active().or(root) {
         scene.trigger(EntityEdit::Create {
             parent: Some(parent),
         });
@@ -447,7 +447,7 @@ fn entity_shortcuts(
     mut scene: EditWorldSignals,
 ) {
     for action in fired.read() {
-        let Some(entity) = selection.entity() else {
+        let Some(entity) = selection.active() else {
             continue;
         };
         if action.is(DeleteEntity) {
@@ -483,7 +483,7 @@ fn sync_row_menu_items(
 
 fn select_item(on: On<UIItemSelected>, items: Query<&HierarchyItem>, mut scene: EditWorldSignals) {
     if let Some(item) = items.get_entity(on.entity()) {
-        scene.trigger(Select(Some(item.scene_entity)));
+        scene.trigger(Select::only(item.scene_entity));
     }
 }
 
@@ -496,7 +496,7 @@ fn open_row_menu(
     let Some(item) = items.get_entity(on.entity()) else {
         return;
     };
-    scene.trigger(Select(Some(item.scene_entity)));
+    scene.trigger(Select::only(item.scene_entity));
     for (mut menu, mut panel) in menus.iter_mut() {
         menu.scene_target = Some(item.scene_entity);
         panel.target = UIAnchorTarget::from_point(on.signal().position);
@@ -740,7 +740,7 @@ pub(crate) fn reconcile_content(
             .as_ref()
             .is_some_and(|document| document.is_changed());
     let scene = (&*names, &*roots, &*scene_children, &*kinds);
-    let selected = selection.entity();
+    let selected = selection.active();
     let mut update = |row| {
         update_row(
             row, selected, address, scene, &looks, &mut texts, &theme, &mut cmd,
@@ -1068,7 +1068,7 @@ mod tests {
         fn select(&mut self, entity: Entity) {
             self.scene
                 .scene_world_mut(self.document)
-                .trigger(Select(Some(entity)));
+                .trigger(Select::only(entity));
         }
         fn menu_item(&mut self, scene_entity: Entity, wanted: RowMenuItem) {
             let row = self.item_of(scene_entity);
@@ -1084,7 +1084,7 @@ mod tests {
             self.click(item, MouseButton::Left);
         }
         fn selected(&self) -> Option<Entity> {
-            self.scene.selected(self.document)
+            self.scene.active(self.document)
         }
         fn valid(&self, entity: Entity) -> bool {
             self.scene
@@ -1188,7 +1188,7 @@ mod tests {
         assert!(f.ui_selected(f.root));
         assert!(!f.ui_selected(f.node));
 
-        f.scene.scene_world_mut(f.document).trigger(Select(None));
+        f.scene.scene_world_mut(f.document).trigger(Select::none());
         f.refresh();
         assert!(!f.ui_selected(f.root));
     }

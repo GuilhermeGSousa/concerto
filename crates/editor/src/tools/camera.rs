@@ -360,7 +360,7 @@ fn frame_requested_bounds(
         scene_bounds(&bounded, None)
     } else if commands.frame_selection {
         selection
-            .entity()
+            .active()
             .map(|entity| subtree(entity, &children))
             .and_then(|set| scene_bounds(&bounded, Some(&set)))
     } else {
@@ -495,6 +495,7 @@ mod tests {
         world.insert_resource(ViewportCommands::default());
         world.insert_resource(FlyCamera::default());
         world.insert_resource(Selection::default());
+        world.add_listener(crate::tools::selection::select);
         world.add_listener(frame_selection);
         world.add_listener(frame_all);
         world.spawn((EditorCamera, Camera::default(), Transform::IDENTITY));
@@ -533,10 +534,7 @@ mod tests {
         let all = far_plane(&mut world);
         assert!(farthest < all, "{farthest} lies beyond the far plane {all}");
 
-        world
-            .get_resource_mut::<Selection>()
-            .unwrap()
-            .set(Some(near));
+        world.trigger(crate::tools::selection::Select::only(near));
         world.trigger(FrameSelection);
         run(&mut world, frame_requested_bounds);
         assert!(looks_at(&world, Vec3::new(40.0, 0.0, 0.0)));

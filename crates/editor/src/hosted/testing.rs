@@ -680,11 +680,19 @@ impl SceneFixture {
             .expect("an open scene has a root")
     }
 
-    pub fn selected(&self, document: Entity) -> Option<Entity> {
+    pub fn selected(&self, document: Entity) -> Vec<Entity> {
         self.scene_world(document)
             .get_resource::<Selection>()
             .unwrap()
-            .entity()
+            .entities()
+            .to_vec()
+    }
+
+    pub fn active(&self, document: Entity) -> Option<Entity> {
+        self.scene_world(document)
+            .get_resource::<Selection>()
+            .unwrap()
+            .active()
     }
 
     pub fn unsaved(&mut self, document: Entity) -> bool {

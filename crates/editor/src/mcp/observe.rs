@@ -222,7 +222,7 @@ fn status_of_edit_target(
     names: EditWorld<Query<&Name>>,
     assets: EditWorld<Option<Res<AssetServer>>>,
 ) {
-    let selected = match selection.as_deref().and_then(Selection::entity) {
+    let selected = match selection.as_deref().and_then(Selection::active) {
         Some(entity) => match names.get_entity(entity) {
             Some(name) => format!("{} {}", entity.to_id_string(), name.as_str()),
             None => entity.to_id_string(),
