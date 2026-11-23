@@ -43,7 +43,10 @@ use concerto_ui::{
     elements::prelude::*,
     focus::FocusedWidget,
     interaction::{Interactable, UIClick, UIDisabled},
-    items::{UIHidden, UIItem, UIItemContextMenu, UIItemSelected, UIReveal, UISelected},
+    items::{
+        UIHidden, UIItem, UIItemContextMenu, UIItemSelected, UIReveal, UISelectAnchor,
+        UISelectMode, UISelected,
+    },
     node::{UINode, UIRect},
     scroll::UIScrollArea,
     sets::UiSet,
@@ -275,6 +278,7 @@ pub fn spawn_panel(cmd: &mut CommandQueue, parent: Entity, theme: &UITheme) {
                     .with_flex_grow(1.0),
                 UITree {
                     row_height: Some(ROW_HEIGHT),
+                    multi_select: true,
                     ..Default::default()
                 },
                 TreeView,
@@ -416,6 +420,7 @@ fn press_row_menu_item(
     on: On<UIClick>,
     items: Query<&RowMenuItem>,
     mut menus: Query<(&RowMenu, &mut UIAnchoredPanel)>,
+    selection: EditWorld<Res<Selection>>,
     mut focus_name: ResMut<FocusNameField>,
     mut scene: EditWorldSignals,
 ) {
@@ -431,13 +436,30 @@ fn press_row_menu_item(
                 RowMenuItem::AddChild => scene.trigger(EntityEdit::Create {
                     parent: Some(scene_target),
                 }),
-                RowMenuItem::Duplicate => scene.trigger(EntityEdit::Duplicate(vec![scene_target])),
-                RowMenuItem::Rename => focus_name.0 = true,
-                RowMenuItem::Delete => scene.trigger(EntityEdit::Delete(vec![scene_target])),
+                RowMenuItem::Duplicate => {
+                    scene.trigger(EntityEdit::Duplicate(selection.entities().to_vec()))
+                }
+                RowMenuItem::Rename => request_rename(&selection, &mut focus_name, &mut scene),
+                RowMenuItem::Delete => {
+                    scene.trigger(EntityEdit::Delete(selection.entities().to_vec()))
+                }
             }
         }
         panel.open = false;
     }
+}
+
+fn request_rename(
+    selection: &Selection,
+    focus_name: &mut FocusNameField,
+    scene: &mut EditWorldSignals,
+) {
+    if selection.len() > 1
+        && let Some(active) = selection.active()
+    {
+        scene.trigger(Select::only(active));
+    }
+    focus_name.0 = true;
 }
 
 fn entity_shortcuts(
@@ -447,15 +469,15 @@ fn entity_shortcuts(
     mut scene: EditWorldSignals,
 ) {
     for action in fired.read() {
-        let Some(entity) = selection.active() else {
+        if selection.is_empty() {
             continue;
-        };
+        }
         if action.is(DeleteEntity) {
-            scene.trigger(EntityEdit::Delete(vec![entity]));
+            scene.trigger(EntityEdit::Delete(selection.entities().to_vec()));
         } else if action.is(DuplicateEntity) {
-            scene.trigger(EntityEdit::Duplicate(vec![entity]));
+            scene.trigger(EntityEdit::Duplicate(selection.entities().to_vec()));
         } else if action.is(RenameEntity) {
-            focus_name.0 = true;
+            request_rename(&selection, &mut focus_name, &mut scene);
         }
     }
 }
@@ -482,8 +504,19 @@ fn sync_row_menu_items(
 }
 
 fn select_item(on: On<UIItemSelected>, items: Query<&HierarchyItem>, mut scene: EditWorldSignals) {
-    if let Some(item) = items.get_entity(on.entity()) {
-        scene.trigger(Select::only(item.scene_entity));
+    let Some(item) = items.get_entity(on.entity()) else {
+        return;
+    };
+    match &on.signal().mode {
+        UISelectMode::Replace => scene.trigger(Select::only(item.scene_entity)),
+        UISelectMode::Toggle => scene.trigger(Select::Toggle(item.scene_entity)),
+        UISelectMode::Range(rows) => scene.trigger(Select::Replace(
+            rows.iter()
+                .rev()
+                .filter_map(|row| items.get_entity(*row))
+                .map(|item| item.scene_entity)
+                .collect(),
+        )),
     }
 }
 
@@ -491,12 +524,15 @@ fn open_row_menu(
     on: On<UIItemContextMenu>,
     items: Query<&HierarchyItem>,
     mut menus: Query<(&mut RowMenu, &mut UIAnchoredPanel)>,
+    selection: EditWorld<Res<Selection>>,
     mut scene: EditWorldSignals,
 ) {
     let Some(item) = items.get_entity(on.entity()) else {
         return;
     };
-    scene.trigger(Select::only(item.scene_entity));
+    if !selection.contains(item.scene_entity) {
+        scene.trigger(Select::only(item.scene_entity));
+    }
     for (mut menu, mut panel) in menus.iter_mut() {
         menu.scene_target = Some(item.scene_entity);
         panel.target = UIAnchorTarget::from_point(on.signal().position);
@@ -714,6 +750,7 @@ pub(crate) fn reconcile_content(
         Query<Entity, Added<HierarchyItem>>,
     ),
     mut texts: Query<&mut UIText>,
+    (views, anchors): (Query<Entity, With<TreeView>>, Query<&UISelectAnchor>),
     theme: Res<UITheme>,
     mut cmd: CommandQueue,
 ) {
@@ -740,7 +777,20 @@ pub(crate) fn reconcile_content(
             .as_ref()
             .is_some_and(|document| document.is_changed());
     let scene = (&*names, &*roots, &*scene_children, &*kinds);
-    let selected = selection.active();
+    let selected = &**selection;
+    if let Some(row) = selected
+        .active()
+        .and_then(|active| state.items.get(&active).copied())
+    {
+        for view in views.iter() {
+            if anchors
+                .get_entity(view)
+                .is_none_or(|anchor| anchor.0 != row)
+            {
+                cmd.insert(UISelectAnchor(row), view);
+            }
+        }
+    }
     let mut update = |row| {
         update_row(
             row, selected, address, scene, &looks, &mut texts, &theme, &mut cmd,
@@ -765,7 +815,7 @@ pub(crate) fn reconcile_content(
 
 fn update_row(
     (entity, item, selected): (Entity, Ref<HierarchyItem>, Option<&UISelected>),
-    selection: Option<Entity>,
+    selection: &Selection,
     address: &str,
     (names, roots, scene_children, kinds): (
         &Query<Ref<Name>>,
@@ -833,7 +883,7 @@ fn update_row(
     {
         text.color = label_color;
     }
-    let wanted = selection == Some(scene_entity);
+    let wanted = selection.contains(scene_entity);
     if let Some(mut text) = texts.get_entity_mut(item.mark) {
         draw_row_icon(&mut text, theme, mark, wanted);
     }
@@ -932,7 +982,7 @@ mod tests {
         system::BoxedSystem,
     };
     use concerto_foundation::transform::Transform;
-    use concerto_ui::{items::UISelectMode, tree::update_trees_system};
+    use concerto_ui::tree::update_trees_system;
     use glam::Vec2;
 
     struct Fixture {
@@ -1070,6 +1120,29 @@ mod tests {
                 .scene_world_mut(self.document)
                 .trigger(Select::only(entity));
         }
+        fn replace_selection(&mut self, entities: Vec<Entity>) {
+            self.scene
+                .scene_world_mut(self.document)
+                .trigger(Select::Replace(entities));
+            self.refresh();
+        }
+        fn pick(&mut self, scene_entity: Entity, mode: UISelectMode) {
+            let row = self.item_of(scene_entity);
+            self.scene.world.trigger_on(row, UIItemSelected { mode });
+            self.refresh();
+        }
+        fn anchor(&mut self) -> Option<Entity> {
+            let tree = self
+                .scene
+                .world
+                .query::<Entity, With<TreeView>>()
+                .iter(&mut self.scene.world)
+                .next()?;
+            self.scene
+                .world
+                .get_component_for_entity::<UISelectAnchor>(tree)
+                .map(|anchor| anchor.0)
+        }
         fn menu_item(&mut self, scene_entity: Entity, wanted: RowMenuItem) {
             let row = self.item_of(scene_entity);
             self.click(row, MouseButton::Right);
@@ -1177,25 +1250,60 @@ mod tests {
     #[test]
     fn selection_flows_both_ways() {
         let mut f = fixture();
-        f.expand(f.root);
-        let item = f.item_of(f.node);
-
-        f.scene.world.trigger_on(
-            item,
-            UIItemSelected {
-                mode: UISelectMode::Replace,
-            },
-        );
-        assert_eq!(f.selected(), Some(f.node));
-
-        f.select(f.root);
+        let a = f.spawn_under(f.root, "a");
+        let b = f.spawn_under(f.root, "b");
         f.refresh();
-        assert!(f.ui_selected(f.root));
-        assert!(!f.ui_selected(f.node));
+        f.expand(f.root);
+        let (node, root) = (f.node, f.root);
+
+        f.pick(node, UISelectMode::Replace);
+        assert_eq!(f.scene.selected(f.document), [node]);
+
+        f.select(root);
+        f.refresh();
+        assert!(f.ui_selected(root));
+        assert!(!f.ui_selected(node));
 
         f.scene.scene_world_mut(f.document).trigger(Select::none());
         f.refresh();
-        assert!(!f.ui_selected(f.root));
+        assert!(!f.ui_selected(root));
+
+        f.pick(node, UISelectMode::Replace);
+        f.pick(a, UISelectMode::Toggle);
+        assert_eq!(f.scene.selected(f.document), [node, a]);
+        assert!(f.ui_selected(node) && f.ui_selected(a) && !f.ui_selected(b));
+
+        let rows = [f.item_of(node), f.item_of(a), f.item_of(b)];
+        f.pick(b, UISelectMode::Range(rows.to_vec()));
+        assert_eq!(f.scene.selected(f.document), [b, a, node]);
+        assert_eq!(f.scene.active(f.document), Some(node));
+        assert!(f.ui_selected(node) && f.ui_selected(a) && f.ui_selected(b));
+        assert_eq!(f.anchor(), Some(f.item_of(node)));
+
+        f.select(a);
+        f.refresh();
+        assert_eq!(f.anchor(), Some(f.item_of(a)));
+
+        let rows = vec![f.item_of(root), f.item_of(node)];
+        f.pick(node, UISelectMode::Range(rows));
+        assert_eq!(f.scene.selected(f.document), [node]);
+        assert!(!f.ui_selected(root));
+
+        f.replace_selection(vec![a, b]);
+        f.click(f.item_of(a), MouseButton::Right);
+        assert_eq!(f.scene.selected(f.document), [a, b]);
+        f.click(f.item_of(node), MouseButton::Right);
+        assert_eq!(f.scene.selected(f.document), [node]);
+
+        f.replace_selection(vec![a, b]);
+        f.fire(DuplicateEntity);
+        assert_eq!(f.children(root).len(), 5);
+        assert_eq!(f.scene.selected(f.document).len(), 2);
+
+        f.replace_selection(vec![node, a]);
+        f.fire(RenameEntity);
+        assert!(f.rename_requested());
+        assert_eq!(f.scene.selected(f.document), [a]);
     }
 
     #[test]

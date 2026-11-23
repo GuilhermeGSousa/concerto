@@ -1021,11 +1021,16 @@ a click in the viewport selects an entity, the hierarchy expands its ancestors
 and scrolls its row into view, also for an entity created that frame. The title
 counts every listed entity, collapsed and hidden ones included, and the footer
 reads "Loading…" while a scene loads.
-Right-click a row to add a child, duplicate, rename, or delete it;
-the `+` in the panel header adds a child to the selection, or to the scene when
-nothing is selected. Delete removes the selected entity and its descendants,
-Ctrl+D duplicates it beside itself, and F2 edits its name in the field at the
-top of the inspector. New and duplicated entities go last among their siblings.
+Click a row to select it alone, Ctrl (or the logo key) + click to add it to the
+selection or take it out, and Shift + click to select the shown rows from the
+last clicked one to this one. The last entity selected is the active one.
+Right-click a row to add a child, duplicate, rename, or delete; on a selected
+row it keeps the selection, on another it selects that row alone first.
+The `+` in the panel header adds a child to the active entity, or to the scene
+when nothing is selected. Delete removes every selected entity and its
+descendants, Ctrl+D duplicates each beside itself, and F2 edits the active
+entity's name in the field at the top of the inspector, leaving it alone
+selected. New and duplicated entities go last among their siblings.
 The scene root can be given children but not deleted, duplicated, or renamed.
 A duplicate fails when the entity refers to something outside itself, such as a
 skinned mesh copied without its bones; Chatter says why.
