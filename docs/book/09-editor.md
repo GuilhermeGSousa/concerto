@@ -57,9 +57,9 @@ it to an AI agent (below).
   opens with its default scene, the one `content.toml`'s `default_scene`
   names, or failing that its first scene. The Scene tab has no close button:
   opening another scene replaces the one it shows.
-- **Arrange** the scene: the hierarchy, titled **Warren**, adds, duplicates,
+- **Arrange** the scene: the hierarchy, titled **Score**, adds, duplicates,
   renames (F2) and deletes entities; the viewport selects by clicking and
-  moves with the gizmo; the inspector, titled **Looking Glass**, adds and
+  moves with the gizmo; the inspector, titled **Notes**, adds and
   edits components. Selecting an entity draws its component gizmos, not its
   children's: a mesh's bounds, a skeleton's bones, a light's reach or a
   camera's frustum. The **Gizmos** menu on the viewport's

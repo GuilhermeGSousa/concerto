@@ -6,7 +6,7 @@ Run the standalone showcase without a project or imported content:
 cargo run -p ui-showcase
 ```
 
-The showcase is the visual reference for the Looking Glass palette,
+The showcase is the visual reference for the editor palette,
 typography, spacing, nested flex layout, controls, Unicode input, clipping and
 virtual lists. Its 10,000-item sample creates eight reusable row entities.
 

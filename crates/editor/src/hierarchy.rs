@@ -58,7 +58,7 @@ use concerto_window::input::actions::{ActionFired, ActionMap};
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 
-pub const PANEL_ID: &str = "concerto.warren";
+pub const PANEL_ID: &str = "concerto.score";
 
 const ROW_HEIGHT: f32 = 32.0;
 
@@ -136,7 +136,7 @@ impl Plugin for HierarchyPlugin {
         app.insert_resource(RowLooks::default());
         app.add_panel(PanelDescriptor {
             id: PANEL_ID,
-            title: "Warren",
+            title: "Score",
             region: Region::Left,
         });
         install_listeners(app.main_mut().world_mut());
