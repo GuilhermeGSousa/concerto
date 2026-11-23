@@ -6,11 +6,13 @@ use super::component_menu::{ComponentMenu, ensure_component_menu, menu_button};
 use super::list::remove_button;
 use super::registry::InspectionSource;
 use concerto_ecs::{
+    Changed,
     component::Tick,
     query::filter::{With, Without},
     reflect::AppTypeRegistry,
 };
 use concerto_reflect::{PathSegment, TypeRegistry};
+use concerto_ui::text::UIText;
 use std::{collections::HashMap, sync::Arc};
 
 /// A component card in the inspector's UI hierarchy.
@@ -106,7 +108,7 @@ pub(super) fn sync_inspected_components(
     data: Res<InspectorData>,
     theme: Res<UITheme>,
     stacks: Query<(Entity, &ComponentStack, Option<&Children>)>,
-    cards: Query<(&InspectedComponent, Option<&MixedPaths>)>,
+    cards: Query<&InspectedComponent>,
     bodies: Query<&Children>,
     rows: Query<(
         Option<&PropertyRow>,
@@ -165,10 +167,8 @@ pub(super) fn sync_inspected_components(
         ensure_component_menu(&mut cmd, &component_menus, &theme);
     } else {
         for &entity in children.into_iter().flat_map(|children| children.iter()) {
-            if let Some((card, mixed)) = cards.get_entity(entity) {
-                refresh_card(
-                    &shown, &mut cmd, entity, *card, mixed, &theme, &bodies, &rows,
-                );
+            if let Some(card) = cards.get_entity(entity) {
+                refresh_card(&shown, &mut cmd, entity, *card, &theme, &bodies, &rows);
             }
         }
     }
@@ -191,15 +191,22 @@ impl Shown<'_, '_> {
                     .unwrap_or_default()
             })
             .collect();
+        let by_path: Vec<HashMap<&PropertyPath, Option<&PropertyRowValue>>> = theirs
+            .iter()
+            .map(|other| {
+                other
+                    .iter()
+                    .map(|their| (&their.path, their.value()))
+                    .collect()
+            })
+            .collect();
         properties
             .iter()
             .filter(|property| {
                 property.value().is_some()
-                    && theirs.iter().any(|other| {
-                        !other.iter().any(|their| {
-                            their.path == property.path && their.value() == property.value()
-                        })
-                    })
+                    && by_path
+                        .iter()
+                        .any(|other| other.get(&property.path) != Some(&property.value()))
             })
             .map(|property| property.path.clone())
             .collect()
@@ -244,7 +251,7 @@ fn spawn_cards(
             body,
             read: false,
         };
-        refresh_card(shown, cmd, entity, card, None, theme, bodies, rows);
+        refresh_card(shown, cmd, entity, card, theme, bodies, rows);
     }
 }
 
@@ -254,7 +261,6 @@ fn refresh_card(
     cmd: &mut CommandQueue,
     entity: Entity,
     mut card: InspectedComponent,
-    shown_mixed: Option<&MixedPaths>,
     theme: &UITheme,
     bodies: &Query<&Children>,
     rows: &Query<(
@@ -274,10 +280,6 @@ fn refresh_card(
         .collect_component(shown.registry, card.scene_entity, card.type_id)
         .unwrap_or_default();
     let mixed = shown.mixed_paths(card.type_id, &properties);
-    let marks_kept = shown_mixed.map_or(mixed.is_empty(), |marks| marks.0 == mixed);
-    if card.read && !marks_kept {
-        cmd.entity(card.body).despawn_children();
-    }
     show_properties(
         CardRows {
             body: card.body,
@@ -286,7 +288,7 @@ fn refresh_card(
                 entity: card.scene_entity,
                 component: card.type_id,
             }),
-            read: card.read && marks_kept,
+            read: card.read,
             mixed: &mixed,
         },
         properties,
@@ -478,14 +480,11 @@ fn spawn_row(
             row_node.padding.right = theme.control_height + theme.spacing_xs;
         }
     }
-    let mut label = if property.path.depth() == 0 {
-        card.name.to_string()
-    } else {
-        label_for(&property.path)
-    };
-    if card.mixed.contains(&property.path) {
-        label.push_str(" —");
-    }
+    let label = row_label(
+        card.name,
+        &property.path,
+        card.mixed.contains(&property.path),
+    );
     let mut body_queue = cmd.entity(card.body);
     let mut row_queue = body_queue.spawn_child((
         row_node,
@@ -522,6 +521,60 @@ fn spawn_row(
         }
     }
     row
+}
+
+fn row_label(card: &str, path: &PropertyPath, mixed: bool) -> String {
+    let mut label = if path.depth() == 0 {
+        card.to_string()
+    } else {
+        label_for(path)
+    };
+    if mixed {
+        label.push_str(" —");
+    }
+    label
+}
+
+/// Rewrites the labels of a card's kept rows when which of them are mixed changes, leaving the rows and their widgets in place.
+pub(super) fn mark_mixed_rows(
+    cards: Query<(&InspectedComponent, &MixedPaths), Changed<MixedPaths>>,
+    children: Query<&Children>,
+    rows: Query<(Option<&PropertyRow>, Option<&PlainRow>)>,
+    mut labels: Query<&mut UIText, With<RowLabel>>,
+) {
+    for (card, mixed) in cards.iter() {
+        for &row in children
+            .get_entity(card.body)
+            .into_iter()
+            .flat_map(|rows| rows.iter())
+        {
+            if let Some((property, plain)) = rows.get_entity(row)
+                && let Some((path, _)) = shown_property(property, plain)
+            {
+                let text = row_label(card.name, path, mixed.0.contains(path));
+                relabel(&children, &mut labels, row, text);
+            }
+        }
+    }
+}
+
+fn relabel(
+    children: &Query<&Children>,
+    labels: &mut Query<&mut UIText, With<RowLabel>>,
+    row: Entity,
+    text: String,
+) {
+    for &cell in children
+        .get_entity(row)
+        .into_iter()
+        .flat_map(|cells| cells.iter())
+    {
+        if let Some(mut label) = labels.get_entity_mut(cell)
+            && label.text != text
+        {
+            label.text = text.clone();
+        }
+    }
 }
 
 fn label_column(card_width: f32) -> f32 {

@@ -56,7 +56,8 @@ pub use name_field::{FocusNameField, NameField};
 use name_field::{name_field, update_name_field};
 pub use sync::{InspectedComponent, InspectorHeader, ReadOnlyCard};
 use sync::{
-    build_property_widgets, disable_read_only_cards, size_label_columns, sync_inspected_components,
+    build_property_widgets, disable_read_only_cards, mark_mixed_rows, size_label_columns,
+    sync_inspected_components,
 };
 
 use boolean::refresh_bool_fields;
@@ -191,6 +192,7 @@ impl Plugin for InspectorPlugin {
             .add_system(LateUpdate, collect_inspector_data)
             .add_system(LateUpdate, update_name_field)
             .add_system(LateUpdate, sync_inspected_components)
+            .add_system(LateUpdate, mark_mixed_rows.after(sync_inspected_components))
             .add_system(LateUpdate, build_property_widgets)
             .add_system(
                 LateUpdate,

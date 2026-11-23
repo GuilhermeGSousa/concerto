@@ -443,14 +443,16 @@ fn fanned_out(
     let Some(target) = commit.row.address.target.component() else {
         return vec![commit];
     };
-    let several = data.scene_entities.len() > 1 && data.scene_entity == Some(target.entity);
+    if data.scene_entities.len() < 2 || data.scene_entity != Some(target.entity) {
+        return vec![commit];
+    }
     let holders: Vec<Entity> = data
         .scene_entities
         .iter()
         .copied()
         .filter(|&entity| source.carries(entity, target.component))
         .collect();
-    if !several || (commit.edit.is::<ListEdit>() && !same_on_all(&commit, &holders, source)) {
+    if commit.edit.is::<ListEdit>() && !same_on_all(&commit, &holders, source) {
         return vec![commit];
     }
     holders

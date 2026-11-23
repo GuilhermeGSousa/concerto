@@ -21,7 +21,7 @@ use glam::Vec2;
 struct Inspecting {
     f: SceneFixture,
     document: Entity,
-    systems: [BoxedSystem; 3],
+    systems: [BoxedSystem; 4],
 }
 
 impl Inspecting {
@@ -69,6 +69,7 @@ fn inspecting() -> (Inspecting, Entity, Entity) {
         collect_inspector_data.into_boxed_system(),
         sync_inspected_components.into_boxed_system(),
         build_property_widgets.into_boxed_system(),
+        sync::mark_mixed_rows.into_boxed_system(),
     ];
     for system in &mut systems {
         system.initialize(&mut f.world);
@@ -291,11 +292,13 @@ fn typed_values_are_committed_to_the_entity_their_rows_were_built_for() {
     assert_eq!(other.anchor, Vec2::new(1.0, 2.0));
     assert!(w.f.unsaved(w.document));
 
+    w.register::<Track>();
     let lit = w.spawn_in_scene((
-        Transform::from_translation(glam::Vec3::new(1.0, 2.0, 3.0)),
+        Transform::from_translation(glam::Vec3::new(1.0, 0.0, 0.0)),
         spawner(),
+        Track { steps: vec![1.0] },
     ));
-    let plain = w.spawn_in_scene(Transform::IDENTITY);
+    let plain = w.spawn_in_scene((Transform::IDENTITY, Track::default()));
     w.scene().trigger(Select::Replace(vec![plain, lit]));
     w.update();
     w.update();
@@ -304,6 +307,22 @@ fn typed_values_are_committed_to_the_entity_their_rows_were_built_for() {
     let names: Vec<&str> = cards.iter(world).map(|card| card.name).collect();
     assert!(names.contains(&"Transform"), "{names:?}");
     assert!(!names.contains(&"Spawner"), "{names:?}");
+    let mut buttons = world.query::<(Entity, &component_menu::ComponentMenuButton), ()>();
+    let buttons: Vec<Entity> = buttons.iter(world).map(|(button, _)| button).collect();
+    assert!(!buttons.is_empty());
+    for button in buttons {
+        assert!(
+            world
+                .get_component_for_entity::<UIDisabled>(button)
+                .is_some()
+        );
+    }
+    let mut menus = world.query::<
+        &concerto_ui::anchor::UIAnchoredPanel,
+        concerto_ecs::query::filter::With<add_component::AddComponentMenu>,
+    >();
+    let add = menus.iter(world).next().unwrap().owner.unwrap();
+    assert!(world.get_component_for_entity::<UIDisabled>(add).is_some());
     let label = |world: &mut World, path: &[&'static str]| {
         let row = row(world, path);
         let cell = world
@@ -322,19 +341,54 @@ fn typed_values_are_committed_to_the_entity_their_rows_were_built_for() {
     assert!(translation.text.ends_with(" —"), "{}", translation.text);
     assert_eq!(translation.color, UITheme::default().text_muted);
     assert!(!label(world, &["scale"]).text.ends_with(" —"));
+    let translation_row = row(world, &["translation"]);
     run(world, numeric::refresh_numeric_fields);
     let x = slot(world, &["translation"], 0);
     submit(world, x, "5");
     run(world, numeric::commit_numeric_fields);
     run(world, send_property_commits);
-    assert_eq!(
-        w.get::<Transform>(lit).unwrap().translation,
-        glam::Vec3::new(5.0, 2.0, 3.0)
-    );
-    assert_eq!(
-        w.get::<Transform>(plain).unwrap().translation,
-        glam::Vec3::new(5.0, 0.0, 0.0)
-    );
+    for entity in [lit, plain] {
+        assert_eq!(
+            w.get::<Transform>(entity).unwrap().translation,
+            glam::Vec3::new(5.0, 0.0, 0.0)
+        );
+    }
+    w.update();
+    w.update();
+    let world = &mut w.f.world;
+    assert_eq!(row(world, &["translation"]), translation_row);
+    assert!(!label(world, &["translation"]).text.ends_with(" —"));
+
+    let steps = row(world, &["steps"]);
+    let push = |world: &mut World| {
+        let row = world
+            .get_component_for_entity::<PropertyRow>(steps)
+            .unwrap()
+            .clone();
+        let commit = PropertyCommit::erased::<ListEditor>(&row, ListEdit::Push).unwrap();
+        world
+            .get_resource_mut::<PropertyCommits>()
+            .unwrap()
+            .0
+            .push(commit);
+        run(world, send_property_commits);
+    };
+    push(world);
+    assert_eq!(w.get::<Track>(lit).unwrap().steps.len(), 2);
+    assert_eq!(w.get::<Track>(plain).unwrap().steps.len(), 0);
+    w.scene()
+        .get_component_for_entity_mut::<Track>(plain)
+        .unwrap()
+        .steps = vec![0.0, 0.0];
+    push(&mut w.f.world);
+    assert_eq!(w.get::<Track>(lit).unwrap().steps.len(), 3);
+    assert_eq!(w.get::<Track>(plain).unwrap().steps.len(), 3);
+}
+
+#[derive(Component, concerto_reflect::Reflect, Default)]
+#[reflect(Component, Default)]
+struct Track {
+    steps: Vec<f32>,
 }
 
 #[derive(Component, concerto_reflect::Reflect, Default)]
