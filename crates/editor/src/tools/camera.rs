@@ -359,10 +359,14 @@ fn frame_requested_bounds(
     let bounds = if commands.frame_all {
         scene_bounds(&bounded, None)
     } else if commands.frame_selection {
-        selection
-            .active()
-            .map(|entity| subtree(entity, &children))
-            .and_then(|set| scene_bounds(&bounded, Some(&set)))
+        let set: HashSet<Entity> = selection
+            .entities()
+            .iter()
+            .flat_map(|&entity| subtree(entity, &children))
+            .collect();
+        (!set.is_empty())
+            .then(|| scene_bounds(&bounded, Some(&set)))
+            .flatten()
     } else {
         None
     };

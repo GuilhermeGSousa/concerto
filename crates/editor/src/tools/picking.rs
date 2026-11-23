@@ -10,7 +10,7 @@ use concerto_foundation::{
 };
 use concerto_mesh::{Aabb, Mesh, MeshComponent, Ray};
 use concerto_render::components::camera::Camera;
-use concerto_window::input::{Input, MouseButton};
+use concerto_window::input::{Input, MouseButton, actions::Modifiers};
 use glam::{Mat4, Vec2, Vec3};
 
 use crate::tools::{
@@ -175,15 +175,19 @@ pub(crate) fn pick_on_click(
     for (root, _) in roots.iter() {
         scene.extend(subtree(root, &children));
     }
+    let modifiers = Modifiers::from_input(&input);
+    let adding = modifiers.ctrl || modifiers.shift || modifiers.logo;
     match pick(
         &ray,
         &meshes,
         nodes.iter().filter(|(entity, ..)| scene.contains(entity)),
     ) {
+        Some(entity) if adding => cmd.trigger(Select::Toggle(entity)),
         Some(entity) => {
             cmd.trigger(Select::only(entity));
             reveal.write(RevealEntity(entity));
         }
+        None if adding => {}
         None => cmd.trigger(Select::none()),
     }
 }
@@ -199,6 +203,7 @@ mod tests {
     };
     use concerto_foundation::assets::{AssetId, handle::AssetHandle};
     use concerto_mesh::Vertex;
+    use concerto_window::input::{KeyCode, PhysicalKey};
     use glam::Quat;
 
     fn cube_mesh() -> Mesh {
@@ -262,6 +267,19 @@ mod tests {
         }
         fn selected(&self) -> Option<Entity> {
             self.world.get_resource::<Selection>().unwrap().active()
+        }
+        fn selection(&self) -> Vec<Entity> {
+            self.world
+                .get_resource::<Selection>()
+                .unwrap()
+                .entities()
+                .to_vec()
+        }
+        fn hold(&mut self, key: KeyCode, down: bool) {
+            self.world
+                .get_resource_mut::<Input>()
+                .unwrap()
+                .update_key_input(PhysicalKey::Code(key), down);
         }
         fn revealed(&self) -> Vec<Entity> {
             self.world
@@ -440,6 +458,42 @@ mod tests {
         f.click(corner, corner);
         assert_eq!(f.selected(), None);
         assert_eq!(f.revealed(), [cube]);
+
+        let other = f.cube(f.root, Mat4::from_translation(Vec3::new(-3.0, 0.0, 0.0)));
+        let camera = Camera {
+            aspect: 4.0 / 3.0,
+            ..Default::default()
+        };
+        let view = Transform::from_translation(Vec3::new(0.0, 0.0, 6.0)).compute_matrix();
+        let beside = world_to_viewport(
+            Vec3::new(-3.0, 0.0, 0.0),
+            VIEW,
+            camera.build_projection_matrix() * view.inverse(),
+        )
+        .unwrap();
+        f.click(CENTRE, CENTRE);
+        f.hold(KeyCode::ControlLeft, true);
+        f.click(beside, beside);
+        assert_eq!(f.selection(), [cube, other]);
+        f.click(CENTRE, CENTRE);
+        assert_eq!(
+            f.selection(),
+            [other],
+            "a modified click on a selected one removes it"
+        );
+        f.click(corner, corner);
+        assert_eq!(
+            f.selection(),
+            [other],
+            "a modified click on nothing changes nothing"
+        );
+        f.hold(KeyCode::ControlLeft, false);
+        f.hold(KeyCode::ShiftLeft, true);
+        f.click(CENTRE, CENTRE);
+        assert_eq!(f.selection(), [other, cube]);
+        f.hold(KeyCode::ShiftLeft, false);
+        f.click(corner, corner);
+        assert_eq!(f.selected(), None);
 
         f.world
             .get_resource_mut::<GizmoState>()

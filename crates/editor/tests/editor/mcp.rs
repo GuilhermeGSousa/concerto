@@ -848,6 +848,15 @@ fn line<'a>(text: &'a str, prefix: &str) -> &'a str {
         .unwrap_or_else(|| panic!("no `{prefix}` line in:\n{text}"))
 }
 
+struct SeveralSelected {
+    ids: [String; 3],
+    reply: String,
+    status: String,
+    both: Value,
+    empty: Value,
+    unknown: Value,
+}
+
 struct StatusReads {
     before: String,
     hero: String,
@@ -855,6 +864,7 @@ struct StatusReads {
     after: String,
     cleared: String,
     none: String,
+    several: SeveralSelected,
     gizmos: String,
     unknown_gizmo: Value,
     bounds_always: String,
@@ -876,6 +886,35 @@ fn status_reports_the_documents_and_selection_and_gizmos_and_shading_set_the_vie
         let after = ok(&client, "status").await;
         let cleared = ok(&client, "select").await;
         let none = ok(&client, "status").await;
+        let ids3 = [
+            hero.clone(),
+            scene_id(&ids, "Lamp"),
+            scene_id(&ids, "Sword"),
+        ];
+        let reply = ok_with(&client, "select", json!({ "entities": ids3 })).await;
+        let several_status = ok(&client, "status").await;
+        let both = error_with(
+            &client,
+            "select",
+            json!({ "entity": hero, "entities": [hero] }),
+        )
+        .await;
+        let empty = error_with(&client, "select", json!({ "entities": [] })).await;
+        let unknown =
+            error_with(&client, "select", json!({ "entities": [hero, "999999v9"] })).await;
+        let kept = ok(&client, "status").await;
+        assert_eq!(
+            line(&several_status, "selection: "),
+            line(&kept, "selection: ")
+        );
+        let several = SeveralSelected {
+            ids: ids3,
+            reply,
+            status: several_status,
+            both,
+            empty,
+            unknown,
+        };
         let gizmos = ok(&client, "gizmos").await;
         let unknown_gizmo = error_with(
             &client,
@@ -899,6 +938,7 @@ fn status_reports_the_documents_and_selection_and_gizmos_and_shading_set_the_vie
             after,
             cleared,
             none,
+            several,
             gizmos,
             unknown_gizmo,
             bounds_always,
@@ -916,6 +956,7 @@ fn status_reports_the_documents_and_selection_and_gizmos_and_shading_set_the_vie
         after,
         cleared,
         none,
+        several,
         gizmos,
         unknown_gizmo,
         bounds_always,
@@ -937,6 +978,32 @@ fn status_reports_the_documents_and_selection_and_gizmos_and_shading_set_the_vie
     assert_eq!(line(&after, "selection: "), format!("{hero} Hero"));
     assert_eq!(cleared, "Selection cleared.");
     assert_eq!(line(&none, "selection: "), "none");
+    let [first, second, third] = &several.ids;
+    assert_eq!(
+        several.reply,
+        format!(
+            "Selected 3 entities: {first} Hero, {second} Lamp, {third} Sword; {third} Sword is active."
+        )
+    );
+    assert_eq!(
+        line(&several.status, "selection: "),
+        format!("3 entities: {first} Hero, {second} Lamp, {third} Sword · active {third} Sword")
+    );
+    assert_eq!(
+        several.both["code"], "invalid_arguments",
+        "{}",
+        several.both
+    );
+    assert_eq!(
+        several.empty["code"], "invalid_arguments",
+        "{}",
+        several.empty
+    );
+    assert_eq!(
+        several.unknown["code"], "unknown_entity",
+        "{}",
+        several.unknown
+    );
     assert!(
         gizmos.lines().any(|kind| kind == "Bounds · selected"),
         "{gizmos}"
@@ -1972,6 +2039,11 @@ struct Poses {
     status: String,
     all: String,
     on_all: [String; 2],
+    lamp: String,
+    whole: String,
+    several: String,
+    several_status: String,
+    ambiguous: Value,
     turned: String,
     at: String,
     facing: String,
@@ -2005,6 +2077,17 @@ fn frame_and_set_camera_answer_the_pose_once_the_camera_shows_it() {
             ok(&client, "camera_at").await,
             ok(&client, "drawn_camera_at").await,
         ];
+        let lamp = scene_id(&ids, "Lamp");
+        ok_with(&client, "select", json!({ "entities": [sword, lamp] })).await;
+        let whole = ok(&client, "frame").await;
+        let several = ok_with(&client, "frame", json!({ "entities": [sword, lamp] })).await;
+        let several_status = ok(&client, "status").await;
+        let ambiguous = error_with(
+            &client,
+            "frame",
+            json!({ "entity": sword, "entities": [lamp] }),
+        )
+        .await;
         let turned = ok_with(&client, "set_camera", angles).await;
         let at = ok(&client, "camera_at").await;
         let facing = ok_with(
@@ -2032,6 +2115,11 @@ fn frame_and_set_camera_answer_the_pose_once_the_camera_shows_it() {
             status,
             all,
             on_all,
+            lamp,
+            whole,
+            several,
+            several_status,
+            ambiguous,
             turned,
             at,
             facing,
@@ -2051,6 +2139,11 @@ fn frame_and_set_camera_answer_the_pose_once_the_camera_shows_it() {
         status,
         all,
         on_all,
+        lamp,
+        whole,
+        several,
+        several_status,
+        ambiguous,
         turned,
         at,
         facing,
@@ -2075,6 +2168,19 @@ fn frame_and_set_camera_answer_the_pose_once_the_camera_shows_it() {
     );
     assert!(all.ends_with(level), "{all}");
     assert_eq!(on_all, ["0.00", "0.00"]);
+    assert!(
+        whole.starts_with("Framed the whole scene. Camera at ("),
+        "{whole}"
+    );
+    assert!(
+        several.starts_with(&format!("Framed {sword} Sword, {lamp} Lamp. Camera at (")),
+        "{several}"
+    );
+    assert_eq!(
+        line(&several_status, "selection: "),
+        format!("2 entities: {sword} Sword, {lamp} Lamp · active {lamp} Lamp")
+    );
+    assert_eq!(ambiguous["code"], "invalid_arguments", "{ambiguous}");
     assert_eq!(
         turned,
         "Camera at (1.000, 2.000, 3.000), yaw 0.500, pitch 0.250, looking along (-0.465, 0.247, -0.850)."

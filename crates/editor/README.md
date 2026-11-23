@@ -251,8 +251,11 @@ drops those changes and `"save"` saves them first, and the call carries on as
 if nothing had been unsaved. A save that fails answers `save_failed` with the
 editor's message, and the documents keep their changes. A call that would lose
 nothing ignores `unsaved`.
-`select` selects `entity`, or clears the selection without one. `frame` selects
-`entity` and frames it, or frames the whole scene without one. `set_camera`
+`select` selects `entity`, or `entities` with the last one active, or clears the
+selection without either; giving both, or an empty `entities`, answers
+`invalid_arguments`, and an id that names no entity fails before anything
+changes. `frame` selects `entity` or `entities` and frames their subtrees
+together, or frames the whole scene without either, even with a selection. `set_camera`
 places the camera at `position`, `[x, y, z]`, facing the point `look_at`, or
 turned by `yaw` and `pitch` given together: radians, where yaw 0 faces -Z and a
 positive yaw turns left, and pitch is up from level, kept within ±1.55. Giving
@@ -1092,7 +1095,9 @@ but never offered.
 
 Left-clicking a mesh in the viewport selects its entity, scrolls the hierarchy
 to it, and shows its component gizmos, among them a box around its bounds;
-clicking empty space clears the selection. A
+clicking empty space clears the selection. Ctrl, Shift or the logo key with the
+click adds an unselected entity to the selection or takes a selected one out,
+and does nothing on empty space. A
 press that moves more than a few pixels is not a click. Picking tests the
 mesh's triangles, so a mesh seen through a gap in another is the one selected.
 Limits: a skinned mesh is picked and boxed in its bind pose; a click selects
@@ -1108,7 +1113,8 @@ dragged; orbit a little first. The gizmo keeps its size on screen, is hidden
 while the camera is being flown, and is not shown for the scene root. A drag
 marks the scene dirty when it ends.
 
-Component gizmos draw a component while its entity is selected; selecting a
+Component gizmos draw a component while its entity is selected, for every
+selected entity; F frames every selected entity's subtree; selecting a
 parent does not draw its children's. A gizmo is a type implementing
 `concerto_debug_gizmos::ComponentGizmo`, which names its component, the inputs
 it reads, and its kind's `NAME`, and draws one entity at a time. The scene
