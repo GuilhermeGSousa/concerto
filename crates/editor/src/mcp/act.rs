@@ -42,6 +42,7 @@ use crate::{
         camera::{
             EditorCamera, FlyCamera, FrameAll, FrameSelection, SetCameraPose, ViewportCommands,
         },
+        scene::SceneRoot,
         selection,
     },
 };
@@ -850,6 +851,7 @@ fn chosen(
     entity: Option<String>,
     entities: Option<Vec<String>>,
     scene: &EditWorld<SceneEntities>,
+    roots: &EditWorld<Query<Entity, With<SceneRoot>>>,
 ) -> Result<Vec<Entity>, ToolError> {
     let ids = match (entity, entities) {
         (None, None) => Vec::new(),
@@ -862,7 +864,27 @@ fn chosen(
             ));
         }
     };
-    ids.iter().map(|id| resolve(id, scene)).collect()
+    let resolved = ids
+        .iter()
+        .map(|id| resolve(id, scene))
+        .collect::<Result<Vec<_>, _>>()?;
+    let cleaned: Vec<Entity> = resolved
+        .iter()
+        .enumerate()
+        .filter(|(at, entity)| !resolved[at + 1..].contains(entity))
+        .map(|(_, entity)| *entity)
+        .collect();
+    if cleaned.len() > 1
+        && cleaned
+            .iter()
+            .any(|&entity| roots.get_entity(entity).is_some())
+    {
+        return Err(ToolError::new(
+            "invalid_arguments",
+            "The scene root cannot be selected with other entities; select it alone.",
+        ));
+    }
+    Ok(cleaned)
 }
 
 fn labels(entities: &[Entity], names: &Query<&Name>) -> String {
@@ -876,11 +898,12 @@ fn labels(entities: &[Entity], names: &Query<&Name>) -> String {
 fn select(
     mut calls: ToolCalls<Select>,
     entities: EditWorld<SceneEntities>,
+    roots: EditWorld<Query<Entity, With<SceneRoot>>>,
     names: EditWorld<Query<&Name>>,
     mut scene: EditWorldSignals,
 ) {
     for (arguments, reply) in calls.read() {
-        match chosen(arguments.entity, arguments.entities, &entities) {
+        match chosen(arguments.entity, arguments.entities, &entities, &roots) {
             Ok(chosen) => match chosen.as_slice() {
                 [] => {
                     scene.trigger(selection::Select::none());
@@ -920,6 +943,7 @@ fn camera_refused() -> ToolError {
 fn frame(
     mut calls: ToolCalls<Frame>,
     entities: EditWorld<SceneEntities>,
+    roots: EditWorld<Query<Entity, With<SceneRoot>>>,
     names: EditWorld<Query<&Name>>,
     targets: Query<&PlayState, With<EditTarget>>,
     mut scene: EditWorldSignals,
@@ -930,7 +954,7 @@ fn frame(
             reply.err(camera_refused());
             continue;
         }
-        let framed = match chosen(arguments.entity, arguments.entities, &entities) {
+        let framed = match chosen(arguments.entity, arguments.entities, &entities, &roots) {
             Ok(chosen) if chosen.is_empty() => {
                 scene.trigger(FrameAll);
                 "the whole scene".to_owned()

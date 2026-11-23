@@ -855,6 +855,8 @@ struct SeveralSelected {
     both: Value,
     empty: Value,
     unknown: Value,
+    repeated: String,
+    with_root: Value,
 }
 
 struct StatusReads {
@@ -902,11 +904,19 @@ fn status_reports_the_documents_and_selection_and_gizmos_and_shading_set_the_vie
         let empty = error_with(&client, "select", json!({ "entities": [] })).await;
         let unknown =
             error_with(&client, "select", json!({ "entities": [hero, "999999v9"] })).await;
+        let with_root = error_with(
+            &client,
+            "select",
+            json!({ "entities": [hero, scene_id(&ids, "root")] }),
+        )
+        .await;
         let kept = ok(&client, "status").await;
         assert_eq!(
             line(&several_status, "selection: "),
             line(&kept, "selection: ")
         );
+        let lamp = scene_id(&ids, "Lamp");
+        let repeated = ok_with(&client, "select", json!({ "entities": [hero, lamp, hero] })).await;
         let several = SeveralSelected {
             ids: ids3,
             reply,
@@ -914,6 +924,8 @@ fn status_reports_the_documents_and_selection_and_gizmos_and_shading_set_the_vie
             both,
             empty,
             unknown,
+            repeated,
+            with_root,
         };
         let gizmos = ok(&client, "gizmos").await;
         let unknown_gizmo = error_with(
@@ -998,6 +1010,15 @@ fn status_reports_the_documents_and_selection_and_gizmos_and_shading_set_the_vie
         several.empty["code"], "invalid_arguments",
         "{}",
         several.empty
+    );
+    assert_eq!(
+        several.with_root["code"], "invalid_arguments",
+        "{}",
+        several.with_root
+    );
+    assert_eq!(
+        several.repeated,
+        format!("Selected 2 entities: {second} Lamp, {first} Hero; {first} Hero is active.")
     );
     assert_eq!(
         several.unknown["code"], "unknown_entity",
