@@ -26,10 +26,10 @@ use glam::Vec3;
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-use super::observe::{SceneEntities, resolve};
 use crate::{
     asset_editor::{AssetEditorCommand, AssetEditorCommands, AssetEditorRegistry, EditorDocument},
     content::{self, AssetCreation},
+    entity_ids::{SceneEntities, resolve},
     guard::{GuardChoice, UnsavedGuard},
     hosted::{EditTarget, EditWorld, EditWorldSignals, PlayState},
     import::{

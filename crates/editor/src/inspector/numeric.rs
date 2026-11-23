@@ -13,7 +13,7 @@ use concerto_ui::{
 use glam::{EulerRot, Quat, Vec2, Vec3};
 
 use crate::inspector::color::{self, ColorSpace};
-use crate::inspector::rows::{
+use crate::property::{
     EditContext, EditError, PropertyCommits, PropertyEditor, PropertyRow, PropertyRowValue,
 };
 
@@ -290,7 +290,7 @@ impl<T: NumericValue> PropertyEditor<T> for NumericFields {
         true
     }
     fn row_node(&self, value: &NumericSnapshot, theme: &UITheme) -> UINode {
-        let node = super::sync::standard_row_node(theme);
+        let node = super::standard_row_node(theme);
         match value {
             NumericSnapshot::Color(_) => node.with_flex_wrap(FlexWrap::Wrap),
             NumericSnapshot::Number(_)

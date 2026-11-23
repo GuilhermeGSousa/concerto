@@ -41,7 +41,6 @@ mod numeric;
 mod paths;
 mod reflect_rows;
 mod registry;
-mod rows;
 mod sync;
 mod target;
 mod text_field;
@@ -55,7 +54,7 @@ use add_component::{
 };
 pub use name_field::{FocusNameField, NameField};
 use name_field::{name_field, update_name_field};
-pub use sync::{InspectedComponent, InspectorHeader, ReadOnlyCard, standard_row_node};
+pub use sync::{InspectedComponent, InspectorHeader, ReadOnlyCard};
 use sync::{
     build_property_widgets, disable_read_only_cards, size_label_columns, sync_inspected_components,
 };
@@ -71,6 +70,11 @@ use numeric::{
 use text_field::{cancel_text_fields, commit_text_fields, refresh_text_fields};
 use variants::{refresh_option_fields, refresh_variant_labels};
 
+pub use crate::property::{
+    ComponentTarget, EditContext, EditError, ErasedEditor, PlainRow, Property, PropertyAddress,
+    PropertyCommit, PropertyCommits, PropertyEditor, PropertyKind, PropertyRow, PropertyRowValue,
+    PropertyTarget, TargetWorld, standard_row_node,
+};
 use crate::tools::edits::EditComponent;
 pub(crate) use list::{ListEdit, ListEditor};
 pub(crate) use paths::{
@@ -78,15 +82,9 @@ pub(crate) use paths::{
 };
 pub use reflect_rows::{ReflectRows, ReflectRowsPlugin};
 use registry::send_property_commits;
-pub use registry::{EditableApp, ErasedEditor, InspectorRegistry};
+pub use registry::{EditableApp, InspectorRegistry};
 pub(crate) use registry::{InspectionSource, current_editor};
-pub use rows::{
-    EditContext, EditError, PlainRow, Property, PropertyCommit, PropertyCommits, PropertyEditor,
-    PropertyKind, PropertyRow, PropertyRowValue,
-};
-pub use target::{
-    ComponentTarget, DocumentTypes, DocumentValue, PropertyAddress, PropertyTarget, TargetWorld,
-};
+pub use target::{DocumentTypes, DocumentValue};
 pub use values::{
     CommitValue, InspectedSnapshots, InspectedValues, RefreshInspector, ShownValue, ValueCard,
     ValueSnapshot,

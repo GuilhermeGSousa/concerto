@@ -14,7 +14,7 @@ use concerto_render::components::camera::Camera;
 use concerto_scene::link::LinkedNode;
 use glam::{Mat4, Quat, Vec2, Vec3};
 
-use crate::links::linked_in_open_scene_by;
+use crate::tools::links::linked_in_open_scene_by;
 use crate::tools::{
     camera::{EditorCamera, FlyCamera, ViewportPointer, fill_pointer_from_window},
     picking::{ray_through, world_to_viewport},

@@ -11,6 +11,7 @@ publish = false
 run = [
     "dep:criterion",
     "dep:concerto",
+    "dep:concerto-animation",
     "dep:concerto-app",
     "dep:concerto-color",
     "dep:concerto-ecs",
@@ -23,6 +24,7 @@ run = [
     "dep:concerto-window",
     "dep:serde",
     "dep:bincode",
+    "dep:uuid",
 ]
 
 [dependencies]
@@ -30,6 +32,7 @@ criterion = { version = "0.5", optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 concerto = { path = "../..", optional = true }
+concerto-animation = { workspace = true, optional = true }
 concerto-app = { workspace = true, optional = true }
 concerto-color = { workspace = true, optional = true }
 concerto-ecs = { workspace = true, optional = true }
@@ -42,6 +45,7 @@ concerto-ui = { workspace = true, optional = true }
 concerto-window = { workspace = true, optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
 bincode = { version = "1.3", optional = true }
+uuid = { version = "1.18.1", optional = true }
 
 [[bench]]
 name = "asset_loading"
@@ -55,6 +59,11 @@ required-features = ["run"]
 
 [[bench]]
 name = "ragdoll"
+harness = false
+required-features = ["run"]
+
+[[bench]]
+name = "clip_sampling"
 harness = false
 required-features = ["run"]
 

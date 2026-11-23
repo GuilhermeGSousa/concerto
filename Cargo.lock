@@ -1089,6 +1089,7 @@ version = "0.1.0"
 dependencies = [
  "bincode",
  "concerto",
+ "concerto-animation",
  "concerto-app",
  "concerto-color",
  "concerto-ecs",
@@ -1101,6 +1102,7 @@ dependencies = [
  "criterion",
  "glam 0.33.12",
  "serde",
+ "uuid",
 ]
 
 [[package]]
