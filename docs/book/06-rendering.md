@@ -517,6 +517,10 @@ around a surface, and it is not blocked by a roof, only dimmed by ambient
 occlusion where a camera has it. Without a `Sky`, a surface reflects
 `CameraEnvironment::ambient`, the same from every direction.
 
+`UnlitView` on a camera draws the standard material by its base colour and
+emission alone: no lights, shadows, ambient light, occlusion or fog. The
+editor's viewport puts it on its camera when you switch the viewport to Unlit.
+
 ## Particles
 
 `ParticleEmitter`, from `concerto::particles`, emits soft round billboards from

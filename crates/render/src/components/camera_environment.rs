@@ -74,6 +74,10 @@ impl CameraEnvironment {
     }
 }
 
+/// Draws everything this camera sees with the standard material by base colour and emission alone, without lights, shadows, ambient light, occlusion or fog.
+#[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct UnlitView;
+
 /// Exponential-squared distance fog toward `color`, starting at `start`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Reflect)]
 pub struct Fog {
