@@ -290,6 +290,51 @@ fn typed_values_are_committed_to_the_entity_their_rows_were_built_for() {
     assert_eq!(other.title, "Gate");
     assert_eq!(other.anchor, Vec2::new(1.0, 2.0));
     assert!(w.f.unsaved(w.document));
+
+    let lit = w.spawn_in_scene((
+        Transform::from_translation(glam::Vec3::new(1.0, 2.0, 3.0)),
+        spawner(),
+    ));
+    let plain = w.spawn_in_scene(Transform::IDENTITY);
+    w.scene().trigger(Select::Replace(vec![plain, lit]));
+    w.update();
+    w.update();
+    let world = &mut w.f.world;
+    let mut cards = world.query::<&InspectedComponent, ()>();
+    let names: Vec<&str> = cards.iter(world).map(|card| card.name).collect();
+    assert!(names.contains(&"Transform"), "{names:?}");
+    assert!(!names.contains(&"Spawner"), "{names:?}");
+    let label = |world: &mut World, path: &[&'static str]| {
+        let row = row(world, path);
+        let cell = world
+            .get_component_for_entity::<Children>(row)
+            .unwrap()
+            .iter()
+            .copied()
+            .next()
+            .unwrap();
+        world
+            .get_component_for_entity::<concerto_ui::text::UIText>(cell)
+            .unwrap()
+            .clone()
+    };
+    let translation = label(world, &["translation"]);
+    assert!(translation.text.ends_with(" —"), "{}", translation.text);
+    assert_eq!(translation.color, UITheme::default().text_muted);
+    assert!(!label(world, &["scale"]).text.ends_with(" —"));
+    run(world, numeric::refresh_numeric_fields);
+    let x = slot(world, &["translation"], 0);
+    submit(world, x, "5");
+    run(world, numeric::commit_numeric_fields);
+    run(world, send_property_commits);
+    assert_eq!(
+        w.get::<Transform>(lit).unwrap().translation,
+        glam::Vec3::new(5.0, 2.0, 3.0)
+    );
+    assert_eq!(
+        w.get::<Transform>(plain).unwrap().translation,
+        glam::Vec3::new(5.0, 0.0, 0.0)
+    );
 }
 
 #[derive(Component, concerto_reflect::Reflect, Default)]
@@ -454,6 +499,22 @@ mod name_field {
         f.select(f.second);
         assert_eq!(f.name(f.first), "torch");
         assert_eq!(f.name(f.second), "second");
+
+        let both = vec![f.first, f.second];
+        f.w.scene().trigger(Select::Replace(both));
+        f.step();
+        assert_eq!(
+            f.world()
+                .get_component_for_entity::<UITextInput>(field)
+                .unwrap()
+                .value,
+            "2 entities"
+        );
+        assert!(
+            f.world()
+                .get_component_for_entity::<UIDisabled>(field)
+                .is_some()
+        );
     }
 }
 

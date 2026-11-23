@@ -1093,6 +1093,17 @@ entity lacks, at its `Default` value; a card's ⋯ menu removes one. A type that
 declares `Component` without `Default`, such as `Camera`, is edited and removed
 but never offered.
 
+With several entities selected, the inspector shows only the components every
+one of them has. Each field shows the active entity's value; a field whose
+value differs on another selected entity has ` —` after its label. A value
+edited there is set on every selected entity, each edit checked and reported on
+its own, so a linked node's refusal leaves the others edited. A list's add and
+remove buttons act on every selected entity when the list's length is the same
+on all of them, and on the active one alone otherwise. The name field reads
+`<n> entities` and cannot be edited, and the "add component" row and the cards'
+⋯ menus are disabled. MCP's `set_property`, `list_push` and `list_remove` act
+only on the entity they name, whatever is selected.
+
 Left-clicking a mesh in the viewport selects its entity, scrolls the hierarchy
 to it, and shows its component gizmos, among them a box around its bounds;
 clicking empty space clears the selection. Ctrl, Shift or the logo key with the

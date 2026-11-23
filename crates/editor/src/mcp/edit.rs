@@ -2,7 +2,7 @@ use std::{any::TypeId, sync::Arc};
 
 use concerto_app::{App, schedule_groups::LateUpdate};
 use concerto_ecs::{
-    Component, Entity, Query, Res, ResMut,
+    Component, Entity, Query, Res,
     command::CommandQueue,
     component::{Tick, name::Name},
     events::event_reader::EventReader,
@@ -25,13 +25,14 @@ use crate::{
     hosted::{EditTarget, EditWorld, EditWorldSignals, Hosted},
     inspector::{
         ComponentTarget, EditSource, InspectionSource, InspectorRegistry, ListEdit, ListEditor,
-        ListedPath, PropertyAddress, PropertyCommit, PropertyCommits, PropertyTarget,
-        adapter_commit, find_path, listed_paths, not_editable, refusal_error,
-        refused as inspector_refused, unknown_path,
+        ListedPath, PropertyAddress, PropertyCommit, PropertyTarget, adapter_commit, checked,
+        find_path, listed_paths, not_editable, refusal_error, refused as inspector_refused,
+        unknown_path,
     },
     tools::{
         edits::{
-            ComponentEdit, ComponentEdited, EditComponent, PropertyCommitted, SetValue, dotted_name,
+            CommitProperty, ComponentEdit, ComponentEdited, EditComponent, PropertyCommitted,
+            SetValue, dotted_name,
         },
         entity_ops::{EntityEdit, EntityEdited},
         scene::SceneRoot,
@@ -507,7 +508,7 @@ fn registered_component(types: &TypeRegistry, name: &str) -> Result<Named, ToolE
 }
 
 enum Write {
-    Adapter(PropertyCommit),
+    Adapter(CommitProperty),
     Value(SetValue),
 }
 
@@ -558,7 +559,9 @@ fn property_write(
             server,
         },
     )?;
-    Ok(Write::Adapter(commit))
+    checked(registry, Some(&source.types()), changed, commit)
+        .map(Write::Adapter)
+        .map_err(|error| refused(&format!("Set {name} failed: {error}")))
 }
 
 fn set_property(
@@ -569,7 +572,6 @@ fn set_property(
     server: EditWorld<Option<Res<AssetServer>>>,
     registry: Res<InspectorRegistry>,
     targets: Query<Entity, With<EditTarget>>,
-    mut commits: ResMut<PropertyCommits>,
     mut scene: EditWorldSignals,
     mut cmd: CommandQueue,
 ) {
@@ -598,7 +600,7 @@ fn set_property(
         let (target, path) = match write {
             Ok(Write::Adapter(commit)) => {
                 let address = commit.row.address.clone();
-                commits.0.push(commit);
+                scene.trigger(commit);
                 (address.target, address.path)
             }
             Ok(Write::Value(set)) => {
@@ -632,7 +634,7 @@ fn list_commit(
     component: &str,
     path: &str,
     edit: ListEdit,
-) -> Result<(PropertyCommit, String), ToolError> {
+) -> Result<(CommitProperty, String), ToolError> {
     let (component, short, _) = carried_component(source, entity, component)?;
     let rows = source
         .collect_component(registry, entity, component)
@@ -643,7 +645,10 @@ fn list_commit(
         .unwrap_or_default();
     let target = Arc::new(ComponentTarget { entity, component });
     let changed = registry.changed_tick();
-    list_commit_at(short, path, &listed, root, edit, target, changed)
+    let (commit, done) = list_commit_at(short, path, &listed, root, edit, target, changed)?;
+    let commit = checked(registry, Some(&source.types()), changed, commit)
+        .map_err(|error| refused(&format!("Changing {short}.{path} failed: {error}")))?;
+    Ok((commit, done))
 }
 
 /// The commit that makes `edit` to the list at `path` among `listed`, and what its answer says was done.
@@ -699,8 +704,8 @@ pub(super) fn list_commit_at(
 fn start_list_edit(
     reply: &Reply,
     document: Entity,
-    edit: Result<(PropertyCommit, String), ToolError>,
-    commits: &mut PropertyCommits,
+    edit: Result<(CommitProperty, String), ToolError>,
+    scene: &mut EditWorldSignals,
     cmd: &mut CommandQueue,
 ) {
     let (commit, done) = match edit {
@@ -711,7 +716,7 @@ fn start_list_edit(
         }
     };
     let PropertyAddress { target, path, .. } = commit.row.address.clone();
-    commits.0.push(commit);
+    scene.trigger(commit);
     cmd.spawn((
         PendingCall::new(reply, "the list to be changed"),
         SettingProperty {
@@ -730,7 +735,7 @@ fn list_push(
     roots: EditWorld<Query<Entity, With<SceneRoot>>>,
     registry: Res<InspectorRegistry>,
     targets: Query<Entity, With<EditTarget>>,
-    mut commits: ResMut<PropertyCommits>,
+    mut scene: EditWorldSignals,
     mut cmd: CommandQueue,
 ) {
     let Some(document) = targets.iter().next() else {
@@ -753,7 +758,7 @@ fn list_push(
                 ListEdit::Push,
             )
         });
-        start_list_edit(reply, document, edit, &mut commits, &mut cmd);
+        start_list_edit(reply, document, edit, &mut scene, &mut cmd);
     }
 }
 
@@ -764,7 +769,7 @@ fn list_remove(
     roots: EditWorld<Query<Entity, With<SceneRoot>>>,
     registry: Res<InspectorRegistry>,
     targets: Query<Entity, With<EditTarget>>,
-    mut commits: ResMut<PropertyCommits>,
+    mut scene: EditWorldSignals,
     mut cmd: CommandQueue,
 ) {
     let Some(document) = targets.iter().next() else {
@@ -787,7 +792,7 @@ fn list_remove(
                 ListEdit::Remove(arguments.index),
             )
         });
-        start_list_edit(reply, document, edit, &mut commits, &mut cmd);
+        start_list_edit(reply, document, edit, &mut scene, &mut cmd);
     }
 }
 

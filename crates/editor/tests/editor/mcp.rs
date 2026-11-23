@@ -2700,6 +2700,7 @@ fn set_property_writes_through_the_adapter_or_set_value_and_answers_the_componen
             };
             let intensity = set(&bulb, "Light", "intensity", json!(3.5)).await;
             let color = set(&bulb, "light", "color", json!([1.0, 0.5, 0.25, 1.0])).await;
+            ok_with(&client, "select", json!({ "entities": [bulb, hero] })).await;
             let rotation = set(
                 &hero,
                 "Transform",
@@ -2761,7 +2762,7 @@ fn set_property_writes_through_the_adapter_or_set_value_and_answers_the_componen
                 &ok_with(
                     &client,
                     "inspect",
-                    json!({ "entity": bulb, "components": ["Light"] }),
+                    json!({ "entity": bulb, "components": ["Light", "Transform"] }),
                 )
                 .await,
             )
@@ -2847,6 +2848,10 @@ fn set_property_writes_through_the_adapter_or_set_value_and_answers_the_componen
     assert_eq!(voiced, format!("strong {chime} {hero} 2"));
     assert_eq!(merged, format!("strong {chime} {hero} 3"));
     assert_eq!(inspected(&after, "Light")["value"]["intensity"], 3.5);
+    assert_eq!(
+        inspected(&after, "Transform")["value"]["rotation"],
+        json!([0.0, 0.0, 0.0, 1.0])
+    );
     let codes: Vec<&str> = errors
         .iter()
         .map(|error| error["code"].as_str().unwrap())

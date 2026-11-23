@@ -26,17 +26,19 @@ use concerto_ecs::{
 use concerto_foundation::assets::handle::ReflectAssetHandle;
 use concerto_reflect::{
     PathSegment, PropertyPath, PropertyVisitor, Reflect, ReflectDefault, ReflectEnumInfo,
-    ReflectList, ReflectOption, ReflectRef, TypeRegistry,
+    ReflectList, ReflectOption, ReflectRef, TypeRegistry, with_property,
 };
 use concerto_ui::{node::UINode, theme::UITheme};
 
-use super::list::ListEditor;
+use super::InspectorData;
+use super::list::{ListEdit, ListEditor};
 use super::variants::{OptionToggle, VariantPicker};
 use crate::asset_picker::AssetPicker;
 use crate::hosted::{EditWorld, EditWorldSignals};
 use crate::property::{
-    EditContext, EditError, ErasedEditor, Property, PropertyCommit, PropertyCommits,
-    PropertyEditor, PropertyKind, PropertyRow, PropertyRowValue, TargetWorld, standard_row_node,
+    ComponentTarget, EditContext, EditError, ErasedEditor, Property, PropertyAddress,
+    PropertyCommit, PropertyCommits, PropertyEditor, PropertyKind, PropertyRow, PropertyRowValue,
+    TargetWorld, standard_row_node,
 };
 use crate::tools::edits::CommitProperty;
 
@@ -291,6 +293,10 @@ impl InspectionSource<'_> {
     pub fn is_component_changed(&self, entity: Entity, id: TypeId) -> bool {
         self.components.is_component_changed(entity, id)
     }
+    /// Whether `entity` has component `id`.
+    pub fn carries(&self, entity: Entity, id: TypeId) -> bool {
+        self.components.component_ids(entity).contains(&id)
+    }
     pub fn is_registered(&self, id: TypeId) -> bool {
         self.table.get_type_data::<ReflectComponent>(id).is_some()
     }
@@ -389,7 +395,8 @@ pub(crate) fn current_editor(
         .ok_or(EditError::StaleEditor)
 }
 
-fn checked(
+/// The commit as the signal that applies it, refused when its row's editor changed since the row was built.
+pub(crate) fn checked(
     registry: &InspectorRegistry,
     types: Option<&TypeRegistry>,
     changed: Tick,
@@ -407,18 +414,77 @@ fn checked(
 pub(super) fn send_property_commits(
     mut commits: ResMut<PropertyCommits>,
     registry: Res<InspectorRegistry>,
-    types: EditWorld<Option<Res<AppTypeRegistry>>>,
+    data: Res<InspectorData>,
+    source: EditWorld<InspectionSource>,
     mut scene: EditWorldSignals,
 ) {
     if !commits.holds_for(TargetWorld::EditTarget) {
         return;
     }
-    let types = types.as_deref().map(|types| types.read());
-    let types = types.as_deref();
+    let types = source.types();
     for commit in commits.take_for(TargetWorld::EditTarget) {
-        match checked(&registry, types, registry.changed_tick(), commit) {
-            Ok(commit) => scene.trigger(commit),
+        match checked(&registry, Some(&types), registry.changed_tick(), commit) {
+            Ok(commit) => {
+                for commit in fanned_out(commit, &data, &source) {
+                    scene.trigger(commit);
+                }
+            }
             Err(error) => log::warn!("Property commit dropped: {error}"),
         }
     }
+}
+
+/// The commit, or, when its row was built for the inspected entity of several, the same edit to each of them that holds the component; a list edit on a list whose length differs among them stays with the inspected one.
+fn fanned_out(
+    commit: CommitProperty,
+    data: &InspectorData,
+    source: &InspectionSource,
+) -> Vec<CommitProperty> {
+    let Some(target) = commit.row.address.target.component() else {
+        return vec![commit];
+    };
+    let several = data.scene_entities.len() > 1 && data.scene_entity == Some(target.entity);
+    let holders: Vec<Entity> = data
+        .scene_entities
+        .iter()
+        .copied()
+        .filter(|&entity| source.carries(entity, target.component))
+        .collect();
+    if !several || (commit.edit.is::<ListEdit>() && !same_on_all(&commit, &holders, source)) {
+        return vec![commit];
+    }
+    holders
+        .into_iter()
+        .map(|entity| CommitProperty {
+            row: PropertyRow {
+                address: PropertyAddress {
+                    target: Arc::new(ComponentTarget {
+                        entity,
+                        component: target.component,
+                    }),
+                    ..commit.row.address.clone()
+                },
+                ..commit.row.clone()
+            },
+            edit: commit.edit.clone(),
+            editor: commit.editor.clone(),
+        })
+        .collect()
+}
+
+fn same_on_all(commit: &CommitProperty, holders: &[Entity], source: &InspectionSource) -> bool {
+    let address = &commit.row.address;
+    let Some(component) = address.target.component() else {
+        return false;
+    };
+    let snapshot = |entity: Entity| {
+        let mut shot = None;
+        let value = source.read(entity, component.component)?;
+        let _ = with_property(value, &address.path, &mut |field| {
+            shot = commit.editor.snapshot(field).ok();
+        });
+        shot
+    };
+    let active = snapshot(component.entity);
+    active.is_some() && holders.iter().all(|&entity| snapshot(entity) == active)
 }

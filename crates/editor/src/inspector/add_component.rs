@@ -63,14 +63,18 @@ pub(super) fn forget_scene(
     }
 }
 
-/// Spawns the "add component" row at the end of `stack` and anchors the menu to it.
+/// Spawns the "add component" row at the end of `stack`, disabled unless `enabled`, and anchors the menu to it.
 pub(super) fn spawn_add_component(
     cmd: &mut CommandQueue,
     stack: Entity,
     menus: &Query<(Entity, &AddComponentMenu)>,
+    enabled: bool,
     theme: &UITheme,
 ) {
     let row = spawn_row(cmd, stack, theme);
+    if !enabled {
+        cmd.insert(UIDisabled, row);
+    }
     match menus.iter().next() {
         Some((entity, menu)) => cmd.insert(menu_panel(row, menu.search), entity),
         None => spawn_menu(cmd, row, theme),

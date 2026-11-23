@@ -285,6 +285,7 @@ pub(super) fn sync_value_cards(
                 name: &value.name,
                 target: value.target.clone(),
                 read: same,
+                mixed: &[],
             },
             value.properties.clone(),
             &value.types.read(),
