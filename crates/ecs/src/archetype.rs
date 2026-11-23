@@ -6,7 +6,7 @@ use crate::{
     common::ArchetypeType,
     component::{CheckChangeTicks, Component, ComponentId, SystemTicks, Tick},
     entity::Entity,
-    table::{CellAccessor, MutableCellAccessor, Table, TableRowIndex},
+    table::{Column, MutableCellAccessor, Table, TableRowIndex},
     utils::fixed_hasher::FixedHasher,
 };
 
@@ -146,15 +146,12 @@ impl Archetype {
         self.data_table.check_change_ticks(check);
     }
 
-    pub(crate) unsafe fn get_component_unsafe_ticked<T: 'static>(
-        &self,
-        row: TableRowIndex,
-    ) -> Option<CellAccessor<'_, T>> {
-        unsafe {
-            self.data_table
-                .get_column(ComponentId::of::<T>())?
-                .get_unsafe_ticked(row)
-        }
+    pub(crate) fn column(&self, component_id: ComponentId) -> Option<&Column> {
+        self.data_table.get_column(component_id)
+    }
+
+    pub(crate) fn column_mut(&mut self, component_id: ComponentId) -> Option<&mut Column> {
+        self.data_table.get_column_mut(component_id)
     }
 
     pub(crate) unsafe fn get_component_unsafe_mut<T: 'static>(

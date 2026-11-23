@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    marker::PhantomData,
     ops::{Deref, DerefMut},
 };
 
@@ -8,6 +8,7 @@ use any_vec::{AnyVec, any_value::AnyValueWrapper};
 use crate::{
     component::{CheckChangeTicks, Component, ComponentId, SystemTicks, Tick},
     entity::Entity,
+    utilities::TypeIdMap,
 };
 
 pub struct Column {
@@ -76,20 +77,31 @@ impl Column {
         unsafe { self.data.get_unchecked(*row).downcast_ref() }
     }
 
-    pub(crate) unsafe fn get_unsafe_ticked<T: 'static>(
-        &self,
-        row: TableRowIndex,
-    ) -> Option<CellAccessor<'_, T>> {
-        unsafe {
-            self.data
-                .get_unchecked(*row)
-                .downcast_ref()
-                .map(|data| CellAccessor {
-                    data,
-                    added_tick: self.added_ticks[*row],
-                    changed_tick: self.changed_ticks[*row],
-                })
+    pub(crate) fn values<T: 'static>(&self) -> Option<&[T]> {
+        Some(self.data.downcast_ref::<T>()?.as_slice())
+    }
+
+    pub(crate) fn ticks(&self) -> ColumnTicks<'_> {
+        ColumnTicks {
+            added: self.added_ticks.as_ptr(),
+            changed: self.changed_ticks.as_ptr(),
+            len: self.added_ticks.len().min(self.changed_ticks.len()),
+            _column: PhantomData,
         }
+    }
+
+    pub(crate) fn cells_mut<T: 'static>(&mut self) -> Option<ColumnCells<'_, T>> {
+        let values = self.data.downcast_mut::<T>()?.as_mut_slice();
+        Some(ColumnCells {
+            len: values
+                .len()
+                .min(self.added_ticks.len())
+                .min(self.changed_ticks.len()),
+            values: values.as_mut_ptr(),
+            added: self.added_ticks.as_ptr(),
+            changed: self.changed_ticks.as_mut_ptr(),
+            _column: PhantomData,
+        })
     }
 
     pub(crate) unsafe fn get_unsafe_mut<T: 'static>(
@@ -120,14 +132,14 @@ impl Column {
 }
 
 pub struct Table {
-    columns: HashMap<ComponentId, Column>,
+    columns: TypeIdMap<Column>,
     entities: Vec<Entity>,
 }
 
 impl Table {
     pub fn new() -> Self {
         Self {
-            columns: HashMap::new(),
+            columns: TypeIdMap::default(),
             entities: Vec::new(),
         }
     }
@@ -284,10 +296,59 @@ impl DerefMut for TableRowIndex {
     }
 }
 
-pub(crate) struct CellAccessor<'w, T> {
-    pub(crate) data: &'w T,
-    pub(crate) added_tick: Tick,
-    pub(crate) changed_tick: Tick,
+/// The stamps of one row of a column.
+#[derive(Clone, Copy)]
+pub struct RowTicks {
+    pub(crate) added: Tick,
+    pub(crate) changed: Tick,
+}
+
+/// The stamps of one column, read by row while a [`ColumnCells`] may write other rows.
+pub struct ColumnTicks<'w> {
+    added: *const Tick,
+    changed: *const Tick,
+    len: usize,
+    _column: PhantomData<&'w [Tick]>,
+}
+
+impl ColumnTicks<'_> {
+    /// # Safety
+    /// No exclusive borrow of the stamps at `row` may be alive.
+    pub(crate) unsafe fn get(&self, row: usize) -> RowTicks {
+        assert!(row < self.len, "row {row} is outside its column");
+        // SAFETY: `row` is inside both buffers, which live for `'w`, and nothing borrows it exclusively.
+        unsafe {
+            RowTicks {
+                added: *self.added.add(row),
+                changed: *self.changed.add(row),
+            }
+        }
+    }
+}
+
+/// The values and stamps of one column, borrowed a row at a time.
+pub struct ColumnCells<'w, T> {
+    values: *mut T,
+    added: *const Tick,
+    changed: *mut Tick,
+    len: usize,
+    _column: PhantomData<&'w mut [T]>,
+}
+
+impl<'w, T> ColumnCells<'w, T> {
+    /// # Safety
+    /// No other borrow of the value or the changed stamp at `row` may be alive while the returned one is.
+    pub(crate) unsafe fn get(&self, row: usize) -> MutableCellAccessor<'w, T> {
+        assert!(row < self.len, "row {row} is outside its column");
+        // SAFETY: `row` is inside the three buffers, which live for `'w`, and nothing else borrows it.
+        unsafe {
+            MutableCellAccessor {
+                data: &mut *self.values.add(row),
+                added_tick: *self.added.add(row),
+                changed_tick: &mut *self.changed.add(row),
+            }
+        }
+    }
 }
 
 pub(crate) struct MutableCellAccessor<'w, T> {

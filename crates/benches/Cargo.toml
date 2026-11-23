@@ -78,6 +78,11 @@ harness = false
 required-features = ["run"]
 
 [[bench]]
+name = "query_iteration"
+harness = false
+required-features = ["run"]
+
+[[bench]]
 name = "motion_matching"
 harness = false
 required-features = ["run"]
