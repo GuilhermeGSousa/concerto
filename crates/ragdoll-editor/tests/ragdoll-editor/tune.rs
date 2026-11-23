@@ -47,6 +47,11 @@ async fn tune(client: Client) {
 
     ok(&client, "open_asset", json!({ "asset": RAGDOLL })).await;
     until_idle(&client).await;
+    let status = ok(&client, "status", json!({})).await;
+    assert!(
+        status.contains("values: Part, Preview, Profiles"),
+        "{status}"
+    );
     let fat = ok(
         &client,
         "set_ragdoll_part",

@@ -1810,11 +1810,12 @@ action: the tool answers that a rig comes first.
 The same crate registers the tab of a `Ragdoll`, in place of the generic form.
 The left host is a tree of the parts, each under the part of its nearest
 ancestor bone and labelled with its bone; a row selects its part. The panel
-shows three values: `Ragdoll`, the whole asset; `Part`, the selected part, whose
-shape, offset, rotation, mass and joint the inspector's own property editors
-edit and whose edits mark the tab unsaved; and `Preview`, never saved, with the
-`drop_height`, `poke_bone`, `poke_impulse`, `seconds` and `clip` the buttons
-use. Above them are **Add part**, which lists the bones that have no part,
+shows three values: `Part`, the selected part, whose shape, offset, rotation,
+mass and joint the inspector's own property editors edit and whose edits mark
+the tab unsaved; `Preview`, never saved, with the `drop_height`, `poke_bone`,
+`poke_impulse`, `seconds` and `clip` the buttons use; and `Profiles`, the
+ragdoll's strength profiles. Parts other than the selected one are not shown,
+and the skeleton is the one the ragdoll was created for. Above them are **Add part**, which lists the bones that have no part,
 **Remove part**, and the preview buttons **Drop**, **Poke**, **Play** and
 **Reset**; Drop and Poke print the headless trial's report under them. Limits
 are edited by number only.
