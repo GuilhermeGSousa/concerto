@@ -6,7 +6,7 @@ use uuid::Uuid;
 
 use crate::{
     blackboard::AnimationBlackboard,
-    clip::{AnimationChannel, AnimationClip},
+    clip::{AnimationChannel, AnimationClip, KeyCursor},
     evaluation::{AnimationGraphContext, RootBone},
     param::Param,
     pose::{
@@ -280,12 +280,14 @@ impl ClipClock {
 
 pub struct AnimationClipNodeState {
     clock: ClipClock,
+    cursors: Vec<KeyCursor>,
 }
 
 impl AnimationClipNodeState {
     pub fn new() -> Self {
         Self {
             clock: ClipClock::new(0.0),
+            cursors: Vec::new(),
         }
     }
 
@@ -372,27 +374,32 @@ impl AnimationNode for AnimationClipNode {
             return;
         };
 
-        bone_ids
-            .iter()
-            .map(|uuid| animation_clip.get_channels(uuid))
-            .enumerate()
-            .for_each(|(bone_index, animation_channels)| {
-                let Some(animation_channels) = animation_channels else {
-                    return;
-                };
+        let time = state.current_time();
+        let mut sampled = 0;
+        for (bone_index, uuid) in bone_ids.iter().enumerate() {
+            let Some(animation_channels) = animation_clip.get_channels(uuid) else {
+                continue;
+            };
 
-                let Some(joint_pose) = output.joint_mut(bone_index) else {
-                    return;
-                };
+            let Some(joint_pose) = output.joint_mut(bone_index) else {
+                continue;
+            };
 
-                for animation_channel in animation_channels {
-                    animation_channel.sample_transform(state.current_time(), joint_pose);
-                }
+            let cursors = sampled..sampled + animation_channels.len();
+            sampled = cursors.end;
+            if state.cursors.len() < cursors.end {
+                state.cursors.resize(cursors.end, KeyCursor::default());
+            }
+            for (animation_channel, cursor) in
+                animation_channels.iter().zip(&mut state.cursors[cursors])
+            {
+                animation_channel.sample_transform_from(time, cursor, joint_pose);
+            }
 
-                if let Some(root) = context.root().filter(|root| root.index == bone_index) {
-                    net_of_root_motion(joint_pose, root);
-                }
-            });
+            if let Some(root) = context.root().filter(|root| root.index == bone_index) {
+                net_of_root_motion(joint_pose, root);
+            }
+        }
 
         output.set_root_motion(root_motion(
             &state.clock,

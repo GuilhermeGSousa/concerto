@@ -54,6 +54,26 @@ pub(crate) enum ChannelComponent {
     Scale,
 }
 
+/// Where a channel's last sample landed among its keys, kept by whoever plays it; a cursor from another channel or a changed one is safe to pass.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct KeyCursor {
+    key: usize,
+}
+
+#[derive(Clone, Copy)]
+enum KeySpan {
+    At(usize),
+    Between(usize),
+}
+
+impl KeySpan {
+    fn key(self) -> usize {
+        match self {
+            Self::At(key) | Self::Between(key) => key,
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 pub struct AnimationChannel {
     time_samples: Vec<f32>,
@@ -73,26 +93,72 @@ impl AnimationChannel {
             return;
         }
 
+        self.set_transform_in(transform, self.search(current_time), current_time);
+    }
+
+    /// Samples as [`Self::sample_transform`] does, trying the keys at `cursor` before searching, and leaves `cursor` at the keys found.
+    pub fn sample_transform_from(
+        &self,
+        current_time: f32,
+        cursor: &mut KeyCursor,
+        transform: &mut JointPose,
+    ) {
+        if self.time_samples.len() < 2 {
+            return;
+        }
+
+        let span = self
+            .span_at(current_time, cursor.key)
+            .or_else(|| self.span_at(current_time, cursor.key.saturating_add(1)))
+            .unwrap_or_else(|| self.search(current_time));
+        cursor.key = span.key();
+        self.set_transform_in(transform, span, current_time);
+    }
+
+    fn search(&self, current_time: f32) -> KeySpan {
         match self
             .time_samples
             .binary_search_by(|val| val.total_cmp(&current_time))
         {
-            Ok(index) => {
-                self.set_transform_at(transform, index);
+            Ok(index) => KeySpan::At(index),
+            Err(0) => KeySpan::At(0),
+            Err(index) if index >= self.time_samples.len() => {
+                KeySpan::At(self.time_samples.len() - 1)
             }
-            Err(index) => {
-                if index == 0 {
-                    self.set_transform_at(transform, index);
-                } else if index >= self.time_samples.len() {
-                    self.set_transform_at(transform, self.time_samples.len() - 1);
-                } else {
-                    let after_time = self.time_samples[index];
-                    let before_time = self.time_samples[index - 1];
+            Err(index) => KeySpan::Between(index - 1),
+        }
+    }
 
-                    let normalized_time = (current_time - before_time) / (after_time - before_time);
+    fn span_at(&self, current_time: f32, key: usize) -> Option<KeySpan> {
+        let time = self.time_samples.get(key)?;
+        let after =
+            |other: Option<&f32>| other.is_none_or(|other| other.total_cmp(&current_time).is_gt());
+        let next = self.time_samples.get(key + 1);
+        match time.total_cmp(&current_time) {
+            Ordering::Less if next.is_none() => Some(KeySpan::At(key)),
+            Ordering::Less => after(next).then_some(KeySpan::Between(key)),
+            Ordering::Greater => (key == 0).then_some(KeySpan::At(key)),
+            Ordering::Equal => {
+                let previous = key
+                    .checked_sub(1)
+                    .map(|previous| &self.time_samples[previous]);
+                let alone = after(next)
+                    && previous.is_none_or(|previous| previous.total_cmp(&current_time).is_lt());
+                alone.then_some(KeySpan::At(key))
+            }
+        }
+    }
 
-                    self.interpolate_between(transform, index - 1, normalized_time);
-                }
+    fn set_transform_in(&self, transform: &mut JointPose, span: KeySpan, current_time: f32) {
+        match span {
+            KeySpan::At(index) => self.set_transform_at(transform, index),
+            KeySpan::Between(index) => {
+                let before_time = self.time_samples[index];
+                let after_time = self.time_samples[index + 1];
+
+                let normalized_time = (current_time - before_time) / (after_time - before_time);
+
+                self.interpolate_between(transform, index, normalized_time);
             }
         }
     }
