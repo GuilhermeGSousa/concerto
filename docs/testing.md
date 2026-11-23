@@ -37,7 +37,9 @@ cargo bench -p concerto-benches --features run
 ```
 
 The `ragdoll` benchmark measures one fixed step with 1, 8 and 32 reference
-humanoids, limp, kinematic and powered. The `transform_propagation` benchmark
+humanoids, limp, kinematic and powered. The `clip_sampling` benchmark samples a
+clip of 60 bones, three channels each of 300 keys, a frame at a time, with a
+fresh search and with a `KeyCursor`. The `transform_propagation` benchmark
 measures one `propagate_global_transforms` run over 100 hierarchies of 100
 entities when nothing changed, when one leaf moved and when every entity
 moved. The `animation_graph` benchmark measures one frame of 16 players of a

@@ -5,6 +5,7 @@ pub mod edits;
 pub mod entity_ops;
 pub mod environment;
 pub mod gizmo;
+pub(crate) mod links;
 pub mod picking;
 pub mod placement;
 pub mod scene;
@@ -49,7 +50,7 @@ pub(crate) fn build_core(app: &mut App) {
     selection::build(app);
     entity_ops::build(app);
     edits::build(app);
-    crate::links::build_tools(app);
+    links::build_tools(app);
     placement::build(app);
     component_gizmos::build(app);
 }

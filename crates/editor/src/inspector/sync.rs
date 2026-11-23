@@ -438,11 +438,6 @@ pub(super) fn size_label_columns(
     }
 }
 
-/// The layout node every property row starts from.
-pub fn standard_row_node(theme: &UITheme) -> UINode {
-    theme.row().fixed().gap(theme.spacing_xs).into_bundle()
-}
-
 pub(super) fn body_node(theme: &UITheme) -> UINode {
     UINode::default()
         .with_visible(false)

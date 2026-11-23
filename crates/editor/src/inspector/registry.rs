@@ -31,41 +31,14 @@ use concerto_reflect::{
 use concerto_ui::{node::UINode, theme::UITheme};
 
 use super::list::ListEditor;
-use super::rows::{
-    EditContext, EditError, Property, PropertyCommit, PropertyCommits, PropertyEditor,
-    PropertyKind, PropertyRow, PropertyRowValue,
-};
-use super::target::TargetWorld;
 use super::variants::{OptionToggle, VariantPicker};
 use crate::asset_picker::AssetPicker;
 use crate::hosted::{EditWorld, EditWorldSignals};
+use crate::property::{
+    EditContext, EditError, ErasedEditor, Property, PropertyCommit, PropertyCommits,
+    PropertyEditor, PropertyKind, PropertyRow, PropertyRowValue, TargetWorld, standard_row_node,
+};
 use crate::tools::edits::CommitProperty;
-
-/// A registered property editor with its value and edit types erased.
-pub trait ErasedEditor: Send + Sync {
-    fn snapshot(&self, value: &dyn Reflect) -> Result<PropertyRowValue, EditError>;
-    /// The layout node of the row, read once when the row is spawned.
-    fn row_node(&self, _snapshot: &PropertyRowValue, theme: &UITheme) -> Result<UINode, EditError> {
-        Ok(super::sync::standard_row_node(theme))
-    }
-    fn build(
-        &self,
-        cmd: &mut CommandQueue,
-        row: Entity,
-        snapshot: &PropertyRowValue,
-        theme: &UITheme,
-    ) -> Result<(), EditError>;
-    fn apply(
-        &self,
-        value: &mut dyn Reflect,
-        edit: &dyn Any,
-        context: &EditContext,
-    ) -> Result<(), EditError>;
-    /// The erased edit that [`Self::apply`] takes to set the field to `value`, or `None` when the editor offers no value edit.
-    fn edit_to(&self, value: &dyn Reflect)
-    -> Result<Option<Arc<dyn Any + Send + Sync>>, EditError>;
-    fn follows_snapshot(&self) -> bool;
-}
 
 struct Adapter<T, E> {
     editor: E,
@@ -223,7 +196,7 @@ impl InspectorRegistry {
             .value()
             .zip(self.editor(property.type_id, Some(types)))
             .and_then(|(value, editor)| editor.adapter.row_node(value, theme).ok())
-            .unwrap_or_else(|| super::sync::standard_row_node(theme))
+            .unwrap_or_else(|| standard_row_node(theme))
     }
 
     /// Collect fresh owned snapshots, preferring an editor for each node over its children unless that editor walks them.

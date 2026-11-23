@@ -6,8 +6,7 @@ use std::{
 
 use concerto_app::{App, edit_time::AtEditTime};
 use concerto_ecs::{
-    Component, Entity, Resource, World,
-    component::Tick,
+    Entity, Resource, World,
     events::Event,
     reflect::{AppTypeRegistry, ReflectComponent},
     signal::{On, Signal},
@@ -23,62 +22,15 @@ use concerto_reflect::{
 };
 use serde_json::Value;
 
+pub use crate::property::{EditContext, EditError, PropertyRow};
 use crate::{
-    inspector::{ComponentTarget, ErasedEditor, PropertyAddress, PropertyTarget},
-    links::{LinkedEdit, refusal},
+    property::{ComponentTarget, ErasedEditor, PropertyAddress, PropertyTarget},
     tools::{
         entity_ops::in_open_scene,
+        links::{LinkedEdit, refusal},
         scene::{SceneRoot, SceneStatus, report_edit, write},
     },
 };
-
-/// A rejected edit leaves the target unchanged.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum EditError {
-    Rejected,
-    TypeMismatch,
-    NotFound,
-    StaleEditor,
-    MissingTarget,
-    UnregisteredComponent,
-    MissingAssets,
-}
-
-impl std::fmt::Display for EditError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match self {
-            Self::Rejected => "the value was refused",
-            Self::TypeMismatch => "the value has the wrong type",
-            Self::NotFound => "the property was not found",
-            Self::StaleEditor => "its editor changed since it was read",
-            Self::MissingTarget => "its entity, component or document no longer exists",
-            Self::UnregisteredComponent => "the component type is not registered",
-            Self::MissingAssets => "its App has no asset server or asset registry",
-        })
-    }
-}
-impl std::error::Error for EditError {}
-
-/// What an edit can read from the world it changes.
-pub struct EditContext<'w> {
-    pub assets: &'w AssetServer,
-    pub registry: &'w AssetRegistry,
-}
-
-/// A row an editor built.
-#[derive(Component, Clone)]
-pub struct PropertyRow {
-    pub address: PropertyAddress,
-    pub(crate) editor_type: TypeId,
-    pub(crate) registry_tick: Tick,
-}
-
-impl PropertyRow {
-    /// The registry's change tick at collection, which later edits are checked against.
-    pub fn registry_tick(&self) -> Tick {
-        self.registry_tick
-    }
-}
 
 /// One value written into a component, already checked against the widget registry.
 pub struct CommitProperty {
@@ -553,7 +505,11 @@ mod tests {
         SceneDirty, SceneEdited,
         testing::{tools_app, written},
     };
-    use concerto_ecs::{command::EntityCommandQueue, component::scene::SceneEntityRef};
+    use concerto_ecs::{
+        Component,
+        command::EntityCommandQueue,
+        component::{Tick, scene::SceneEntityRef},
+    };
     use concerto_foundation::assets::{
         Asset, AssetId, LoadableAsset, asset_store::AssetStore, handle::AssetHandle,
     };

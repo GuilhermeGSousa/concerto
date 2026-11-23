@@ -67,6 +67,11 @@ harness = false
 required-features = ["run"]
 
 [[bench]]
+name = "clip_sampling"
+harness = false
+required-features = ["run"]
+
+[[bench]]
 name = "transform_propagation"
 harness = false
 required-features = ["run"]
