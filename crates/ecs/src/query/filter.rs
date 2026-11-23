@@ -4,8 +4,7 @@ use crate::{
     Component, World,
     archetype::Archetype,
     component::{ComponentId, SystemTicks, bundle::ComponentBundle},
-    entity::Entity,
-    query::world_query::WorldQuery,
+    query::{fetch::StampFetch, world_query::WorldQuery},
     system::access::{QueryShape, SystemAccess},
     world::UnsafeWorldCell,
 };
@@ -16,17 +15,27 @@ use typle::typle;
 /// Multiple filters can be combined in a tuple: `(With<A>, Without<B>)` matches
 /// entities that have `A` but not `B`.  [`Or`] can be used for disjunctions.
 pub trait QueryFilter: WorldQuery {
-    /// Whether `entity` passes the filter.
+    /// What the filter resolves once from an archetype, to check its entities by row.
+    type Fetch<'w>;
+
+    /// Whether [`WorldQuery::matches`] alone decides the filter, so an entity of a matched archetype needs no check.
+    const IS_ARCHETYPAL: bool;
+
+    /// Resolves what the filter reads in the archetype at index `archetype`.
     ///
     /// # Safety
-    /// The caller must hold read access to the components the filter inspects.
-    unsafe fn filter<'w>(
-        _world: UnsafeWorldCell<'w>,
-        _entity: Entity,
-        _ticks: SystemTicks,
-    ) -> bool {
-        true
-    }
+    /// The caller must hold read access to the components the filter inspects for as long as `'w`.
+    unsafe fn set_archetype<'w>(
+        world: UnsafeWorldCell<'w>,
+        archetype: usize,
+        ticks: SystemTicks,
+    ) -> Self::Fetch<'w>;
+
+    /// Whether the entity at `row` of the archetype `fetch` was resolved from passes the filter.
+    ///
+    /// # Safety
+    /// No item that writes a component the filter inspects may be alive for the entity at `row`.
+    unsafe fn filter(fetch: &Self::Fetch<'_>, row: usize) -> bool;
 
     /// Registers what [`QueryFilter::filter`] reads with the scheduler's access tracker.
     fn fill_access(_access: &mut SystemAccess) {}
@@ -46,10 +55,24 @@ where
     T: Tuple,
     T<_>: QueryFilter,
 {
-    unsafe fn filter<'w>(world: UnsafeWorldCell<'w>, entity: Entity, ticks: SystemTicks) -> bool {
-        for typle_index!(i) in 0..T::LEN {
+    type Fetch<'w> = typle_for!(i in .. => <T<{i}> as QueryFilter>::Fetch<'w>);
+    const IS_ARCHETYPAL: bool = typle_all!(i in .. => <T<{i}>>::IS_ARCHETYPAL);
+
+    unsafe fn set_archetype<'w>(
+        world: UnsafeWorldCell<'w>,
+        archetype: usize,
+        ticks: SystemTicks,
+    ) -> Self::Fetch<'w> {
+        typle_for!(i in .. => {
             // SAFETY: the caller's access covers every filter in the tuple.
-            if !unsafe { T::<{ i }>::filter(world, entity, ticks) } {
+            unsafe { <T<{i}>>::set_archetype(world, archetype, ticks) }
+        })
+    }
+
+    unsafe fn filter(fetch: &Self::Fetch<'_>, row: usize) -> bool {
+        for typle_index!(i) in 0..T::LEN {
+            // SAFETY: the caller's guarantee covers every filter in the tuple.
+            if !unsafe { T::<{ i }>::filter(&fetch[[i]], row) } {
                 return false;
             }
         }
@@ -94,14 +117,21 @@ impl<T> QueryFilter for Added<T>
 where
     T: Component,
 {
-    unsafe fn filter<'w>(world: UnsafeWorldCell<'w>, entity: Entity, ticks: SystemTicks) -> bool {
-        for component_id in T::get_component_ids() {
-            // SAFETY: `fill_access` declares read access to `T`, whose change ticks this reads.
-            if !unsafe { world.world() }.was_component_added_in(entity, component_id, ticks) {
-                return false;
-            }
-        }
-        true
+    type Fetch<'w> = StampFetch<'w>;
+    const IS_ARCHETYPAL: bool = false;
+
+    unsafe fn set_archetype<'w>(
+        world: UnsafeWorldCell<'w>,
+        archetype: usize,
+        ticks: SystemTicks,
+    ) -> Self::Fetch<'w> {
+        // SAFETY: `fill_access` declares read access to `T`, whose stamps this resolves.
+        unsafe { StampFetch::new::<T>(world, archetype, ticks) }
+    }
+
+    unsafe fn filter(fetch: &Self::Fetch<'_>, row: usize) -> bool {
+        // SAFETY: the caller rules out an item writing `T` for this row.
+        unsafe { fetch.is_added(row) }
     }
     fn fill_access(access: &mut SystemAccess) {
         access.read_component::<T>();
@@ -139,14 +169,21 @@ impl<T> QueryFilter for Changed<T>
 where
     T: Component,
 {
-    unsafe fn filter<'w>(world: UnsafeWorldCell<'w>, entity: Entity, ticks: SystemTicks) -> bool {
-        for component_id in T::get_component_ids() {
-            // SAFETY: `fill_access` declares read access to `T`, whose change ticks this reads.
-            if !unsafe { world.world() }.was_component_changed_in(entity, component_id, ticks) {
-                return false;
-            }
-        }
-        true
+    type Fetch<'w> = StampFetch<'w>;
+    const IS_ARCHETYPAL: bool = false;
+
+    unsafe fn set_archetype<'w>(
+        world: UnsafeWorldCell<'w>,
+        archetype: usize,
+        ticks: SystemTicks,
+    ) -> Self::Fetch<'w> {
+        // SAFETY: `fill_access` declares read access to `T`, whose stamps this resolves.
+        unsafe { StampFetch::new::<T>(world, archetype, ticks) }
+    }
+
+    unsafe fn filter(fetch: &Self::Fetch<'_>, row: usize) -> bool {
+        // SAFETY: the caller rules out an item writing `T` for this row.
+        unsafe { fetch.is_changed(row) }
     }
     fn fill_access(access: &mut SystemAccess) {
         access.read_component::<T>();
@@ -184,21 +221,22 @@ impl<T> QueryFilter for With<T>
 where
     T: Component,
 {
-    unsafe fn filter<'w>(world: UnsafeWorldCell<'w>, entity: Entity, _ticks: SystemTicks) -> bool {
-        // SAFETY: only the entity's archetype is read, under the caller's access.
-        let world = unsafe { world.world() };
+    type Fetch<'w> = bool;
+    const IS_ARCHETYPAL: bool = true;
 
-        match world.entity_store().find_location(entity) {
-            Some(location) => {
-                let archetypes = world.archetypes();
-                let archetype = &archetypes[location.archetype_index as usize];
-                let archetype_ids = archetype.component_ids();
-                let component_ids = T::get_component_ids();
+    unsafe fn set_archetype<'w>(
+        world: UnsafeWorldCell<'w>,
+        archetype: usize,
+        _ticks: SystemTicks,
+    ) -> Self::Fetch<'w> {
+        world
+            .archetypes()
+            .get(archetype)
+            .is_some_and(|archetype| archetype.contains(TypeId::of::<T>()))
+    }
 
-                component_ids.iter().all(|id| archetype_ids.contains(id))
-            }
-            None => false,
-        }
+    unsafe fn filter(fetch: &Self::Fetch<'_>, _row: usize) -> bool {
+        *fetch
     }
 
     fn fill_shape(shape: &mut QueryShape) {
@@ -238,9 +276,21 @@ impl<T> QueryFilter for Not<T>
 where
     T: QueryFilter,
 {
-    unsafe fn filter<'w>(world: UnsafeWorldCell<'w>, entity: Entity, ticks: SystemTicks) -> bool {
+    type Fetch<'w> = T::Fetch<'w>;
+    const IS_ARCHETYPAL: bool = T::IS_ARCHETYPAL;
+
+    unsafe fn set_archetype<'w>(
+        world: UnsafeWorldCell<'w>,
+        archetype: usize,
+        ticks: SystemTicks,
+    ) -> Self::Fetch<'w> {
         // SAFETY: `Not` inspects what `T` inspects, which the caller covers.
-        !unsafe { T::filter(world, entity, ticks) }
+        unsafe { T::set_archetype(world, archetype, ticks) }
+    }
+
+    unsafe fn filter(fetch: &Self::Fetch<'_>, row: usize) -> bool {
+        // SAFETY: `Not` inspects what `T` inspects, which the caller covers.
+        !unsafe { T::filter(fetch, row) }
     }
 
     fn fill_access(access: &mut SystemAccess) {
@@ -303,12 +353,26 @@ where
     T: Tuple,
     T<_>: QueryFilter,
 {
-    unsafe fn filter<'w>(world: UnsafeWorldCell<'w>, entity: Entity, ticks: SystemTicks) -> bool {
+    type Fetch<'w> = typle_for!(i in .. => <T<{i}> as QueryFilter>::Fetch<'w>);
+    const IS_ARCHETYPAL: bool = typle_all!(i in .. => <T<{i}>>::IS_ARCHETYPAL);
+
+    unsafe fn set_archetype<'w>(
+        world: UnsafeWorldCell<'w>,
+        archetype: usize,
+        ticks: SystemTicks,
+    ) -> Self::Fetch<'w> {
+        typle_for!(i in .. => {
+            // SAFETY: the caller's access covers every filter in `Or`.
+            unsafe { <T<{i}>>::set_archetype(world, archetype, ticks) }
+        })
+    }
+
+    unsafe fn filter(fetch: &Self::Fetch<'_>, row: usize) -> bool {
         let mut result = false;
 
         for typle_index!(i) in 0..T::LEN {
-            // SAFETY: the caller's access covers every filter in `Or`.
-            result |= unsafe { <T<{ i }>>::filter(world, entity, ticks) };
+            // SAFETY: the caller's guarantee covers every filter in `Or`.
+            result |= unsafe { <T<{ i }>>::filter(&fetch[[i]], row) };
         }
 
         result
@@ -325,7 +389,7 @@ where
 mod tests {
     use super::*;
     use crate::{
-        Query,
+        Entity, Query,
         system::{input::SystemInput, meta::SystemMetadata},
     };
 
