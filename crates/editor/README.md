@@ -254,7 +254,8 @@ nothing ignores `unsaved`.
 `select` selects `entity`, or `entities` with the last one active, or clears the
 selection without either; giving both, or an empty `entities`, answers
 `invalid_arguments`, and an id that names no entity fails before anything
-changes. `frame` selects `entity` or `entities` and frames their subtrees
+changes. A repeated id is dropped, keeping its later position, and several ids
+holding the scene root answer `invalid_arguments`; select the root alone. `frame` selects `entity` or `entities` and frames their subtrees
 together, or frames the whole scene without either, even with a selection. `set_camera`
 places the camera at `position`, `[x, y, z]`, facing the point `look_at`, or
 turned by `yaw` and `pitch` given together: radians, where yaw 0 faces -Z and a

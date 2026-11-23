@@ -122,7 +122,7 @@ impl From<UnsavedChoice> for GuardChoice {
 pub struct Select {
     /// The entity to select, such as 42v3, as scene_tree shows it; give this or entities.
     pub entity: Option<String>,
-    /// Several entities to select, the last one active; give this or entity.
+    /// Several entities to select, the last one active; a repeated id keeps its later position, and the scene root cannot be among several; give this or entity.
     pub entities: Option<Vec<String>>,
 }
 
@@ -131,7 +131,7 @@ pub struct Select {
 pub struct Frame {
     /// The entity to frame, such as 42v3, as scene_tree shows it; give this or entities.
     pub entity: Option<String>,
-    /// Several entities to frame together; give this or entity.
+    /// Several entities to frame together; a repeated id keeps its later position, and the scene root cannot be among several; give this or entity.
     pub entities: Option<Vec<String>>,
 }
 

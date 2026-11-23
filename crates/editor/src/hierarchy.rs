@@ -1309,9 +1309,9 @@ mod tests {
         assert_eq!(f.scene.selected(f.document), [a]);
 
         f.replace_selection(vec![a, b]);
-        f.menu_item(node, RowMenuItem::Rename);
+        f.menu_item(a, RowMenuItem::Rename);
         assert!(f.rename_requested());
-        assert_eq!(f.scene.selected(f.document), [node]);
+        assert_eq!(f.scene.selected(f.document), [a]);
 
         f.replace_selection(vec![a, b]);
         f.fire(DeleteEntity);

@@ -47,7 +47,6 @@ pub(super) fn forget_scene(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(super) fn update_name_field(
     mut submitted: EventReader<UITextInputSubmitted>,
     mut lost: EventReader<UIFocusLost>,
