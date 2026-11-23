@@ -42,7 +42,9 @@ clip of 60 bones, three channels each of 300 keys, a frame at a time, with a
 fresh search and with a `KeyCursor`. The `transform_propagation` benchmark
 measures one `propagate_global_transforms` run over 100 hierarchies of 100
 entities when nothing changed, when one leaf moved and when every entity
-moved. The `motion_matching` benchmark measures one search of a database
+moved. The `archetype_moves` benchmark measures inserting and then removing a
+marker component on 10,000 entities, and spawning 10,000 entities of one
+shape into a new world. The `motion_matching` benchmark measures one search of a database
 of 20,000 frames of 27 features, with the weights it was loaded with and with
 weights changed in place afterwards, which searches the slower way.
 

@@ -73,6 +73,11 @@ harness = false
 required-features = ["run"]
 
 [[bench]]
+name = "archetype_moves"
+harness = false
+required-features = ["run"]
+
+[[bench]]
 name = "motion_matching"
 harness = false
 required-features = ["run"]
