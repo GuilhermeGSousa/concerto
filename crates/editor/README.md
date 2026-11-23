@@ -272,6 +272,12 @@ with the change. A kind the scene does not have answers `unknown_gizmo`, listing
 the kinds it has, and `kind` without `always`, or `always` without `kind`,
 answers `invalid_arguments`. It needs an open scene.
 
+`viewport_shading` answers whether the viewport draws scenes lit or unlit, as
+`The viewport draws scenes lit.`; with `unlit` it sets that first, for every
+scene edited this session, as the viewport's Lit/Unlit button does. Unlit draws
+by base colour and emission alone, without lights, shadows, ambient light or
+fog. A playing game is drawn lit. It needs an open scene.
+
 `set_panel_size` sets the size of `panel`, one of `left`, `right`, `bottom`
 and `browser`, to `size` logical pixels: a width, or for `bottom` the strip's
 height. It triggers `ResizePanel`, the signal a splitter's drag triggers, and
@@ -596,9 +602,17 @@ steps, and drops. The crate has three parts:
   `MainCamera`. It writes only when the value differs, so the viewport is lit
   and drawn as the level's camera sees it in Play, and an agent changes it
   through `add_component`, `set_property` and `remove_component` on that
-  camera.
-- The panels (hierarchy, inspector, viewport, tabs, content, dock) and the
-  viewport's Gizmos menu (`gizmo_choices.rs`) run in the editor's `App`.
+  camera. A scene with no `Light` and no `Sky`, such as one holding a lone
+  crate or character, is lit instead by an ambient light of
+  `UNLIT_SCENE_AMBIENT` (1.0), keeping the scene's fog; adding a light or a
+  sky gives the scene's own lighting back. The edit `App`'s `ViewportShading`
+  resource, set by the `SetViewportUnlit` signal, puts `UnlitView` on the
+  editor camera, which draws by base colour and emission alone.
+- The panels (hierarchy, inspector, viewport, tabs, content, dock), the
+  viewport's Lit/Unlit button (`viewport_shading.rs`) and its Gizmos menu
+  (`gizmo_choices.rs`) run in the editor's `App`. Both buttons sit in the
+  viewport's `ViewportToolbar`, a row on its top-right corner that a viewport
+  feature adds its button to when the toolbar is added.
 
 The dock (`src/dock.rs`) tiles the window; nothing is drawn over anything
 else. From the top: a bar with the brand, the tabs, the stats and the window

@@ -1,27 +1,79 @@
-//! The editor camera shows the scene's main camera's sky and environment.
+//! The editor camera shows the scene's main camera's sky and environment, lights a scene that has no light, and draws unlit on request.
 use concerto_app::{App, Plugin, edit_time::AtEditTime, schedule_groups::Update};
+use concerto_color::Color;
 use concerto_director::MainCamera;
-use concerto_ecs::{Component, Entity, Query, With, Without, command::CommandQueue};
-use concerto_render::components::camera_environment::CameraEnvironment;
+use concerto_ecs::{
+    Component, Entity, Query, Res, ResMut, Resource, With, Without,
+    command::CommandQueue,
+    signal::{On, Signal},
+};
+use concerto_render::components::{
+    Light,
+    camera_environment::{CameraEnvironment, UnlitView},
+};
 use concerto_skybox::Sky;
 
 use crate::tools::camera::{EditorCamera, EditorHelper};
 
-/// Copies the scene's `MainCamera`'s `Sky` and `CameraEnvironment` onto the editor camera, so the viewport lights and draws the scene as it will play.
+/// The ambient light the viewport gives a scene with no light and no sky, so a lone prop or character shows.
+pub const UNLIT_SCENE_AMBIENT: f32 = 1.0;
+
+/// Copies the scene's `MainCamera`'s `Sky` and `CameraEnvironment` onto the editor camera, so the viewport lights and draws the scene as it will play; a scene with no light and no sky gets a bright ambient light instead, and [`ViewportShading`] draws it unlit.
 pub struct ViewportEnvironmentPlugin;
 
 impl Plugin for ViewportEnvironmentPlugin {
     fn build(&self, app: &mut App) {
-        app.add_system(Update, mirror_scene_environment.at_edit_time());
+        app.insert_resource(ViewportShading::default())
+            .add_listener(set_viewport_unlit.at_edit_time())
+            .add_system(Update, mirror_scene_environment.at_edit_time());
     }
 }
 
+/// Whether the viewport draws the scene unlit, by base colour and emission alone.
+#[derive(Resource, Default, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ViewportShading {
+    pub unlit: bool,
+}
+
+/// Draws the viewport unlit, or lit again.
+pub struct SetViewportUnlit(pub bool);
+impl Signal for SetViewportUnlit {}
+
+fn set_viewport_unlit(on: On<SetViewportUnlit>, mut shading: ResMut<ViewportShading>) {
+    let unlit = on.signal().0;
+    if shading.unlit != unlit {
+        shading.unlit = unlit;
+    }
+}
+
+fn bright_environment(source: Option<&CameraEnvironment>) -> CameraEnvironment {
+    source
+        .copied()
+        .unwrap_or_default()
+        .with_ambient(Color::rgba(
+            UNLIT_SCENE_AMBIENT,
+            UNLIT_SCENE_AMBIENT,
+            UNLIT_SCENE_AMBIENT,
+            1.0,
+        ))
+}
+
 pub(crate) fn mirror_scene_environment(
-    editor: Query<(Entity, Option<&Sky>, Option<&CameraEnvironment>), With<EditorCamera>>,
+    editor: Query<
+        (
+            Entity,
+            Option<&Sky>,
+            Option<&CameraEnvironment>,
+            Option<&UnlitView>,
+        ),
+        With<EditorCamera>,
+    >,
     main_cameras: Query<
         (Entity, Option<&Sky>, Option<&CameraEnvironment>),
         (With<MainCamera>, Without<EditorHelper>),
     >,
+    lights: Query<Entity, (With<Light>, Without<EditorHelper>)>,
+    shading: Res<ViewportShading>,
     mut cmd: CommandQueue,
 ) {
     let source = main_cameras
@@ -29,9 +81,20 @@ pub(crate) fn mirror_scene_environment(
         .min_by_key(|(entity, ..)| entity.index());
     let sky_source = source.and_then(|(_, sky, _)| sky);
     let environment_source = source.and_then(|(_, _, environment)| environment);
-    for (camera, sky, environment) in editor.iter() {
+    let lit = sky_source.is_some() || lights.iter().next().is_some();
+    let environment = if lit {
+        environment_source.copied()
+    } else {
+        Some(bright_environment(environment_source))
+    };
+    for (camera, sky, current, unlit) in editor.iter() {
         mirror(&mut cmd, camera, sky, sky_source);
-        mirror(&mut cmd, camera, environment, environment_source);
+        mirror(&mut cmd, camera, current, environment.as_ref());
+        match (shading.unlit, unlit.is_some()) {
+            (true, false) => cmd.insert(UnlitView, camera),
+            (false, true) => cmd.remove::<UnlitView>(camera),
+            _ => {}
+        }
     }
 }
 
@@ -62,7 +125,11 @@ mod tests {
     use concerto_reflect::PropertyPath;
     use concerto_render::{
         ExclusiveCamera,
-        components::{camera::Camera, camera_environment::CameraEnvironment},
+        components::{
+            Light,
+            camera::Camera,
+            camera_environment::{CameraEnvironment, UnlitView},
+        },
     };
     use concerto_skybox::Sky;
     use serde_json::json;
@@ -76,7 +143,8 @@ mod tests {
     }
 
     #[test]
-    fn the_viewport_mirrors_the_scene_cameras_sky_and_environment() {
+    fn the_viewport_mirrors_the_scene_cameras_sky_and_environment_lights_a_dark_scene_and_goes_unlit()
+     {
         let mut app = App::for_editing();
         app.register_plugin(MainSchedulePlugin)
             .register_plugin(TimePlugin);
@@ -84,6 +152,7 @@ mod tests {
         app.register_type::<Sky>()
             .register_type::<CameraEnvironment>()
             .register_type::<MainCamera>()
+            .register_type::<Light>()
             .register_plugin(ViewportEnvironmentPlugin);
         app.finish_plugin_build();
         let world = app.main_mut().world_mut();
@@ -129,6 +198,27 @@ mod tests {
         assert_eq!(held(&mut app, editor), Some(second_sky));
         remove(&mut app, second, TypeId::of::<MainCamera>());
         assert_eq!(held::<Sky>(&mut app, editor), None);
+        assert_eq!(
+            held::<CameraEnvironment>(&mut app, editor).map(|environment| environment.ambient),
+            Some(Color::rgba(
+                UNLIT_SCENE_AMBIENT,
+                UNLIT_SCENE_AMBIENT,
+                UNLIT_SCENE_AMBIENT,
+                1.0
+            )),
+            "a scene with no light and no sky is lit brightly in the viewport"
+        );
+
+        let lamp = app.main_mut().world_mut().spawn(Light::point_light());
+        app.update();
         assert_eq!(held::<CameraEnvironment>(&mut app, editor), None);
+        app.main_mut().world_mut().despawn(lamp);
+
+        app.main_mut().world_mut().trigger(SetViewportUnlit(true));
+        app.update();
+        assert!(held::<UnlitView>(&mut app, editor).is_some());
+        app.main_mut().world_mut().trigger(SetViewportUnlit(false));
+        app.update();
+        assert!(held::<UnlitView>(&mut app, editor).is_none());
     }
 }
