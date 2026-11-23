@@ -25,6 +25,7 @@ pub mod name_menu;
 pub mod placement;
 pub mod preview;
 pub mod project;
+mod property;
 mod run;
 pub mod scene;
 pub mod shell;

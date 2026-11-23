@@ -3,13 +3,74 @@ use std::{
     sync::Arc,
 };
 
-use concerto_ecs::{Component, Resource, command::EntityCommandQueue, component::Tick};
+use concerto_ecs::{
+    Component, Resource,
+    command::EntityCommandQueue,
+    component::{Tick, bundle::IntoBundle},
+};
+use concerto_foundation::assets::{asset_server::AssetServer, registry::AssetRegistry};
 use concerto_reflect::{PropertyPath, Reflect};
+use concerto_ui::elements::prelude::*;
 use concerto_ui::{node::UINode, theme::UITheme};
 
-use super::list::ListLength;
 use super::target::{PropertyAddress, PropertyTarget, TargetWorld};
-pub use crate::tools::edits::{EditContext, EditError, PropertyRow};
+
+/// A rejected edit leaves the target unchanged.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EditError {
+    Rejected,
+    TypeMismatch,
+    NotFound,
+    StaleEditor,
+    MissingTarget,
+    UnregisteredComponent,
+    MissingAssets,
+}
+
+impl std::fmt::Display for EditError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Rejected => "the value was refused",
+            Self::TypeMismatch => "the value has the wrong type",
+            Self::NotFound => "the property was not found",
+            Self::StaleEditor => "its editor changed since it was read",
+            Self::MissingTarget => "its entity, component or document no longer exists",
+            Self::UnregisteredComponent => "the component type is not registered",
+            Self::MissingAssets => "its App has no asset server or asset registry",
+        })
+    }
+}
+impl std::error::Error for EditError {}
+
+/// What an edit can read from the world it changes.
+pub struct EditContext<'w> {
+    pub assets: &'w AssetServer,
+    pub registry: &'w AssetRegistry,
+}
+
+/// A row an editor built.
+#[derive(Component, Clone)]
+pub struct PropertyRow {
+    pub address: PropertyAddress,
+    pub(crate) editor_type: TypeId,
+    pub(crate) registry_tick: Tick,
+}
+
+impl PropertyRow {
+    /// The registry's change tick at collection, which later edits are checked against.
+    pub fn registry_tick(&self) -> Tick {
+        self.registry_tick
+    }
+}
+
+/// The snapshot of a list's own row.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ListLength(pub(crate) usize);
+
+/// The layout node every property row starts from.
+pub fn standard_row_node(theme: &UITheme) -> UINode {
+    theme.row().fixed().gap(theme.spacing_xs).into_bundle()
+}
 
 /// Presentation and validated editing for a concrete Rust type.
 pub trait PropertyEditor<T: Reflect>: Default + Send + Sync + 'static {
@@ -19,7 +80,7 @@ pub trait PropertyEditor<T: Reflect>: Default + Send + Sync + 'static {
     fn snapshot(&self, value: &T) -> Self::Snapshot;
     /// The layout node of the row that holds this editor's widgets. It is read once, when the row is spawned, so an editor whose node depends on the snapshot must return `false` from [`Self::follows_snapshot`].
     fn row_node(&self, _snapshot: &Self::Snapshot, theme: &UITheme) -> UINode {
-        super::sync::standard_row_node(theme)
+        standard_row_node(theme)
     }
     fn build(&self, row: &mut EntityCommandQueue, snapshot: &Self::Snapshot, theme: &UITheme);
     /// Validate before mutating. On error the target must remain unchanged.
