@@ -16,6 +16,9 @@ use typle::typle;
 /// Multiple filters can be combined in a tuple: `(With<A>, Without<B>)` matches
 /// entities that have `A` but not `B`.  [`Or`] can be used for disjunctions.
 pub trait QueryFilter: WorldQuery {
+    /// Whether [`WorldQuery::matches`] alone decides the filter, so an entity of a matched archetype needs no check.
+    const IS_ARCHETYPAL: bool;
+
     /// Whether `entity` passes the filter.
     ///
     /// # Safety
@@ -46,6 +49,8 @@ where
     T: Tuple,
     T<_>: QueryFilter,
 {
+    const IS_ARCHETYPAL: bool = typle_all!(i in .. => <T<{i}>>::IS_ARCHETYPAL);
+
     unsafe fn filter<'w>(world: UnsafeWorldCell<'w>, entity: Entity, ticks: SystemTicks) -> bool {
         for typle_index!(i) in 0..T::LEN {
             // SAFETY: the caller's access covers every filter in the tuple.
@@ -94,14 +99,11 @@ impl<T> QueryFilter for Added<T>
 where
     T: Component,
 {
+    const IS_ARCHETYPAL: bool = false;
+
     unsafe fn filter<'w>(world: UnsafeWorldCell<'w>, entity: Entity, ticks: SystemTicks) -> bool {
-        for component_id in T::get_component_ids() {
-            // SAFETY: `fill_access` declares read access to `T`, whose change ticks this reads.
-            if !unsafe { world.world() }.was_component_added_in(entity, component_id, ticks) {
-                return false;
-            }
-        }
-        true
+        // SAFETY: `fill_access` declares read access to `T`, whose change ticks this reads.
+        unsafe { world.world() }.was_component_added_in(entity, TypeId::of::<T>(), ticks)
     }
     fn fill_access(access: &mut SystemAccess) {
         access.read_component::<T>();
@@ -139,14 +141,11 @@ impl<T> QueryFilter for Changed<T>
 where
     T: Component,
 {
+    const IS_ARCHETYPAL: bool = false;
+
     unsafe fn filter<'w>(world: UnsafeWorldCell<'w>, entity: Entity, ticks: SystemTicks) -> bool {
-        for component_id in T::get_component_ids() {
-            // SAFETY: `fill_access` declares read access to `T`, whose change ticks this reads.
-            if !unsafe { world.world() }.was_component_changed_in(entity, component_id, ticks) {
-                return false;
-            }
-        }
-        true
+        // SAFETY: `fill_access` declares read access to `T`, whose change ticks this reads.
+        unsafe { world.world() }.was_component_changed_in(entity, TypeId::of::<T>(), ticks)
     }
     fn fill_access(access: &mut SystemAccess) {
         access.read_component::<T>();
@@ -184,21 +183,18 @@ impl<T> QueryFilter for With<T>
 where
     T: Component,
 {
+    const IS_ARCHETYPAL: bool = true;
+
     unsafe fn filter<'w>(world: UnsafeWorldCell<'w>, entity: Entity, _ticks: SystemTicks) -> bool {
         // SAFETY: only the entity's archetype is read, under the caller's access.
         let world = unsafe { world.world() };
 
-        match world.entity_store().find_location(entity) {
-            Some(location) => {
-                let archetypes = world.archetypes();
-                let archetype = &archetypes[location.archetype_index as usize];
-                let archetype_ids = archetype.component_ids();
-                let component_ids = T::get_component_ids();
-
-                component_ids.iter().all(|id| archetype_ids.contains(id))
-            }
-            None => false,
-        }
+        world
+            .entity_store()
+            .find_location(entity)
+            .is_some_and(|location| {
+                world.archetypes()[location.archetype_index as usize].contains(TypeId::of::<T>())
+            })
     }
 
     fn fill_shape(shape: &mut QueryShape) {
@@ -238,6 +234,8 @@ impl<T> QueryFilter for Not<T>
 where
     T: QueryFilter,
 {
+    const IS_ARCHETYPAL: bool = T::IS_ARCHETYPAL;
+
     unsafe fn filter<'w>(world: UnsafeWorldCell<'w>, entity: Entity, ticks: SystemTicks) -> bool {
         // SAFETY: `Not` inspects what `T` inspects, which the caller covers.
         !unsafe { T::filter(world, entity, ticks) }
@@ -303,6 +301,8 @@ where
     T: Tuple,
     T<_>: QueryFilter,
 {
+    const IS_ARCHETYPAL: bool = typle_all!(i in .. => <T<{i}>>::IS_ARCHETYPAL);
+
     unsafe fn filter<'w>(world: UnsafeWorldCell<'w>, entity: Entity, ticks: SystemTicks) -> bool {
         let mut result = false;
 

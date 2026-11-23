@@ -182,17 +182,24 @@ impl<'world, 'state, T: QueryData, F: QueryFilter> Query<'world, 'state, T, F> {
     /// # Safety
     /// No item this query fetched for `entity` through a shared borrow may be alive if `T` writes.
     unsafe fn fetch(&self, entity: Entity) -> Option<T::Item<'_>> {
-        // SAFETY: the query's system declared the access of `T` and `F`, and holds it while
-        // the query lives.
-        if !unsafe { F::filter(self.world, entity, self.ticks) } {
+        if !self.passes(entity) {
             return None;
         }
-        // SAFETY: as above; the entity store is read only to locate `entity`.
-        unsafe { self.world.world() }
-            .entity_store()
-            .find_location(entity)?;
-        // SAFETY: as above.
+        // SAFETY: the query's system declared the access of `T` and holds it while the query lives.
         unsafe { T::fetch(self.world, entity, self.ticks) }
+    }
+
+    fn passes(&self, entity: Entity) -> bool {
+        // SAFETY: the entity store is read only to locate `entity`, and no system changes it.
+        let location = unsafe { self.world.world() }
+            .entity_store()
+            .find_location(entity);
+        let matched = location.is_some_and(|location| {
+            self.state
+                .matches_archetype(location.archetype_index as usize)
+        });
+        // SAFETY: the query's system declared the access of `F` and holds it while the query lives.
+        matched && (F::IS_ARCHETYPAL || unsafe { F::filter(self.world, entity, self.ticks) })
     }
 
     /// Fetches the query data for a specific entity, with write access to what `T` writes.
@@ -203,9 +210,7 @@ impl<'world, 'state, T: QueryData, F: QueryFilter> Query<'world, 'state, T, F> {
 
     /// Returns `true` if `entity` matches this query.
     pub fn contains_entity(&self, entity: Entity) -> bool {
-        // SAFETY: the item is dropped at once; a shared borrow of the query cannot coexist with
-        // an item that writes.
-        unsafe { self.fetch(entity) }.is_some()
+        self.passes(entity)
     }
 }
 
@@ -248,7 +253,7 @@ where
             self.current_row += 1;
             // SAFETY: the query's system declared the access of `T` and `F`, and holds it
             // while the iterator lives.
-            if !unsafe { F::filter(self.world, entity, self.ticks) } {
+            if !F::IS_ARCHETYPAL && !unsafe { F::filter(self.world, entity, self.ticks) } {
                 continue;
             }
 
