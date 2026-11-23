@@ -395,7 +395,6 @@ pub(crate) fn current_editor(
         .ok_or(EditError::StaleEditor)
 }
 
-/// The commit as the signal that applies it, refused when its row's editor changed since the row was built.
 pub(crate) fn checked(
     registry: &InspectorRegistry,
     types: Option<&TypeRegistry>,
@@ -434,7 +433,6 @@ pub(super) fn send_property_commits(
     }
 }
 
-/// The commit, or, when its row was built for the inspected entity of several, the same edit to each of them that holds the component; a list edit on a list whose length differs among them stays with the inspected one.
 fn fanned_out(
     commit: CommitProperty,
     data: &InspectorData,

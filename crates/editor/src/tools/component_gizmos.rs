@@ -252,6 +252,8 @@ mod tests {
         assert_eq!(drawn(&mut world), lit, "the parent, not its child");
         world.trigger(Select::only(child));
         assert_eq!(drawn(&mut world), bounds, "the child alone");
+        world.trigger(Select::Replace(vec![parent, child]));
+        assert_eq!(drawn(&mut world), lit + bounds, "every selected entity");
         world.trigger(Select::none());
         set(&mut world, "Camera", true);
         assert_eq!(

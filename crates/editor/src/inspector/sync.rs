@@ -59,11 +59,9 @@ pub(super) struct CardRows<'a> {
     pub(super) mixed: &'a [PropertyPath],
 }
 
-/// The paths of a card's rows whose value differs on another selected entity.
 #[derive(Component)]
 pub(super) struct MixedPaths(Vec<PropertyPath>);
 
-/// A card's "⋯" button: the component it acts on, and whether it can be pressed.
 #[derive(Clone, Copy)]
 pub(super) struct CardMenu {
     pub(super) scene_entity: Entity,
@@ -213,7 +211,6 @@ impl Shown<'_, '_> {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn spawn_cards(
     shown: &Shown,
     cmd: &mut CommandQueue,
@@ -535,7 +532,6 @@ fn row_label(card: &str, path: &PropertyPath, mixed: bool) -> String {
     label
 }
 
-/// Rewrites the labels of a card's kept rows when which of them are mixed changes, leaving the rows and their widgets in place.
 pub(super) fn mark_mixed_rows(
     cards: Query<(&InspectedComponent, &MixedPaths), Changed<MixedPaths>>,
     children: Query<&Children>,

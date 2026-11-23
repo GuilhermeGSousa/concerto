@@ -2,7 +2,7 @@
 use concerto_app::{App, edit_time::AtEditTime, schedule_groups::Update};
 use concerto_ecs::{
     Query, ResMut,
-    entity::{Entity, hierarchy::ChildOf},
+    entity::{Entity, EntityHashSet, hierarchy::ChildOf},
     resource::Resource,
     signal::{On, Signal},
 };
@@ -13,6 +13,7 @@ use crate::tools::scene::SceneRoot;
 #[derive(Resource, Default)]
 pub struct Selection {
     entities: Vec<Entity>,
+    members: EntityHashSet,
 }
 
 impl Selection {
@@ -27,7 +28,7 @@ impl Selection {
     }
 
     pub fn contains(&self, entity: Entity) -> bool {
-        self.entities.contains(&entity)
+        self.members.contains(&entity)
     }
 
     pub fn is_empty(&self) -> bool {
@@ -98,8 +99,9 @@ fn selected_after(
         }
     };
     let mut kept = Vec::with_capacity(list.len());
+    let mut seen = EntityHashSet::default();
     while let Some(entity) = list.pop() {
-        if !kept.contains(&entity) {
+        if seen.insert(entity) {
             kept.push(entity);
         }
     }
@@ -115,6 +117,7 @@ pub(crate) fn select(on: On<Select>, mut selection: ResMut<Selection>, roots: Qu
         roots.contains_entity(entity)
     });
     if next != selection.entities {
+        selection.members = next.iter().copied().collect();
         selection.entities = next;
     }
 }
@@ -128,6 +131,7 @@ fn forget_despawned_selection(mut selection: ResMut<Selection>, alive: Query<Ent
         selection
             .entities
             .retain(|&entity| alive.contains_entity(entity));
+        selection.members = selection.entities.iter().copied().collect();
     }
 }
 

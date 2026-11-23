@@ -513,7 +513,7 @@ mod tests {
             ))
         };
         let near = bounded(40.0);
-        bounded(-40.0);
+        let far = bounded(-40.0);
         let looks_at = |world: &World, point: Vec3| {
             let fly = world.get_resource::<FlyCamera>().unwrap();
             ((point - fly.position).normalize() - fly.forward()).length() < 1e-3
@@ -547,6 +547,11 @@ mod tests {
             all,
             "framing less never clips the rest"
         );
+
+        world.trigger(crate::tools::selection::Select::Replace(vec![near, far]));
+        world.trigger(FrameSelection);
+        run(&mut world, frame_requested_bounds);
+        assert!(looks_at(&world, Vec3::ZERO), "several frame as their union");
     }
 
     fn pointing(over: bool) -> World {

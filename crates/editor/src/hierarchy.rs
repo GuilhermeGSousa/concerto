@@ -439,7 +439,10 @@ fn press_row_menu_item(
                 RowMenuItem::Duplicate => {
                     scene.trigger(EntityEdit::Duplicate(selection.entities().to_vec()))
                 }
-                RowMenuItem::Rename => request_rename(&selection, &mut focus_name, &mut scene),
+                RowMenuItem::Rename => {
+                    scene.trigger(Select::only(scene_target));
+                    focus_name.0 = true;
+                }
                 RowMenuItem::Delete => {
                     scene.trigger(EntityEdit::Delete(selection.entities().to_vec()))
                 }
@@ -1304,6 +1307,22 @@ mod tests {
         f.fire(RenameEntity);
         assert!(f.rename_requested());
         assert_eq!(f.scene.selected(f.document), [a]);
+
+        f.replace_selection(vec![a, b]);
+        f.menu_item(node, RowMenuItem::Rename);
+        assert!(f.rename_requested());
+        assert_eq!(f.scene.selected(f.document), [node]);
+
+        f.replace_selection(vec![a, b]);
+        f.fire(DeleteEntity);
+        assert!(!f.valid(a) && !f.valid(b));
+
+        let c = f.spawn_under(f.root, "c");
+        let d = f.spawn_under(f.root, "d");
+        f.refresh();
+        f.replace_selection(vec![c, d]);
+        f.menu_item(c, RowMenuItem::Delete);
+        assert!(!f.valid(c) && !f.valid(d));
     }
 
     #[test]

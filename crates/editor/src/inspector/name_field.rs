@@ -129,9 +129,9 @@ pub(super) fn update_name_field(
         }
     }
 
-    if focus_request.0 && !several {
+    if focus_request.0 {
         focus_request.0 = false;
-        if node.visible {
+        if !several && node.visible {
             **focused = Some(entity);
         }
     }

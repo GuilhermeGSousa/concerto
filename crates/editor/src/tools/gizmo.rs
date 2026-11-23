@@ -734,5 +734,27 @@ mod tests {
             "a child moves with its selected parent, not twice"
         );
         assert_eq!(f.edits(), 5);
+
+        f.settle(other, parent_two_matrix);
+        f.select(other);
+        let start = f.world_position(other, parent_two_matrix);
+        let grab = start + Vec3::X * f.size(start) * 0.5;
+        let (from, part, to) = (
+            f.screen(grab),
+            f.screen(grab + Vec3::X * 0.3),
+            f.screen(grab + Vec3::X * 0.9),
+        );
+        f.frame(from, false, false);
+        f.frame(from, true, true);
+        f.frame(part, false, true);
+        let partway = f.world_position(other, parent_two_matrix);
+        assert!((partway - start - Vec3::X * 0.3).length() < 1e-3);
+        let first_at = f.world_position(entity, parent_matrix);
+        f.select(entity);
+        f.frame(to, false, true);
+        f.frame(to, false, false);
+        assert_eq!(f.world_position(other, parent_two_matrix), partway);
+        assert_eq!(f.world_position(entity, parent_matrix), first_at);
+        assert_eq!(f.edits(), 6, "changing the selection ends the drag");
     }
 }

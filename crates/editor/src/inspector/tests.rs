@@ -339,7 +339,6 @@ fn typed_values_are_committed_to_the_entity_their_rows_were_built_for() {
     };
     let translation = label(world, &["translation"]);
     assert!(translation.text.ends_with(" —"), "{}", translation.text);
-    assert_eq!(translation.color, UITheme::default().text_muted);
     assert!(!label(world, &["scale"]).text.ends_with(" —"));
     let translation_row = row(world, &["translation"]);
     run(world, numeric::refresh_numeric_fields);

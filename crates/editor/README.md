@@ -737,7 +737,7 @@ A panel reaches the scene in two ways and no other:
   `EditWorld<Res<T>>` skips its system with a warning on every frame the scene's
   world has no `T`, so name only resources the tools always insert, such as
   `Selection` and `AppTypeRegistry`.
-- `EditWorldSignals` sends a signal to it: `scene.trigger(Select(Some(entity)))`.
+- `EditWorldSignals` sends a signal to it: `scene.trigger(Select::only(entity))`.
   The listeners run when the system's commands are applied.
 
 Both reach the document marked `EditTarget`: the front tab's scene, once it
@@ -916,7 +916,7 @@ with its children nested: the scene's root and whatever the game spawned, such
 as its character, data entities included. Only the entities that
 `World::add_listener` spawns to hold a listener, which carry `GlobalListener`,
 are left out. Any listed entity can be renamed, duplicated, or deleted. The `+`
-adds a child to the selection, or an entity at the top level when nothing is
+adds a child to the active entity, or an entity at the top level when nothing is
 selected or the game has despawned the selection.
 
 Stop drops the game and returns to the scene exactly as it was before Play.
@@ -1026,9 +1026,11 @@ counts every listed entity, collapsed and hidden ones included, and the footer
 reads "Loading…" while a scene loads.
 Click a row to select it alone, Ctrl (or the logo key) + click to add it to the
 selection or take it out, and Shift + click to select the shown rows from the
-last clicked one to this one. The last entity selected is the active one.
+active entity to this one. The last entity selected is the active one.
 Right-click a row to add a child, duplicate, rename, or delete; on a selected
-row it keeps the selection, on another it selects that row alone first.
+row it keeps the selection, on another it selects that row alone first. Rename
+from the menu always selects the right-clicked row alone and edits its name,
+as Add child acts on it.
 The `+` in the panel header adds a child to the active entity, or to the scene
 when nothing is selected. Delete removes every selected entity and its
 descendants, Ctrl+D duplicates each beside itself, and F2 edits the active
@@ -1039,8 +1041,8 @@ A duplicate fails when the entity refers to something outside itself, such as a
 skinned mesh copied without its bones; Chatter says why.
 
 Panels change the scene only by triggering signals through `EditWorldSignals`,
-for example `scene.trigger(EntityEdit::Delete(entity))` or
-`scene.trigger(Select(Some(entity)))`. The scene tools in `src/tools/` own the
+for example `scene.trigger(EntityEdit::Delete(vec![entity]))` or
+`scene.trigger(Select::only(entity))`. The scene tools in `src/tools/` own the
 listeners: one applies each kind of edit and moves the selection. The tools
 know nothing about documents or panels. They report back through events that
 the editor re-writes in its own world as `Hosted<E>` events carrying the
