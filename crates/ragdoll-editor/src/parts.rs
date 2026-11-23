@@ -1,3 +1,4 @@
+use concerto_foundation::math::Angle;
 use concerto_mesh::Skeleton;
 use concerto_name::Name;
 use concerto_ragdoll::{Ragdoll, RagdollJoint, RagdollPart, RagdollShape, Trial, run_trial};
@@ -5,8 +6,8 @@ use glam::{Quat, Vec3};
 
 const DEFAULT_RADIUS: f32 = 0.05;
 const DEFAULT_MASS: f32 = 1.0;
-const DEFAULT_SWING: f32 = std::f32::consts::FRAC_PI_4;
-const DEFAULT_TWIST: f32 = std::f32::consts::FRAC_PI_6;
+const DEFAULT_SWING_DEGREES: f32 = 45.0;
+const DEFAULT_TWIST_DEGREES: f32 = 30.0;
 const DEFAULT_FRICTION: f32 = 0.3;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -124,10 +125,21 @@ pub(crate) fn shape_text(shape: &RagdollShape) -> String {
     }
 }
 
+fn degrees_text(angle: Angle) -> String {
+    let text = format!("{:.1}", angle.degrees());
+    let text = text.strip_suffix(".0").unwrap_or(&text);
+    let text = if text == "-0" { "0" } else { text };
+    format!("{text}°")
+}
+
 fn limits_text(joint: &RagdollJoint) -> String {
     format!(
-        "swing_normal {:.2} swing_plane {:.2} twist {:.2}..{:.2} friction {:.2}",
-        joint.swing_normal, joint.swing_plane, joint.twist_min, joint.twist_max, joint.friction
+        "swing_normal {} swing_plane {} twist {}..{} friction {:.2}",
+        degrees_text(joint.swing_normal),
+        degrees_text(joint.swing_plane),
+        degrees_text(joint.twist_min),
+        degrees_text(joint.twist_max),
+        joint.friction
     )
 }
 
@@ -169,9 +181,9 @@ fn positive(name: &str, value: Option<f32>) -> Result<(), String> {
     }
 }
 
-fn angle(name: &str, value: Option<f32>) -> Result<(), String> {
+fn finite(name: &str, value: Option<f32>, unit: &str) -> Result<(), String> {
     match value {
-        Some(value) if !value.is_finite() => Err(format!("{name} is {value}; give radians.")),
+        Some(value) if !value.is_finite() => Err(format!("{name} is {value}; give {unit}.")),
         _ => Ok(()),
     }
 }
@@ -211,8 +223,14 @@ fn started_part(skeleton: &Skeleton, bone: usize) -> RagdollPart {
 
 fn loose_joint(twist_axis: Vec3) -> RagdollJoint {
     RagdollJoint::new(twist_axis, twist_axis.any_orthonormal_vector())
-        .with_swing(DEFAULT_SWING, DEFAULT_SWING)
-        .with_twist(-DEFAULT_TWIST, DEFAULT_TWIST)
+        .with_swing(
+            Angle::from_degrees(DEFAULT_SWING_DEGREES),
+            Angle::from_degrees(DEFAULT_SWING_DEGREES),
+        )
+        .with_twist(
+            Angle::from_degrees(-DEFAULT_TWIST_DEGREES),
+            Angle::from_degrees(DEFAULT_TWIST_DEGREES),
+        )
         .with_friction(DEFAULT_FRICTION)
 }
 
@@ -280,10 +298,10 @@ pub(crate) fn apply_edit(
         ("swing_plane", edit.swing_plane),
         ("twist_min", edit.twist_min),
         ("twist_max", edit.twist_max),
-        ("friction", edit.friction),
     ] {
-        angle(name, value)?;
+        finite(name, value, "degrees")?;
     }
+    finite("friction", edit.friction, "a torque in N·m")?;
     if edit.remove {
         let before = ragdoll.parts.len();
         ragdoll.parts.retain(|part| &*part.bone != bone);
@@ -314,16 +332,16 @@ pub(crate) fn apply_edit(
     }
     let joint = &mut part.joint;
     if let Some(value) = edit.swing_normal {
-        joint.swing_normal = value;
+        joint.swing_normal = Angle::from_degrees(value);
     }
     if let Some(value) = edit.swing_plane {
-        joint.swing_plane = value;
+        joint.swing_plane = Angle::from_degrees(value);
     }
     if let Some(value) = edit.twist_min {
-        joint.twist_min = value;
+        joint.twist_min = Angle::from_degrees(value);
     }
     if let Some(value) = edit.twist_max {
-        joint.twist_max = value;
+        joint.twist_max = Angle::from_degrees(value);
     }
     if let Some(value) = edit.friction {
         joint.friction = value;

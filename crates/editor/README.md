@@ -1531,10 +1531,10 @@ through unchanged.
 An edit is the widget's own type, so a value alone cannot pass through it.
 `PropertyEditor::edit_to(&value)` returns the edit that sets the field to
 `value`; it still goes through `apply`, with its `EditContext`, so validation
-holds. The built-in editors for `f32`, `f64`, `usize`, `u32`, `i32`, `Vec2`, `Vec3`, `Quat`, `bool`, `Name` and `String`, the
+holds. The built-in editors for `f32`, `f64`, `usize`, `u32`, `i32`, `Vec2`, `Vec3`, `Quat`, `Angle`, `bool`, `Name` and `String`, the
 asset picker, the entity picker and the joint picker implement it; `Quat` goes
 through the widget's XYZ degrees, so it comes back normalized and equal up to
-rounding. It defaults to `None`, which says the editor offers no value edit. A
+rounding, and `Angle` shows and takes degrees. It defaults to `None`, which says the editor offers no value edit. A
 custom editor opts in by implementing it; MCP's `set_property` writes a field
 an adapter claims only through it, and answers `not_editable` for an adapter
 that returns `None`:

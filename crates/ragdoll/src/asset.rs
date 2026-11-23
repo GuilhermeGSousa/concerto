@@ -1,6 +1,7 @@
 use concerto_foundation::assets::{
     Asset, CreatableAsset, LoadableAsset, asset_server::AssetLoadContext, handle::AssetHandle,
 };
+use concerto_foundation::math::Angle;
 use concerto_mesh::{JointName, ReflectSkeletonSource, Skeleton, SkeletonSource};
 use concerto_name::Name;
 use concerto_reflect::{Reflect, ReflectDefault};
@@ -197,7 +198,7 @@ impl Default for RagdollMotor {
     }
 }
 
-/// The joint between a part and the part of its nearest ancestor bone that has one; axes are in the part's bone space, angles in radians.
+/// The joint between a part and the part of its nearest ancestor bone that has one; axes are in the part's bone space.
 #[derive(Clone, Copy, Debug, PartialEq, Reflect, Serialize, Deserialize)]
 pub struct RagdollJoint {
     /// The axis the part twists around.
@@ -205,13 +206,13 @@ pub struct RagdollJoint {
     /// An axis perpendicular to the twist axis; swing around it is limited by `swing_plane`.
     pub plane_axis: Vec3,
     /// Half the swing range around the axis perpendicular to the twist and plane axes.
-    pub swing_normal: f32,
+    pub swing_normal: Angle,
     /// Half the swing range around the plane axis.
-    pub swing_plane: f32,
-    /// Lowest twist angle, from -π to 0.
-    pub twist_min: f32,
-    /// Highest twist angle, from 0 to π.
-    pub twist_max: f32,
+    pub swing_plane: Angle,
+    /// Lowest twist angle, from -180° to 0.
+    pub twist_min: Angle,
+    /// Highest twist angle, from 0 to 180°.
+    pub twist_max: Angle,
     /// Friction torque while the joint is not driven, in N·m.
     pub friction: f32,
     pub motor: RagdollMotor,
@@ -222,10 +223,10 @@ impl Default for RagdollJoint {
         Self {
             twist_axis: Vec3::Y,
             plane_axis: Vec3::X,
-            swing_normal: 0.0,
-            swing_plane: 0.0,
-            twist_min: 0.0,
-            twist_max: 0.0,
+            swing_normal: Angle::ZERO,
+            swing_plane: Angle::ZERO,
+            twist_min: Angle::ZERO,
+            twist_max: Angle::ZERO,
             friction: 0.0,
             motor: RagdollMotor::default(),
         }
@@ -243,18 +244,18 @@ impl RagdollJoint {
     }
 
     /// A hinge around `axis` that turns from `min` to `max` and swings no other way, as a knee or an elbow does.
-    pub fn hinge(axis: Vec3, min: f32, max: f32) -> Self {
+    pub fn hinge(axis: Vec3, min: Angle, max: Angle) -> Self {
         Self::new(axis, axis.any_orthonormal_vector()).with_twist(min, max)
     }
 
     /// Sets both swing half angles.
-    pub fn with_swing(mut self, swing_normal: f32, swing_plane: f32) -> Self {
+    pub fn with_swing(mut self, swing_normal: Angle, swing_plane: Angle) -> Self {
         self.swing_normal = swing_normal;
         self.swing_plane = swing_plane;
         self
     }
 
-    pub fn with_twist(mut self, twist_min: f32, twist_max: f32) -> Self {
+    pub fn with_twist(mut self, twist_min: Angle, twist_max: Angle) -> Self {
         self.twist_min = twist_min;
         self.twist_max = twist_max;
         self

@@ -2,6 +2,7 @@ use std::fmt;
 
 use concerto_animation::retarget::{ResolvedChain, ResolvedRig};
 use concerto_foundation::assets::handle::AssetHandle;
+use concerto_foundation::math::Angle;
 use concerto_mesh::{Mesh, Skeleton};
 use concerto_name::Name;
 use glam::{Mat4, Quat, Vec3};
@@ -628,8 +629,11 @@ fn part(
                 .try_normalize()
                 .unwrap_or_else(|| direction.any_orthonormal_vector());
             RagdollJoint::new(to_bone * direction, to_bone * plane)
-                .with_swing(swing_normal, swing_plane)
-                .with_twist(-twist, twist)
+                .with_swing(
+                    Angle::from_radians(swing_normal),
+                    Angle::from_radians(swing_plane),
+                )
+                .with_twist(Angle::from_radians(-twist), Angle::from_radians(twist))
         }
         JointModel::Hinge {
             axis,
@@ -641,8 +645,8 @@ fn part(
                 .try_normalize()
                 .unwrap_or_else(|| axis.any_orthonormal_vector());
             RagdollJoint::new(to_bone * axis, to_bone * plane)
-                .with_swing(swing, swing)
-                .with_twist(min, max)
+                .with_swing(Angle::from_radians(swing), Angle::from_radians(swing))
+                .with_twist(Angle::from_radians(min), Angle::from_radians(max))
         }
     };
     RagdollPart::new(skeleton.names[plan.bone].as_ref(), shape)
