@@ -1,17 +1,30 @@
-use std::{
-    any::TypeId,
-    hash::{Hash, Hasher},
-};
+use std::borrow::Borrow;
 
-use crate::entity::EntityType;
+use crate::component::ComponentId;
 
-pub fn generate_type_id(type_ids: &[TypeId]) -> EntityType {
-    let mut sorted_type_ids: Vec<TypeId> = type_ids.to_owned();
-    sorted_type_ids.sort();
-    sorted_type_ids.dedup();
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    for type_id in sorted_type_ids {
-        type_id.hash(&mut hasher);
+/// A set of component ids, sorted and without repeats: an archetype's identity, or the components one move adds or removes.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct ArchetypeType(Box<[ComponentId]>);
+
+impl ArchetypeType {
+    /// The set holding `component_ids`, whatever their order and however often each repeats.
+    pub fn of(component_ids: &[ComponentId]) -> Self {
+        let mut ids = Vec::new();
+        Self::sort_into(component_ids, &mut ids);
+        Self(ids.into_boxed_slice())
     }
-    EntityType(hasher.finish())
+
+    /// Writes `component_ids` into `sorted` the way a set stores them, to look one up without allocating.
+    pub fn sort_into(component_ids: &[ComponentId], sorted: &mut Vec<ComponentId>) {
+        sorted.clear();
+        sorted.extend_from_slice(component_ids);
+        sorted.sort_unstable();
+        sorted.dedup();
+    }
+}
+
+impl Borrow<[ComponentId]> for ArchetypeType {
+    fn borrow(&self) -> &[ComponentId] {
+        &self.0
+    }
 }

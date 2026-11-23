@@ -18,20 +18,21 @@ use crate::signal::listener::{GlobalListener, IntoListener, Listener, Listeners}
 use crate::signal::{EntitySignal, Signal};
 use crate::system::access::SystemAccess;
 use crate::system::schedule::{CompiledSchedules, ScheduleLabel};
-use crate::table::{CellAccessor, MutableCellAccessor};
+use crate::table::{CellAccessor, MutableCellAccessor, Table};
 use crate::world_id::WorldId;
 use crate::{
-    archetype::Archetype,
-    common::generate_type_id,
+    archetype::{Archetype, ArchetypeEdges},
+    common::ArchetypeType,
     component::{
         Component, ComponentId, ComponentLifecycleContext, RequiredComponent, RequiredComponents,
         components::Components,
     },
-    entity::{Entity, EntityLocation, EntityStructuralVersion, EntityType},
+    entity::{Entity, EntityLocation, EntityStructuralVersion},
     resource::Resource,
     system::input::{SystemInput, ValidationError},
     table::TableRowIndex,
     utilities::TypeIdMap,
+    utils::fixed_hasher::FixedHasher,
 };
 use crate::{
     component::{CHECK_TICK_THRESHOLD, CheckChangeTicks, SystemTicks, Tick},
@@ -61,7 +62,9 @@ pub struct World {
     archetypes: Vec<Archetype>,
     resources: TypeIdMap<ResourceData>,
     entity_store: EntityStore,
-    archetype_index: HashMap<EntityType, usize>,
+    archetype_index: HashMap<ArchetypeType, usize, FixedHasher>,
+    spawn_edges: ArchetypeEdges,
+    move_key: Vec<ComponentId>,
     components: Components,
     listeners: Listeners,
     change_tick: AtomicU32,
@@ -78,7 +81,9 @@ impl Default for World {
             archetypes: Vec::new(),
             resources: TypeIdMap::default(),
             entity_store: EntityStore::default(),
-            archetype_index: HashMap::new(),
+            archetype_index: HashMap::default(),
+            spawn_edges: ArchetypeEdges::default(),
+            move_key: Vec::new(),
             components: Components::default(),
             listeners: Listeners::default(),
             change_tick: AtomicU32::new(1),
@@ -122,30 +127,26 @@ impl World {
 
     fn spawn_allocated_internal<T: ComponentBundle>(&mut self, entity: Entity, bundle: T) {
         T::register_required(self);
-        let bundle_ids = T::get_component_ids();
-        let required = self.components.missing_required(&bundle_ids, &bundle_ids);
-        let mut type_ids = bundle_ids.clone();
+        let mut type_ids = T::get_component_ids();
+        let bundle_len = type_ids.len();
+        let required = self.components.missing_required(&[], &type_ids);
         type_ids.extend(required.iter().map(RequiredComponent::id));
-        let entity_type = generate_type_id(&type_ids);
+
+        let mut move_key = std::mem::take(&mut self.move_key);
+        ArchetypeType::sort_into(&type_ids, &mut move_key);
+        let archetype_index = match self.spawn_edges.after_adding(&move_key) {
+            Some(archetype_index) => archetype_index,
+            None => {
+                let archetype_index = self.archetype_for_spawn::<T>(&type_ids, &required);
+                self.spawn_edges
+                    .remember_adding(ArchetypeType::of(&move_key), archetype_index);
+                archetype_index
+            }
+        };
+        self.move_key = move_key;
 
         let change_tick = *self.change_tick();
-        let archetype_id = self.archetypes().len().into();
-        let archetype_index = self
-            .archetype_index
-            .entry(entity_type.clone())
-            .or_insert_with(|| {
-                let mut table = T::generate_empty_table();
-                for entry in &required {
-                    if !table.has_column(entry.id()) {
-                        entry.add_column(&mut table);
-                    }
-                }
-                let archetype = Archetype::new(table, type_ids, archetype_id);
-                self.archetypes.push(archetype);
-                self.archetypes.len() - 1
-            });
-
-        let archetype: &mut Archetype = &mut self.archetypes[*archetype_index];
+        let archetype: &mut Archetype = &mut self.archetypes[archetype_index];
 
         let row = TableRowIndex::new(archetype.len());
         archetype.add_entity(entity);
@@ -155,15 +156,76 @@ impl World {
         }
 
         let new_location = EntityLocation {
-            archetype_index: *archetype_index as u32,
+            archetype_index: archetype_index as u32,
             row,
         };
 
         self.entity_store.set_location(entity, new_location);
 
-        let order = self.components.add_order(&bundle_ids, &required);
+        let order = self
+            .components
+            .add_order(&type_ids[..bundle_len], &required);
         let cell = self.as_unsafe_world_cell_mut();
         cell.trigger_on_add(entity, &order);
+    }
+
+    fn archetype_for_spawn<T: ComponentBundle>(
+        &mut self,
+        type_ids: &[ComponentId],
+        required: &[RequiredComponent],
+    ) -> usize {
+        self.find_or_create_archetype(type_ids.to_vec(), |_| {
+            let mut table = T::generate_empty_table();
+            add_required_columns(&mut table, required);
+            table
+        })
+    }
+
+    fn archetype_after_insert<T: ComponentBundle>(
+        &mut self,
+        source_index: usize,
+        added_ids: &[ComponentId],
+        required: &[RequiredComponent],
+    ) -> usize {
+        let mut component_ids = self.archetypes[source_index].component_ids().to_vec();
+        for id in added_ids {
+            if !component_ids.contains(id) {
+                component_ids.push(*id);
+            }
+        }
+        self.find_or_create_archetype(component_ids, |archetypes| {
+            let mut table = archetypes[source_index].clone_empty_table();
+            table.merge(T::generate_empty_table());
+            add_required_columns(&mut table, required);
+            table
+        })
+    }
+
+    fn archetype_after_remove(&mut self, source_index: usize, removed_index: usize) -> usize {
+        let mut component_ids = self.archetypes[source_index].component_ids().to_vec();
+        let removed_id = component_ids.swap_remove(removed_index);
+        self.find_or_create_archetype(component_ids, |archetypes| {
+            let mut table = archetypes[source_index].clone_empty_table();
+            table.remove_column(removed_id);
+            table
+        })
+    }
+
+    fn find_or_create_archetype(
+        &mut self,
+        component_ids: Vec<ComponentId>,
+        build_table: impl FnOnce(&[Archetype]) -> Table,
+    ) -> usize {
+        let key = ArchetypeType::of(&component_ids);
+        if let Some(existing) = self.archetype_index.get(&key) {
+            return *existing;
+        }
+        let new_index = self.archetypes.len();
+        let table = build_table(&self.archetypes);
+        self.archetypes
+            .push(Archetype::new(table, component_ids, new_index.into()));
+        self.archetype_index.insert(key, new_index);
+        new_index
     }
 
     /// Removes an entity, its components, and its descendants from the world.
@@ -243,9 +305,10 @@ impl World {
         };
 
         let source_index = location.archetype_index as usize;
-        let inserted_ids = T::get_component_ids();
+        let mut added_ids = T::get_component_ids();
+        let bundle_len = added_ids.len();
 
-        let replaced_ids: Vec<ComponentId> = inserted_ids
+        let replaced_ids: Vec<ComponentId> = added_ids
             .iter()
             .copied()
             .filter(|id| self.archetypes[source_index].component_ids().contains(id))
@@ -253,41 +316,28 @@ impl World {
         self.as_unsafe_world_cell_mut()
             .trigger_on_replace(entity, &replaced_ids);
 
-        let mut component_ids = self.archetypes[source_index].component_ids().to_vec();
-        for id in &inserted_ids {
-            if !component_ids.contains(id) {
-                component_ids.push(*id);
-            }
-        }
         let required = self
             .components
-            .missing_required(&component_ids, &inserted_ids);
-        component_ids.extend(required.iter().map(RequiredComponent::id));
+            .missing_required(self.archetypes[source_index].component_ids(), &added_ids);
+        added_ids.extend(required.iter().map(RequiredComponent::id));
 
-        let entity_type = generate_type_id(&component_ids);
-
-        let destination_index = match self.archetype_index.entry(entity_type) {
-            Occupied(occupied_entry) => *occupied_entry.get(),
-            Vacant(vacant_entry) => {
-                let new_index = self.archetypes.len();
-                vacant_entry.insert(new_index);
-
-                let mut table = self.archetypes[source_index].clone_empty_table();
-                table.merge(T::generate_empty_table());
-                for entry in &required {
-                    if !table.has_column(entry.id()) {
-                        entry.add_column(&mut table);
-                    }
-                }
-                self.archetypes.push(Archetype::new(
-                    table,
-                    component_ids,
-                    self.archetypes().len().into(),
-                ));
-
-                new_index
+        let mut move_key = std::mem::take(&mut self.move_key);
+        ArchetypeType::sort_into(&added_ids, &mut move_key);
+        let destination_index = match self.archetypes[source_index]
+            .edges()
+            .after_adding(&move_key)
+        {
+            Some(destination_index) => destination_index,
+            None => {
+                let destination_index =
+                    self.archetype_after_insert::<T>(source_index, &added_ids, &required);
+                self.archetypes[source_index]
+                    .edges_mut()
+                    .remember_adding(ArchetypeType::of(&move_key), destination_index);
+                destination_index
             }
         };
+        self.move_key = move_key;
 
         if destination_index == source_index {
             let change_tick = *self.change_tick();
@@ -319,7 +369,9 @@ impl World {
             self.entity_store.set_location(entity, new_location);
         }
 
-        let order = self.components.add_order(&inserted_ids, &required);
+        let order = self
+            .components
+            .add_order(&added_ids[..bundle_len], &required);
         let cell = self.as_unsafe_world_cell_mut();
         cell.trigger_on_add(entity, &order);
     }
@@ -331,8 +383,11 @@ impl World {
 
         let removed_id = TypeId::of::<T>();
         let source_index = location.archetype_index as usize;
-        let mut component_ids = self.archetypes[source_index].component_ids().to_vec();
-        let Some(removed_index) = component_ids.iter().position(|id| *id == removed_id) else {
+        let Some(removed_index) = self.archetypes[source_index]
+            .component_ids()
+            .iter()
+            .position(|id| *id == removed_id)
+        else {
             warn!("Entity does not have the component being removed.");
             return;
         };
@@ -340,25 +395,17 @@ impl World {
         self.as_unsafe_world_cell_mut()
             .trigger_on_remove_component(entity, &removed_id);
 
-        component_ids.swap_remove(removed_index);
-
-        let entity_type = generate_type_id(&component_ids);
-
-        let destination_index = match self.archetype_index.entry(entity_type) {
-            Occupied(occupied_entry) => *occupied_entry.get(),
-            Vacant(vacant_entry) => {
-                let new_index = self.archetypes.len();
-                vacant_entry.insert(new_index);
-
-                let mut table = self.archetypes[source_index].clone_empty_table();
-                table.remove_column(removed_id);
-                self.archetypes.push(Archetype::new(
-                    table,
-                    component_ids,
-                    self.archetypes().len().into(),
-                ));
-
-                new_index
+        let destination_index = match self.archetypes[source_index]
+            .edges()
+            .after_removing(&[removed_id])
+        {
+            Some(destination_index) => destination_index,
+            None => {
+                let destination_index = self.archetype_after_remove(source_index, removed_index);
+                self.archetypes[source_index]
+                    .edges_mut()
+                    .remember_removing(ArchetypeType::of(&[removed_id]), destination_index);
+                destination_index
             }
         };
 
@@ -1185,4 +1232,12 @@ impl<'w> RestrictedWorld<'w> {
 
 pub trait FromWorld {
     fn from_world(world: &World) -> Self;
+}
+
+fn add_required_columns(table: &mut Table, required: &[RequiredComponent]) {
+    for entry in required {
+        if !table.has_column(entry.id()) {
+            entry.add_column(table);
+        }
+    }
 }
