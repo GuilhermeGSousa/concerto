@@ -8,7 +8,7 @@ use concerto_ui::{
     transform::UIValue,
 };
 
-use crate::inspector::rows::{
+use crate::property::{
     EditContext, EditError, PropertyCommits, PropertyEditor, PropertyRow, PropertyRowValue,
 };
 
