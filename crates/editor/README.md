@@ -1108,7 +1108,10 @@ entities without a mesh are selected from the hierarchy.
 The selected entity shows a transform gizmo: red, green, and blue handles for
 the world X, Y, and Z axes, with the one under the pointer in yellow. W shows
 arrows that move the entity along an axis; E shows rings that rotate it about
-one. Drag a handle with the left button. A ring seen nearly edge-on cannot be
+one. Drag a handle with the left button. With several entities selected the
+gizmo sits on the active one, and a drag moves every selected entity by the
+same offset or turns each by the same rotation about its own origin; an entity
+whose ancestor is also selected follows that ancestor and is not moved again. A ring seen nearly edge-on cannot be
 dragged; orbit a little first. The gizmo keeps its size on screen, is hidden
 while the camera is being flown, and is not shown for the scene root. A drag
 marks the scene dirty when it ends.

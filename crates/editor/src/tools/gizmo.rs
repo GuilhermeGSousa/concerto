@@ -1,4 +1,4 @@
-//! Handles for moving and rotating the selected entity in the viewport.
+//! Handles for moving and rotating the selected entities in the viewport.
 use concerto_app::{App, edit_time::AtEditTime, schedule_groups::Update};
 use concerto_color::Color;
 use concerto_debug_gizmos::DebugGizmos;
@@ -66,13 +66,17 @@ impl Axis {
     }
 }
 
-struct Drag {
+struct DragTarget {
     entity: Entity,
+    start: Transform,
+    parent: Mat4,
+}
+
+struct Drag {
     axis: Axis,
     mode: GizmoMode,
     origin: Vec3,
-    start: Transform,
-    parent: Mat4,
+    targets: Vec<DragTarget>,
     grab: f32,
     moved: bool,
 }
@@ -230,6 +234,78 @@ pub fn hovered_handle(
         .map(|(_, axis)| axis)
 }
 
+fn origin_target(
+    targets: &[Entity],
+    active: Option<Entity>,
+    parents: &Query<&ChildOf>,
+) -> Option<Entity> {
+    let mut at = active;
+    while let Some(entity) = at {
+        if targets.contains(&entity) {
+            return Some(entity);
+        }
+        at = parents.get_entity(entity).map(|parent| parent.parent());
+    }
+    targets.first().copied()
+}
+
+fn parent_matrix(
+    entity: Entity,
+    parents: &Query<&ChildOf>,
+    globals: &Query<&GlobalTransform>,
+) -> Mat4 {
+    parents
+        .get_entity(entity)
+        .and_then(|parent| globals.get_entity(parent.parent()))
+        .map_or(Mat4::IDENTITY, |parent| parent.matrix())
+}
+
+fn apply_drag(drag: &mut Drag, ray: &Ray, transforms: &mut Query<&mut Transform>) -> Vec3 {
+    let axis = drag.axis.direction();
+    let mut origin = drag.origin;
+    let mut moved = false;
+    match drag.mode {
+        GizmoMode::Translate => {
+            let Some(param) = axis_param(ray, drag.origin, axis) else {
+                return origin;
+            };
+            let offset = axis * (param - drag.grab);
+            origin = drag.origin + offset;
+            for target in &drag.targets {
+                let Some(mut transform) = transforms.get_entity_mut(target.entity) else {
+                    continue;
+                };
+                let world = target.parent.transform_point3(target.start.translation) + offset;
+                let local = target.parent.inverse().transform_point3(world);
+                if transform.translation != local {
+                    transform.translation = local;
+                    moved = true;
+                }
+            }
+        }
+        GizmoMode::Rotate => {
+            let Some(angle) = plane_angle(ray, drag.origin, axis) else {
+                return origin;
+            };
+            let turn = Quat::from_axis_angle(axis, angle - drag.grab);
+            for target in &drag.targets {
+                let Some(mut transform) = transforms.get_entity_mut(target.entity) else {
+                    continue;
+                };
+                let parent_rotation = target.parent.to_scale_rotation_translation().1;
+                let local =
+                    parent_rotation.inverse() * turn * parent_rotation * target.start.rotation;
+                if transform.rotation != local {
+                    transform.rotation = local;
+                    moved = true;
+                }
+            }
+        }
+    }
+    drag.moved |= moved;
+    origin
+}
+
 #[allow(clippy::too_many_arguments)]
 fn update_gizmo(
     pointer: Res<ViewportPointer>,
@@ -253,16 +329,24 @@ fn update_gizmo(
         state.captured = false;
     }
     let mode = state.mode;
-    let target = selection.active().filter(|entity| {
-        roots.get_entity(*entity).is_none()
-            && transforms.contains_entity(*entity)
-            && linked_in_open_scene_by(*entity, &linked, &members).is_none()
-    });
-    if state
-        .drag
-        .as_ref()
-        .is_some_and(|drag| !pointer.held || Some(drag.entity) != target)
-        && state.drag.take().is_some_and(|drag| drag.moved)
+    let targets: Vec<Entity> = selection
+        .roots(&parents)
+        .into_iter()
+        .filter(|entity| {
+            roots.get_entity(*entity).is_none()
+                && transforms.contains_entity(*entity)
+                && linked_in_open_scene_by(*entity, &linked, &members).is_none()
+        })
+        .collect();
+    let target = origin_target(&targets, selection.active(), &parents);
+    if state.drag.as_ref().is_some_and(|drag| {
+        !pointer.held
+            || !drag
+                .targets
+                .iter()
+                .map(|drag_target| drag_target.entity)
+                .eq(targets.iter().copied())
+    }) && state.drag.take().is_some_and(|drag| drag.moved)
     {
         dirty.0 = true;
         edited.write(SceneEdited);
@@ -291,10 +375,7 @@ fn update_gizmo(
 
     let view_proj = projection * camera_matrix.inverse();
     let ray = ray_through(pointer.position, pointer.size, projection, camera_matrix);
-    let parent = parents
-        .get_entity(target)
-        .and_then(|parent| globals.get_entity(parent.parent()))
-        .map_or(Mat4::IDENTITY, |parent| parent.matrix());
+    let parent = parent_matrix(target, &parents, &globals);
     let mut origin = globals
         .get_entity(target)
         .map(|global| global.matrix().w_axis.truncate())
@@ -305,37 +386,9 @@ fn update_gizmo(
         .unwrap_or_default();
 
     if let Some(drag) = state.drag.as_mut() {
-        let axis = drag.axis.direction();
         origin = drag.origin;
-        if let (Some(ray), Some(mut transform)) = (ray, transforms.get_entity_mut(target)) {
-            match drag.mode {
-                GizmoMode::Translate => {
-                    if let Some(param) = axis_param(&ray, drag.origin, axis) {
-                        let delta = param - drag.grab;
-                        origin = drag.origin + axis * delta;
-                        let local = drag.parent.inverse().transform_point3(origin);
-                        if transform.translation != local {
-                            transform.translation = local;
-                            drag.moved = true;
-                        }
-                    } else {
-                        origin = drag.parent.transform_point3(transform.translation);
-                    }
-                }
-                GizmoMode::Rotate => {
-                    if let Some(angle) = plane_angle(&ray, drag.origin, axis) {
-                        let parent_rotation = drag.parent.to_scale_rotation_translation().1;
-                        let local = parent_rotation.inverse()
-                            * Quat::from_axis_angle(axis, angle - drag.grab)
-                            * parent_rotation
-                            * drag.start.rotation;
-                        if transform.rotation != local {
-                            transform.rotation = local;
-                            drag.moved = true;
-                        }
-                    }
-                }
-            }
+        if let Some(ray) = ray {
+            origin = apply_drag(drag, &ray, &mut transforms);
         }
     }
 
@@ -364,15 +417,23 @@ fn update_gizmo(
                 GizmoMode::Translate => axis_param(&ray, origin, axis.direction()),
                 GizmoMode::Rotate => plane_angle(&ray, origin, axis.direction()),
             };
-            if let (Some(grab), Some(start)) = (grab, transforms.get_entity_mut(target)) {
+            if let Some(grab) = grab {
+                let drag_targets: Vec<DragTarget> = targets
+                    .iter()
+                    .filter_map(|&entity| {
+                        Some(DragTarget {
+                            entity,
+                            start: transforms.get_entity_mut(entity)?.clone(),
+                            parent: parent_matrix(entity, &parents, &globals),
+                        })
+                    })
+                    .collect();
                 state.captured = true;
                 state.drag = Some(Drag {
-                    entity: target,
                     axis,
                     mode,
                     origin,
-                    start: start.clone(),
-                    parent,
+                    targets: drag_targets,
                     grab,
                     moved: false,
                 });
@@ -514,6 +575,19 @@ mod tests {
                 .unwrap()
                 .clone()
         }
+        fn settle(&mut self, entity: Entity, parent: Mat4) {
+            let matrix = parent * self.local(entity).compute_matrix();
+            self.world
+                .get_component_for_entity_mut::<GlobalTransform>(entity)
+                .unwrap()
+                .set_matrix(matrix);
+        }
+        fn world_position(&self, entity: Entity, parent: Mat4) -> Vec3 {
+            parent.transform_point3(self.local(entity).translation)
+        }
+        fn world_rotation(&self, entity: Entity, parent: Mat4) -> Quat {
+            parent.to_scale_rotation_translation().1 * self.local(entity).rotation
+        }
         fn edits(&self) -> usize {
             self.world
                 .get_resource::<EventChannel<SceneEdited>>()
@@ -588,5 +662,77 @@ mod tests {
             "{world_rotation:?}"
         );
         assert_eq!(f.edits(), 2);
+
+        let parent_two_local = Transform::from_translation_rotation_scale(
+            Vec3::new(2.0, 1.0, -1.0),
+            Quat::from_rotation_x(0.7),
+            Vec3::splat(3.0),
+        );
+        let parent_two_matrix = parent_two_local.compute_matrix();
+        let parent_two = f.child(f.root, parent_two_local);
+        let other = f.child(
+            parent_two,
+            Transform::from_translation(Vec3::new(0.0, 0.2, 0.3)),
+        );
+        f.settle(entity, parent_matrix);
+        f.settle(other, parent_two_matrix);
+        f.set_mode(GizmoMode::Translate);
+        f.world
+            .trigger(crate::tools::selection::Select::Replace(vec![
+                entity, other,
+            ]));
+        let first_before = f.world_position(entity, parent_matrix);
+        let other_before = f.world_position(other, parent_two_matrix);
+        let grab = other_before + Vec3::X * f.size(other_before) * 0.5;
+        f.drag(grab, grab + Vec3::X * 0.8);
+        let first_after = f.world_position(entity, parent_matrix);
+        let other_after = f.world_position(other, parent_two_matrix);
+        assert!(
+            (first_after - first_before - Vec3::X * 0.8).length() < 1e-3,
+            "{first_before:?} {first_after:?}"
+        );
+        assert!(
+            (other_after - other_before - Vec3::X * 0.8).length() < 1e-3,
+            "{other_before:?} {other_after:?}"
+        );
+        assert_eq!(f.edits(), 3);
+
+        f.settle(entity, parent_matrix);
+        f.settle(other, parent_two_matrix);
+        f.set_mode(GizmoMode::Rotate);
+        let first_turned = f.world_rotation(entity, parent_matrix);
+        let other_turned = f.world_rotation(other, parent_two_matrix);
+        let size = f.size(other_after);
+        let on_ring = |angle: f32| other_after + (u * angle.cos() + v * angle.sin()) * size;
+        f.drag(on_ring(0.6), on_ring(0.6 + FRAC_PI_2));
+        let turn = Quat::from_rotation_z(FRAC_PI_2);
+        let now = f.world_rotation(entity, parent_matrix);
+        assert!(now.dot(turn * first_turned).abs() > 0.99999, "{now:?}");
+        let now = f.world_rotation(other, parent_two_matrix);
+        assert!(now.dot(turn * other_turned).abs() > 0.99999, "{now:?}");
+        assert!((f.world_position(entity, parent_matrix) - first_after).length() < 1e-3);
+        assert!((f.world_position(other, parent_two_matrix) - other_after).length() < 1e-3);
+        assert_eq!(f.edits(), 4);
+
+        let kid = f.child(other, Transform::from_translation(Vec3::Y));
+        let kid_translation = f.local(kid).translation;
+        f.settle(other, parent_two_matrix);
+        f.set_mode(GizmoMode::Translate);
+        f.world
+            .trigger(crate::tools::selection::Select::Replace(vec![other, kid]));
+        let start = f.world_position(other, parent_two_matrix);
+        let grab = start + Vec3::X * f.size(start) * 0.5;
+        f.drag(grab, grab + Vec3::X * 0.5);
+        let end = f.world_position(other, parent_two_matrix);
+        assert!(
+            (end - start - Vec3::X * 0.5).length() < 1e-3,
+            "{start:?} {end:?}"
+        );
+        assert_eq!(
+            f.local(kid).translation,
+            kid_translation,
+            "a child moves with its selected parent, not twice"
+        );
+        assert_eq!(f.edits(), 5);
     }
 }
