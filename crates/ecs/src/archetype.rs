@@ -1,15 +1,44 @@
+use std::collections::HashMap;
+
 use derive_more::{Deref, From};
 
 use crate::{
+    common::ArchetypeType,
     component::{CheckChangeTicks, Component, ComponentId, SystemTicks, Tick},
     entity::Entity,
     table::{CellAccessor, MutableCellAccessor, Table, TableRowIndex},
+    utils::fixed_hasher::FixedHasher,
 };
+
+#[derive(Default)]
+pub(crate) struct ArchetypeEdges {
+    added: HashMap<ArchetypeType, usize, FixedHasher>,
+    removed: HashMap<ArchetypeType, usize, FixedHasher>,
+}
+
+impl ArchetypeEdges {
+    pub(crate) fn after_adding(&self, added: &[ComponentId]) -> Option<usize> {
+        self.added.get(added).copied()
+    }
+
+    pub(crate) fn remember_adding(&mut self, added: ArchetypeType, destination: usize) {
+        self.added.insert(added, destination);
+    }
+
+    pub(crate) fn after_removing(&self, removed: &[ComponentId]) -> Option<usize> {
+        self.removed.get(removed).copied()
+    }
+
+    pub(crate) fn remember_removing(&mut self, removed: ArchetypeType, destination: usize) {
+        self.removed.insert(removed, destination);
+    }
+}
 
 pub struct Archetype {
     data_table: Table,
     component_ids: Vec<ComponentId>,
     id: ArchetypeId,
+    edges: ArchetypeEdges,
 }
 
 impl Archetype {
@@ -18,7 +47,16 @@ impl Archetype {
             data_table,
             component_ids,
             id,
+            edges: ArchetypeEdges::default(),
         }
+    }
+
+    pub(crate) fn edges(&self) -> &ArchetypeEdges {
+        &self.edges
+    }
+
+    pub(crate) fn edges_mut(&mut self) -> &mut ArchetypeEdges {
+        &mut self.edges
     }
 
     /// Whether `T`'s column already holds a value at `row`.

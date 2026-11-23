@@ -160,7 +160,10 @@ impl Components {
                 continue;
             };
             for entry in required.iter() {
-                if !present.contains(&entry.id()) && !missing.iter().any(|m| m.id() == entry.id()) {
+                if !present.contains(&entry.id())
+                    && !added.contains(&entry.id())
+                    && !missing.iter().any(|m| m.id() == entry.id())
+                {
                     missing.push(entry.clone());
                 }
             }
