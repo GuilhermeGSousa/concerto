@@ -58,6 +58,19 @@ fix the entry in the same commit as the change that made it false.
 - **`Added<T>` and `Changed<T>` read `T`.** A query filtered by them conflicts
   with any system writing `T`, so the two never run in parallel. `With<T>` and
   `Without<T>` read only archetypes and do not conflict.
+- **A lookup by entity sees what iteration sees.** `get_entity`,
+  `get_entity_mut` and `contains_entity` answer `None` or `false` for an entity
+  whose archetype the query did not match, whatever the filter would say about
+  that entity alone. `Not` negates the archetype match as well as the check per
+  entity, so `Not<Changed<T>>` and `Not<Added<T>>` match only archetypes
+  without `T`; they do not mean "has `T`, unchanged".
+- **A query's fetch points into an archetype's columns.** An iterator, and
+  each lookup by entity, resolves column pointers and indexes them by row, so
+  no row may be added to or removed from a table while a query item or
+  iterator is alive. Only exclusive access to the world changes tables, and a
+  system holding a query cannot reach it: commands are deferred, and a
+  `&mut World` parameter beside a query that reads or writes a component
+  panics at initialization.
 - **`.after()` and `.before()` reference a system; they do not add it.**
   Something else must add the target to the same schedule.
 - **A system takes at most twelve parameters.** A thirteenth fails with an
