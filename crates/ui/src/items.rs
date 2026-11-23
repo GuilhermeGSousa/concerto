@@ -231,18 +231,15 @@ fn range_from(
     let (_, from) = items
         .get_entity(anchor)
         .filter(|(_, from)| from.owner == item.owner && from.shown)?;
-    let mut shown: Vec<(Entity, usize)> = items
-        .iter()
-        .filter(|(_, other)| other.owner == item.owner && other.shown)
-        .map(|(entity, other)| (entity, other.index))
-        .collect();
-    shown.sort_by_key(|row| row.1);
     let (low, high) = (from.index.min(item.index), from.index.max(item.index));
-    let mut range: Vec<Entity> = shown
-        .into_iter()
-        .filter(|row| (low..=high).contains(&row.1))
-        .map(|row| row.0)
+    let mut range: Vec<Entity> = items
+        .iter()
+        .filter(|(_, other)| {
+            other.owner == item.owner && other.shown && (low..=high).contains(&other.index)
+        })
+        .map(|(entity, _)| entity)
         .collect();
+    range.sort_by_key(|entity| items.get_entity(*entity).map(|(_, other)| other.index));
     if from.index > item.index {
         range.reverse();
     }
