@@ -1,5 +1,4 @@
 use std::{
-    collections::HashMap,
     marker::PhantomData,
     ops::{Deref, DerefMut},
 };
@@ -9,6 +8,7 @@ use any_vec::{AnyVec, any_value::AnyValueWrapper};
 use crate::{
     component::{CheckChangeTicks, Component, ComponentId, SystemTicks, Tick},
     entity::Entity,
+    utilities::TypeIdMap,
 };
 
 pub struct Column {
@@ -132,14 +132,14 @@ impl Column {
 }
 
 pub struct Table {
-    columns: HashMap<ComponentId, Column>,
+    columns: TypeIdMap<Column>,
     entities: Vec<Entity>,
 }
 
 impl Table {
     pub fn new() -> Self {
         Self {
-            columns: HashMap::new(),
+            columns: TypeIdMap::default(),
             entities: Vec::new(),
         }
     }
