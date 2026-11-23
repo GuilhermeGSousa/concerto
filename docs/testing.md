@@ -40,7 +40,9 @@ The `ragdoll` benchmark measures one fixed step with 1, 8 and 32 reference
 humanoids, limp, kinematic and powered. The `transform_propagation` benchmark
 measures one `propagate_global_transforms` run over 100 hierarchies of 100
 entities when nothing changed, when one leaf moved and when every entity
-moved.
+moved. The `archetype_moves` benchmark measures inserting and then removing a
+marker component on 10,000 entities, and spawning 10,000 entities of one
+shape into a new world.
 
 Benchmarks do not run in CI, and without the `run` feature the crate builds
 without `criterion` and skips them. Run them by hand before and after a change

@@ -63,5 +63,10 @@ name = "transform_propagation"
 harness = false
 required-features = ["run"]
 
+[[bench]]
+name = "archetype_moves"
+harness = false
+required-features = ["run"]
+
 [lints]
 workspace = true

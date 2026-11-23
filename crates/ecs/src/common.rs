@@ -1,17 +1,9 @@
-use std::{
-    any::TypeId,
-    hash::{Hash, Hasher},
-};
+use crate::component::ComponentId;
 
-use crate::entity::EntityType;
-
-pub fn generate_type_id(type_ids: &[TypeId]) -> EntityType {
-    let mut sorted_type_ids: Vec<TypeId> = type_ids.to_owned();
-    sorted_type_ids.sort();
-    sorted_type_ids.dedup();
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    for type_id in sorted_type_ids {
-        type_id.hash(&mut hasher);
-    }
-    EntityType(hasher.finish())
+/// The identity of an archetype: its component ids, sorted and without repeats.
+pub fn archetype_key(component_ids: &[ComponentId]) -> Box<[ComponentId]> {
+    let mut key = component_ids.to_vec();
+    key.sort();
+    key.dedup();
+    key.into_boxed_slice()
 }
