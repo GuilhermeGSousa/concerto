@@ -6,6 +6,7 @@ pub mod content;
 pub mod diagnostics;
 pub mod dock;
 pub mod drag_drop;
+mod entity_ids;
 pub mod entity_picker;
 pub mod fonts;
 pub mod gizmo_choices;

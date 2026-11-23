@@ -55,6 +55,7 @@ use serde::Deserialize;
 use taffy::AlignItems;
 
 use crate::{
+    entity_ids::{SceneEntities, resolve},
     fonts::{button_icon, glyph, icon_button},
     hierarchy::{RowLook, RowLooks, reconcile_content},
     hosted::{
@@ -63,7 +64,6 @@ use crate::{
     },
     import::ImportFinished,
     inspector::{InspectedComponent, InspectorHeader, ReadOnlyCard, refused},
-    mcp::{SceneEntities, resolve},
     scene::SceneSaved,
     tools::{
         edits::{ComponentEdit, ComponentEdited},
