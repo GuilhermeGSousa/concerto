@@ -46,18 +46,22 @@ pub struct CreateEntity {
     pub parent: Option<String>,
 }
 
-/// Deletes an entity and its descendants, and answers what is selected afterwards.
+/// Deletes an entity, or several as one edit, with their descendants, and answers what is selected afterwards.
 #[derive(Deserialize, JsonSchema)]
 pub struct DeleteEntity {
-    /// The entity, such as 42v3, as scene_tree shows it.
-    pub entity: String,
+    /// The entity, such as 42v3, as scene_tree shows it; give this or entities.
+    pub entity: Option<String>,
+    /// Several entities to delete as one edit; one that is under another listed entity goes with it; give this or entity.
+    pub entities: Option<Vec<String>>,
 }
 
-/// Copies an entity and its descendants beside it, and answers the copy's id.
+/// Copies an entity, or several as one edit, with their descendants beside them, and answers the copies' ids.
 #[derive(Deserialize, JsonSchema)]
 pub struct DuplicateEntity {
-    /// The entity, such as 42v3, as scene_tree shows it.
-    pub entity: String,
+    /// The entity, such as 42v3, as scene_tree shows it; give this or entities.
+    pub entity: Option<String>,
+    /// Several entities to copy as one edit; one that is under another listed entity is copied with it; give this or entity.
+    pub entities: Option<Vec<String>>,
 }
 
 /// Renames an entity and answers the name it took, trimmed.
@@ -256,6 +260,32 @@ fn create_entity(
     }
 }
 
+fn listed_entities(
+    entity: Option<String>,
+    entities: Option<Vec<String>>,
+    scene: &EditWorld<SceneEntities>,
+) -> Result<Vec<Entity>, ToolError> {
+    let ids = match (entity, entities) {
+        (Some(entity), None) => vec![entity],
+        (None, Some(entities)) if !entities.is_empty() => entities,
+        _ => {
+            return Err(ToolError::new(
+                "invalid_arguments",
+                "Give exactly one of entity, or entities with at least one id.",
+            ));
+        }
+    };
+    ids.iter().map(|id| resolve(id, scene)).collect()
+}
+
+fn labels(entities: &[Entity], names: &Query<&Name>) -> String {
+    entities
+        .iter()
+        .map(|entity| label(*entity, names))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 fn delete_entity(
     mut calls: ToolCalls<DeleteEntity>,
     entities: EditWorld<SceneEntities>,
@@ -268,12 +298,12 @@ fn delete_entity(
         return;
     };
     for (arguments, reply) in calls.read() {
-        match resolve(&arguments.entity, &entities) {
-            Ok(entity) => edit_entity(
+        match listed_entities(arguments.entity, arguments.entities, &entities) {
+            Ok(listed) => edit_entity(
                 reply,
                 document,
-                EntityEdit::Delete(entity),
-                label(entity, &names),
+                EntityEdit::Delete(listed.clone()),
+                labels(&listed, &names),
                 &mut scene,
                 &mut cmd,
             ),
@@ -294,12 +324,12 @@ fn duplicate_entity(
         return;
     };
     for (arguments, reply) in calls.read() {
-        match resolve(&arguments.entity, &entities) {
-            Ok(entity) => edit_entity(
+        match listed_entities(arguments.entity, arguments.entities, &entities) {
+            Ok(listed) => edit_entity(
                 reply,
                 document,
-                EntityEdit::Duplicate(entity),
-                label(entity, &names),
+                EntityEdit::Duplicate(listed.clone()),
+                labels(&listed, &names),
                 &mut scene,
                 &mut cmd,
             ),
@@ -338,19 +368,19 @@ fn rename_entity(
 
 fn entity_answer(
     editing: &EditingEntity,
-    made: Option<Entity>,
+    made: &[Entity],
     names: &Query<&Name>,
     selection: Option<&Selection>,
 ) -> Result<String, ToolError> {
     let place = &editing.label;
     match (&editing.edit, made) {
-        (EntityEdit::Create { .. }, Some(made)) => {
-            Ok(format!("Created {} {place}.", label(made, names)))
+        (EntityEdit::Create { .. }, [made, ..]) => {
+            Ok(format!("Created {} {place}.", label(*made, names)))
         }
-        (EntityEdit::Duplicate(_), Some(made)) => {
-            Ok(format!("Duplicated {place} as {}.", label(made, names)))
+        (EntityEdit::Duplicate(_), [_, ..]) => {
+            Ok(format!("Duplicated {place} as {}.", labels(made, names)))
         }
-        (EntityEdit::Create { .. } | EntityEdit::Duplicate(_), None) => Err(ToolError::new(
+        (EntityEdit::Create { .. } | EntityEdit::Duplicate(_), []) => Err(ToolError::new(
             "internal",
             "The edit was applied but made no entity.",
         )),
@@ -378,7 +408,7 @@ fn answer_entity_edits(
                 continue;
             }
             let answer = match &event.result {
-                Ok(made) => entity_answer(editing, *made, &names, selection.as_deref()),
+                Ok(made) => entity_answer(editing, made, &names, selection.as_deref()),
                 Err(reason) => Err(refused(reason)),
             };
             match answer {

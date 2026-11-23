@@ -997,7 +997,7 @@ mod tests {
             entity: created,
             name: "lamp".into(),
         });
-        f.signal(EntityEdit::Duplicate(original));
+        f.signal(EntityEdit::Duplicate(vec![original]));
         assert!(f.unsaved(document));
         save(&mut f, document);
 

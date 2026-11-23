@@ -431,9 +431,9 @@ fn press_row_menu_item(
                 RowMenuItem::AddChild => scene.trigger(EntityEdit::Create {
                     parent: Some(scene_target),
                 }),
-                RowMenuItem::Duplicate => scene.trigger(EntityEdit::Duplicate(scene_target)),
+                RowMenuItem::Duplicate => scene.trigger(EntityEdit::Duplicate(vec![scene_target])),
                 RowMenuItem::Rename => focus_name.0 = true,
-                RowMenuItem::Delete => scene.trigger(EntityEdit::Delete(scene_target)),
+                RowMenuItem::Delete => scene.trigger(EntityEdit::Delete(vec![scene_target])),
             }
         }
         panel.open = false;
@@ -451,9 +451,9 @@ fn entity_shortcuts(
             continue;
         };
         if action.is(DeleteEntity) {
-            scene.trigger(EntityEdit::Delete(entity));
+            scene.trigger(EntityEdit::Delete(vec![entity]));
         } else if action.is(DuplicateEntity) {
-            scene.trigger(EntityEdit::Duplicate(entity));
+            scene.trigger(EntityEdit::Duplicate(vec![entity]));
         } else if action.is(RenameEntity) {
             focus_name.0 = true;
         }

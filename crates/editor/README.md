@@ -329,7 +329,9 @@ parked and preview `App`, so its links spawn again; a playing game is never
 reloaded.
 `delete_entity` deletes `entity` and its descendants and answers what is
 selected afterwards. `duplicate_entity` copies `entity` beside it and answers
-the copy's id. `rename_entity` renames `entity` to `name`, trimmed; an empty
+the copy's id. Both take `entities` instead of `entity` to act on several as one
+edit: one listed under another is left to it, the whole edit is refused when
+any is refused, and a duplicate answers every copy. `rename_entity` renames `entity` to `name`, trimmed; an empty
 name is refused. `add_component` adds `component` at its default value and
 answers it in `inspect`'s form; `remove_component` removes it. A component is
 named by its short name, ignoring case, or by its full path when the short name

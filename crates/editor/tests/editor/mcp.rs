@@ -2204,6 +2204,17 @@ fn tree_id(tree: &str, name: &str) -> String {
         .unwrap_or_else(|| panic!("no {name} in:\n{tree}"))
 }
 
+fn pair_ids(answer: &str) -> Vec<String> {
+    answer
+        .trim_end_matches('.')
+        .split(" as ")
+        .nth(1)
+        .unwrap()
+        .split(", ")
+        .map(|label| label.split_whitespace().next().unwrap().to_owned())
+        .collect()
+}
+
 fn stale(id: &str) -> String {
     let (index, generation) = id.split_once('v').unwrap();
     format!("{index}v{}", generation.parse::<u32>().unwrap() + 1)
@@ -2225,6 +2236,10 @@ struct EntityEdits {
     renamed: String,
     duplicated: String,
     deleted: String,
+    pair: String,
+    kept: String,
+    after_failures: String,
+    deleted_pair: String,
     top: String,
     tree: String,
     errors: Vec<Value>,
@@ -2251,6 +2266,31 @@ fn the_entity_tools_create_rename_duplicate_and_delete() {
         let duplicated = ok_with(&client, "duplicate_entity", json!({ "entity": torch })).await;
         let copy = duplicated.split_whitespace().nth(4).unwrap().to_owned();
         let deleted = ok_with(&client, "delete_entity", json!({ "entity": copy })).await;
+        let extra =
+            second_word(&ok_with(&client, "create_entity", json!({ "parent": hero })).await);
+        let pair = ok_with(
+            &client,
+            "duplicate_entity",
+            json!({ "entities": [torch, extra] }),
+        )
+        .await;
+        let kept = ok(&client, "scene_tree").await;
+        let ids_of_pair = pair_ids(&pair);
+        let unknown = error_with(
+            &client,
+            "delete_entity",
+            json!({ "entities": [ids_of_pair[0], "999999v1"] }),
+        )
+        .await;
+        let both = error_with(
+            &client,
+            "delete_entity",
+            json!({ "entity": torch, "entities": [torch] }),
+        )
+        .await;
+        let after_failures = ok(&client, "scene_tree").await;
+        let deleted_pair =
+            ok_with(&client, "delete_entity", json!({ "entities": ids_of_pair })).await;
         let top = ok(&client, "create_entity").await;
         let tree = ok(&client, "scene_tree").await;
         let errors = vec![
@@ -2269,6 +2309,8 @@ fn the_entity_tools_create_rename_duplicate_and_delete() {
             )
             .await,
             error_with(&client, "delete_entity", json!({ "entity": "999999v1" })).await,
+            unknown,
+            both,
         ];
         client.cancel().await.unwrap();
         EntityEdits {
@@ -2278,6 +2320,10 @@ fn the_entity_tools_create_rename_duplicate_and_delete() {
             renamed,
             duplicated,
             deleted,
+            pair,
+            kept,
+            after_failures,
+            deleted_pair,
             top,
             tree,
             errors,
@@ -2293,6 +2339,10 @@ fn the_entity_tools_create_rename_duplicate_and_delete() {
         renamed,
         duplicated,
         deleted,
+        pair,
+        kept,
+        after_failures,
+        deleted_pair,
         top,
         tree,
         errors,
@@ -2310,6 +2360,15 @@ fn the_entity_tools_create_rename_duplicate_and_delete() {
         deleted,
         format!("Deleted {copy} Torch; the selection is {hero} Hero.")
     );
+    assert!(
+        pair.starts_with(&format!("Duplicated {torch} Torch, ")),
+        "{pair}"
+    );
+    assert_eq!(pair.matches(" Torch").count(), 2, "{pair}");
+    assert_eq!(pair.matches(" Entity").count(), 2, "{pair}");
+    assert_eq!(kept, after_failures);
+    assert!(deleted_pair.starts_with("Deleted "), "{deleted_pair}");
+    assert!(!tree.contains(&pair_ids(&pair)[0]), "{tree}");
     let new = second_word(&top);
     assert!(
         top.starts_with(&format!("Created {new} Entity in {root}")),
@@ -2333,7 +2392,9 @@ fn the_entity_tools_create_rename_duplicate_and_delete() {
             "refused",
             "refused",
             "stale_entity",
-            "unknown_entity"
+            "unknown_entity",
+            "unknown_entity",
+            "invalid_arguments"
         ]
     );
 }

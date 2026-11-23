@@ -184,8 +184,8 @@ fn note_link_edits(
                     EntityEdit::Create {
                         parent: Some(parent),
                     },
-                    Ok(Some(entity)),
-                ) if is_linked(*parent) => Some(LinkEdit::Created {
+                    Ok(made),
+                ) if is_linked(*parent) => made.first().map(|entity| LinkEdit::Created {
                     entity: *entity,
                     parent: *parent,
                 }),
