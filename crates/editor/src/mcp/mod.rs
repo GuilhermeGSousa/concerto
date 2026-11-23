@@ -6,7 +6,6 @@ mod observe;
 mod run;
 mod value;
 
-pub(crate) use observe::{SceneEntities, resolve};
 pub use run::PlayTimeout;
 
 use std::path::PathBuf;

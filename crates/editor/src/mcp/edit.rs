@@ -18,9 +18,10 @@ use serde_json::Value;
 
 use super::{
     act::label,
-    observe::{SceneEntities, component_json, names_component, resolve},
+    observe::{component_json, names_component},
 };
 use crate::{
+    entity_ids::{SceneEntities, resolve},
     hosted::{EditTarget, EditWorld, EditWorldSignals, Hosted},
     inspector::{
         ComponentTarget, EditSource, InspectionSource, InspectorRegistry, ListEdit, ListEditor,
