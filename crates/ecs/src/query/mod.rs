@@ -1,9 +1,10 @@
-use std::{any::TypeId, marker::PhantomData};
+use std::any::TypeId;
 
 use fixedbitset::Ones;
 use typle::typle;
 
 pub mod change_detection;
+pub mod fetch;
 pub mod filter;
 pub mod state;
 pub mod world_query;
@@ -11,9 +12,10 @@ pub mod world_query;
 use crate::{
     World,
     component::{Component, ComponentId, SystemTicks},
-    entity::Entity,
+    entity::{Entity, EntityLocation},
     query::{
         change_detection::{Mut, Ref},
+        fetch::{RefFetch, WriteFetch},
         filter::QueryFilter,
         state::QueryState,
         world_query::WorldQuery,
@@ -55,21 +57,30 @@ pub trait QueryData: WorldQuery {
     /// The item type produced for each matched entity.
     type Item<'a>;
 
+    /// What the data resolves once from an archetype, to fetch its entities by row.
+    type Fetch<'w>;
+
     /// Whether fetching this data writes nothing, so it may be fetched through a shared borrow of the query.
     const IS_READ_ONLY: bool;
 
     /// Returns the [`ComponentId`]s that must be present on an entity for it to match.
     fn component_ids() -> Vec<ComponentId>;
 
-    /// Fetches the data for `entity` from `world`, returning `None` if not possible.
+    /// Resolves the data's columns in the archetype at index `archetype`, or `None` if it lacks a required one.
     ///
     /// # Safety
-    /// The caller must hold the access [`QueryData::fill_access`] declares.
-    unsafe fn fetch<'w>(
+    /// The caller must hold the access [`QueryData::fill_access`] declares for as long as `'w`.
+    unsafe fn set_archetype<'w>(
         world: UnsafeWorldCell<'w>,
-        entity: Entity,
+        archetype: usize,
         ticks: SystemTicks,
-    ) -> Option<Self::Item<'w>>;
+    ) -> Option<Self::Fetch<'w>>;
+
+    /// Fetches the data of `entity`, which sits at `row` of the archetype `fetch` was resolved from.
+    ///
+    /// # Safety
+    /// No other item fetched for this row may be alive if the data writes.
+    unsafe fn fetch<'w>(fetch: &Self::Fetch<'w>, entity: Entity, row: usize) -> Self::Item<'w>;
 
     /// Registers component access with the scheduler's access tracker.
     fn fill_access(meta: &mut SystemMetadata, access: &mut SystemAccess);
@@ -98,16 +109,7 @@ impl<'world, 'state, T: QueryData, F: QueryFilter> Query<'world, 'state, T, F> {
     }
 
     pub(crate) fn into_iter_exclusive(self) -> QueryIter<'world, 'state, T, F> {
-        QueryIter {
-            world: self.world,
-            matched_archetypes: self.state.matched_archetypes(),
-            current_entities: &[],
-            current_row: 0,
-            current_len: 0,
-            ticks: self.ticks,
-            _marker_data: PhantomData,
-            _marker_filter: PhantomData,
-        }
+        QueryIter::new(self.world, self.state, self.ticks)
     }
 
     /// Returns an iterator over all matching entities; only a query whose data is read-only has it.
@@ -121,16 +123,7 @@ impl<'world, 'state, T: QueryData, F: QueryFilter> Query<'world, 'state, T, F> {
                 "Query::iter needs read-only data; use iter_mut on a query that writes"
             )
         };
-        QueryIter {
-            world: self.world,
-            matched_archetypes: self.state.matched_archetypes(),
-            current_entities: &[],
-            current_row: 0,
-            current_len: 0,
-            ticks: self.ticks,
-            _marker_data: PhantomData,
-            _marker_filter: PhantomData,
-        }
+        QueryIter::new(self.world, self.state, self.ticks)
     }
 
     /// Returns an iterator over a read-only query whose items live as long as the world borrow.
@@ -138,30 +131,12 @@ impl<'world, 'state, T: QueryData, F: QueryFilter> Query<'world, 'state, T, F> {
     where
         T: ReadOnlyQueryData,
     {
-        QueryIter {
-            world: self.world,
-            matched_archetypes: self.state.matched_archetypes(),
-            current_entities: &[],
-            current_row: 0,
-            current_len: 0,
-            ticks: self.ticks,
-            _marker_data: PhantomData,
-            _marker_filter: PhantomData,
-        }
+        QueryIter::new(self.world, self.state, self.ticks)
     }
 
     /// Returns an iterator over all matching entities, with write access to what `T` writes.
     pub fn iter_mut(&mut self) -> QueryIter<'_, 'state, T, F> {
-        QueryIter {
-            world: self.world,
-            matched_archetypes: self.state.matched_archetypes(),
-            current_entities: &[],
-            current_row: 0,
-            current_len: 0,
-            ticks: self.ticks,
-            _marker_data: PhantomData,
-            _marker_filter: PhantomData,
-        }
+        QueryIter::new(self.world, self.state, self.ticks)
     }
 
     /// Fetches the query data for a specific entity, returning `None` if it doesn't match; only a query whose data is read-only has it.
@@ -182,24 +157,37 @@ impl<'world, 'state, T: QueryData, F: QueryFilter> Query<'world, 'state, T, F> {
     /// # Safety
     /// No item this query fetched for `entity` through a shared borrow may be alive if `T` writes.
     unsafe fn fetch(&self, entity: Entity) -> Option<T::Item<'_>> {
-        if !self.passes(entity) {
+        let location = self.matched_location(entity)?;
+        if !self.passes(location) {
             return None;
         }
         // SAFETY: the query's system declared the access of `T` and holds it while the query lives.
-        unsafe { T::fetch(self.world, entity, self.ticks) }
+        let data =
+            unsafe { T::set_archetype(self.world, location.archetype_index as usize, self.ticks) }?;
+        // SAFETY: the caller leaves no other item alive for this entity if `T` writes.
+        Some(unsafe { T::fetch(&data, entity, *location.row) })
     }
 
-    fn passes(&self, entity: Entity) -> bool {
+    fn matched_location(&self, entity: Entity) -> Option<EntityLocation> {
         // SAFETY: the entity store is read only to locate `entity`, and no system changes it.
-        let location = unsafe { self.world.world() }
+        unsafe { self.world.world() }
             .entity_store()
-            .find_location(entity);
-        let matched = location.is_some_and(|location| {
-            self.state
-                .matches_archetype(location.archetype_index as usize)
-        });
+            .find_location(entity)
+            .filter(|location| {
+                self.state
+                    .matches_archetype(location.archetype_index as usize)
+            })
+    }
+
+    fn passes(&self, location: EntityLocation) -> bool {
+        if F::IS_ARCHETYPAL {
+            return true;
+        }
         // SAFETY: the query's system declared the access of `F` and holds it while the query lives.
-        matched && (F::IS_ARCHETYPAL || unsafe { F::filter(self.world, entity, self.ticks) })
+        let filter =
+            unsafe { F::set_archetype(self.world, location.archetype_index as usize, self.ticks) };
+        // SAFETY: a borrow of the query cannot coexist with an item of it that writes.
+        unsafe { F::filter(&filter, *location.row) }
     }
 
     /// Fetches the query data for a specific entity, with write access to what `T` writes.
@@ -210,19 +198,61 @@ impl<'world, 'state, T: QueryData, F: QueryFilter> Query<'world, 'state, T, F> {
 
     /// Returns `true` if `entity` matches this query.
     pub fn contains_entity(&self, entity: Entity) -> bool {
-        self.passes(entity)
+        self.matched_location(entity)
+            .is_some_and(|location| self.passes(location))
     }
 }
 
-pub struct QueryIter<'world, 'state, T, F> {
+struct ArchetypeFetch<'world, T: QueryData, F: QueryFilter> {
+    data: T::Fetch<'world>,
+    filter: F::Fetch<'world>,
+}
+
+pub struct QueryIter<'world, 'state, T: QueryData, F: QueryFilter> {
     world: UnsafeWorldCell<'world>,
     matched_archetypes: Ones<'state>,
     current_entities: &'world [Entity],
     current_row: usize,
-    current_len: usize,
+    current: Option<ArchetypeFetch<'world, T, F>>,
     ticks: SystemTicks,
-    _marker_data: PhantomData<T>,
-    _marker_filter: PhantomData<F>,
+}
+
+impl<'world, 'state, T, F> QueryIter<'world, 'state, T, F>
+where
+    T: QueryData,
+    F: QueryFilter,
+{
+    fn new(
+        world: UnsafeWorldCell<'world>,
+        state: &'state QueryState<T, F>,
+        ticks: SystemTicks,
+    ) -> Self {
+        Self {
+            world,
+            matched_archetypes: state.matched_archetypes(),
+            current_entities: &[],
+            current_row: 0,
+            current: None,
+            ticks,
+        }
+    }
+
+    fn enter(&mut self, archetype: usize) {
+        self.current_row = 0;
+        self.current_entities = &[];
+        self.current = None;
+        if self.world.archetypes()[archetype].is_empty() {
+            return;
+        }
+        // SAFETY: the query's system declared the access of `F` and holds it while the iterator lives.
+        let filter = unsafe { F::set_archetype(self.world, archetype, self.ticks) };
+        // SAFETY: the query's system declared the access of `T` and holds it while the iterator lives.
+        let Some(data) = (unsafe { T::set_archetype(self.world, archetype, self.ticks) }) else {
+            return;
+        };
+        self.current_entities = self.world.archetypes()[archetype].entities();
+        self.current = Some(ArchetypeFetch { data, filter });
+    }
 }
 
 impl<'world, 's, T, F> Iterator for QueryIter<'world, 's, T, F>
@@ -233,32 +263,23 @@ where
     type Item = T::Item<'world>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let archetypes = self.world.archetypes();
         loop {
-            if self.current_row == self.current_len {
-                let archetype_index = self.matched_archetypes.next()?;
-
-                let archetype = &archetypes[archetype_index];
-
-                self.current_row = 0;
-                self.current_len = archetype.len();
-                self.current_entities = archetype.entities();
-            }
-
-            if self.current_entities.is_empty() {
+            if self.current_row == self.current_entities.len() {
+                let archetype = self.matched_archetypes.next()?;
+                self.enter(archetype);
                 continue;
             }
 
-            let entity = self.current_entities[self.current_row];
+            let row = self.current_row;
             self.current_row += 1;
-            // SAFETY: the query's system declared the access of `T` and `F`, and holds it
-            // while the iterator lives.
-            if !F::IS_ARCHETYPAL && !unsafe { F::filter(self.world, entity, self.ticks) } {
+            let current = self.current.as_ref()?;
+            // SAFETY: the iterator has fetched no item for this row yet.
+            if !F::IS_ARCHETYPAL && !unsafe { F::filter(&current.filter, row) } {
                 continue;
             }
 
-            // SAFETY: as above.
-            return unsafe { T::fetch(self.world, entity, self.ticks) };
+            // SAFETY: the iterator fetches each row once, and the query's borrow leaves no other item alive.
+            return Some(unsafe { T::fetch(&current.data, self.current_entities[row], row) });
         }
     }
 }
@@ -310,23 +331,24 @@ where
     T: Component,
 {
     type Item<'w> = &'w T;
+    type Fetch<'w> = &'w [T];
     const IS_READ_ONLY: bool = true;
 
     fn component_ids() -> Vec<ComponentId> {
         vec![TypeId::of::<T>()]
     }
 
-    unsafe fn fetch<'w>(
+    unsafe fn set_archetype<'w>(
         world: UnsafeWorldCell<'w>,
-        entity: Entity,
+        archetype: usize,
         _ticks: SystemTicks,
-    ) -> Option<Self::Item<'w>> {
+    ) -> Option<Self::Fetch<'w>> {
         // SAFETY: the caller holds read access to `T`, declared in `fill_access`.
-        let world = unsafe { world.world() };
-        world
-            .entity_store()
-            .find_location(entity)
-            .and_then(|location| world.get_component_for_entity_location::<T>(location))
+        unsafe { world.column(archetype, TypeId::of::<T>()) }?.values::<T>()
+    }
+
+    unsafe fn fetch<'w>(fetch: &Self::Fetch<'w>, _entity: Entity, row: usize) -> Self::Item<'w> {
+        &fetch[row]
     }
 
     fn fill_access(_meta: &mut SystemMetadata, access: &mut SystemAccess) {
@@ -341,35 +363,25 @@ where
     T: Component,
 {
     type Item<'w> = Mut<'w, T>;
+    type Fetch<'w> = WriteFetch<'w, T>;
     const IS_READ_ONLY: bool = false;
 
     fn component_ids() -> Vec<ComponentId> {
         vec![TypeId::of::<T>()]
     }
 
-    unsafe fn fetch<'w>(
+    unsafe fn set_archetype<'w>(
         world: UnsafeWorldCell<'w>,
-        entity: Entity,
+        archetype: usize,
         ticks: SystemTicks,
-    ) -> Option<Self::Item<'w>> {
+    ) -> Option<Self::Fetch<'w>> {
         // SAFETY: the caller holds write access to `T`, declared in `fill_access`.
-        let world = unsafe { world.world_mut() };
+        unsafe { WriteFetch::new(world, archetype, ticks) }
+    }
 
-        world
-            .entity_store()
-            .find_location(entity)
-            .and_then(|location| {
-                world
-                    .get_component_for_entity_location_mut::<T>(location)
-                    .map(|table_cell| {
-                        Mut::new(
-                            table_cell.data,
-                            table_cell.added_tick,
-                            table_cell.changed_tick,
-                            ticks,
-                        )
-                    })
-            })
+    unsafe fn fetch<'w>(fetch: &Self::Fetch<'w>, _entity: Entity, row: usize) -> Self::Item<'w> {
+        // SAFETY: the caller leaves no other item alive for this row.
+        unsafe { fetch.get(row) }
     }
 
     fn fill_access(_meta: &mut SystemMetadata, access: &mut SystemAccess) {
@@ -382,24 +394,24 @@ where
     T: Component,
 {
     type Item<'w> = Ref<'w, T>;
+    type Fetch<'w> = RefFetch<'w, T>;
     const IS_READ_ONLY: bool = true;
 
     fn component_ids() -> Vec<ComponentId> {
         vec![TypeId::of::<T>()]
     }
 
-    unsafe fn fetch<'w>(
+    unsafe fn set_archetype<'w>(
         world: UnsafeWorldCell<'w>,
-        entity: Entity,
+        archetype: usize,
         ticks: SystemTicks,
-    ) -> Option<Self::Item<'w>> {
+    ) -> Option<Self::Fetch<'w>> {
         // SAFETY: the caller holds read access to `T`, declared in `fill_access`.
-        let world = unsafe { world.world() };
-        world
-            .entity_store()
-            .find_location(entity)
-            .and_then(|location| world.get_component_for_entity_location_ticked::<T>(location))
-            .map(|cell| Ref::new(cell.data, cell.added_tick, cell.changed_tick, ticks))
+        unsafe { RefFetch::new(world, archetype, ticks) }
+    }
+
+    unsafe fn fetch<'w>(fetch: &Self::Fetch<'w>, _entity: Entity, row: usize) -> Self::Item<'w> {
+        fetch.get(row)
     }
 
     fn fill_access(_meta: &mut SystemMetadata, access: &mut SystemAccess) {
@@ -411,18 +423,23 @@ impl<T: Component> ReadOnlyQueryData for Ref<'_, T> {}
 
 impl QueryData for Entity {
     type Item<'a> = Entity;
+    type Fetch<'w> = ();
     const IS_READ_ONLY: bool = true;
 
     fn component_ids() -> Vec<ComponentId> {
         vec![]
     }
 
-    unsafe fn fetch<'w>(
+    unsafe fn set_archetype<'w>(
         _world: UnsafeWorldCell<'w>,
-        entity: Entity,
+        _archetype: usize,
         _ticks: SystemTicks,
-    ) -> Option<Self::Item<'w>> {
-        Some(entity)
+    ) -> Option<Self::Fetch<'w>> {
+        Some(())
+    }
+
+    unsafe fn fetch<'w>(_fetch: &Self::Fetch<'w>, entity: Entity, _row: usize) -> Self::Item<'w> {
+        entity
     }
 
     fn fill_access(_meta: &mut SystemMetadata, _access: &mut SystemAccess) {}
@@ -435,23 +452,25 @@ where
     T: Component,
 {
     type Item<'w> = Option<&'w T>;
+    type Fetch<'w> = Option<&'w [T]>;
     const IS_READ_ONLY: bool = true;
 
     fn component_ids() -> Vec<ComponentId> {
         vec![]
     }
 
-    unsafe fn fetch<'w>(
+    unsafe fn set_archetype<'w>(
         world: UnsafeWorldCell<'w>,
-        entity: Entity,
+        archetype: usize,
         _ticks: SystemTicks,
-    ) -> Option<Self::Item<'w>> {
+    ) -> Option<Self::Fetch<'w>> {
         // SAFETY: the caller holds read access to `T`, declared in `fill_access`.
-        let world = unsafe { world.world() };
-        world
-            .entity_store()
-            .find_location(entity)
-            .map(|location| world.get_component_for_entity_location(location))
+        let column = unsafe { world.column(archetype, TypeId::of::<T>()) };
+        Some(column.and_then(|column| column.values::<T>()))
+    }
+
+    unsafe fn fetch<'w>(fetch: &Self::Fetch<'w>, _entity: Entity, row: usize) -> Self::Item<'w> {
+        fetch.map(|values| &values[row])
     }
 
     fn fill_access(_meta: &mut SystemMetadata, access: &mut SystemAccess) {
@@ -466,32 +485,25 @@ where
     T: Component,
 {
     type Item<'w> = Option<Mut<'w, T>>;
+    type Fetch<'w> = Option<WriteFetch<'w, T>>;
     const IS_READ_ONLY: bool = false;
 
     fn component_ids() -> Vec<ComponentId> {
         vec![]
     }
 
-    unsafe fn fetch<'w>(
+    unsafe fn set_archetype<'w>(
         world: UnsafeWorldCell<'w>,
-        entity: Entity,
+        archetype: usize,
         ticks: SystemTicks,
-    ) -> Option<Self::Item<'w>> {
+    ) -> Option<Self::Fetch<'w>> {
         // SAFETY: the caller holds write access to `T`, declared in `fill_access`.
-        let world = unsafe { world.world_mut() };
+        Some(unsafe { WriteFetch::new(world, archetype, ticks) })
+    }
 
-        world.entity_store().find_location(entity).map(|location| {
-            world
-                .get_component_for_entity_location_mut::<T>(location)
-                .map(|table_cell| {
-                    Mut::new(
-                        table_cell.data,
-                        table_cell.added_tick,
-                        table_cell.changed_tick,
-                        ticks,
-                    )
-                })
-        })
+    unsafe fn fetch<'w>(fetch: &Self::Fetch<'w>, _entity: Entity, row: usize) -> Self::Item<'w> {
+        // SAFETY: the caller leaves no other item alive for this row.
+        fetch.as_ref().map(|fetch| unsafe { fetch.get(row) })
     }
 
     fn fill_access(_meta: &mut SystemMetadata, access: &mut SystemAccess) {
@@ -508,6 +520,7 @@ where
     T<_>: QueryData,
 {
     type Item<'w> = typle_for!(i in .. => T<{i}>::Item<'w>);
+    type Fetch<'w> = typle_for!(i in .. => T<{i}>::Fetch<'w>);
     const IS_READ_ONLY: bool = typle_all!(i in .. => <T<{i}>>::IS_READ_ONLY);
 
     #[allow(clippy::let_and_return)]
@@ -523,15 +536,24 @@ where
         }
     }
 
-    unsafe fn fetch<'w>(
+    unsafe fn set_archetype<'w>(
         world: UnsafeWorldCell<'w>,
-        entity: Entity,
+        archetype: usize,
         ticks: SystemTicks,
-    ) -> Option<Self::Item<'w>> {
+    ) -> Option<Self::Fetch<'w>> {
         Some(typle_for!(i in .. => {
-                unsafe { <T<{i}>>::fetch(world, entity, ticks) }?
+                // SAFETY: the caller's access covers every element of the tuple.
+                unsafe { <T<{i}>>::set_archetype(world, archetype, ticks) }?
             }
         ))
+    }
+
+    unsafe fn fetch<'w>(fetch: &Self::Fetch<'w>, entity: Entity, row: usize) -> Self::Item<'w> {
+        typle_for!(i in .. => {
+                // SAFETY: the caller's guarantee covers every element of the tuple.
+                unsafe { <T<{i}>>::fetch(&fetch[[i]], entity, row) }
+            }
+        )
     }
 
     fn fill_access(meta: &mut SystemMetadata, access: &mut SystemAccess) {
