@@ -1,5 +1,7 @@
 use concerto_ecs::{
-    component::scene::SceneEntityRef, reflect::ReflectSceneComponent, Component, Entity,
+    component::scene::SceneEntityRef,
+    reflect::{ReflectComponent, ReflectSceneComponent},
+    Component, Entity,
 };
 use concerto_foundation::assets::{handle::AssetHandle, Asset, AssetId, LoadableAsset};
 use concerto_name::Name;
@@ -219,9 +221,9 @@ fn skeleton_of<T: SkeletonSource>(value: &dyn Reflect) -> Option<AssetId> {
     value.downcast_ref::<T>()?.skeleton().map(AssetHandle::id)
 }
 
-/// Runtime data built by the importer; scene-only, so the inspector does not edit it.
+/// The skeleton a skinned entity is posed by, and the scene entities that are its bones; the importer fills it.
 #[derive(Component, Clone, Reflect, Default)]
-#[reflect(SceneComponent)]
+#[reflect(Component, SceneComponent)]
 pub struct SkeletonComponent {
     pub skeleton: AssetHandle<Skeleton>,
     pub bones: Vec<SceneEntityRef>,
