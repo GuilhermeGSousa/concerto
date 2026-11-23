@@ -24,13 +24,10 @@ use super::{
     PropertyRowValue,
 };
 use crate::fonts::{button_icon, glyph, icon_button};
+use crate::property::ListLength;
 
 /// Shows a reflected list's length and adds to it; its elements follow as rows of their own.
 pub(crate) struct ListEditor;
-
-/// The snapshot of a list's own row.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct ListLength(pub(crate) usize);
 
 /// A change to a reflected list's length.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

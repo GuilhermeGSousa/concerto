@@ -23,7 +23,7 @@ use concerto_render::{
     gpu::Gpu, readback::read_texture, render_asset::render_texture::RenderTexture,
 };
 use concerto_scene::{
-    link::{LinkedNode, SceneLink, SceneLinkState},
+    link::{SceneLink, SceneLinkState},
     scene::Scene,
 };
 use image::{ImageFormat, RgbaImage, imageops::FilterType};
@@ -40,6 +40,7 @@ use super::{
 };
 use crate::{
     asset_editor::{ActiveEditor, EditorDocument, Unsaved},
+    entity_ids::{SceneEntities, resolve},
     hosted::{EditTarget, EditWorld, HostedApp, PlayState},
     import_fold::{ImportFolds, is_import_face},
     inspector::{
@@ -49,9 +50,7 @@ use crate::{
     links::{change_lines, link_row, state_text},
     placement::PlaceableKinds,
     project::ProjectState,
-    tools::{
-        camera::FlyCamera, entity_ops::scene_member_by, scene::SceneRoot, selection::Selection,
-    },
+    tools::{camera::FlyCamera, scene::SceneRoot, selection::Selection},
 };
 
 /// What the editor has open: the project, its documents, the active one and its values, the selection, the panels' sizes, the viewport's size, and whether it is busy.
@@ -584,64 +583,6 @@ fn children_of(children: &Query<&Children>, entity: Entity) -> Vec<Entity> {
         .get_entity(entity)
         .map(|children| children.iter().copied().collect())
         .unwrap_or_default()
-}
-
-pub(crate) type SceneEntities = Query<
-    'static,
-    'static,
-    (
-        Entity,
-        Option<&'static ChildOf>,
-        Option<&'static SceneRoot>,
-        Option<&'static LinkedNode>,
-    ),
->;
-
-fn outside_open_scene(entity: Entity, entities: &SystemInputData<SceneEntities>) -> bool {
-    entities.iter().any(|(_, _, root, _)| root.is_some())
-        && scene_member_by(entity, |entity| {
-            entities
-                .get_entity(entity)
-                .map(|(_, parent, root, _)| (root.is_some(), parent.map(ChildOf::parent)))
-        })
-        .is_err()
-}
-
-pub(crate) fn resolve(
-    id: &str,
-    entities: &SystemInputData<SceneEntities>,
-) -> Result<Entity, ToolError> {
-    let Some(entity) = Entity::parse_id(id) else {
-        return Err(ToolError::new(
-            "unknown_entity",
-            format!("`{id}` is not an entity id; ids look like 42v3, as scene_tree shows them."),
-        ));
-    };
-    if entities.get_entity(entity).is_some() {
-        if outside_open_scene(entity, entities) {
-            Err(ToolError::new(
-                "unknown_entity",
-                format!("{id} is not part of the open scene; call scene_tree for the scene's ids."),
-            ))
-        } else {
-            Ok(entity)
-        }
-    } else if entities
-        .iter()
-        .any(|(live, ..)| live.index() == entity.index())
-    {
-        Err(ToolError::new(
-            "stale_entity",
-            format!(
-                "{id} is gone and its slot holds another entity; call scene_tree for current ids."
-            ),
-        ))
-    } else {
-        Err(ToolError::new(
-            "unknown_entity",
-            format!("No entity {id}; call scene_tree for current ids."),
-        ))
-    }
 }
 
 fn scene_tree(

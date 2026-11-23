@@ -20,7 +20,7 @@ use concerto_window::input::MouseButton;
 
 use crate::hosted::EditTarget;
 use crate::inspector::numeric::{NumericEdit, NumericFields, NumericSnapshot, NumericValue};
-use crate::inspector::rows::{EditError, PropertyCommits, PropertyRow, PropertyRowValue};
+use crate::property::{EditError, PropertyCommits, PropertyRow, PropertyRowValue};
 
 /// The space a [`Color`] is stored in, which is the space its fields edit.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
