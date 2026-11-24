@@ -73,7 +73,7 @@ impl<'a> AnimationGraphContext<'a> {
         self.skeleton
     }
 
-    /// In `evaluate`, the world transform of the skeleton's model space: the `GlobalTransform` of bone 0's parent, or identity when it has none.
+    /// In `evaluate`, the world transform of the skeleton's model space as of this frame, after the character moved by its root motion: bone 0's parent's, or identity when it has none.
     pub fn model_to_world(&self) -> Option<Affine3A> {
         self.model_to_world
     }

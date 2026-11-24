@@ -1441,17 +1441,31 @@ until the player's graph is initialized again. The
 clip node reads `AssetStore<AnimationClip>` and the state machine
 `AssetStore<AnimationGraph>` this way. `AnimationGraphContext` carries only the
 player's own data: its blackboard, its root bone in `evaluate`, its skeleton,
-and, in `evaluate`, `model_to_world`: the `GlobalTransform` of bone 0's parent,
-or identity when it has none.
+and, in `evaluate`, `model_to_world`: the transform of bone 0's parent, or
+identity when it has none. It is this frame's: the character has already moved by
+this frame's root motion when `evaluate` runs, so a node that reads the world
+reads where the character is now.
 
 `evaluate` writes an `AnimationFrame`: a `Pose`, the joints in bone order, with
-the root motion and the clip events its sources gave this frame. Its inputs
+the clip events its sources fired this frame. Its inputs
 arrive as `EvaluatedFrame`s, each a frame and the weight its node carries.
+A frame carries no root motion; that has its own method, below.
 The frame carries the clip events its sources fired this frame
 (`AnimationFrame::events`), and `copy_from` and `blend` carry them along,
 weighted as the joints are. A node that builds its output without `copy_from`
 or `blend` must forward its inputs' events itself, with
 `AnimationFrame::push_event`, or they never reach the player.
+
+A node gives root motion with `root_motion(state, input, context, bone_ids,
+inputs)`, which returns a `RootMotion`. `update_animation_players` calls it for
+every node after the whole graph's `update`, from the leaves up, with the node's `UpdateInput`, so `inputs` holds
+each input's root motion and the weight its node carries, and the state is the
+one `update` just left. The default returns the first input's, or
+`RootMotion::IDENTITY` for a node with none, so a node that only changes the pose
+overrides nothing. A node that makes motion overrides it, as a clip does with the
+delta of its root since the last frame, and a node that combines inputs weights
+them, as a blend does. It runs before `evaluate`, so it reads what `update`
+decided and never the pose.
 
 Add a node with `add_input(Gain { amount: 2.0 })` on the result node or on
 another node's context, or start a graph with `AnimationGraph::from_node`.
@@ -1547,9 +1561,10 @@ player.for_each_node(&graphs, |visit| {
 A clip whose root bone moves gives root motion: a `RootMotion` that says how the
 root moved this frame, with a `translation` and a `rotation` that read as
 "forward, as the character faced last frame". Every source in a graph produces
-one, and blends and transitions carry it with the frame, so it works for any
-graph. Each frame the result lands on the root bone, in
-`AnimationRootBone::root_motion`. A paused player, an unloaded skeleton or graph,
+one from its `root_motion` method, and blends and transitions combine their
+inputs', so it works for any graph. Each frame, after the graph's `update` and
+before any pose is evaluated, a pass over the graph gathers it and the result
+lands on the root bone, in `AnimationRootBone::root_motion`. A paused player, an unloaded skeleton or graph,
 or a clip with no channels for the root gives `RootMotion::IDENTITY`.
 
 The root bone's `Transform` is written like any other bone's, net of what root
@@ -1581,7 +1596,8 @@ cmd.spawn((
 ));
 ```
 
-Each frame the character moves by its root motion, and is then reconciled with
+Each frame the character moves by its root motion before its pose is evaluated,
+so the pose is evaluated where the character moved to, and is then reconciled with
 the capsule by one of three methods, which are mutually exclusive:
 
 - `Synchronization` places both at a weighted average each frame, set by `data_factor`: 0
@@ -1949,7 +1965,7 @@ The inner graph shares the player's blackboard, so its parameters are the
 player's, and the player's `AnimationRootBone` reaches it as the source
 skeleton's root, netted against the source rig's reference root joint (see
 [Retargeting a pose](#retargeting-a-pose)). The output pose is then net of
-root motion against the target reference, and the frame's root motion is the
+root motion against the target reference, and the node's root motion is the
 inner graph's, with its translation multiplied by `scale()` and its rotation
 unchanged. Clip events fired in the inner graph reach the player as its own,
 and the node is finished when the inner graph is, so a state machine's

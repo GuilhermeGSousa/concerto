@@ -422,13 +422,6 @@ impl AnimationNode for AnimationClipNode {
                 net_of_root_motion(joint_pose, root);
             }
         }
-
-        output.set_root_motion(root_motion(
-            &state.clock,
-            animation_clip,
-            context.root(),
-            bone_ids,
-        ));
     }
 
     fn root_motion(
@@ -671,21 +664,10 @@ mod tests {
             node: &AnimationClipNode,
             state: &mut AnimationClipNodeState,
         ) -> RootMotion {
-            let mut pool = FramePool::new(1);
-            let mut output = pool.acquire();
-            self.evaluate(node, state, &[ROOT], &mut pool, &mut output);
-            let pass = self
-                .walks
+            self.walks
                 .evaluate(&self.blackboard, Some(self.root()), |context| {
                     AnimationNode::root_motion(node, state, clips(context), context, &[ROOT], &[])
-                });
-            let frame = output.root_motion();
-            assert!(
-                pass.translation.abs_diff_eq(frame.translation, 1e-6)
-                    && pass.rotation.abs_diff_eq(frame.rotation, 1e-6),
-                "the pass gives {pass:?}, the frame {frame:?}"
-            );
-            frame
+                })
         }
 
         fn step(
@@ -1121,15 +1103,11 @@ mod tests {
     }
 
     fn weighted(translation: Vec3, weight: f32) -> EvaluatedFrame {
-        let mut frame = AnimationFrame::new(Pose::from_joints(vec![JointPose {
+        let frame = AnimationFrame::new(Pose::from_joints(vec![JointPose {
             translation,
             rotation: Quat::IDENTITY,
             scale: Vec3::ONE,
         }]));
-        frame.set_root_motion(RootMotion {
-            translation,
-            rotation: Quat::IDENTITY,
-        });
         EvaluatedFrame { frame, weight }
     }
 
@@ -1184,7 +1162,10 @@ mod tests {
                 .inputs
                 .iter()
                 .map(|input| WeightedMotion {
-                    motion: input.frame.root_motion(),
+                    motion: RootMotion {
+                        translation: input.frame.joints()[0].translation,
+                        rotation: Quat::IDENTITY,
+                    },
                     weight: input.weight,
                 })
                 .collect();
@@ -1193,21 +1174,16 @@ mod tests {
                 AnimationNode::root_motion(&BlendNode {}, &mut (), &(), context, &[], &motions)
             });
             assert!(
-                pass.translation
-                    .abs_diff_eq(blended.root_motion().translation, 1e-5)
-                    && pass
-                        .rotation
-                        .abs_diff_eq(blended.root_motion().rotation, 1e-5),
+                pass.translation.abs_diff_eq(case.translation, 1e-5)
+                    && pass.rotation.abs_diff_eq(Quat::IDENTITY, 1e-5),
                 "{}: the pass gives {pass:?}",
                 case.name
             );
 
             let joint = blended.joints()[0].translation;
-            let root = blended.root_motion().translation;
             assert!(
-                joint.abs_diff_eq(case.translation, 1e-5)
-                    && root.abs_diff_eq(case.translation, 1e-5),
-                "{}: joint {joint}, root motion {root}",
+                joint.abs_diff_eq(case.translation, 1e-5),
+                "{}: joint {joint}",
                 case.name
             );
         }
