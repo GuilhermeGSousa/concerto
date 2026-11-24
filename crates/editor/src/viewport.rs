@@ -40,6 +40,10 @@ use crate::tools::{
 #[derive(Component)]
 pub struct ViewportRegion;
 
+/// The row on a viewport's top-right corner that viewport features put their buttons in.
+#[derive(Component)]
+pub struct ViewportToolbar;
+
 #[derive(Component)]
 struct InputHint;
 
@@ -89,9 +93,10 @@ fn build_panel(mut cmd: CommandQueue, registry: Res<PanelRegistry>, theme: Res<U
     }
 }
 
-/// Spawns the viewport under `parent`: the picture of the front tab's `App`, cut to a card's corners.
+/// Spawns the viewport under `parent`: the picture of the front tab's `App`, cut to a card's corners, with a [`ViewportToolbar`].
 pub fn spawn_panel(cmd: &mut CommandQueue, parent: Entity, theme: &UITheme) -> Entity {
-    cmd.entity(parent)
+    let viewport = cmd
+        .entity(parent)
         .spawn_child((
             UINode::default()
                 .with_flex_grow(1.0)
@@ -104,7 +109,18 @@ pub fn spawn_panel(cmd: &mut CommandQueue, parent: Entity, theme: &UITheme) -> E
             Interactable,
             ViewportRegion,
         ))
-        .entity()
+        .entity();
+    cmd.entity(viewport).add_child((
+        theme.row().gap(theme.spacing_xs).node(|node| {
+            node.with_position(Position::Absolute).with_inset(UIInset {
+                right: UIValue::Px(theme.spacing_sm),
+                top: UIValue::Px(theme.spacing_sm),
+                ..Default::default()
+            })
+        }),
+        ViewportToolbar,
+    ));
+    viewport
 }
 
 fn show_active_picture(

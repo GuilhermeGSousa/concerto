@@ -2091,8 +2091,8 @@ mod tests {
             },
             "an explicit size is never second guessed"
         );
-        let short = size(Size::NONE, Some("Warren"));
-        let long = size(Size::NONE, Some("Warren and Curiosities"));
+        let short = size(Size::NONE, Some("Score"));
+        let long = size(Size::NONE, Some("Score and Notes"));
         assert!(short.width > 0.0, "text must have some width at all");
         assert!(long.width > short.width, "more text must claim more width");
         assert_eq!(size(Size::NONE, Some("one")).height, 20.0);
@@ -2196,7 +2196,7 @@ mod tests {
         let first = row(&mut world, root);
         let inner = row(&mut world, first);
         let second = row(&mut world, root);
-        let bare = world.spawn((ui_text("Warren"), ChildOf::new(root)));
+        let bare = world.spawn((ui_text("Score"), ChildOf::new(root)));
 
         lay_out(&mut world);
 
@@ -2501,7 +2501,7 @@ mod tests {
     }
 
     const TEXTS: [&str; 4] = [
-        "Warren",
+        "Score",
         "Curiosities",
         "67 fps",
         "a label much longer than any of the others",
@@ -2757,7 +2757,7 @@ mod tests {
         ));
         row(world, grown);
         row(world, grown);
-        labelled(world, root, "Warren");
+        labelled(world, root, "Score");
         world.spawn((fixed_label_node(), ui_text("66 fps"), ChildOf::new(root)));
         lay_out(world);
         lay_out(world);

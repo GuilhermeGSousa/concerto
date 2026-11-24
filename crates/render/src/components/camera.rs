@@ -24,7 +24,7 @@ use crate::{
     assets::texture::Texture,
     assets::texture::TextureRole,
     components::{
-        camera_environment::{CameraEnvironment, DEFAULT_AMBIENT_INTENSITY},
+        camera_environment::{CameraEnvironment, UnlitView, DEFAULT_AMBIENT_INTENSITY},
         render_entity::RenderEntity,
     },
     device::RenderDevice,
@@ -236,6 +236,7 @@ pub struct CameraUniform {
     pub(crate) exposure: f32,
     pub(crate) tonemapping: u32,
     pub(crate) shadow_view: u32,
+    pub(crate) unlit: u32,
 }
 
 impl CameraUniform {
@@ -254,6 +255,7 @@ impl CameraUniform {
             exposure: 1.0,
             tonemapping: Tonemapping::default().shader_value(),
             shadow_view: 0,
+            unlit: 0,
         }
     }
 
@@ -446,6 +448,7 @@ pub(crate) fn extract_cameras(
             Option<&Tonemapping>,
             Option<&Exposure>,
             Option<&Msaa>,
+            Option<&UnlitView>,
             &GlobalTransform,
             &RenderEntity,
         )>,
@@ -470,6 +473,7 @@ pub(crate) fn extract_cameras(
         tonemapping,
         exposure,
         msaa,
+        unlit,
         transform,
         render_entity,
     ) in cameras.iter()
@@ -486,6 +490,7 @@ pub(crate) fn extract_cameras(
         let tonemapping = tonemapping.copied().unwrap_or_default();
         let exposure = exposure.copied().unwrap_or_default();
         camera_uniform.set_display(tonemapping, exposure);
+        camera_uniform.unlit = u32::from(unlit.is_some());
         let clear_color = scene_clear_color(camera.clear_color, tonemapping, exposure);
 
         if let Some(mut render_camera) = render_cameras.get_entity_mut(render_entity) {
@@ -733,6 +738,7 @@ mod tests {
             exposure: 2.0,
             tonemapping: 3,
             shadow_view: 4,
+            unlit: 5,
         };
 
         let mut expected = float_words(&[1.0, 2.0, 3.0, 0.0]);
@@ -750,10 +756,10 @@ mod tests {
         }
         expected.extend(float_words(&[90.0, 91.0, 92.0, 93.0]));
         expected.extend(float_words(&[94.0, 95.0, 96.0, 97.0]));
-        expected.extend([1, 2.0f32.to_bits(), 3, 4]);
+        expected.extend([1, 2.0f32.to_bits(), 3, 4, 5, 0, 0, 0]);
 
         assert_eq!(uniform_words(&uniform), expected);
-        assert_eq!(uniform.size().get(), 384);
+        assert_eq!(uniform.size().get(), 400);
     }
 
     struct Case {

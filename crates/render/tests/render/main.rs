@@ -20,4 +20,5 @@ mod scene_component_impls;
 mod shadow_cascades;
 mod texture_derive;
 mod texture_pipeline_e2e;
+mod unlit_view;
 mod webgl2_shaders;

@@ -18,21 +18,20 @@ use concerto_ui::{
     anchor::{UIAnchorAlign, UIAnchoredPanel, toggle_owned_panels},
     checkbox::{UICheckbox, UICheckboxChanged},
     elements::prelude::*,
-    node::{UIInset, UINode},
+    node::UINode,
     sets::UiSet,
     theme::UITheme,
     transform::UIValue,
 };
 use schemars::JsonSchema;
 use serde::Deserialize;
-use taffy::Position;
 
 use crate::{
     hosted::{
         EditTarget, EditWorld, HostRole, HostedApp, ParkedEditApp, PendingApp, PendingPlayApp,
     },
     tools::component_gizmos::{ComponentGizmos, SetGizmoAlways},
-    viewport::ViewportRegion,
+    viewport::ViewportToolbar,
 };
 
 const MENU_WIDTH: f32 = 180.0;
@@ -178,22 +177,14 @@ pub(crate) fn apply_gizmo_choices(
     }
 }
 
-fn add_gizmos_button(on: On<Add<ViewportRegion>>, theme: Res<UITheme>, mut cmd: CommandQueue) {
+fn add_gizmos_button(on: On<Add<ViewportToolbar>>, theme: Res<UITheme>, mut cmd: CommandQueue) {
     let button = cmd
         .entity(on.signal().entity)
         .spawn_child((
             theme
                 .button("Gizmos")
                 .small()
-                .node(|node| {
-                    node.with_position(Position::Absolute)
-                        .with_inset(UIInset {
-                            right: UIValue::Px(theme.spacing_sm),
-                            top: UIValue::Px(theme.spacing_sm),
-                            ..Default::default()
-                        })
-                        .with_visible(false)
-                })
+                .node(|node| node.with_visible(false))
                 .on_click(toggle_owned_panels),
             GizmosButton,
         ))

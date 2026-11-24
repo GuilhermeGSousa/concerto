@@ -163,7 +163,7 @@ impl Plugin for InspectorPlugin {
         app.insert_resource(InspectedSnapshots::default());
         app.add_panel(PanelDescriptor {
             id: PANEL_ID,
-            title: "Looking Glass",
+            title: "Notes",
             region: Region::Right,
         });
         app.forward_hosted_event::<PropertyCommitted>();
