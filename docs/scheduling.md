@@ -1,8 +1,10 @@
 # System scheduling
 
 Systems live in named schedules (`Update`, `LateUpdate`, `Render`, ...). Within a
-schedule, their order comes from explicit constraints and, where there are none,
-from registration order. This page covers the API for both.
+schedule, their order comes from explicit constraints and, where there are none
+and two systems' data access conflicts, from registration order. When a system's
+commands become visible follows the explicit constraints alone; see
+[When commands apply](#when-commands-apply).
 
 ## Imports
 
@@ -150,6 +152,37 @@ members is silent by design: a plugin contributing no systems to a set is normal
 Naming a system that was added more than once orders against every copy and logs
 a separate warning.
 
+## When commands apply
+
+A system's commands (`CommandQueue`, and anything else it defers) are applied:
+
+- before every system explicitly ordered after it: through `.after`, `.before`,
+  `.chain()` or an order between sets, directly or through other explicitly
+  ordered systems;
+- before any system that takes `&mut World`, which applies everything that ran
+  before it; and
+- at the end of the schedule run, so nothing waits past the run.
+
+A system that is not explicitly ordered after the producer may run before or
+after its commands apply, and must not rely on either. Registration order no
+longer means anything here, and neither does an order the scheduler adds only
+because two systems' data access conflicts. So when one system spawns or
+inserts and another must see it in the same frame, order the consumer after the
+producer:
+
+```rust
+app.add_system(Update, spawn_projectiles);
+app.add_system(Update, steer_projectiles.after(spawn_projectiles));
+```
+
+The scheduler gives each explicitly ordered pair whose earlier side defers work
+a sync point between them, an exclusive step that applies what has run so far.
+Sync points are shared, as in Bevy's `auto_insert_apply_deferred`: each system
+gets a depth, the largest number of command-taking systems on any explicit path
+into it, and one sync point per depth serves every edge into that depth. A sync
+point is not ordered against conflicting systems; the executor runs it when
+nothing else runs. Unordered command systems therefore run in parallel.
+
 ## Tags
 
 A tag is a type deriving `SystemTag`; bring the trait into scope for the derive, as
@@ -166,10 +199,10 @@ app.add_system(Update, (spin, bob).tagged(Preview));
 Tags never affect ordering, and `compile` ignores them. `compile_filtered` takes a
 `TagFilter { include, exclude }`: a system runs when `include` is empty or it carries
 an included tag, and it carries no excluded tag. The others stay in the schedule as
-stand-ins. Explicit orderings through them hold, they declare no access and add no
-sync point, and they do nothing when run. The implicit edges a replaced
-system's own data access or sync point would have added are gone, but a stand-in is
-still ordered by registration against sync points and against systems that take the
+stand-ins. Explicit orderings through them hold, they declare no access and defer
+nothing, and they do nothing when run. The implicit edges a replaced
+system's own data access would have added are gone, but a stand-in is
+still ordered by registration against systems that take the
 whole world, because empty access still conflicts with whole-world access. A
 component only stand-ins would have queried is never registered.
 
@@ -216,8 +249,7 @@ same way.
 `Changed<T>`, `Added<T>` and `is_changed()` mean "since this system last ran",
 whatever the order of writer and reader within a frame:
 
-- A write made after a reader ran, including a command applied at a later sync
-  point or a direct `World` write between frames, is seen on the reader's next run.
+- A write made after a reader ran, including a command applied after it or a direct `World` write between frames, is seen on the reader's next run.
 - A system does not see its own `Mut` or `ResMut` writes on its next run.
 - A system's first run sees every entity and resource stamped within
   `MAX_CHANGE_AGE` as added and changed.
@@ -247,7 +279,8 @@ across runs. A new instance is a first run and sees everything stamped within
 ## Rules
 
 - Conflicting systems (overlapping data access) with no explicit constraint
-  between them still run in registration order.
+  between them still run in registration order, but that order does not make
+  one's commands visible to the other.
 - An explicit constraint always wins over registration order.
 - Contradictory explicit constraints panic at compile with
   `Cycle in schedule ordering`, naming the systems on the cycle.

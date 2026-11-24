@@ -17,11 +17,8 @@ use fixedbitset::FixedBitSet;
 use crate::{
     World,
     system::{
-        BoxedSystem,
-        access::SystemAccess,
-        executor::SystemExecutor,
-        meta::SystemMetadata,
-        schedule::{CompiledScheduleData, is_sync_point},
+        BoxedSystem, access::SystemAccess, executor::SystemExecutor, meta::SystemMetadata,
+        schedule::CompiledScheduleData,
     },
     utilities::SyncUnsafeCell,
     world::UnsafeWorldCell,
@@ -57,6 +54,7 @@ struct ExecutorState {
     dependency_count: Vec<usize>,
     dependants: Vec<Vec<usize>>,
     local_thread_running: bool,
+    exclusive_running: bool,
 }
 
 struct Environment<'env> {
@@ -91,6 +89,7 @@ impl SystemExecutor for MultiThreadedExecutor {
                 dependency_count: compiled_data.dependency_count.clone(),
                 dependants: compiled_data.dependants.clone(),
                 local_thread_running: false,
+                exclusive_running: false,
             }),
             system_completion: ConcurrentQueue::bounded(sys_count.max(1)),
         }
@@ -134,6 +133,16 @@ impl SystemExecutor for MultiThreadedExecutor {
                 context.tick_executor();
             },
         );
+
+        let state = self
+            .state
+            .get_mut()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        profiling::scope!("apply_deferred");
+        for system_index in state.unapplied_systems.ones() {
+            compiled_data.systems[system_index].apply(world);
+        }
+        state.unapplied_systems.clear();
     }
 }
 
@@ -142,7 +151,7 @@ impl Environment<'_> {
         profiling::scope!("apply_deferred");
         for system_index in systems.ones() {
             let sys = unsafe { &mut *self.systems[system_index].get() };
-            // SAFETY: no system runs while a sync point applies.
+            // SAFETY: no system runs while an exclusive system applies deferred work.
             sys.apply(unsafe { self.world_cell.world_mut() });
         }
     }
@@ -210,6 +219,7 @@ impl ExecutorState {
         self.running_systems.clear();
         self.unapplied_systems.clear();
         self.local_thread_running = false;
+        self.exclusive_running = false;
         self.dependency_count
             .clone_from(&compiled_data.dependency_count);
         for (index, &count) in self.dependency_count.iter().enumerate() {
@@ -226,39 +236,16 @@ impl ExecutorState {
             self.finish_system(environment, finished_system);
         }
 
-        self.start_sync_points(context);
-
         let candidate = self.lone_candidate(context);
         if let Some(system_index) = candidate {
             self.start_system(context.environment, system_index);
+            if environment.system_access[system_index].is_exclusive() {
+                environment.apply_deferred(&self.unapplied_systems);
+                self.unapplied_systems.clear();
+            }
         }
         self.spawn_system_tasks(context);
         candidate
-    }
-
-    fn start_sync_points(&mut self, context: Context) {
-        let environment = context.environment;
-        while let Some(sync_index) = self
-            .ready_systems
-            .ones()
-            .find(|&index| is_sync_point(unsafe { &*environment.systems[index].get() }))
-        {
-            self.start_system(environment, sync_index);
-            if thread::current().id() == environment.scope_thread {
-                environment.apply_deferred(&self.unapplied_systems);
-                self.unapplied_systems.clear();
-                self.finish_system(environment, sync_index);
-                continue;
-            }
-
-            let unapplied = self.unapplied_systems.clone();
-            self.unapplied_systems.clear();
-            context.scope.spawn_on_scope(async move {
-                environment.apply_deferred(&unapplied);
-                context.system_completed(sync_index);
-            });
-            return;
-        }
     }
 
     fn lone_candidate(&self, context: Context) -> Option<usize> {
@@ -273,15 +260,23 @@ impl ExecutorState {
         if !environment.system_meta[system_index].is_send() {
             self.local_thread_running = true;
         }
+        if environment.system_access[system_index].is_exclusive() {
+            self.exclusive_running = true;
+        }
         self.ready_systems.remove(system_index);
         self.running_systems.insert(system_index);
     }
 
     fn finish_system(&mut self, environment: &Environment, system_index: usize) {
         self.running_systems.remove(system_index);
-        self.unapplied_systems.insert(system_index);
+        if environment.system_access[system_index].needs_apply() {
+            self.unapplied_systems.insert(system_index);
+        }
         if !environment.system_meta[system_index].is_send() {
             self.local_thread_running = false;
+        }
+        if environment.system_access[system_index].is_exclusive() {
+            self.exclusive_running = false;
         }
 
         for &dependant in &self.dependants[system_index] {
@@ -297,15 +292,24 @@ impl ExecutorState {
         ready_systems.clone_from(&self.ready_systems);
 
         for system_index in ready_systems.ones() {
+            if self.exclusive_running {
+                break;
+            }
             let is_send = context.environment.system_meta[system_index].is_send();
             let is_exclusive = context.environment.system_access[system_index].is_exclusive();
-            if !is_send && self.local_thread_running {
+            if (!is_send && self.local_thread_running)
+                || (is_exclusive && !self.running_systems.is_clear())
+            {
                 continue;
             }
 
             self.start_system(context.environment, system_index);
+            let unapplied = is_exclusive.then(|| self.take_unapplied());
 
             let task = async move {
+                if let Some(unapplied) = unapplied {
+                    context.environment.apply_deferred(&unapplied);
+                }
                 context.run_system(system_index);
                 context.system_completed(system_index);
             };
@@ -320,6 +324,12 @@ impl ExecutorState {
         }
 
         self.ready_systems_copy = ready_systems;
+    }
+
+    fn take_unapplied(&mut self) -> FixedBitSet {
+        let unapplied = self.unapplied_systems.clone();
+        self.unapplied_systems.clear();
+        unapplied
     }
 }
 
@@ -693,14 +703,15 @@ mod tests {
 
     #[test]
     fn every_dependant_ready_after_a_sync_point_runs() {
+        use crate::IntoSystemConfig;
         let mut world = World::new();
         world.insert_resource(FirstCount::default());
         world.insert_resource(SecondCount::default());
         let mut schedule = Schedule::new();
         schedule
             .add_system(trigger_applied)
-            .add_system(count_first)
-            .add_system(count_second);
+            .add_system(count_first.after(trigger_applied))
+            .add_system(count_second.after(trigger_applied));
         schedule
             .compile::<MultiThreadedExecutor>(&mut world)
             .run(&mut world);
