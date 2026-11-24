@@ -39,7 +39,7 @@ fn queue<const N: usize>(
     mut cmd: CommandQueue,
 ) {
     black_box(sum(&query));
-    if N % 4 == 0 {
+    if N.is_multiple_of(4) {
         cmd.insert(Marker, target.0);
     }
 }
