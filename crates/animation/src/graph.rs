@@ -27,7 +27,7 @@ use crate::{
     },
     param::Param,
     player::ActiveNodeState,
-    pose::{AnimationFrame, EvaluatedFrame, FramePool},
+    pose::{AnimationFrame, EvaluatedFrame, FramePool, RootMotion, WeightedMotion},
 };
 
 type AnimationDirectedGraph = DiGraph<AnimationNodeData, ()>;
@@ -821,6 +821,46 @@ impl AnimationGraphState {
 
                 node_state.update(node, delta_time, context);
             });
+    }
+
+    #[expect(dead_code)]
+    pub(crate) fn root_motion(
+        &mut self,
+        graphs: &AssetStore<AnimationGraph>,
+        context: &AnimationGraphContext<'_>,
+        bone_ids: &[Uuid],
+    ) -> RootMotion {
+        let Some(graph) = self.get_animation_graph(graphs) else {
+            return RootMotion::IDENTITY;
+        };
+
+        let mut stack: Vec<WeightedMotion> = Vec::new();
+
+        for node_index in graph.iter_post_order() {
+            let input_count = graph.get_node_inputs(node_index).count();
+            let stack_start = stack.len().saturating_sub(input_count);
+            let mut pushed = WeightedMotion {
+                motion: RootMotion::IDENTITY,
+                weight: 1.0,
+            };
+
+            if let Some(node) = graph.live_node(node_index)
+                && let Some(node_state) = self.get_active_node_state_mut(&node_index)
+            {
+                pushed.motion = node.root_motion(
+                    &mut node_state.node_state,
+                    context,
+                    bone_ids,
+                    &stack[stack_start..],
+                );
+                pushed.weight = node_state.weight;
+            }
+
+            stack.truncate(stack_start);
+            stack.push(pushed);
+        }
+
+        stack.pop().map_or(RootMotion::IDENTITY, |last| last.motion)
     }
 
     pub(crate) fn evaluate(
