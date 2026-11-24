@@ -13,7 +13,7 @@ use concerto_ecs::{
         listener::{GlobalListener, IntoListener, Listener},
     },
 };
-use concerto_ui::elements::{Listening, Pressable, Text, prelude::*};
+use concerto_ui::elements::{ListItem, Listening, Pressable, Text, prelude::*};
 use concerto_ui::{
     anchor::UIAnchoredPanel, interaction::UIClick, items::UIItemActivated, text::UIText,
     theme::UITheme,
@@ -28,7 +28,7 @@ use crate::hosted::{EditTarget, EditWorld, EditWorldSignals, PlayState};
 use crate::inspector::{
     EditContext, EditError, PropertyCommits, PropertyEditor, PropertyRow, PropertyRowValue,
 };
-use crate::picker_menu::{PickerEntry, picker_panel, show_picker_menu, spawn_picker_content};
+use crate::picker_menu::{picker_panel, picker_tree, show_picker_menu};
 use crate::tools::{scene::SceneRoot, selection::Select};
 
 const NOT_IN_SCENE: &str = "(not in this scene)";
@@ -150,18 +150,22 @@ fn toggle_entity_picker(row: Entity) -> Listener<UIClick> {
             ListRoot::Exclude,
         );
         let current = held(&values, row).unwrap_or_default();
-        let content = spawn_picker_content(
-            entries(row, current, &candidates, &names),
-            Some("Search entities…"),
-            "None",
-            &theme,
-            &mut cmd,
-        );
+        let none = SceneEntityRef::default();
+        let list = picker_tree(&theme)
+            .searchable("Search entities…")
+            .item(
+                theme
+                    .tree_item("None")
+                    .always_shown()
+                    .selected(current == none)
+                    .on_activate(pick_entity(row, none)),
+            )
+            .items(entity_items(row, current, &candidates, &names, &theme));
         show_picker_menu(
             menu,
-            picker_panel(button, content.field),
             EntityPickerMenu,
-            content,
+            list,
+            |field| picker_panel(button, field),
             &theme,
             &mut cmd,
         );
@@ -169,37 +173,40 @@ fn toggle_entity_picker(row: Entity) -> Listener<UIClick> {
     .into_listener()
 }
 
-fn entries(
+fn entity_items(
     row: Entity,
     current: SceneEntityRef,
     candidates: &[ListedEntity],
     names: &Query<Option<&Name>>,
-) -> Vec<PickerEntry> {
-    let none = SceneEntityRef::default();
-    let positions: HashMap<Entity, usize> = candidates
-        .iter()
-        .enumerate()
-        .map(|(index, listed)| (listed.entity, index + 1))
-        .collect();
-    std::iter::once(
-        PickerEntry::new("None", pick_entity(row, none))
-            .always_shown()
-            .with_current(current == none),
-    )
-    .chain(candidates.iter().map(|listed| {
-        let value = SceneEntityRef::Entity(listed.entity);
-        PickerEntry::new(
-            entity_label(listed.entity, names.get_entity(listed.entity).flatten()),
-            pick_entity(row, value),
-        )
-        .with_parent(
-            listed
-                .parent
-                .and_then(|parent| positions.get(&parent).copied()),
-        )
-        .with_current(current == value)
-    }))
-    .collect()
+    theme: &UITheme,
+) -> Vec<ListItem> {
+    let listed: HashSet<Entity> = candidates.iter().map(|listed| listed.entity).collect();
+    let mut children: HashMap<Option<Entity>, Vec<Entity>> = HashMap::new();
+    for candidate in candidates {
+        let parent = candidate.parent.filter(|parent| listed.contains(parent));
+        children.entry(parent).or_default().push(candidate.entity);
+    }
+    let item = |entity: Entity| {
+        let value = SceneEntityRef::Entity(entity);
+        theme
+            .tree_item(entity_label(entity, names.get_entity(entity).flatten()))
+            .selected(current == value)
+            .on_activate(pick_entity(row, value))
+    };
+    nest(None, &children, &item)
+}
+
+fn nest(
+    parent: Option<Entity>,
+    children: &HashMap<Option<Entity>, Vec<Entity>>,
+    item: &impl Fn(Entity) -> ListItem,
+) -> Vec<ListItem> {
+    children
+        .get(&parent)
+        .into_iter()
+        .flatten()
+        .map(|&entity| item(entity).children(nest(Some(entity), children, item)))
+        .collect()
 }
 
 fn pick_entity(row: Entity, value: SceneEntityRef) -> Listener<UIItemActivated> {

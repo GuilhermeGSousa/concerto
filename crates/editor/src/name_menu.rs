@@ -2,6 +2,7 @@ use concerto_ecs::{
     Component, Entity, Query, Res, With, command::CommandQueue,
     query::change_detection::DetectChanges, signal::listener::Listener,
 };
+use concerto_ui::elements::ListItem;
 use concerto_ui::{
     anchor::{UIAnchorAlign, UIAnchorSide, UIAnchorTarget, UIAnchoredPanel},
     items::UIItemActivated,
@@ -11,7 +12,7 @@ use concerto_ui::{
 use glam::Vec2;
 
 use crate::asset_editor::ActiveEditor;
-use crate::picker_menu::{PickerEntry, picker_panel, show_picker_menu, spawn_picker_content};
+use crate::picker_menu::{picker_list, picker_panel, show_picker_menu};
 
 /// The popup listing names to pick from, shared by every name picker.
 #[derive(Component)]
@@ -35,18 +36,15 @@ pub fn open_name_menu(
         }
         menu = Some(entity);
     }
-    let content = spawn_picker_content(
-        entries(names, current, pick),
-        Some("Search…"),
-        "None",
-        theme,
-        cmd,
-    );
+    let list = picker_list(theme)
+        .searchable("Search…")
+        .empty_text("None")
+        .items(items(names, current, pick, theme));
     show_picker_menu(
         menu,
-        picker_panel(button, content.field),
         NameMenu,
-        content,
+        list,
+        |field| picker_panel(button, field),
         theme,
         cmd,
     );
@@ -65,23 +63,26 @@ pub fn open_name_menu_at(
         .with_side(UIAnchorSide::Below)
         .with_align(UIAnchorAlign::Start)
         .with_open(true);
-    let content = spawn_picker_content(entries(names, None, pick), None, "None", theme, cmd);
+    let list = picker_list(theme)
+        .empty_text("None")
+        .items(items(names, None, pick, theme));
     let menu = menus.iter_mut().next().map(|(entity, _)| entity);
-    show_picker_menu(menu, panel, NameMenu, content, theme, cmd);
+    show_picker_menu(menu, NameMenu, list, |_| panel, theme, cmd);
 }
 
-fn entries(
-    names: &[impl AsRef<str>],
-    current: Option<&str>,
-    pick: impl Fn(&str) -> Listener<UIItemActivated>,
-) -> Vec<PickerEntry> {
-    names
-        .iter()
-        .map(|name| {
-            let name = name.as_ref();
-            PickerEntry::new(name, pick(name)).with_current(current == Some(name))
-        })
-        .collect()
+fn items<'a>(
+    names: &'a [impl AsRef<str>],
+    current: Option<&'a str>,
+    pick: impl Fn(&str) -> Listener<UIItemActivated> + 'a,
+    theme: &'a UITheme,
+) -> impl Iterator<Item = ListItem> + 'a {
+    names.iter().map(move |name| {
+        let name = name.as_ref();
+        theme
+            .list_item(name)
+            .selected(current == Some(name))
+            .on_activate(pick(name))
+    })
 }
 
 /// Closes the name menu.

@@ -363,7 +363,10 @@ fn close_panel(field: Entity, panels: &mut Query<&mut UIAnchoredPanel>, parents:
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{Arc, Mutex};
+
     use concerto_ecs::{
+        System,
         entity::{Entity, hierarchy::ChildOf},
         events::event_channel::EventChannel,
     };
@@ -373,15 +376,13 @@ mod tests {
     use super::*;
     use crate::{
         anchor::UIAnchoredPanel,
-        items::{UIHidden, UIListNext},
-        list::{
-            UIList,
-            tests::{Harness, Heard, heard},
-        },
+        elements::{Layout, SpawnedList},
+        items::{UIHidden, UIItem, UIListNext},
+        list::tests::{Harness, Heard, heard},
+        material::UIMaterial,
         node::{FlexDirection, UINode},
-        text_input::{UITextInput, UITextInputCancelled, UITextInputSubmitted},
+        text_input::{UITextInputCancelled, UITextInputSubmitted},
         transform::UIValue,
-        tree::{UITree, UITreeElement},
     };
 
     const ROW: f32 = 20.0;
@@ -393,23 +394,43 @@ mod tests {
             .with_flex_direction(FlexDirection::Column)
     }
 
-    fn field(harness: &mut Harness, target: Entity, parent: Entity) -> Entity {
-        harness.world.spawn((
-            UINode::default(),
-            UITextInput::new("Search"),
-            UISearchField { target },
-            ChildOf::new(parent),
-        ))
+    fn build(
+        harness: &mut Harness,
+        spawn: impl Fn(&UITheme, &mut CommandQueue) -> SpawnedList + Send + Sync + 'static,
+    ) -> SpawnedList {
+        let spawned = Arc::new(Mutex::new(None));
+        let out = Arc::clone(&spawned);
+        let mut system = (move |theme: Res<UITheme>, mut cmd: CommandQueue| {
+            *out.lock().unwrap() = Some(spawn(&theme, &mut cmd));
+        })
+        .into_system();
+        system.initialize(&mut harness.world);
+        system.run_and_apply((), &mut harness.world);
+        spawned.lock().unwrap().expect("the builder ran")
     }
 
-    fn item(harness: &mut Harness, parent: Entity, text: Option<&str>) -> Entity {
-        let item = harness
+    fn rows_of(harness: &Harness, parent: Entity) -> Vec<Entity> {
+        let mut rows = Vec::new();
+        for &child in harness
             .world
-            .spawn((UINode::default(), ChildOf::new(parent)));
-        if let Some(text) = text {
-            harness.world.insert(UISearchText(text.into()), item);
+            .get_component_for_entity::<Children>(parent)
+            .into_iter()
+            .flat_map(|children| children.iter())
+        {
+            if harness
+                .world
+                .get_component_for_entity::<UIWidgetPart>(child)
+                .is_none()
+                && harness
+                    .world
+                    .get_component_for_entity::<UIMaterial>(child)
+                    .is_some()
+            {
+                rows.push(child);
+                rows.extend(rows_of(harness, child));
+            }
         }
-        item
+        rows
     }
 
     fn type_query(harness: &mut Harness, field: Entity, query: &str) {
@@ -447,7 +468,7 @@ mod tests {
     }
 
     #[test]
-    fn a_search_field_narrows_its_list_and_picks_from_the_keyboard() {
+    fn a_searchable_list_narrows_as_its_field_is_typed_in_and_picks_from_the_keyboard() {
         let mut harness = Harness::new();
         let root = harness.root();
         let panel = harness.world.spawn((
@@ -455,20 +476,20 @@ mod tests {
             UIAnchoredPanel::default().with_open(true),
             ChildOf::new(root),
         ));
-        let list = harness.world.spawn((
-            column(60.0),
-            UIList {
-                row_height: Some(ROW),
-                click_activates: true,
-                ..Default::default()
-            },
-        ));
-        let search = field(&mut harness, list, panel);
-        harness.world.insert(ChildOf::new(panel), list);
-        let rows: Vec<Entity> = ["Grass", "Stone", "Moss Stone", "Sand", "Mossy Grass"]
-            .into_iter()
-            .map(|text| item(&mut harness, list, Some(text)))
-            .collect();
+        let spawned = build(&mut harness, move |theme, cmd| {
+            theme
+                .list()
+                .row_height(ROW)
+                .click_activates()
+                .searchable("Search")
+                .height(UIValue::Px(60.0))
+                .items(["Grass", "Stone", "Moss Stone", "Sand"].map(|label| theme.list_item(label)))
+                .item(theme.list_item("Grass").detail("Mossy"))
+                .spawn_in(panel, cmd)
+        });
+        let search = spawned.field.expect("a searchable list has a field");
+        let rows = rows_of(&harness, spawned.list);
+        assert_eq!(rows.len(), 5);
         harness.settle();
         for row in &rows {
             harness.listen(*row);
@@ -476,7 +497,11 @@ mod tests {
         harness.focus(search);
 
         type_query(&mut harness, search, "moss");
-        assert_eq!(hidden(&harness, &rows), vec![0, 1, 3]);
+        assert_eq!(
+            hidden(&harness, &rows),
+            vec![0, 1, 3],
+            "a detail is matched too"
+        );
         assert_eq!(harness.selected(&rows), vec![2]);
         assert!(
             harness.heard().is_empty(),
@@ -542,44 +567,39 @@ mod tests {
     }
 
     #[test]
-    fn a_tree_search_shows_the_ancestors_of_a_match_without_highlighting_them() {
+    fn a_searchable_tree_shows_the_ancestors_of_a_match_without_highlighting_them() {
         let mut harness = Harness::new();
         let root = harness.root();
-        let tree = harness.world.spawn((
-            column(200.0),
-            UITree {
-                row_height: Some(ROW),
-                ..Default::default()
-            },
-            ChildOf::new(root),
-        ));
-        let search = field(&mut harness, tree, root);
-        let none = item(&mut harness, tree, None);
-        let player = item(&mut harness, tree, Some("Player"));
-        let hand = item(&mut harness, player, Some("Hand"));
-        let lamp = item(&mut harness, tree, Some("Lamp"));
-        let rows = [none, player, hand, lamp];
-        for row in rows {
-            harness.world.insert(UITreeElement { expanded: false }, row);
-        }
+        let spawned = build(&mut harness, move |theme, cmd| {
+            theme
+                .tree()
+                .row_height(ROW)
+                .searchable("Search")
+                .height(UIValue::Px(200.0))
+                .item(theme.tree_item("None").always_shown())
+                .item(
+                    theme
+                        .tree_item("Player")
+                        .expanded(false)
+                        .child(theme.tree_item("Hand")),
+                )
+                .item(theme.tree_item("Lamp"))
+                .spawn_in(root, cmd)
+        });
+        let search = spawned.field.unwrap();
+        let rows = rows_of(&harness, spawned.list);
+        assert_eq!(rows.len(), 4, "a child nests under its row");
         harness.settle();
 
         type_query(&mut harness, search, "hand");
         assert_eq!(hidden(&harness, &rows), vec![1, 3]);
-        assert!(
-            harness
-                .world
-                .get_component_for_entity::<UITree>(tree)
-                .unwrap()
-                .filtering
-        );
         assert_eq!(harness.selected(&rows), vec![2]);
         let shown: Vec<bool> = rows
             .iter()
             .map(|row| {
                 harness
                     .world
-                    .get_component_for_entity::<crate::items::UIItem>(*row)
+                    .get_component_for_entity::<UIItem>(*row)
                     .unwrap()
                     .is_shown()
             })

@@ -34,7 +34,7 @@ use crate::inspector::{
     EditContext, EditError, ErasedEditor, PropertyCommit, PropertyCommits, PropertyRow,
     PropertyRowValue,
 };
-use crate::picker_menu::{PickerEntry, picker_panel, show_picker_menu, spawn_picker_content};
+use crate::picker_menu::{picker_list, picker_panel, show_picker_menu};
 
 /// Picks the asset a reflected asset handle names from the project's assets of its kind.
 pub struct AssetPicker {
@@ -229,26 +229,21 @@ pub fn open_asset_menu(
         }
         menu = Some(entity);
     }
-    let entries = registry
-        .of_kind(kind)
-        .map(|entry| {
-            PickerEntry::new(entry.name(), pick(entry.id))
-                .with_detail(entry.folder())
-                .with_current(current == Some(entry.id))
-        })
-        .collect();
-    let content = spawn_picker_content(
-        entries,
-        Some("Search assets…"),
-        &format!("No {kind} assets"),
-        theme,
-        cmd,
-    );
+    let list = picker_list(theme)
+        .searchable("Search assets…")
+        .empty_text(format!("No {kind} assets"))
+        .items(registry.of_kind(kind).map(|entry| {
+            theme
+                .list_item(entry.name())
+                .detail(entry.folder())
+                .selected(current == Some(entry.id))
+                .on_activate(pick(entry.id))
+        }));
     show_picker_menu(
         menu,
-        picker_panel(button, content.field),
         AssetPickerMenu { row },
-        content,
+        list,
+        |field| picker_panel(button, field),
         theme,
         cmd,
     );
