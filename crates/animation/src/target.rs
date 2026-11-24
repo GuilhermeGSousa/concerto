@@ -165,7 +165,7 @@ mod tests {
     use crate::{
         blackboard::AnimationBlackboard,
         clip::{AnimationChanelOutput, AnimationChannel, AnimationClip},
-        evaluation::RootBone,
+        evaluation::{AnimationGraphContext, RootBone},
         event::{AnimationEvent, AnimationSignal},
         graph::{AnimationGraph, AnimationNodeIndex},
         node::{
@@ -386,15 +386,17 @@ mod tests {
                 rest: self.rest.clone(),
                 up: Vec3::Y,
             };
-            self.walks
-                .update(&AnimationBlackboard::default(), |context| {
-                    player.root_motion_pass(
-                        self.walks.graphs(),
-                        Some(root),
-                        skeleton,
-                        context.inputs,
-                    )
-                })
+            let blackboard = AnimationBlackboard::default();
+            self.walks.update(&blackboard, |context| {
+                let context = AnimationGraphContext {
+                    root: Some(root),
+                    skeleton: Some(skeleton),
+                    ..*context
+                };
+                player
+                    .graph_state
+                    .root_motion(self.walks.graphs(), &context, &skeleton.bone_ids)
+            })
         }
 
         fn root_motion_after_animating(self, player: AnimationPlayer) -> RootMotion {
