@@ -43,7 +43,7 @@ impl ActiveNodeState {
 
 #[derive(Component)]
 pub struct AnimationPlayer {
-    pub(crate) graph_state: AnimationGraphState,
+    graph_state: AnimationGraphState,
     blackboard: AnimationBlackboard,
     frame_pool: FramePool,
     root: Option<RootBone>,

@@ -665,7 +665,7 @@ mod tests {
             state: &mut AnimationClipNodeState,
         ) -> RootMotion {
             self.walks
-                .evaluate(&self.blackboard, Some(self.root()), |context| {
+                .pass(&self.blackboard, Some(self.root()), |context| {
                     AnimationNode::root_motion(node, state, clips(context), context, &[ROOT], &[])
                 })
         }

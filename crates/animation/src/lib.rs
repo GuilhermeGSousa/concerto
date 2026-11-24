@@ -384,7 +384,7 @@ mod tests {
             let mut frame = self.pool.acquire();
             let passed = self
                 .walks
-                .evaluate(&self.blackboard, Some(root.clone()), |context| {
+                .pass(&self.blackboard, Some(root.clone()), |context| {
                     self.fsm
                         .root_motion(&mut self.node_state, context, &[self.bone], &[])
                 });

@@ -1541,7 +1541,6 @@ mod tests {
         RetargetGoal, RetargetGoalSettings, RetargetNode, RetargetRig, RigError,
     };
     use crate::{
-        blackboard::AnimationBlackboard,
         clip::{AnimationChanelOutput, AnimationChannel, AnimationClip},
         evaluation::{AnimationGraphContext, RootBone},
         event::AnimationEvent,
@@ -3038,20 +3037,11 @@ mod tests {
             self.frame(None).joints().to_vec()
         }
 
-        fn root_motion_pass(&mut self, root: Option<RootBone>) -> RootMotion {
-            let walks = &self.walks;
-            let player = &mut self.player;
-            let skeleton = &self.player_skeleton;
-            walks.update(&AnimationBlackboard::default(), |context| {
-                let context = AnimationGraphContext {
-                    root,
-                    skeleton: Some(skeleton),
-                    ..*context
-                };
-                player
-                    .graph_state
-                    .root_motion(walks.graphs(), &context, &skeleton.bone_ids)
-            })
+        fn advance_rooted(&mut self, root: RootBone) -> RootMotion {
+            self.walks
+                .advance_with(&mut self.player, 0.1, &self.player_skeleton, Some(root));
+            self.walks
+                .root_motion(&mut self.player, &self.player_skeleton)
         }
 
         fn frame(&mut self, root: Option<RootBone>) -> AnimationFrame {
@@ -3211,8 +3201,7 @@ mod tests {
             up: Vec3::Y,
         };
 
-        played.advance();
-        let passed = played.root_motion_pass(Some(outer_root.clone()));
+        let passed = played.advance_rooted(outer_root.clone());
         let frame = played.frame(Some(outer_root));
 
         assert_poses(frame.joints(), &target.rest_pose);
