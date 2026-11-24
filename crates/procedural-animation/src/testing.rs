@@ -4,7 +4,10 @@ use concerto_animation::{
     node::{AnimationNode, InputSlots, ReflectAnimationNode},
     player::{AnimationHandleComponent, AnimationPlayer},
     plugin::{AnimationAppExt, AnimationPlugin, register_animation_types},
-    pose::{AnimationFrame, EvaluatedFrame, FiredEvent, FramePool, JointPose, RootMotion},
+    pose::{
+        AnimationFrame, EvaluatedFrame, FiredEvent, FramePool, JointPose, RootMotion,
+        WeightedMotion,
+    },
 };
 use concerto_app::{App, plugins::AssetManagerPlugin};
 use concerto_ecs::{
@@ -116,6 +119,25 @@ impl AnimationNode for Capture {
 
     fn update(&self, _: &mut Option<Frame>, _: f32, _: &(), _: &AnimationGraphContext<'_>) {}
 
+    fn root_motion(
+        &self,
+        state: &mut Option<Frame>,
+        _: &(),
+        _: &AnimationGraphContext<'_>,
+        _: &[Uuid],
+        inputs: &[WeightedMotion],
+    ) -> RootMotion {
+        let motion = inputs
+            .first()
+            .map_or(RootMotion::IDENTITY, |input| input.motion);
+        *state = Some(Frame {
+            joints: Vec::new(),
+            root_motion: motion,
+            events: Vec::new(),
+        });
+        motion
+    }
+
     fn evaluate(
         &self,
         state: &mut Option<Frame>,
@@ -132,7 +154,9 @@ impl AnimationNode for Capture {
         output.copy_from(&input.frame);
         *state = Some(Frame {
             joints: input.frame.joints().to_vec(),
-            root_motion: input.frame.root_motion(),
+            root_motion: state
+                .as_ref()
+                .map_or(RootMotion::IDENTITY, |frame| frame.root_motion),
             events: input.frame.events().to_vec(),
         });
     }
