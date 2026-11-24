@@ -30,10 +30,10 @@ pub enum EntityEdit {
     Create {
         parent: Option<Entity>,
     },
-    /// Removes the entity and its descendants.
-    Delete(Entity),
-    /// Copies the entity and its descendants beside it.
-    Duplicate(Entity),
+    /// Removes the entities and their descendants as one edit; an entity under another listed one is left to it.
+    Delete(Vec<Entity>),
+    /// Copies the entities and their descendants beside them as one edit; an entity under another listed one is left to it.
+    Duplicate(Vec<Entity>),
     Rename {
         entity: Entity,
         name: String,
@@ -42,11 +42,11 @@ pub enum EntityEdit {
 
 impl Signal for EntityEdit {}
 
-/// What one `EntityEdit` did: the entity it created or duplicated, or the status text saying why it was refused.
+/// What one `EntityEdit` did: every entity it created or duplicated, in list order, or the status text saying why it was refused.
 #[derive(Event, Clone)]
 pub struct EntityEdited {
     pub edit: EntityEdit,
-    pub result: Result<Option<Entity>, String>,
+    pub result: Result<Vec<Entity>, String>,
 }
 
 pub(crate) fn build(app: &mut App) {
@@ -55,7 +55,7 @@ pub(crate) fn build(app: &mut App) {
 }
 
 enum Applied {
-    Changed(Option<Entity>),
+    Changed(Vec<Entity>),
     Removed(Option<Entity>),
     Unchanged,
 }
@@ -68,23 +68,23 @@ pub(crate) fn apply_entity_edit(on: On<EntityEdit>, world: &mut World) {
         EntityEdit::Rename { .. } => "Rename",
     };
     let result = match apply(world, on.signal()) {
-        Ok(Applied::Changed(selected)) => {
-            if let Some(selected) = selected {
-                world.trigger(Select(Some(selected)));
-                write(world, RevealEntity(selected));
+        Ok(Applied::Changed(made)) => {
+            if let Some(last) = made.last().copied() {
+                world.trigger(Select::Replace(made.clone()));
+                write(world, RevealEntity(last));
             }
             report_edit(world);
-            Ok(selected)
+            Ok(made)
         }
         Ok(Applied::Removed(parent)) => {
-            world.trigger(Select(parent));
+            world.trigger(Select::Replace(parent.into_iter().collect()));
             if let Some(parent) = parent {
                 write(world, RevealEntity(parent));
             }
             report_edit(world);
-            Ok(None)
+            Ok(Vec::new())
         }
-        Ok(Applied::Unchanged) => Ok(None),
+        Ok(Applied::Unchanged) => Ok(Vec::new()),
         Err(error) => {
             let status = format!("{operation} failed: {error:#}");
             write(world, SceneStatus(status.clone()));
@@ -113,22 +113,40 @@ fn apply(world: &mut World, edit: &EntityEdit) -> anyhow::Result<Applied> {
             if let Some(parent) = parent {
                 world.entity_mut(*parent).add_child(child);
             }
-            Ok(Applied::Changed(Some(child)))
+            Ok(Applied::Changed(vec![child]))
         }
-        EntityEdit::Delete(entity) => {
-            let parent = editable(world, *entity)?;
-            record_removal(world, *entity);
-            world.despawn(*entity);
+        EntityEdit::Delete(entities) => {
+            let roots = roots_of(world, entities)?;
+            let mut parent = None;
+            for root in &roots {
+                parent = editable(world, *root)?;
+            }
+            for root in roots {
+                record_removal(world, root);
+                world.despawn(root);
+            }
             Ok(Applied::Removed(parent))
         }
-        EntityEdit::Duplicate(entity) => {
-            let parent = editable(world, *entity)?;
-            refuse_linked(world, *entity, LinkedEdit::Duplicate)?;
-            let mut scene = capture_subtree(world, *entity)?;
-            for node in &mut scene.nodes {
-                node.id = NodeId::fresh();
+        EntityEdit::Duplicate(entities) => {
+            let roots = roots_of(world, entities)?;
+            let mut parents = Vec::new();
+            for root in &roots {
+                parents.push(editable(world, *root)?);
+                refuse_linked(world, *root, LinkedEdit::Duplicate)?;
             }
-            Ok(Applied::Changed(spawn_beside(world, &scene, parent)))
+            let mut captured = Vec::new();
+            for root in roots {
+                let mut scene = capture_subtree(world, root)?;
+                for node in &mut scene.nodes {
+                    node.id = NodeId::fresh();
+                }
+                captured.push(scene);
+            }
+            let mut copies = Vec::new();
+            for (scene, parent) in captured.iter().zip(parents) {
+                copies.extend(spawn_beside(world, scene, parent));
+            }
+            Ok(Applied::Changed(copies))
         }
         EntityEdit::Rename { entity, name } => {
             editable(world, *entity)?;
@@ -142,9 +160,32 @@ fn apply(world: &mut World, edit: &EntityEdit) -> anyhow::Result<Applied> {
                 Some(current) => current.set(name),
                 None => world.insert(Name::new(name), *entity),
             }
-            Ok(Applied::Changed(None))
+            Ok(Applied::Changed(Vec::new()))
         }
     }
+}
+
+fn roots_of(world: &World, entities: &[Entity]) -> anyhow::Result<Vec<Entity>> {
+    let mut roots: Vec<Entity> = Vec::new();
+    for entity in entities {
+        let mut ancestor = world
+            .get_component_for_entity::<ChildOf>(*entity)
+            .map(ChildOf::parent);
+        let mut covered = roots.contains(entity);
+        while let Some(parent) = ancestor.filter(|_| !covered) {
+            covered = entities.contains(&parent);
+            ancestor = world
+                .get_component_for_entity::<ChildOf>(parent)
+                .map(ChildOf::parent);
+        }
+        if !covered {
+            roots.push(*entity);
+        }
+    }
+    if roots.is_empty() {
+        bail!("no entity was given");
+    }
+    Ok(roots)
 }
 
 fn refuse_linked(world: &World, entity: Entity, edit: LinkedEdit) -> anyhow::Result<()> {
@@ -306,7 +347,7 @@ mod tests {
         fn world(&mut self) -> &mut World {
             self.app.main_mut().world_mut()
         }
-        fn edit(&mut self, edit: EntityEdit) -> Result<Option<Entity>, String> {
+        fn edit(&mut self, edit: EntityEdit) -> Result<Vec<Entity>, String> {
             self.world().trigger(edit);
             written::<EntityEdited>(&self.app).pop().unwrap().result
         }
@@ -314,7 +355,14 @@ mod tests {
             written::<SceneEdited>(&self.app).len()
         }
         fn selected(&self) -> Option<Entity> {
-            self.app.get_resource::<Selection>().unwrap().entity()
+            self.app.get_resource::<Selection>().unwrap().active()
+        }
+        fn selection(&self) -> Vec<Entity> {
+            self.app
+                .get_resource::<Selection>()
+                .unwrap()
+                .entities()
+                .to_vec()
         }
         fn children(&mut self, entity: Entity) -> Vec<Entity> {
             self.world()
@@ -344,10 +392,7 @@ mod tests {
         let mut f = fixture();
         let (root, node, child) = (f.root, f.node, f.child);
 
-        let created = f
-            .edit(EntityEdit::Create { parent: Some(node) })
-            .unwrap()
-            .unwrap();
+        let created = f.edit(EntityEdit::Create { parent: Some(node) }).unwrap()[0];
         assert_eq!(f.children(node), [child, created]);
         assert_eq!(f.name(created), "Entity");
         assert!(
@@ -368,7 +413,7 @@ mod tests {
             [created]
         );
 
-        let copy = f.edit(EntityEdit::Duplicate(node)).unwrap().unwrap();
+        let copy = f.edit(EntityEdit::Duplicate(vec![node])).unwrap()[0];
         assert_eq!(f.children(root), [node, copy]);
         assert_eq!(f.selected(), Some(copy));
         let copied_child = f.children(copy)[0];
@@ -397,25 +442,52 @@ mod tests {
         .unwrap();
         assert_eq!(f.name(copy), "lamp");
 
-        f.edit(EntityEdit::Delete(node)).unwrap();
+        let batch = f.edit(EntityEdit::Duplicate(vec![node, child])).unwrap();
+        assert_eq!(batch.len(), 1);
+        assert_eq!(f.children(batch[0]).len(), 2);
+        assert_eq!(f.selection(), batch);
+        let copied_child = f.children(batch[0])[0];
+        f.edit(EntityEdit::Delete(vec![batch[0], copied_child]))
+            .unwrap();
+        assert!(!f.valid(batch[0]) && !f.valid(copied_child));
+        assert_eq!(f.selection(), [root]);
+
+        let pair = f.edit(EntityEdit::Duplicate(vec![copy, node])).unwrap();
+        assert_eq!(pair.len(), 2);
+        assert_eq!(f.selection(), pair);
+        assert_eq!(f.selected(), Some(pair[1]));
+        assert!(f.edit(EntityEdit::Delete(vec![pair[0], root])).is_err());
+        assert!(f.valid(pair[0]) && f.valid(pair[1]) && f.valid(root));
+        f.edit(EntityEdit::Delete(pair.clone())).unwrap();
+        assert!(!f.valid(pair[0]) && !f.valid(pair[1]));
+        assert_eq!(f.selection(), [root]);
+
+        let gone = f.edit(EntityEdit::Create { parent: Some(node) }).unwrap()[0];
+        f.world().despawn(gone);
+        let edits = f.edits();
+        let siblings = f.children(node);
+        assert!(f.edit(EntityEdit::Delete(vec![node, gone])).is_err());
+        assert!(f.edit(EntityEdit::Duplicate(vec![node, gone])).is_err());
+        assert!(f.valid(node));
+        assert_eq!(f.edits(), edits);
+        assert_eq!(f.children(node), siblings);
+
+        f.edit(EntityEdit::Delete(vec![node])).unwrap();
         assert!(!f.valid(node) && !f.valid(child) && !f.valid(created));
         assert_eq!(f.selected(), Some(root));
-        assert_eq!(f.edits(), 4);
+        assert_eq!(f.edits(), 9);
 
-        assert!(f.edit(EntityEdit::Delete(root)).is_err());
+        assert!(f.edit(EntityEdit::Delete(vec![root])).is_err());
         assert!(f.edit(EntityEdit::Create { parent: None }).is_err());
         assert!(f.valid(root));
-        assert_eq!(f.edits(), 4);
+        assert_eq!(f.edits(), 9);
 
         f.world().remove_component::<SceneRoot>(root);
-        let top = f
-            .edit(EntityEdit::Create { parent: None })
-            .unwrap()
-            .unwrap();
+        let top = f.edit(EntityEdit::Create { parent: None }).unwrap()[0];
         assert!(f.world().get_component_for_entity::<ChildOf>(top).is_none());
-        f.edit(EntityEdit::Delete(root)).unwrap();
+        f.edit(EntityEdit::Delete(vec![root])).unwrap();
         assert!(!f.valid(root) && !f.valid(copy));
         assert!(f.valid(top));
-        assert_eq!(f.edits(), 6);
+        assert_eq!(f.edits(), 11);
     }
 }

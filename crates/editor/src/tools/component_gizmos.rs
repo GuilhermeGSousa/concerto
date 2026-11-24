@@ -124,12 +124,12 @@ fn draw_component_gizmo<G: ComponentGizmo>(
     mut gizmos: DebugGizmos,
 ) {
     let always = kinds.always(G::NAME);
-    let selected = selection.and_then(|selection| selection.entity());
-    if !always && selected.is_none() {
+    let selection = selection.as_deref();
+    if !always && selection.is_none_or(Selection::is_empty) {
         return;
     }
     for (entity, component, transform) in drawn.iter() {
-        if always || selected == Some(entity) {
+        if always || selection.is_some_and(|selection| selection.contains(entity)) {
             G::draw(entity, component, transform, &input, &mut gizmos);
         }
     }
@@ -248,11 +248,13 @@ mod tests {
         let camera = alone::<CameraGizmo>(Camera::default());
 
         assert_eq!(drawn(&mut world), 0, "nothing is selected");
-        world.trigger(Select(Some(parent)));
+        world.trigger(Select::only(parent));
         assert_eq!(drawn(&mut world), lit, "the parent, not its child");
-        world.trigger(Select(Some(child)));
+        world.trigger(Select::only(child));
         assert_eq!(drawn(&mut world), bounds, "the child alone");
-        world.trigger(Select(None));
+        world.trigger(Select::Replace(vec![parent, child]));
+        assert_eq!(drawn(&mut world), lit + bounds, "every selected entity");
+        world.trigger(Select::none());
         set(&mut world, "Camera", true);
         assert_eq!(
             drawn(&mut world),

@@ -359,10 +359,14 @@ fn frame_requested_bounds(
     let bounds = if commands.frame_all {
         scene_bounds(&bounded, None)
     } else if commands.frame_selection {
-        selection
-            .entity()
-            .map(|entity| subtree(entity, &children))
-            .and_then(|set| scene_bounds(&bounded, Some(&set)))
+        let set: HashSet<Entity> = selection
+            .entities()
+            .iter()
+            .flat_map(|&entity| subtree(entity, &children))
+            .collect();
+        (!set.is_empty())
+            .then(|| scene_bounds(&bounded, Some(&set)))
+            .flatten()
     } else {
         None
     };
@@ -495,6 +499,7 @@ mod tests {
         world.insert_resource(ViewportCommands::default());
         world.insert_resource(FlyCamera::default());
         world.insert_resource(Selection::default());
+        world.add_listener(crate::tools::selection::select);
         world.add_listener(frame_selection);
         world.add_listener(frame_all);
         world.spawn((EditorCamera, Camera::default(), Transform::IDENTITY));
@@ -508,7 +513,7 @@ mod tests {
             ))
         };
         let near = bounded(40.0);
-        bounded(-40.0);
+        let far = bounded(-40.0);
         let looks_at = |world: &World, point: Vec3| {
             let fly = world.get_resource::<FlyCamera>().unwrap();
             ((point - fly.position).normalize() - fly.forward()).length() < 1e-3
@@ -533,10 +538,7 @@ mod tests {
         let all = far_plane(&mut world);
         assert!(farthest < all, "{farthest} lies beyond the far plane {all}");
 
-        world
-            .get_resource_mut::<Selection>()
-            .unwrap()
-            .set(Some(near));
+        world.trigger(crate::tools::selection::Select::only(near));
         world.trigger(FrameSelection);
         run(&mut world, frame_requested_bounds);
         assert!(looks_at(&world, Vec3::new(40.0, 0.0, 0.0)));
@@ -545,6 +547,11 @@ mod tests {
             all,
             "framing less never clips the rest"
         );
+
+        world.trigger(crate::tools::selection::Select::Replace(vec![near, far]));
+        world.trigger(FrameSelection);
+        run(&mut world, frame_requested_bounds);
+        assert!(looks_at(&world, Vec3::ZERO), "several frame as their union");
     }
 
     fn pointing(over: bool) -> World {

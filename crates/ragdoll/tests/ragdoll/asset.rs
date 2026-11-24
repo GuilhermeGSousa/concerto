@@ -1,3 +1,4 @@
+use concerto_foundation::math::Angle;
 use std::f32::consts::FRAC_PI_3;
 use std::path::Path;
 
@@ -201,8 +202,14 @@ fn any_part() -> impl Strategy<Value = RagdollPart> {
                 .with_mass(numbers.0)
                 .with_joint(
                     RagdollJoint::new(axis, offset)
-                        .with_swing(numbers.2, -numbers.1)
-                        .with_twist(numbers.1, numbers.2)
+                        .with_swing(
+                            Angle::from_radians(numbers.2),
+                            Angle::from_radians(-numbers.1),
+                        )
+                        .with_twist(
+                            Angle::from_radians(numbers.1),
+                            Angle::from_radians(numbers.2),
+                        )
                         .with_friction(motor.1)
                         .with_motor(RagdollMotor {
                             frequency: motor.0,

@@ -1,5 +1,6 @@
 use concerto_animation::retarget::RetargetRig;
 use concerto_foundation::assets::handle::AssetHandle;
+use concerto_foundation::math::Angle;
 use concerto_foundation::transform::Transform;
 use concerto_physics::physics_pipeline::PhysicsPipeline;
 use concerto_physics::physics_state::PhysicsState;
@@ -80,10 +81,15 @@ fn a_generated_humanoid_has_its_mass_its_one_way_knees_and_a_body_that_rests_in_
     let ragdoll = generated(&humanoid_rig(), 75.0).unwrap();
     for hinge in hinges {
         let joint = ragdoll.part(hinge.bone).unwrap().joint;
-        assert_eq!(joint.twist_min, 0.0, "{} cannot bend backwards", hinge.bone);
-        assert!(joint.twist_max > 2.0, "{} bends", hinge.bone);
-        assert_eq!(joint.swing_normal, 0.0);
-        assert_eq!(joint.swing_plane, 0.0);
+        assert_eq!(
+            joint.twist_min,
+            Angle::ZERO,
+            "{} cannot bend backwards",
+            hinge.bone
+        );
+        assert!(joint.twist_max.radians() > 2.0, "{} bends", hinge.bone);
+        assert_eq!(joint.swing_normal, Angle::ZERO);
+        assert_eq!(joint.swing_plane, Angle::ZERO);
         let bent = Quat::from_axis_angle(joint.twist_axis.normalize(), 0.5) * hinge.bone_direction;
         assert!(
             bent.dot(hinge.bends_towards) > 0.4,

@@ -977,7 +977,7 @@ mod tests {
             1
         );
         let root = f.scene_root(document);
-        assert_eq!(f.selected(document), Some(root));
+        assert_eq!(f.active(document), Some(root));
     }
 
     #[test]
@@ -992,12 +992,12 @@ mod tests {
         f.signal(EntityEdit::Create {
             parent: Some(original),
         });
-        let created = f.selected(document).unwrap();
+        let created = f.active(document).unwrap();
         f.signal(EntityEdit::Rename {
             entity: created,
             name: "lamp".into(),
         });
-        f.signal(EntityEdit::Duplicate(original));
+        f.signal(EntityEdit::Duplicate(vec![original]));
         assert!(f.unsaved(document));
         save(&mut f, document);
 

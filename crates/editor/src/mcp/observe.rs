@@ -222,11 +222,25 @@ fn status_of_edit_target(
     names: EditWorld<Query<&Name>>,
     assets: EditWorld<Option<Res<AssetServer>>>,
 ) {
-    let selected = match selection.as_deref().and_then(Selection::entity) {
-        Some(entity) => match names.get_entity(entity) {
-            Some(name) => format!("{} {}", entity.to_id_string(), name.as_str()),
-            None => entity.to_id_string(),
-        },
+    let describe_entity = |entity: Entity| match names.get_entity(entity) {
+        Some(name) => format!("{} {}", entity.to_id_string(), name.as_str()),
+        None => entity.to_id_string(),
+    };
+    let selected = match selection.as_deref() {
+        Some(selection) if selection.len() > 1 => format!(
+            "{} entities: {} · active {}",
+            selection.len(),
+            selection
+                .entities()
+                .iter()
+                .map(|&entity| describe_entity(entity))
+                .collect::<Vec<_>>()
+                .join(", "),
+            selection.active().map(describe_entity).unwrap_or_default()
+        ),
+        Some(selection) => selection
+            .active()
+            .map_or_else(|| "none".to_owned(), describe_entity),
         None => "none".to_owned(),
     };
     for (_, reply) in calls.read() {

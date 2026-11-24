@@ -209,8 +209,14 @@ impl Ragdoll {
                 pose.rotation * part.joint.twist_axis,
                 pose.rotation * part.joint.plane_axis,
             )
-            .with_swing(part.joint.swing_normal, part.joint.swing_plane)
-            .with_twist(part.joint.twist_min, part.joint.twist_max)
+            .with_swing(
+                part.joint.swing_normal.radians(),
+                part.joint.swing_plane.radians(),
+            )
+            .with_twist(
+                part.joint.twist_min.radians(),
+                part.joint.twist_max.radians(),
+            )
             .with_max_friction_torque(part.joint.friction)
             .with_motor(MotorSettings {
                 frequency: part.joint.motor.frequency,

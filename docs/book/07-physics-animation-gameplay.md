@@ -430,9 +430,13 @@ parts. Each `RagdollPart` follows one bone and has a `RagdollShape` (capsule,
 box or sphere) with its `offset` and `rotation` in the bone's space, a `mass`,
 and the `RagdollJoint` to its parent part: a twist axis and a plane axis in the
 bone's space, the two swing half angles, the twist range, a friction torque
-and the motor's spring.
+and the motor's spring. The angles are `Angle`s, from
+`concerto_foundation::math`: held and saved in radians, and read and written in
+degrees by the inspector and by JSON, so `set_property` and the ragdoll tools
+take degrees.
 
 ```rust
+use concerto::foundation::math::Angle;
 use concerto::ragdoll::{Ragdoll, RagdollJoint, RagdollPart, RagdollShape};
 
 let ragdoll = Ragdoll::new(skeleton)
@@ -441,7 +445,11 @@ let ragdoll = Ragdoll::new(skeleton)
         RagdollPart::new("thigh_l", RagdollShape::Capsule { half_height: 0.15, radius: 0.07 })
             .with_offset(Vec3::new(0.0, -0.2, 0.0))
             .with_mass(7.5)
-            .with_joint(RagdollJoint::new(Vec3::NEG_Y, Vec3::X).with_swing(1.0, 0.8).with_twist(-0.4, 0.4)),
+            .with_joint(
+                RagdollJoint::new(Vec3::NEG_Y, Vec3::X)
+                    .with_swing(Angle::from_degrees(60.0), Angle::from_degrees(45.0))
+                    .with_twist(Angle::from_degrees(-25.0), Angle::from_degrees(25.0)),
+            ),
     )
     .with_part(
         RagdollPart::new("calf_l", RagdollShape::Capsule { half_height: 0.15, radius: 0.05 })
@@ -508,8 +516,10 @@ A `Ragdoll` opens in its own tab, from the same crate. The left panel is the
 part tree, each part under the part of its nearest ancestor bone, labelled with
 its bone; the selected part's shape, offset, rotation, mass and joint (axes,
 swing, twist, friction, motor) are the **Part** form, written with the
-inspector's usual number fields, radians for angles. **Add part** lists the
-bones that have none, and **Remove part** drops the selected one. The preview
+inspector's usual number fields, degrees for angles. **Add part** lists the
+bones that have none and gives the chosen one a capsule to its first child bone
+on a loose ball joint, 45° of swing and 30° of twist each way, and **Remove
+part** drops the selected one. The preview
 stands the skeleton's character, with its skinned mesh when the skeleton's
 folder has a `scene`, on a floor, with `concerto-physics-gizmos` drawing each
 part and each joint's limits over it, and the buttons **Drop**, **Poke**,
@@ -522,9 +532,9 @@ yet. Drop and Poke also run the headless trial `run_trial` on the tab's current
 value and print its report under the buttons.
 
 The tools do the same without a screenshot. `ragdoll_parts` lists the parts:
-bone, parent part, shape and sizes, mass, and the joint's limits. `set_ragdoll_part`
+bone, parent part, shape and sizes, mass, and the joint's limits in degrees. `set_ragdoll_part`
 sets one bone's shape, `radius`, `half_height`, `half_extents`, `mass`,
-`offset`, swing and twist limits and `friction`, adds a part on a bone that has
+`offset`, swing and twist limits in degrees and `friction`, adds a part on a bone that has
 none, or `remove`s one, on the ragdoll open in a tab; the tab becomes unsaved,
 and `save` writes it. `test_ragdoll` runs a drop (`height`, 0.5 m by default)
 or a poke (`bone`, `impulse`) for `seconds` (5 by default) in a physics world of
@@ -657,6 +667,12 @@ placed in world terms, so the mesh stays on the body wherever the character's
 own entity is. Changing a weight over time is how animation and physics are
 blended. While a character whose parts have weight is itself moving, the drawn
 body trails it by one frame's motion.
+
+"After the animation" means after `AnimationSet`, the `LateUpdate` set that
+`animate_targets` runs in. A system that poses bones some other way, as an
+editor's clip preview does, joins `AnimationSet` and runs before
+`propagate_global_transforms`; otherwise its pose can land after the ragdoll's
+and hide it.
 
 While the character's root part, its pelvis, has any weight, the character is
 a body and not a walker, and its `capsule` follows the body instead of driving

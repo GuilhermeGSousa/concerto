@@ -42,6 +42,7 @@ use crate::{
         camera::{
             EditorCamera, FlyCamera, FrameAll, FrameSelection, SetCameraPose, ViewportCommands,
         },
+        scene::SceneRoot,
         selection,
     },
 };
@@ -116,18 +117,22 @@ impl From<UnsavedChoice> for GuardChoice {
     }
 }
 
-/// Selects an entity of the open scene, or clears the selection when no entity is given.
+/// Selects one entity or several of the open scene, the last one active, or clears the selection when none is given.
 #[derive(Deserialize, JsonSchema)]
 pub struct Select {
-    /// The entity to select, such as 42v3, as scene_tree shows it.
+    /// The entity to select, such as 42v3, as scene_tree shows it; give this or entities.
     pub entity: Option<String>,
+    /// Several entities to select, the last one active; a repeated id keeps its later position, and the scene root cannot be among several; give this or entity.
+    pub entities: Option<Vec<String>>,
 }
 
-/// Moves the editor camera to show an entity and its children, selecting it, or the whole scene when no entity is given.
+/// Moves the editor camera to show an entity and its children, or several entities and theirs, selecting them, or the whole scene when none is given.
 #[derive(Deserialize, JsonSchema)]
 pub struct Frame {
-    /// The entity to frame, such as 42v3, as scene_tree shows it.
+    /// The entity to frame, such as 42v3, as scene_tree shows it; give this or entities.
     pub entity: Option<String>,
+    /// Several entities to frame together; a repeated id keeps its later position, and the scene root cannot be among several; give this or entity.
+    pub entities: Option<Vec<String>>,
 }
 
 /// Places the editor camera at a position, facing a point or turned by yaw and pitch, and answers the pose it took.
@@ -842,23 +847,84 @@ pub(super) fn label(entity: Entity, names: &Query<&Name>) -> String {
     }
 }
 
+fn chosen(
+    entity: Option<String>,
+    entities: Option<Vec<String>>,
+    scene: &EditWorld<SceneEntities>,
+    roots: &EditWorld<Query<Entity, With<SceneRoot>>>,
+) -> Result<Vec<Entity>, ToolError> {
+    let ids = match (entity, entities) {
+        (None, None) => Vec::new(),
+        (Some(entity), None) => vec![entity],
+        (None, Some(entities)) if !entities.is_empty() => entities,
+        _ => {
+            return Err(ToolError::new(
+                "invalid_arguments",
+                "Give entity, or entities with at least one id, but not both.",
+            ));
+        }
+    };
+    let resolved = ids
+        .iter()
+        .map(|id| resolve(id, scene))
+        .collect::<Result<Vec<_>, _>>()?;
+    let cleaned: Vec<Entity> = resolved
+        .iter()
+        .enumerate()
+        .filter(|(at, entity)| !resolved[at + 1..].contains(entity))
+        .map(|(_, entity)| *entity)
+        .collect();
+    if cleaned.len() > 1
+        && cleaned
+            .iter()
+            .any(|&entity| roots.get_entity(entity).is_some())
+    {
+        return Err(ToolError::new(
+            "invalid_arguments",
+            "The scene root cannot be selected with other entities; select it alone.",
+        ));
+    }
+    Ok(cleaned)
+}
+
+fn labels(entities: &[Entity], names: &Query<&Name>) -> String {
+    entities
+        .iter()
+        .map(|&entity| label(entity, names))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 fn select(
     mut calls: ToolCalls<Select>,
     entities: EditWorld<SceneEntities>,
+    roots: EditWorld<Query<Entity, With<SceneRoot>>>,
     names: EditWorld<Query<&Name>>,
     mut scene: EditWorldSignals,
 ) {
     for (arguments, reply) in calls.read() {
-        match arguments.entity.as_deref().map(|id| resolve(id, &entities)) {
-            Some(Ok(entity)) => {
-                scene.trigger(selection::Select(Some(entity)));
-                reply.ok(format!("Selected {}.", label(entity, &names)));
-            }
-            Some(Err(error)) => reply.err(error),
-            None => {
-                scene.trigger(selection::Select(None));
-                reply.ok("Selection cleared.");
-            }
+        match chosen(arguments.entity, arguments.entities, &entities, &roots) {
+            Ok(chosen) => match chosen.as_slice() {
+                [] => {
+                    scene.trigger(selection::Select::none());
+                    reply.ok("Selection cleared.");
+                }
+                [entity] => {
+                    scene.trigger(selection::Select::only(*entity));
+                    reply.ok(format!("Selected {}.", label(*entity, &names)));
+                }
+                [.., active] => {
+                    let message = format!(
+                        "Selected {} entities: {}; {} is active.",
+                        chosen.len(),
+                        labels(&chosen, &names),
+                        label(*active, &names)
+                    );
+                    scene.trigger(selection::Select::Replace(chosen));
+                    reply.ok(message);
+                }
+            },
+            Err(error) => reply.err(error),
         }
     }
 }
@@ -877,6 +943,7 @@ fn camera_refused() -> ToolError {
 fn frame(
     mut calls: ToolCalls<Frame>,
     entities: EditWorld<SceneEntities>,
+    roots: EditWorld<Query<Entity, With<SceneRoot>>>,
     names: EditWorld<Query<&Name>>,
     targets: Query<&PlayState, With<EditTarget>>,
     mut scene: EditWorldSignals,
@@ -887,19 +954,20 @@ fn frame(
             reply.err(camera_refused());
             continue;
         }
-        let framed = match arguments.entity.as_deref().map(|id| resolve(id, &entities)) {
-            Some(Ok(entity)) => {
-                scene.trigger(selection::Select(Some(entity)));
-                scene.trigger(FrameSelection);
-                label(entity, &names)
-            }
-            Some(Err(error)) => {
-                reply.err(error);
-                continue;
-            }
-            None => {
+        let framed = match chosen(arguments.entity, arguments.entities, &entities, &roots) {
+            Ok(chosen) if chosen.is_empty() => {
                 scene.trigger(FrameAll);
                 "the whole scene".to_owned()
+            }
+            Ok(chosen) => {
+                let framed = labels(&chosen, &names);
+                scene.trigger(selection::Select::Replace(chosen));
+                scene.trigger(FrameSelection);
+                framed
+            }
+            Err(error) => {
+                reply.err(error);
+                continue;
             }
         };
         cmd.spawn((

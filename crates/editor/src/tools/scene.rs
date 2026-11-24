@@ -62,7 +62,7 @@ fn open_scene(on: On<OpenScene>, world: &mut World) {
     let root = world.spawn((Transform::IDENTITY, SceneRoot));
     spawn_scene_in_world(world, &on.signal().scene, root, &SpawnFilter::default());
     world.insert_resource(SceneDirty(false));
-    world.trigger(Select(Some(root)));
+    world.trigger(Select::only(root));
 }
 
 /// The scene open in `world` as data, listing the assets it names, or why it could not be captured.
@@ -183,7 +183,7 @@ mod tests {
             .next()
             .unwrap();
         assert_eq!(
-            world.get_resource::<Selection>().unwrap().entity(),
+            world.get_resource::<Selection>().unwrap().active(),
             Some(root)
         );
         assert!(!dirty(world));

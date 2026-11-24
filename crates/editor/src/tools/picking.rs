@@ -1,8 +1,11 @@
 //! Selecting scene entities by clicking them in the viewport.
 use concerto_app::{App, edit_time::AtEditTime, schedule_groups::Update};
 use concerto_ecs::{
-    Entity, IntoSystemConfig, Query, Res, ResMut, Resource, command::CommandQueue,
-    entity::hierarchy::Children, events::event_writer::EventWriter,
+    Entity, IntoSystemConfig, Query, Res, ResMut, Resource,
+    command::CommandQueue,
+    entity::hierarchy::Children,
+    events::event_writer::EventWriter,
+    signal::{On, Signal},
 };
 use concerto_foundation::{
     assets::asset_store::AssetStore,
@@ -10,14 +13,14 @@ use concerto_foundation::{
 };
 use concerto_mesh::{Aabb, Mesh, MeshComponent, Ray};
 use concerto_render::components::camera::Camera;
-use concerto_window::input::{Input, MouseButton};
+use concerto_window::input::{Input, MouseButton, actions::Modifiers};
 use glam::{Mat4, Vec2, Vec3};
 
 use crate::tools::{
     camera::{EditorCamera, FlyCamera, ViewportPointer, fill_pointer_from_window, subtree},
     gizmo::GizmoState,
     scene::{RevealEntity, SceneRoot},
-    selection::Select,
+    selection::{Select, Selection},
 };
 
 /// How far the pointer may travel between press and release and still count as a click.
@@ -26,8 +29,34 @@ const CLICK_SLOP: f32 = 4.0;
 #[derive(Resource, Default)]
 pub(crate) struct PickPress(Option<Vec2>);
 
+#[derive(Clone, Copy)]
+struct PickedEntity {
+    entity: Entity,
+    adding: bool,
+}
+impl Signal for PickedEntity {}
+
+fn apply_pick(
+    on: On<PickedEntity>,
+    selection: Res<Selection>,
+    mut reveal: EventWriter<RevealEntity>,
+    mut cmd: CommandQueue,
+) {
+    let PickedEntity { entity, adding } = *on.signal();
+    if !adding {
+        cmd.trigger(Select::only(entity));
+        reveal.write(RevealEntity(entity));
+    } else {
+        if !selection.contains(entity) {
+            reveal.write(RevealEntity(entity));
+        }
+        cmd.trigger(Select::Toggle(entity));
+    }
+}
+
 pub(crate) fn build(app: &mut App) {
     app.insert_resource(PickPress::default());
+    app.add_listener(apply_pick.at_edit_time());
     app.add_system(
         Update,
         pick_on_click.after(fill_pointer_from_window).at_edit_time(),
@@ -133,7 +162,6 @@ pub(crate) fn pick_on_click(
     nodes: Query<(Entity, &MeshComponent, &Aabb, &GlobalTransform)>,
     meshes: Res<AssetStore<Mesh>>,
     mut press: ResMut<PickPress>,
-    mut reveal: EventWriter<RevealEntity>,
     mut cmd: CommandQueue,
 ) {
     if pointer.pressed {
@@ -175,23 +203,22 @@ pub(crate) fn pick_on_click(
     for (root, _) in roots.iter() {
         scene.extend(subtree(root, &children));
     }
+    let modifiers = Modifiers::from_input(&input);
+    let adding = modifiers.ctrl || modifiers.shift || modifiers.logo;
     match pick(
         &ray,
         &meshes,
         nodes.iter().filter(|(entity, ..)| scene.contains(entity)),
     ) {
-        Some(entity) => {
-            cmd.trigger(Select(Some(entity)));
-            reveal.write(RevealEntity(entity));
-        }
-        None => cmd.trigger(Select(None)),
+        Some(entity) => cmd.trigger(PickedEntity { entity, adding }),
+        None if adding => {}
+        None => cmd.trigger(Select::none()),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tools::selection::Selection;
     use concerto_ecs::{
         IntoSystem, System, World,
         entity::hierarchy::ChildOf,
@@ -199,6 +226,7 @@ mod tests {
     };
     use concerto_foundation::assets::{AssetId, handle::AssetHandle};
     use concerto_mesh::Vertex;
+    use concerto_window::input::{KeyCode, PhysicalKey};
     use glam::Quat;
 
     fn cube_mesh() -> Mesh {
@@ -235,6 +263,7 @@ mod tests {
         world.insert_resource(meshes);
         world.insert_resource(Selection::default());
         world.add_listener(crate::tools::selection::select);
+        world.add_listener(apply_pick);
         world.insert_resource(EventChannel::<RevealEntity>::default());
         world.insert_resource(FlyCamera::default());
         world.insert_resource(PickPress::default());
@@ -261,7 +290,20 @@ mod tests {
             entity
         }
         fn selected(&self) -> Option<Entity> {
-            self.world.get_resource::<Selection>().unwrap().entity()
+            self.world.get_resource::<Selection>().unwrap().active()
+        }
+        fn selection(&self) -> Vec<Entity> {
+            self.world
+                .get_resource::<Selection>()
+                .unwrap()
+                .entities()
+                .to_vec()
+        }
+        fn hold(&mut self, key: KeyCode, down: bool) {
+            self.world
+                .get_resource_mut::<Input>()
+                .unwrap()
+                .update_key_input(PhysicalKey::Code(key), down);
         }
         fn revealed(&self) -> Vec<Entity> {
             self.world
@@ -440,6 +482,48 @@ mod tests {
         f.click(corner, corner);
         assert_eq!(f.selected(), None);
         assert_eq!(f.revealed(), [cube]);
+
+        let other = f.cube(f.root, Mat4::from_translation(Vec3::new(-3.0, 0.0, 0.0)));
+        let camera = Camera {
+            aspect: 4.0 / 3.0,
+            ..Default::default()
+        };
+        let view = Transform::from_translation(Vec3::new(0.0, 0.0, 6.0)).compute_matrix();
+        let beside = world_to_viewport(
+            Vec3::new(-3.0, 0.0, 0.0),
+            VIEW,
+            camera.build_projection_matrix() * view.inverse(),
+        )
+        .unwrap();
+        f.click(CENTRE, CENTRE);
+        f.hold(KeyCode::ControlLeft, true);
+        f.click(beside, beside);
+        assert_eq!(f.selection(), [cube, other]);
+        assert_eq!(
+            f.revealed(),
+            [cube, cube, other],
+            "a modified click that adds reveals the entity"
+        );
+        f.click(CENTRE, CENTRE);
+        assert_eq!(
+            f.selection(),
+            [other],
+            "a modified click on a selected one removes it"
+        );
+        assert_eq!(f.revealed(), [cube, cube, other]);
+        f.click(corner, corner);
+        assert_eq!(
+            f.selection(),
+            [other],
+            "a modified click on nothing changes nothing"
+        );
+        f.hold(KeyCode::ControlLeft, false);
+        f.hold(KeyCode::ShiftLeft, true);
+        f.click(CENTRE, CENTRE);
+        assert_eq!(f.selection(), [other, cube]);
+        f.hold(KeyCode::ShiftLeft, false);
+        f.click(corner, corner);
+        assert_eq!(f.selected(), None);
 
         f.world
             .get_resource_mut::<GizmoState>()

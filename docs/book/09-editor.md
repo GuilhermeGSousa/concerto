@@ -58,7 +58,8 @@ it to an AI agent (below).
   names, or failing that its first scene. The Scene tab has no close button:
   opening another scene replaces the one it shows.
 - **Arrange** the scene: the hierarchy, titled **Score**, adds, duplicates,
-  renames (F2) and deletes entities; the viewport selects by clicking and
+  renames (F2) and deletes entities, one or several at once with Ctrl and
+  Shift clicks; the viewport selects by clicking and
   moves with the gizmo; the inspector, titled **Notes**, adds and
   edits components. Selecting an entity draws its component gizmos, not its
   children's: a mesh's bounds, a skeleton's bones, a light's reach or a

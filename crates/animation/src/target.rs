@@ -1,5 +1,5 @@
 use concerto_ecs::{
-    Entity,
+    Entity, SystemSet,
     command::CommandQueue,
     entity::hierarchy::ChildOf,
     query::{
@@ -38,6 +38,10 @@ pub(crate) fn initialize_skeletons(
         cmd.insert(AnimationRootBone::default(), root);
     }
 }
+
+/// The set, in `LateUpdate`, of the systems that pose bones from animation: what reads or overrides an animated pose runs after it.
+#[derive(SystemSet, Clone, PartialEq, Eq, Hash, Debug)]
+pub struct AnimationSet;
 
 pub fn animate_targets(
     mut animation_players: Query<(Entity, &mut AnimationPlayer, &SkeletonComponent)>,

@@ -251,8 +251,12 @@ drops those changes and `"save"` saves them first, and the call carries on as
 if nothing had been unsaved. A save that fails answers `save_failed` with the
 editor's message, and the documents keep their changes. A call that would lose
 nothing ignores `unsaved`.
-`select` selects `entity`, or clears the selection without one. `frame` selects
-`entity` and frames it, or frames the whole scene without one. `set_camera`
+`select` selects `entity`, or `entities` with the last one active, or clears the
+selection without either; giving both, or an empty `entities`, answers
+`invalid_arguments`, and an id that names no entity fails before anything
+changes. A repeated id is dropped, keeping its later position, and several ids
+holding the scene root answer `invalid_arguments`; select the root alone. `frame` selects `entity` or `entities` and frames their subtrees
+together, or frames the whole scene without either, even with a selection. `set_camera`
 places the camera at `position`, `[x, y, z]`, facing the point `look_at`, or
 turned by `yaw` and `pitch` given together: radians, where yaw 0 faces -Z and a
 positive yaw turns left, and pitch is up from level, kept within ±1.55. Giving
@@ -329,8 +333,10 @@ parked and preview `App`, so its links spawn again; a playing game is never
 reloaded.
 `delete_entity` deletes `entity` and its descendants and answers what is
 selected afterwards. `duplicate_entity` copies `entity` beside it and answers
-the copy's id. `rename_entity` renames `entity` to `name`, trimmed; an empty
-name is refused. `add_component` adds `component` at its default value and
+the copy's id. Both take `entities` instead of `entity` to act on several as one
+edit: one listed under another is left to it, the whole edit is refused when
+any is refused, and a duplicate answers every copy. `rename_entity` renames `entity` to `name`,
+trimmed; an empty name is refused. `add_component` adds `component` at its default value and
 answers it in `inspect`'s form; `remove_component` removes it. A component is
 named by its short name, ignoring case, or by its full path when the short name
 is ambiguous; `add_component` looks among the components registered in the
@@ -732,7 +738,7 @@ A panel reaches the scene in two ways and no other:
   `EditWorld<Res<T>>` skips its system with a warning on every frame the scene's
   world has no `T`, so name only resources the tools always insert, such as
   `Selection` and `AppTypeRegistry`.
-- `EditWorldSignals` sends a signal to it: `scene.trigger(Select(Some(entity)))`.
+- `EditWorldSignals` sends a signal to it: `scene.trigger(Select::only(entity))`.
   The listeners run when the system's commands are applied.
 
 Both reach the document marked `EditTarget`: the front tab's scene, once it
@@ -911,7 +917,7 @@ with its children nested: the scene's root and whatever the game spawned, such
 as its character, data entities included. Only the entities that
 `World::add_listener` spawns to hold a listener, which carry `GlobalListener`,
 are left out. Any listed entity can be renamed, duplicated, or deleted. The `+`
-adds a child to the selection, or an entity at the top level when nothing is
+adds a child to the active entity, or an entity at the top level when nothing is
 selected or the game has despawned the selection.
 
 Stop drops the game and returns to the scene exactly as it was before Play.
@@ -1019,18 +1025,25 @@ a click in the viewport selects an entity, the hierarchy expands its ancestors
 and scrolls its row into view, also for an entity created that frame. The title
 counts every listed entity, collapsed and hidden ones included, and the footer
 reads "Loading…" while a scene loads.
-Right-click a row to add a child, duplicate, rename, or delete it;
-the `+` in the panel header adds a child to the selection, or to the scene when
-nothing is selected. Delete removes the selected entity and its descendants,
-Ctrl+D duplicates it beside itself, and F2 edits its name in the field at the
-top of the inspector. New and duplicated entities go last among their siblings.
+Click a row to select it alone, Ctrl (or the logo key) + click to add it to the
+selection or take it out, and Shift + click to select the shown rows from the
+active entity to this one. The last entity selected is the active one.
+Right-click a row to add a child, duplicate, rename, or delete; on a selected
+row it keeps the selection, on another it selects that row alone first. Rename
+from the menu always selects the right-clicked row alone and edits its name,
+as Add child acts on it.
+The `+` in the panel header adds a child to the active entity, or to the scene
+when nothing is selected. Delete removes every selected entity and its
+descendants, Ctrl+D duplicates each beside itself, and F2 edits the active
+entity's name in the field at the top of the inspector, leaving it alone
+selected. New and duplicated entities go last among their siblings.
 The scene root can be given children but not deleted, duplicated, or renamed.
 A duplicate fails when the entity refers to something outside itself, such as a
 skinned mesh copied without its bones; Chatter says why.
 
 Panels change the scene only by triggering signals through `EditWorldSignals`,
-for example `scene.trigger(EntityEdit::Delete(entity))` or
-`scene.trigger(Select(Some(entity)))`. The scene tools in `src/tools/` own the
+for example `scene.trigger(EntityEdit::Delete(vec![entity]))` or
+`scene.trigger(Select::only(entity))`. The scene tools in `src/tools/` own the
 listeners: one applies each kind of edit and moves the selection. The tools
 know nothing about documents or panels. They report back through events that
 the editor re-writes in its own world as `Hosted<E>` events carrying the
@@ -1083,9 +1096,22 @@ entity lacks, at its `Default` value; a card's ⋯ menu removes one. A type that
 declares `Component` without `Default`, such as `Camera`, is edited and removed
 but never offered.
 
+With several entities selected, the inspector shows only the components every
+one of them has. Each field shows the active entity's value; a field whose
+value differs on another selected entity has ` —` after its label. A value
+edited there is set on every selected entity, each edit checked and reported on
+its own, so a linked node's refusal leaves the others edited. A list's add and
+remove buttons act on every selected entity when the list's length is the same
+on all of them, and on the active one alone otherwise. The name field reads
+`<n> entities` and cannot be edited, and the "add component" row and the cards'
+⋯ menus are disabled. MCP's `set_property`, `list_push` and `list_remove` act
+only on the entity they name, whatever is selected.
+
 Left-clicking a mesh in the viewport selects its entity, scrolls the hierarchy
 to it, and shows its component gizmos, among them a box around its bounds;
-clicking empty space clears the selection. A
+clicking empty space clears the selection. Ctrl, Shift or the logo key with the
+click adds an unselected entity to the selection or takes a selected one out,
+and does nothing on empty space. A
 press that moves more than a few pixels is not a click. Picking tests the
 mesh's triangles, so a mesh seen through a gap in another is the one selected.
 Limits: a skinned mesh is picked and boxed in its bind pose; a click selects
@@ -1096,12 +1122,16 @@ entities without a mesh are selected from the hierarchy.
 The selected entity shows a transform gizmo: red, green, and blue handles for
 the world X, Y, and Z axes, with the one under the pointer in yellow. W shows
 arrows that move the entity along an axis; E shows rings that rotate it about
-one. Drag a handle with the left button. A ring seen nearly edge-on cannot be
+one. Drag a handle with the left button. With several entities selected the
+gizmo sits on the active one, and a drag moves every selected entity by the
+same offset or turns each by the same rotation about its own origin; an entity
+whose ancestor is also selected follows that ancestor and is not moved again. A ring seen nearly edge-on cannot be
 dragged; orbit a little first. The gizmo keeps its size on screen, is hidden
 while the camera is being flown, and is not shown for the scene root. A drag
 marks the scene dirty when it ends.
 
-Component gizmos draw a component while its entity is selected; selecting a
+Component gizmos draw a component while its entity is selected, for every
+selected entity; F frames every selected entity's subtree; selecting a
 parent does not draw its children's. A gizmo is a type implementing
 `concerto_debug_gizmos::ComponentGizmo`, which names its component, the inputs
 it reads, and its kind's `NAME`, and draws one entity at a time. The scene
@@ -1501,10 +1531,10 @@ through unchanged.
 An edit is the widget's own type, so a value alone cannot pass through it.
 `PropertyEditor::edit_to(&value)` returns the edit that sets the field to
 `value`; it still goes through `apply`, with its `EditContext`, so validation
-holds. The built-in editors for `f32`, `f64`, `usize`, `u32`, `i32`, `Vec2`, `Vec3`, `Quat`, `bool`, `Name` and `String`, the
+holds. The built-in editors for `f32`, `f64`, `usize`, `u32`, `i32`, `Vec2`, `Vec3`, `Quat`, `Angle`, `bool`, `Name` and `String`, the
 asset picker, the entity picker and the joint picker implement it; `Quat` goes
 through the widget's XYZ degrees, so it comes back normalized and equal up to
-rounding. It defaults to `None`, which says the editor offers no value edit. A
+rounding, and `Angle` shows and takes degrees. It defaults to `None`, which says the editor offers no value edit. A
 custom editor opts in by implementing it; MCP's `set_property` writes a field
 an adapter claims only through it, and answers `not_editable` for an adapter
 that returns `None`:

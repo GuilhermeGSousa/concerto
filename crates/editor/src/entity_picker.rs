@@ -327,7 +327,7 @@ fn select_referenced(row: Entity) -> Listener<UIClick> {
         .iter()
         .any(|listed| listed.entity == entity);
         if listed {
-            scene.trigger(Select(Some(entity)));
+            scene.trigger(Select::only(entity));
             hierarchy.reveal_entity(entity);
         }
     })

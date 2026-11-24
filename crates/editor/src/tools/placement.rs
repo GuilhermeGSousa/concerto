@@ -173,7 +173,7 @@ fn finish(world: &mut World, placement: &Placement) {
 fn report(world: &mut World, request: PlaceAsset, result: Result<Entity, String>) {
     match &result {
         Ok(entity) => {
-            world.trigger(Select(Some(*entity)));
+            world.trigger(Select::only(*entity));
             write(world, RevealEntity(*entity));
             report_edit(world);
         }
@@ -609,7 +609,7 @@ mod tests {
                 .transform_point3(Vec3::ZERO)
         }
         fn selected(&self) -> Option<Entity> {
-            self.app.get_resource::<Selection>().unwrap().entity()
+            self.app.get_resource::<Selection>().unwrap().active()
         }
         fn dirty(&self) -> bool {
             self.app.get_resource::<SceneDirty>().unwrap().0

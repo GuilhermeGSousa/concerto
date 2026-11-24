@@ -2,6 +2,7 @@ use concerto_ecs::system::executor::single_thread::SingleThreadedExecutor;
 use concerto_ecs::system::schedule::Schedule;
 use concerto_ecs::world::World;
 use concerto_foundation::assets::{AssetId, handle::AssetHandle};
+use concerto_foundation::math::Angle;
 use concerto_foundation::transform::Transform;
 use concerto_mesh::{JointPose, Skeleton};
 use concerto_physics::collider::{Collider, register_colliders};
@@ -83,8 +84,8 @@ pub fn spine_part(bone: &str) -> RagdollPart {
     .with_mass(2.0)
     .with_joint(
         RagdollJoint::new(Vec3::Y, Vec3::X)
-            .with_swing(0.6, 0.6)
-            .with_twist(-0.3, 0.3),
+            .with_swing(Angle::from_radians(0.6), Angle::from_radians(0.6))
+            .with_twist(Angle::from_radians(-0.3), Angle::from_radians(0.3)),
     )
 }
 

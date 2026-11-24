@@ -6,11 +6,13 @@ use super::component_menu::{ComponentMenu, ensure_component_menu, menu_button};
 use super::list::remove_button;
 use super::registry::InspectionSource;
 use concerto_ecs::{
+    Changed,
     component::Tick,
     query::filter::{With, Without},
     reflect::AppTypeRegistry,
 };
 use concerto_reflect::{PathSegment, TypeRegistry};
+use concerto_ui::text::UIText;
 use std::{collections::HashMap, sync::Arc};
 
 /// A component card in the inspector's UI hierarchy.
@@ -54,6 +56,17 @@ pub(super) struct CardRows<'a> {
     pub(super) name: &'a str,
     pub(super) target: Arc<dyn PropertyTarget>,
     pub(super) read: bool,
+    pub(super) mixed: &'a [PropertyPath],
+}
+
+#[derive(Component)]
+pub(super) struct MixedPaths(Vec<PropertyPath>);
+
+#[derive(Clone, Copy)]
+pub(super) struct CardMenu {
+    pub(super) scene_entity: Entity,
+    pub(super) component: TypeId,
+    pub(super) enabled: bool,
 }
 
 pub(super) fn forget_scene(
@@ -67,6 +80,23 @@ pub(super) fn forget_scene(
         }
         cmd.insert(ComponentStack::default(), stack);
     }
+}
+
+fn inspected_targets(source: &InspectionSource, data: &InspectorData) -> Vec<Entity> {
+    let Some(active) = data
+        .scene_entity
+        .filter(|&entity| source.entity_is_valid(entity))
+    else {
+        return Vec::new();
+    };
+    let mut targets: Vec<Entity> = data
+        .scene_entities
+        .iter()
+        .copied()
+        .filter(|&entity| entity != active && source.entity_is_valid(entity))
+        .collect();
+    targets.push(active);
+    targets
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -90,13 +120,14 @@ pub(super) fn sync_inspected_components(
     let Some((stack_entity, stack, children)) = stacks.iter().next() else {
         return;
     };
-    let target = data
-        .scene_entity
-        .filter(|&entity| source.entity_is_valid(entity));
-    let structural_version = target.and_then(|entity| source.structural_version(entity));
+    let targets = inspected_targets(&source, &data);
+    let structural_versions: Vec<Option<EntityStructuralVersion>> = targets
+        .iter()
+        .map(|&entity| source.structural_version(entity))
+        .collect();
     let registry_tick = Some(registry.changed_tick());
-    let rebuild = stack.scene_target != target
-        || stack.structural_version != structural_version
+    let rebuild = stack.scene_targets != targets
+        || stack.structural_versions != structural_versions
         || stack.registry_tick != registry_tick;
     if rebuild {
         if children.is_some() {
@@ -104,58 +135,126 @@ pub(super) fn sync_inspected_components(
         }
         cmd.insert(
             ComponentStack {
-                scene_target: target,
-                structural_version,
+                scene_targets: targets.clone(),
+                structural_versions,
                 registry_tick,
             },
             stack_entity,
         );
     }
-    let Some(target) = target else {
+    let Some((&target, others)) = targets.split_last() else {
         return;
+    };
+    let shown = Shown {
+        source: &source,
+        registry: &registry,
+        others,
     };
 
     if rebuild {
-        cmd.entity(stack_entity).add_child((
-            theme.column().fixed().gap(theme.spacing_xs + 2.0).hidden(),
-            InspectorHeader {
-                scene_entity: target,
-            },
-        ));
-        let mut components = source.visible_components(target);
-        components.sort_by(|(a_id, a), (b_id, b)| a.cmp(b).then(a_id.cmp(b_id)));
-        for (type_id, name) in components {
-            let menu = source.is_registered(type_id).then_some((target, type_id));
-            let (entity, body) = spawn_card(&mut cmd, stack_entity, name, menu, &theme);
-            let card = InspectedComponent {
-                scene_entity: target,
-                type_id,
-                name,
-                body,
-                read: false,
-            };
-            refresh_card(
-                &source, &registry, &mut cmd, entity, card, &theme, &bodies, &rows,
-            );
-        }
-
-        spawn_add_component(&mut cmd, stack_entity, &menus, &theme);
+        spawn_cards(
+            &shown,
+            &mut cmd,
+            stack_entity,
+            target,
+            &theme,
+            &bodies,
+            &rows,
+        );
+        spawn_add_component(&mut cmd, stack_entity, &menus, others.is_empty(), &theme);
         ensure_component_menu(&mut cmd, &component_menus, &theme);
     } else {
         for &entity in children.into_iter().flat_map(|children| children.iter()) {
             if let Some(card) = cards.get_entity(entity) {
-                refresh_card(
-                    &source, &registry, &mut cmd, entity, *card, &theme, &bodies, &rows,
-                );
+                refresh_card(&shown, &mut cmd, entity, *card, &theme, &bodies, &rows);
             }
         }
     }
 }
 
+struct Shown<'a, 'w> {
+    source: &'a InspectionSource<'w>,
+    registry: &'a Res<'w, InspectorRegistry>,
+    others: &'a [Entity],
+}
+
+impl Shown<'_, '_> {
+    fn mixed_paths(&self, component: TypeId, properties: &[Property]) -> Vec<PropertyPath> {
+        let theirs: Vec<Vec<Property>> = self
+            .others
+            .iter()
+            .map(|&other| {
+                self.source
+                    .collect_component(self.registry, other, component)
+                    .unwrap_or_default()
+            })
+            .collect();
+        let by_path: Vec<HashMap<&PropertyPath, Option<&PropertyRowValue>>> = theirs
+            .iter()
+            .map(|other| {
+                other
+                    .iter()
+                    .map(|their| (&their.path, their.value()))
+                    .collect()
+            })
+            .collect();
+        properties
+            .iter()
+            .filter(|property| {
+                property.value().is_some()
+                    && by_path
+                        .iter()
+                        .any(|other| other.get(&property.path) != Some(&property.value()))
+            })
+            .map(|property| property.path.clone())
+            .collect()
+    }
+}
+
+fn spawn_cards(
+    shown: &Shown,
+    cmd: &mut CommandQueue,
+    stack: Entity,
+    target: Entity,
+    theme: &UITheme,
+    bodies: &Query<&Children>,
+    rows: &Query<(
+        Option<&PropertyRow>,
+        Option<&PlainRow>,
+        Option<&PropertyRowValue>,
+    )>,
+) {
+    let source = shown.source;
+    cmd.entity(stack).add_child((
+        theme.column().fixed().gap(theme.spacing_xs + 2.0).hidden(),
+        InspectorHeader {
+            scene_entity: target,
+        },
+    ));
+    let mut components = source.visible_components(target);
+    components.retain(|&(id, _)| shown.others.iter().all(|&other| source.carries(other, id)));
+    components.sort_by(|(a_id, a), (b_id, b)| a.cmp(b).then(a_id.cmp(b_id)));
+    for (type_id, name) in components {
+        let menu = source.is_registered(type_id).then_some(CardMenu {
+            scene_entity: target,
+            component: type_id,
+            enabled: shown.others.is_empty(),
+        });
+        let (entity, body) = spawn_card(cmd, stack, name, menu, theme);
+        let card = InspectedComponent {
+            scene_entity: target,
+            type_id,
+            name,
+            body,
+            read: false,
+        };
+        refresh_card(shown, cmd, entity, card, theme, bodies, rows);
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn refresh_card(
-    source: &InspectionSource,
-    registry: &Res<InspectorRegistry>,
+    shown: &Shown,
     cmd: &mut CommandQueue,
     entity: Entity,
     mut card: InspectedComponent,
@@ -167,12 +266,17 @@ fn refresh_card(
         Option<&PropertyRowValue>,
     )>,
 ) {
-    if card.read && !source.is_component_changed(card.scene_entity, card.type_id) {
+    let source = shown.source;
+    let changed = std::iter::once(card.scene_entity)
+        .chain(shown.others.iter().copied())
+        .any(|entity| source.is_component_changed(entity, card.type_id));
+    if card.read && !changed {
         return;
     }
     let properties = source
-        .collect_component(registry, card.scene_entity, card.type_id)
+        .collect_component(shown.registry, card.scene_entity, card.type_id)
         .unwrap_or_default();
+    let mixed = shown.mixed_paths(card.type_id, &properties);
     show_properties(
         CardRows {
             body: card.body,
@@ -182,17 +286,18 @@ fn refresh_card(
                 component: card.type_id,
             }),
             read: card.read,
+            mixed: &mixed,
         },
         properties,
         &source.types(),
-        registry,
+        shown.registry,
         cmd,
         theme,
         bodies,
         rows,
     );
     card.read = true;
-    cmd.insert(card, entity);
+    cmd.insert((card, MixedPaths(mixed)), entity);
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -316,7 +421,7 @@ pub(super) fn spawn_card(
     cmd: &mut CommandQueue,
     stack: Entity,
     name: &str,
-    menu: Option<(Entity, TypeId)>,
+    menu: Option<CardMenu>,
     theme: &UITheme,
 ) -> (Entity, Entity) {
     let mut stack_queue = cmd.entity(stack);
@@ -333,8 +438,12 @@ pub(super) fn spawn_card(
         theme.row().fixed().gap(theme.spacing_xs + 2.0),
         |mut header| {
             header.add_child(theme.label(name).single_line().grow());
-            if let Some((target, type_id)) = menu {
-                header.add_child(menu_button(theme, target, type_id));
+            if let Some(menu) = menu {
+                let mut button =
+                    header.spawn_child(menu_button(theme, menu.scene_entity, menu.component));
+                if !menu.enabled {
+                    button.insert(UIDisabled);
+                }
             }
             header.add_child((
                 theme
@@ -368,11 +477,11 @@ fn spawn_row(
             row_node.padding.right = theme.control_height + theme.spacing_xs;
         }
     }
-    let label = if property.path.depth() == 0 {
-        card.name.to_string()
-    } else {
-        label_for(&property.path)
-    };
+    let label = row_label(
+        card.name,
+        &property.path,
+        card.mixed.contains(&property.path),
+    );
     let mut body_queue = cmd.entity(card.body);
     let mut row_queue = body_queue.spawn_child((
         row_node,
@@ -409,6 +518,59 @@ fn spawn_row(
         }
     }
     row
+}
+
+fn row_label(card: &str, path: &PropertyPath, mixed: bool) -> String {
+    let mut label = if path.depth() == 0 {
+        card.to_string()
+    } else {
+        label_for(path)
+    };
+    if mixed {
+        label.push_str(" —");
+    }
+    label
+}
+
+pub(super) fn mark_mixed_rows(
+    cards: Query<(&InspectedComponent, &MixedPaths), Changed<MixedPaths>>,
+    children: Query<&Children>,
+    rows: Query<(Option<&PropertyRow>, Option<&PlainRow>)>,
+    mut labels: Query<&mut UIText, With<RowLabel>>,
+) {
+    for (card, mixed) in cards.iter() {
+        for &row in children
+            .get_entity(card.body)
+            .into_iter()
+            .flat_map(|rows| rows.iter())
+        {
+            if let Some((property, plain)) = rows.get_entity(row)
+                && let Some((path, _)) = shown_property(property, plain)
+            {
+                let text = row_label(card.name, path, mixed.0.contains(path));
+                relabel(&children, &mut labels, row, text);
+            }
+        }
+    }
+}
+
+fn relabel(
+    children: &Query<&Children>,
+    labels: &mut Query<&mut UIText, With<RowLabel>>,
+    row: Entity,
+    text: String,
+) {
+    for &cell in children
+        .get_entity(row)
+        .into_iter()
+        .flat_map(|cells| cells.iter())
+    {
+        if let Some(mut label) = labels.get_entity_mut(cell)
+            && label.text != text
+        {
+            label.text = text.clone();
+        }
+    }
 }
 
 fn label_column(card_width: f32) -> f32 {

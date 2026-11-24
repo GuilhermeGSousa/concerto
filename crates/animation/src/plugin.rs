@@ -18,7 +18,7 @@ use crate::{
     param::Param,
     retarget::{RetargetNode, RetargetRig},
     target::{
-        animate_targets, initialize_animation_players, initialize_skeletons,
+        AnimationSet, animate_targets, initialize_animation_players, initialize_skeletons,
         update_animation_players,
     },
 };
@@ -107,6 +107,7 @@ impl Plugin for AnimationPlugin {
                 LateUpdate,
                 animate_targets
                     .after(update_animation_players)
+                    .in_set(AnimationSet)
                     .at_preview_time(),
             )
             .add_system(LateUpdate, initialize_animation_players.at_preview_time())

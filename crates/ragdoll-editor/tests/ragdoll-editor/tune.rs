@@ -110,6 +110,28 @@ async fn tune(client: Client) {
     )
     .await;
     assert!(added.starts_with("Added index_l"), "{added}");
+    assert!(
+        added.contains("swing_normal 45° swing_plane 45° twist -30°..30° friction 0.30"),
+        "an added part bends like a loose ball joint: {added}"
+    );
+    let swung = ok(
+        &client,
+        "set_ragdoll_part",
+        json!({ "bone": "thigh_l", "swing_normal": 60.0 }),
+    )
+    .await;
+    assert!(swung.contains("swing_normal 60°"), "{swung}");
+    ok(
+        &client,
+        "set_property",
+        json!({ "target": "Part", "path": "joint.twist_max", "value": 20.0 }),
+    )
+    .await;
+    let part = ok(&client, "inspect", json!({ "target": "Part" })).await;
+    assert!(
+        part.contains("\"twist_max\": 20.0") || part.contains("\"twist_max\":20.0"),
+        "{part}"
+    );
     let removed = ok(
         &client,
         "set_ragdoll_part",
@@ -186,4 +208,6 @@ fn an_agent_finds_an_interpenetration_in_the_drop_report_fixes_a_radius_and_save
         panic!("the thigh is a capsule");
     };
     assert!((radius - 0.06).abs() < 1e-6, "{radius}");
+    let swing = saved.part("thigh_l").unwrap().joint.swing_normal.radians();
+    assert!((swing - 60_f32.to_radians()).abs() < 1e-5, "{swing}");
 }

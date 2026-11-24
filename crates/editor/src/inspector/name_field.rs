@@ -47,21 +47,28 @@ pub(super) fn forget_scene(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(super) fn update_name_field(
     mut submitted: EventReader<UITextInputSubmitted>,
     mut lost: EventReader<UIFocusLost>,
     mut cancelled: EventReader<UITextInputCancelled>,
     data: Res<InspectorData>,
     names: EditWorld<Query<&Name>>,
-    mut fields: Query<(Entity, &mut NameField, &mut UITextInput, &mut UINode)>,
+    mut fields: Query<(
+        Entity,
+        &mut NameField,
+        &mut UITextInput,
+        &mut UINode,
+        Option<&UIDisabled>,
+    )>,
     mut focused: ResMut<FocusedWidget>,
     mut focus_request: ResMut<FocusNameField>,
     mut scene: EditWorldSignals,
+    mut cmd: CommandQueue,
 ) {
-    let Some((entity, mut field, mut input, mut node)) = fields.iter_mut().next() else {
+    let Some((entity, mut field, mut input, mut node, disabled)) = fields.iter_mut().next() else {
         return;
     };
+    let several = data.scene_entities.len() > 1;
     let finished = submitted
         .read()
         .fold(false, |hit, event| hit | (event.entity == entity))
@@ -93,10 +100,15 @@ pub(super) fn update_name_field(
     }
 
     if **focused != Some(entity) {
-        if field.scene_target != data.scene_entity {
-            field.scene_target = data.scene_entity;
+        let target = data.scene_entity.filter(|_| !several);
+        if field.scene_target != target {
+            field.scene_target = target;
         }
-        let name = data.scene_entity.map(name_of).unwrap_or_default();
+        let name = if several {
+            format!("{} entities", data.scene_entities.len())
+        } else {
+            target.map(name_of).unwrap_or_default()
+        };
         if input.value != name {
             input.cursor = name.len();
             input.selection_anchor = None;
@@ -108,9 +120,17 @@ pub(super) fn update_name_field(
         }
     }
 
+    if several != disabled.is_some() {
+        if several {
+            cmd.insert(UIDisabled, entity);
+        } else {
+            cmd.remove::<UIDisabled>(entity);
+        }
+    }
+
     if focus_request.0 {
         focus_request.0 = false;
-        if node.visible {
+        if !several && node.visible {
             **focused = Some(entity);
         }
     }

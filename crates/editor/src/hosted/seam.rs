@@ -515,7 +515,7 @@ mod tests {
         system.run_and_apply((), &mut world);
         system.run_and_apply((), &mut world);
         run(&mut world, move |mut scene: EditWorldSignals| {
-            scene.trigger(crate::tools::selection::Select(Some(entity)));
+            scene.trigger(crate::tools::selection::Select::only(entity));
         });
         system.run_and_apply((), &mut world);
         system.run_and_apply((), &mut world);

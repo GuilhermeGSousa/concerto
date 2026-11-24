@@ -1,7 +1,7 @@
 //! Everything that runs in a clip editor's preview `App`: playing a clip on a skeleton and reporting back.
 use std::sync::Arc;
 
-use concerto_animation::clip::AnimationClip;
+use concerto_animation::{AnimationSet, clip::AnimationClip};
 use concerto_app::{
     App,
     edit_time::AtPreviewTime,
@@ -450,6 +450,7 @@ pub fn clip_preview(app: &mut App) {
         .add_system(
             LateUpdate,
             pose_clip
+                .in_set(AnimationSet)
                 .before(propagate_global_transforms)
                 .at_preview_time(),
         )

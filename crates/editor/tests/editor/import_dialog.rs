@@ -17,7 +17,7 @@ use concerto_editor::{
 use concerto_foundation::assets::registry::AssetRegistry;
 use concerto_ui::{
     focus::FocusedWidget,
-    items::UIItemSelected,
+    items::{UIItemSelected, UISelectMode},
     text::UIText,
     text_input::{UITextInput, UITextInputChanged, UITextInputSubmitted},
 };
@@ -144,7 +144,12 @@ fn the_confirm_key_queues_the_batch_once_and_releases_the_key_context() {
 
     let world = app.main_mut().world_mut();
     let walk = labelled(world, "walk.bvh");
-    world.trigger_on(walk, UIItemSelected);
+    world.trigger_on(
+        walk,
+        UIItemSelected {
+            mode: UISelectMode::Replace,
+        },
+    );
     app.update();
     app.update();
     let world = app.main_mut().world_mut();

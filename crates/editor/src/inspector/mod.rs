@@ -56,7 +56,8 @@ pub use name_field::{FocusNameField, NameField};
 use name_field::{name_field, update_name_field};
 pub use sync::{InspectedComponent, InspectorHeader, ReadOnlyCard};
 use sync::{
-    build_property_widgets, disable_read_only_cards, size_label_columns, sync_inspected_components,
+    build_property_widgets, disable_read_only_cards, mark_mixed_rows, size_label_columns,
+    sync_inspected_components,
 };
 
 use boolean::refresh_bool_fields;
@@ -83,7 +84,7 @@ pub(crate) use paths::{
 pub use reflect_rows::{ReflectRows, ReflectRowsPlugin};
 use registry::send_property_commits;
 pub use registry::{EditableApp, InspectorRegistry};
-pub(crate) use registry::{InspectionSource, current_editor};
+pub(crate) use registry::{InspectionSource, checked, current_editor};
 pub use target::{DocumentTypes, DocumentValue};
 pub use values::{
     CommitValue, InspectedSnapshots, InspectedValues, RefreshInspector, ShownValue, ValueCard,
@@ -111,6 +112,8 @@ pub(crate) struct FieldCommits;
 pub struct InspectorData {
     /// The entity being inspected, in the edit `App`'s world.
     pub scene_entity: Option<Entity>,
+    /// Every selected entity that is not the scene root, the inspected one last, in the edit `App`'s world.
+    pub scene_entities: Vec<Entity>,
     /// The selected scene root, in the edit `App`'s world, when the root is what is selected.
     pub closable_scene_root: Option<Entity>,
 }
@@ -146,8 +149,8 @@ struct DetailsView;
 
 #[derive(Component, Debug, Default)]
 struct ComponentStack {
-    scene_target: Option<Entity>,
-    structural_version: Option<EntityStructuralVersion>,
+    scene_targets: Vec<Entity>,
+    structural_versions: Vec<Option<EntityStructuralVersion>>,
     registry_tick: Option<concerto_ecs::component::Tick>,
 }
 
@@ -189,6 +192,7 @@ impl Plugin for InspectorPlugin {
             .add_system(LateUpdate, collect_inspector_data)
             .add_system(LateUpdate, update_name_field)
             .add_system(LateUpdate, sync_inspected_components)
+            .add_system(LateUpdate, mark_mixed_rows.after(sync_inspected_components))
             .add_system(LateUpdate, build_property_widgets)
             .add_system(
                 LateUpdate,
@@ -267,11 +271,23 @@ pub(crate) fn collect_inspector_data(
     mut current: ResMut<InspectorData>,
 ) {
     let mut data = InspectorData::default();
-    if let Some(entity) = selection.entity()
+    if let Some(entity) = selection.active()
         && let Some(root) = selected.get_entity(entity)
     {
         data.scene_entity = root.is_none().then_some(entity);
         data.closable_scene_root = root.map(|_| entity);
+        if root.is_none() {
+            data.scene_entities = selection
+                .entities()
+                .iter()
+                .copied()
+                .filter(|&entity| {
+                    selected
+                        .get_entity(entity)
+                        .is_some_and(|root| root.is_none())
+                })
+                .collect();
+        }
     }
     if *current != data {
         *current = data;

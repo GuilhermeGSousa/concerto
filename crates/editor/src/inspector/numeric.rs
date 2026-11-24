@@ -1,5 +1,6 @@
 use concerto_ecs::command::EntityCommandQueue;
 use concerto_ecs::{Component, Entity, Query, Res, ResMut, events::event_reader::EventReader};
+use concerto_foundation::math::Angle;
 use concerto_reflect::Reflect;
 use concerto_ui::elements::prelude::*;
 use concerto_ui::{
@@ -50,6 +51,7 @@ pub(crate) fn register_defaults(registry: &mut super::registry::InspectorRegistr
     registry.register_property_editor::<Vec2, NumericFields>();
     registry.register_property_editor::<Vec3, NumericFields>();
     registry.register_property_editor::<Quat, NumericFields>();
+    registry.register_property_editor::<Angle, NumericFields>();
 }
 
 pub(crate) trait NumericValue: Reflect {
@@ -181,6 +183,18 @@ impl NumericValue for Vec3 {
             return Err(EditError::Rejected);
         }
         *self = next;
+        Ok(())
+    }
+}
+
+impl NumericValue for Angle {
+    fn numbers(&self) -> NumericSnapshot {
+        NumericSnapshot::Number(f64::from(self.degrees()))
+    }
+    fn edit(&mut self, edit: &NumericEdit) -> Result<(), EditError> {
+        let mut degrees = self.degrees();
+        degrees.edit(edit)?;
+        *self = Angle::from_degrees(degrees);
         Ok(())
     }
 }

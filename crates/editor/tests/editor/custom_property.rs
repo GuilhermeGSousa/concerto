@@ -98,7 +98,7 @@ impl Inspecting {
 
     fn select(&mut self, entity: Entity) {
         let document = self.document;
-        trigger_on(self.world(), document, Select(Some(entity)));
+        trigger_on(self.world(), document, Select::only(entity));
         self.editor.update();
     }
 

@@ -25,14 +25,14 @@ const DEFAULT_DROP_HEIGHT: f32 = 0.5;
 const DEFAULT_SECONDS: f32 = 5.0;
 const DEFAULT_IMPULSE: Vec3 = Vec3::new(0.0, 0.0, 30.0);
 
-/// Lists the parts of a Ragdoll asset, one line each under its parent part: bone, parent, shape and sizes, mass, and the joint's limits in radians. A tab that has the asset open answers with its current, possibly unsaved, value.
+/// Lists the parts of a Ragdoll asset, one line each under its parent part: bone, parent, shape and sizes, mass, and the joint's limits in degrees. A tab that has the asset open answers with its current, possibly unsaved, value.
 #[derive(Deserialize, JsonSchema)]
 pub struct RagdollParts {
     /// The Ragdoll, by address or id, as list_assets shows it; the front tab's without one.
     pub asset: Option<String>,
 }
 
-/// Edits the part on one bone of the Ragdoll open in a tab, as its form does, and leaves the tab unsaved; save writes it. A bone with no part gets one that runs to its first child bone, with a rigid joint until limits are set. Sizes are in metres, angles in radians.
+/// Edits the part on one bone of the Ragdoll open in a tab, as its form does, and leaves the tab unsaved; save writes it. A bone with no part gets one that runs to its first child bone, with a loose ball joint: 45° of swing each way, 30° of twist each way, and a little friction. Sizes are in metres, angles in degrees.
 #[derive(Deserialize, JsonSchema)]
 pub struct SetRagdollPart {
     /// The bone, by name as ragdoll_parts shows it.
@@ -53,13 +53,13 @@ pub struct SetRagdollPart {
     pub mass: Option<f32>,
     /// Where the shape's centre is, in the bone's space.
     pub offset: Option<[f32; 3]>,
-    /// Half the swing range around the axis perpendicular to the twist and plane axes.
+    /// Half the swing range around the axis perpendicular to the twist and plane axes, in degrees.
     pub swing_normal: Option<f32>,
-    /// Half the swing range around the plane axis.
+    /// Half the swing range around the plane axis, in degrees.
     pub swing_plane: Option<f32>,
-    /// Lowest twist angle, from -π to 0.
+    /// Lowest twist angle, from -180 to 0 degrees.
     pub twist_min: Option<f32>,
-    /// Highest twist angle, from 0 to π.
+    /// Highest twist angle, from 0 to 180 degrees.
     pub twist_max: Option<f32>,
     /// Friction torque of the joint while it is not driven, in N·m.
     pub friction: Option<f32>,

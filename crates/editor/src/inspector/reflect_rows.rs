@@ -122,6 +122,7 @@ fn sync_reflect_rows(
                 name: NAME,
                 target,
                 read,
+                mixed: &[],
             },
             properties,
             &types,
