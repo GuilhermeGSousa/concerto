@@ -382,6 +382,12 @@ mod tests {
                     .update(&mut self.node_state, MACHINE_FRAME, context)
             });
             let mut frame = self.pool.acquire();
+            let passed = self
+                .walks
+                .evaluate(&self.blackboard, Some(root.clone()), |context| {
+                    self.fsm
+                        .root_motion(&mut self.node_state, context, &[self.bone], &[])
+                });
             self.walks
                 .evaluate(&self.blackboard, Some(root), |context| {
                     self.fsm.evaluate(
@@ -395,6 +401,14 @@ mod tests {
                 });
             let x = frame.joint(0).unwrap().translation.x;
             self.root_motion = frame.root_motion();
+            assert!(
+                passed
+                    .translation
+                    .abs_diff_eq(self.root_motion.translation, 1e-5)
+                    && passed.rotation.abs_diff_eq(self.root_motion.rotation, 1e-5),
+                "the pass gave {passed:?}, the frame {:?}",
+                self.root_motion
+            );
             self.events = frame.events().to_vec();
             self.pool.release(frame);
             x

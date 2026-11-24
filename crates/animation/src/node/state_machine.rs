@@ -3,7 +3,7 @@ use std::fmt;
 
 use crate::graph::{AnimationGraph, AnimationGraphState, AnimationGraphStates, GraphId};
 use crate::param::Param;
-use crate::pose::{AnimationFrame, EvaluatedFrame, FramePool};
+use crate::pose::{AnimationFrame, EvaluatedFrame, FramePool, RootMotion, WeightedMotion};
 use crate::transition::{
     AnimationTransitionBlender, TransitionBlender, blend_stack::BlendStack,
     inertialization_blender::InertializationBlender,
@@ -560,6 +560,19 @@ impl AnimationNode for AnimationStateMachine {
             pool,
             output,
         );
+    }
+
+    fn root_motion(
+        &self,
+        state: &mut AnimationStateMachineState,
+        graphs: &Res<AssetStore<AnimationGraph>>,
+        context: &AnimationGraphContext<'_>,
+        bone_ids: &[Uuid],
+        _inputs: &[WeightedMotion],
+    ) -> RootMotion {
+        state
+            .blender
+            .root_motion(bone_ids, &mut state.state_graphs, graphs, context)
     }
 
     fn reset(&self, _state: &mut AnimationStateMachineState) {}

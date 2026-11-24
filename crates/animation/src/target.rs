@@ -163,7 +163,9 @@ mod tests {
 
     use super::{animate_targets, initialize_animation_players};
     use crate::{
+        blackboard::AnimationBlackboard,
         clip::{AnimationChanelOutput, AnimationChannel, AnimationClip},
+        evaluation::RootBone,
         event::{AnimationEvent, AnimationSignal},
         graph::{AnimationGraph, AnimationNodeIndex},
         node::{
@@ -375,6 +377,24 @@ mod tests {
 
         fn update(&self, player: &mut AnimationPlayer, delta_time: f32) {
             self.walks.advance(player, delta_time);
+        }
+
+        fn root_motion_pass(&self, player: &mut AnimationPlayer) -> RootMotion {
+            let skeleton = self.skeletons.get(&self.skeleton).unwrap();
+            let root = RootBone {
+                index: 0,
+                rest: self.rest.clone(),
+                up: Vec3::Y,
+            };
+            self.walks
+                .update(&AnimationBlackboard::default(), |context| {
+                    player.root_motion_pass(
+                        self.walks.graphs(),
+                        Some(root),
+                        skeleton,
+                        context.inputs,
+                    )
+                })
         }
 
         fn root_motion_after_animating(self, player: AnimationPlayer) -> RootMotion {
@@ -734,6 +754,7 @@ mod tests {
         player.set_vec2_param(name!("at"), Vec2::new(0.25, 0.25));
         rig.update(&mut player, 0.5);
 
+        let passed = rig.root_motion_pass(&mut player);
         let motion = rig.root_motion_after_animating(player);
 
         assert!(
@@ -742,6 +763,11 @@ mod tests {
                 .abs_diff_eq(Vec3::new(1.0, 0.5, 0.5), 1e-4),
             "got {}",
             motion.translation
+        );
+        assert!(
+            passed.translation.abs_diff_eq(motion.translation, 1e-4),
+            "the pass gave {}",
+            passed.translation
         );
     }
 

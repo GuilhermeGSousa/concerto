@@ -21,7 +21,7 @@ use crate::{
     graph::{AnimationGraph, AnimationGraphState},
     ik::{TwoBoneChain, solve_two_bone},
     node::{AnimationNode, InputSlots, ReflectAnimationNode},
-    pose::{AnimationFrame, EvaluatedFrame, FramePool, RootMotion, twist_about},
+    pose::{AnimationFrame, EvaluatedFrame, FramePool, RootMotion, WeightedMotion, twist_about},
 };
 
 /// A skeleton described for retargeting: its named bone chains, its retarget root and motion root, and the pose it is aligned in.
@@ -1166,6 +1166,22 @@ impl Running {
         }
     }
 
+    fn root_motion(
+        &mut self,
+        graphs: &AssetStore<AnimationGraph>,
+        context: &AnimationGraphContext<'_>,
+        source: &Skeleton,
+    ) -> RootMotion {
+        let inner_context = self.inner_context(context, source);
+        let motion = self
+            .inner
+            .root_motion(graphs, &inner_context, &source.bone_ids);
+        RootMotion {
+            translation: motion.translation * self.retarget.scale(),
+            rotation: motion.rotation,
+        }
+    }
+
     fn play(
         &mut self,
         graphs: &AssetStore<AnimationGraph>,
@@ -1336,6 +1352,29 @@ impl AnimationNode for RetargetNode {
                     }
                 }
             }
+        }
+    }
+
+    fn root_motion(
+        &self,
+        state: &mut RetargetNodeState,
+        (graphs, skeletons, _, _): &(
+            Res<AssetStore<AnimationGraph>>,
+            Res<AssetStore<Skeleton>>,
+            Res<AssetStore<RetargetRig>>,
+            Res<AssetStore<AnimationClip>>,
+        ),
+        context: &AnimationGraphContext<'_>,
+        _bone_ids: &[Uuid],
+        _inputs: &[WeightedMotion],
+    ) -> RootMotion {
+        match &mut state.stage {
+            Stage::Ready(running) => skeletons
+                .get(&running.source_skeleton)
+                .map_or(RootMotion::IDENTITY, |source| {
+                    running.root_motion(graphs, context, source)
+                }),
+            Stage::Pending | Stage::Failed { .. } => RootMotion::IDENTITY,
         }
     }
 
@@ -1512,6 +1551,7 @@ mod tests {
         RetargetGoal, RetargetGoalSettings, RetargetNode, RetargetRig, RigError,
     };
     use crate::{
+        blackboard::AnimationBlackboard,
         clip::{AnimationChanelOutput, AnimationChannel, AnimationClip},
         evaluation::{AnimationGraphContext, RootBone},
         event::AnimationEvent,
@@ -1519,7 +1559,7 @@ mod tests {
         ik::{TwoBoneChain, solve_two_bone},
         node::{AnimationClipNode, AnimationNode, AnimationPlayMode},
         player::AnimationPlayer,
-        pose::{AnimationFrame, FiredEvent, FramePool},
+        pose::{AnimationFrame, FiredEvent, FramePool, RootMotion},
         testing::{Walks, made_live},
     };
 
@@ -3008,6 +3048,15 @@ mod tests {
             self.frame(None).joints().to_vec()
         }
 
+        fn root_motion_pass(&mut self, root: Option<RootBone>) -> RootMotion {
+            let walks = &self.walks;
+            let player = &mut self.player;
+            let skeleton = &self.player_skeleton;
+            walks.update(&AnimationBlackboard::default(), |context| {
+                player.root_motion_pass(walks.graphs(), root, skeleton, context.inputs)
+            })
+        }
+
         fn frame(&mut self, root: Option<RootBone>) -> AnimationFrame {
             let skeleton = &self.player_skeleton;
             let walks = &self.walks;
@@ -3166,6 +3215,7 @@ mod tests {
         };
 
         played.advance();
+        let passed = played.root_motion_pass(Some(outer_root.clone()));
         let frame = played.frame(Some(outer_root));
 
         assert_poses(frame.joints(), &target.rest_pose);
@@ -3174,6 +3224,8 @@ mod tests {
             Vec3::new(0.2, 0.0, 0.4) * source_to_target().scale(),
         );
         assert_quat(frame.root_motion().rotation, Quat::IDENTITY);
+        assert_vec3(passed.translation, frame.root_motion().translation);
+        assert_quat(passed.rotation, frame.root_motion().rotation);
         assert_eq!(
             frame.events(),
             [FiredEvent {
