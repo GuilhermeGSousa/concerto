@@ -3041,7 +3041,7 @@ mod tests {
 
         fn advance_by(&mut self, delta_time: f32) {
             self.walks
-                .advance_with(&mut self.player, delta_time, &self.player_skeleton);
+                .advance_with(&mut self.player, delta_time, &self.player_skeleton, None);
         }
 
         fn pose(&mut self) -> Vec<JointPose> {

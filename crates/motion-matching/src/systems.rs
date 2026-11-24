@@ -168,10 +168,14 @@ mod tests {
     use std::time::Duration;
 
     use concerto_animation::clip::{AnimationChanelOutput, AnimationChannel, AnimationClip};
+    use concerto_animation::evaluation::AnimationGraphContext;
     use concerto_animation::graph::AnimationGraph;
-    use concerto_animation::node::AnimationClipNode;
+    use concerto_animation::node::{
+        AnimationClipNode, AnimationNode, InputSlots, ReflectAnimationNode,
+    };
     use concerto_animation::player::AnimationHandleComponent;
-    use concerto_animation::plugin::AnimationPlugin;
+    use concerto_animation::plugin::{AnimationAppExt, AnimationPlugin};
+    use concerto_animation::pose::{AnimationFrame, EvaluatedFrame, FramePool};
     use concerto_app::main_schedule::MainSchedulePlugin;
     use concerto_app::plugins::{AssetManagerPlugin, TimePlugin, TransformPlugin};
     use concerto_app::App;
@@ -182,16 +186,19 @@ mod tests {
     use concerto_ecs::world::World;
     use concerto_ecs::{Entity, IntoSystemConfig};
     use concerto_foundation::assets::asset_server::AssetServer;
+    use concerto_foundation::assets::asset_store::AssetStore;
     use concerto_foundation::assets::handle::AssetHandle;
     use concerto_foundation::math::spring_damper::halflife_to_damping;
     use concerto_foundation::transform::Transform;
     use concerto_mesh::skeleton::{JointPose, Skeleton, SkeletonComponent};
+    use concerto_name::name;
     use concerto_physics::collider::{register_colliders, Collider, ColliderOffset};
     use concerto_physics::physics_pipeline::PhysicsPipeline;
     use concerto_physics::plugin::PhysicsPlugin;
     use concerto_physics::rigid_body::{AllowedDofs, MotionType, RigidBody};
     use concerto_physics::step_simulation;
-    use glam::{Mat4, Quat, Vec3};
+    use concerto_reflect::Reflect;
+    use glam::{Affine3A, Mat4, Quat, Vec3};
     use uuid::Uuid;
 
     use super::*;
@@ -535,6 +542,58 @@ mod tests {
         assert_eq!(simulation.facing.velocity, Vec3::new(0.0, 0.7, 0.0));
     }
 
+    #[derive(Default, Reflect)]
+    #[reflect(AnimationNode)]
+    struct ModelProbe {}
+
+    impl AnimationNode for ModelProbe {
+        type State = Option<Affine3A>;
+        type CreateInput = ();
+        type UpdateInput = ();
+        type EvaluateInput = ();
+
+        fn input_slots(&self) -> InputSlots {
+            InputSlots::Fixed(vec![name!("pose")])
+        }
+
+        fn create_state(&self, _: &(), _: &AnimationGraphContext<'_>) -> Option<Affine3A> {
+            None
+        }
+
+        fn update(&self, _: &mut Option<Affine3A>, _: f32, _: &(), _: &AnimationGraphContext<'_>) {}
+
+        fn evaluate(
+            &self,
+            state: &mut Option<Affine3A>,
+            _: &(),
+            context: &AnimationGraphContext<'_>,
+            _: &[Uuid],
+            evaluated_inputs: &[EvaluatedFrame],
+            _: &mut FramePool,
+            output: &mut AnimationFrame,
+        ) {
+            if let Some(input) = evaluated_inputs.first() {
+                output.copy_from(&input.frame);
+            }
+            *state = context.model_to_world();
+        }
+
+        fn reset(&self, state: &mut Option<Affine3A>) {
+            *state = None;
+        }
+    }
+
+    fn probed_model_to_world(app: &App, holder: Entity) -> Option<Affine3A> {
+        let world = app.main().world();
+        let graphs = world.get_resource::<AssetStore<AnimationGraph>>().unwrap();
+        let mut probed = None;
+        world
+            .get_component_for_entity::<AnimationPlayer>(holder)
+            .unwrap()
+            .for_each_state::<ModelProbe>(graphs, |_, state, _| probed = *state);
+        probed
+    }
+
     fn app_with_every_plugin() -> App {
         let mut app = App::new();
         app.register_plugin(MainSchedulePlugin)
@@ -544,12 +603,14 @@ mod tests {
             .register_plugin(PhysicsPlugin)
             .register_plugin(MotionMatchingPlugin)
             .register_plugin(AnimationPlugin);
+        app.register_animation_node::<ModelProbe>();
         app.finish_plugin_build();
         app
     }
 
     #[test]
-    fn a_clips_forward_motion_moves_the_character_and_its_vertical_motion_does_not() {
+    fn a_clips_forward_motion_moves_the_character_its_vertical_motion_does_not_and_its_pose_is_evaluated_where_it_moved_to(
+    ) {
         let mut app = app_with_every_plugin();
         let root_id = Uuid::from_u128(21);
         let server = app.get_resource::<AssetServer>().unwrap().clone();
@@ -562,7 +623,12 @@ mod tests {
             ),
         );
         let clip = server.add(clip);
-        let graph = server.add(AnimationGraph::from_node(AnimationClipNode::new(clip)));
+        let mut probed = AnimationGraph::new();
+        probed
+            .result_node()
+            .input(ModelProbe {})
+            .add_input(AnimationClipNode::new(clip));
+        let graph = server.add(probed);
         let skeleton = server.add(
             Skeleton::new(
                 vec![Mat4::IDENTITY],
@@ -601,12 +667,25 @@ mod tests {
         );
 
         let mut travelled = 0.0;
-        for _ in 0..4 {
+        for frame in 0..4 {
             thread::sleep(Duration::from_millis(5));
             app.update();
             let world = app.main().world();
             let bone = world.get_component_for_entity::<AnimationRootBone>(root);
             travelled += bone.unwrap().root_motion.translation.z;
+            if frame == 0 {
+                continue;
+            }
+            let model = world
+                .get_component_for_entity::<GlobalTransform>(holder)
+                .unwrap()
+                .translation();
+            let probed = probed_model_to_world(&app, holder).expect("the probe evaluated");
+            assert!(
+                Vec3::from(probed.translation).distance(model) < EPS,
+                "evaluated at {:?}, placed at {model:?}",
+                probed.translation
+            );
         }
 
         let world = app.main().world();

@@ -1,6 +1,9 @@
 use concerto_app::{App, edit_time::AtPreviewTime, plugins::Plugin, schedule_groups::LateUpdate};
 use concerto_ecs::{IntoSystemConfig, World, reflect::AppTypeRegistry};
-use concerto_foundation::assets::handle::AssetHandle;
+use concerto_foundation::{
+    assets::handle::AssetHandle,
+    transform::systems::{propagate_global_transforms, update_simple_entities},
+};
 use concerto_mesh::skeleton::Skeleton;
 use concerto_reflect::{GetTypeRegistration, TypeRegistry};
 use glam::{Vec2, Vec3};
@@ -107,6 +110,8 @@ impl Plugin for AnimationPlugin {
                 LateUpdate,
                 animate_targets
                     .after(update_animation_players)
+                    .before(update_simple_entities)
+                    .before(propagate_global_transforms)
                     .at_preview_time(),
             )
             .add_system(

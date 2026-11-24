@@ -3,7 +3,7 @@ use concerto_animation::{
     evaluation::AnimationGraphContext,
     node::{effective_play_rate, AnimationNode, InputSlots, ReflectAnimationNode},
     param::Param,
-    pose::{AnimationFrame, EvaluatedFrame, FramePool},
+    pose::{AnimationFrame, EvaluatedFrame, FramePool, RootMotion, WeightedMotion},
 };
 use concerto_ecs::Res;
 use concerto_foundation::assets::{asset_store::AssetStore, handle::AssetHandle};
@@ -206,6 +206,21 @@ impl AnimationNode for MotionMatchingNode {
         for event in state.fired() {
             output.push_event(*event);
         }
+    }
+
+    fn root_motion(
+        &self,
+        state: &mut MotionMatchingState,
+        _: &(
+            Res<AssetStore<MotionDatabase>>,
+            Res<AssetStore<Skeleton>>,
+            Res<AssetStore<AnimationClip>>,
+        ),
+        _context: &AnimationGraphContext<'_>,
+        bone_ids: &[Uuid],
+        _inputs: &[WeightedMotion],
+    ) -> RootMotion {
+        state.delta(bone_ids.len())
     }
 
     fn reset(&self, state: &mut MotionMatchingState) {

@@ -1,4 +1,6 @@
-use concerto_animation::{animate_targets, param::Param, plugin::AnimationAppExt};
+use concerto_animation::{
+    animate_targets, param::Param, plugin::AnimationAppExt, update_animation_players,
+};
 use concerto_app::{
     plugins::Plugin,
     schedule_groups::{FixedUpdate, LateFixedUpdate, LateUpdate},
@@ -50,7 +52,8 @@ impl Plugin for MotionMatchingPlugin {
             .add_system(
                 LateUpdate,
                 apply_character_displacement
-                    .after(animate_targets)
+                    .after(update_animation_players)
+                    .before(animate_targets)
                     .before(update_simple_entities)
                     .before(propagate_global_transforms),
             );
