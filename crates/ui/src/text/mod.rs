@@ -27,7 +27,7 @@ pub mod fonts;
 pub(crate) mod resources;
 
 /// Font family for a text node.
-#[derive(Clone, Default)]
+#[derive(Clone, Default, PartialEq, Eq, Hash)]
 pub enum FontFamily {
     #[default]
     SansSerif,
