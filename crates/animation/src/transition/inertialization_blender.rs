@@ -5,7 +5,7 @@ use crate::{
     evaluation::AnimationGraphContext,
     graph::{AnimationGraph, AnimationGraphStates, GraphId},
     inertialization::{Inertializer, PoseVelocity},
-    pose::{AnimationFrame, FramePool, Pose},
+    pose::{AnimationFrame, FramePool, Pose, RootMotion},
     transition::{AnimationTransitionBlender, BlendInFlight, blend_stack::BlendStack},
 };
 
@@ -153,6 +153,17 @@ impl AnimationTransitionBlender for InertializationBlender {
         }
 
         self.store_output(output.pose(), delta_time);
+    }
+
+    fn root_motion(
+        &mut self,
+        bone_ids: &[Uuid],
+        graph_states: &mut AnimationGraphStates,
+        graphs: &AssetStore<AnimationGraph>,
+        context: &AnimationGraphContext<'_>,
+    ) -> RootMotion {
+        self.stack
+            .root_motion(bone_ids, graph_states, graphs, context)
     }
 
     fn update(

@@ -4,7 +4,7 @@ use uuid::Uuid;
 use crate::{
     evaluation::AnimationGraphContext,
     graph::{AnimationGraph, AnimationGraphStates, GraphId},
-    pose::{AnimationFrame, FramePool},
+    pose::{AnimationFrame, FramePool, RootMotion},
 };
 
 pub(crate) mod blend_stack;
@@ -48,6 +48,14 @@ pub(crate) trait AnimationTransitionBlender: Send + Sync {
         pool: &mut FramePool,
         output: &mut AnimationFrame,
     );
+
+    fn root_motion(
+        &mut self,
+        bone_ids: &[Uuid],
+        graph_states: &mut AnimationGraphStates,
+        graphs: &AssetStore<AnimationGraph>,
+        context: &AnimationGraphContext<'_>,
+    ) -> RootMotion;
 
     fn update(
         &mut self,

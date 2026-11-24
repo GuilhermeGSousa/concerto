@@ -823,7 +823,6 @@ impl AnimationGraphState {
             });
     }
 
-    #[expect(dead_code)]
     pub(crate) fn root_motion(
         &mut self,
         graphs: &AssetStore<AnimationGraph>,
