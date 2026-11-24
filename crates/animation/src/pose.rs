@@ -16,6 +16,14 @@ impl RootMotion {
         rotation: Quat::IDENTITY,
     };
 
+    /// Blends toward `other` by `weight`: translation by lerp, rotation by slerp.
+    pub fn blend(self, other: RootMotion, weight: f32) -> RootMotion {
+        RootMotion {
+            translation: self.translation.lerp(other.translation, weight),
+            rotation: self.rotation.slerp(other.rotation, weight),
+        }
+    }
+
     pub(crate) fn between(from: &JointPose, to: &JointPose, rest: Quat) -> RootMotion {
         let from_rest = rest.inverse();
         let facing = (from.rotation * from_rest).inverse();
@@ -205,16 +213,7 @@ impl AnimationFrame {
     /// Blends the pose and root motion toward `other` by `weight`, and weights both frames' events to match.
     pub fn blend(&mut self, other: &AnimationFrame, weight: f32) {
         self.pose.blend(&other.pose, weight);
-        self.root_motion = RootMotion {
-            translation: self
-                .root_motion
-                .translation
-                .lerp(other.root_motion.translation, weight),
-            rotation: self
-                .root_motion
-                .rotation
-                .slerp(other.root_motion.rotation, weight),
-        };
+        self.root_motion = self.root_motion.blend(other.root_motion, weight);
         for event in &mut self.events {
             event.weight *= 1.0 - weight;
         }
@@ -242,6 +241,13 @@ impl Blendable for AnimationFrame {
 /// A frame an input of a node evaluated, and the weight it carries.
 pub struct EvaluatedFrame {
     pub frame: AnimationFrame,
+    pub weight: f32,
+}
+
+/// One input's root motion in the root-motion pass and the weight its node carries.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct WeightedMotion {
+    pub motion: RootMotion,
     pub weight: f32,
 }
 
