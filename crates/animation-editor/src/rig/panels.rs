@@ -23,15 +23,13 @@ use concerto_name::Name;
 use concerto_ui::elements::{Label, prelude::*};
 use concerto_ui::{
     anchor::UIAnchoredPanel,
-    interaction::UIClick,
-    items::UIItemContextMenu,
+    items::{UIItemActivated, UIItemContextMenu},
     node::{UINode, UIRect},
     text::UIText,
     theme::UITheme,
     transform::UIValue,
     tree::{UITree, UITreeElement},
 };
-use concerto_window::input::MouseButton;
 use serde_json::{Value, json};
 
 use super::{
@@ -177,13 +175,10 @@ fn assignments(rig: &RetargetRig, bone: Name) -> Vec<Assignment> {
 fn assign_bone(
     target: Arc<dyn PropertyTarget>,
     assignment: Option<Assignment>,
-) -> Listener<UIClick> {
-    (move |on: On<UIClick>,
+) -> Listener<UIItemActivated> {
+    (move |_: On<UIItemActivated>,
            mut menus: Query<&mut UIAnchoredPanel, With<NameMenu>>,
            mut cmd: CommandQueue| {
-        if on.signal().button != MouseButton::Left {
-            return;
-        }
         close_menu(&mut menus);
         if let Some(assignment) = &assignment {
             cmd.trigger(WriteValue {
@@ -482,7 +477,7 @@ pub(crate) fn sync_rig_panels(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::rig::tests::{PELVIS, RigTab, left_click, rig_tab};
+    use crate::rig::tests::{PELVIS, RigTab, rig_tab};
     use concerto_ecs::{
         IntoSystem, World,
         entity::hierarchy::{ChildOf, Children},
@@ -554,7 +549,7 @@ mod tests {
             .expect("the bone menu is open");
         let item =
             item_labelled(&tab.f.world, menu, "spine start").expect("the menu lists the chain");
-        tab.f.world.trigger_on(item, left_click());
+        tab.f.world.trigger_on(item, UIItemActivated);
         tab.f.frame();
 
         assert_eq!(tab.rig().chains[0].start, "pelvis".into());

@@ -2,63 +2,61 @@ use concerto_ecs::{
     Component, Entity, Query, Res, With, command::CommandQueue,
     query::change_detection::DetectChanges, signal::listener::Listener,
 };
-use concerto_ui::elements::prelude::*;
 use concerto_ui::{
     anchor::{UIAnchorAlign, UIAnchorSide, UIAnchorTarget, UIAnchoredPanel},
-    interaction::UIClick,
-    node::UIRect,
-    scroll::{SCROLLBAR_WIDTH, UIScrollArea},
+    items::UIItemActivated,
     theme::UITheme,
-    transform::UIValue,
 };
 
 use glam::Vec2;
 
 use crate::asset_editor::ActiveEditor;
-
-const MENU_WIDTH: f32 = 220.0;
-const ITEM_HEIGHT: f32 = 26.0;
-const LIST_MAX_HEIGHT: f32 = 280.0;
-const SCROLLBAR_GUTTER: f32 = SCROLLBAR_WIDTH + 2.0;
+use crate::picker_menu::{PickerEntry, picker_panel, show_picker_menu, spawn_picker_content};
 
 /// The popup listing names to pick from, shared by every name picker.
 #[derive(Component)]
 pub struct NameMenu;
 
-fn menu_panel(button: Entity) -> UIAnchoredPanel {
-    UIAnchoredPanel::new(UIAnchorTarget::from_node(button))
-        .with_owner(button)
-        .with_side(UIAnchorSide::Below)
-        .with_align(UIAnchorAlign::End)
-        .with_gap(4.0)
-        .with_open(true)
-}
-
-/// Opens the name menu under `button` listing `names`, or closes it when it is already open there.
+/// Opens the name menu under `button` listing `names` under a search field, or closes it when it is already open there.
 pub fn open_name_menu(
     button: Entity,
     names: &[impl AsRef<str>],
     current: Option<&str>,
-    pick: impl Fn(&str) -> Listener<UIClick>,
+    pick: impl Fn(&str) -> Listener<UIItemActivated>,
     menus: &mut Query<(Entity, &mut UIAnchoredPanel), With<NameMenu>>,
     theme: &UITheme,
     cmd: &mut CommandQueue,
 ) {
-    if let Some((_, mut panel)) = menus.iter_mut().next()
-        && panel.open
-        && panel.owner == Some(button)
-    {
-        panel.open = false;
-        return;
+    let mut menu = None;
+    if let Some((entity, mut panel)) = menus.iter_mut().next() {
+        if panel.open && panel.owner == Some(button) {
+            panel.open = false;
+            return;
+        }
+        menu = Some(entity);
     }
-    fill_menu(menu_panel(button), names, current, pick, menus, theme, cmd);
+    let content = spawn_picker_content(
+        entries(names, current, pick),
+        Some("Search…"),
+        "None",
+        theme,
+        cmd,
+    );
+    show_picker_menu(
+        menu,
+        picker_panel(button, content.field),
+        NameMenu,
+        content,
+        theme,
+        cmd,
+    );
 }
 
 /// Opens the name menu at `position`, a point in the window, listing `names`; a press outside it closes it.
 pub fn open_name_menu_at(
     position: Vec2,
     names: &[impl AsRef<str>],
-    pick: impl Fn(&str) -> Listener<UIClick>,
+    pick: impl Fn(&str) -> Listener<UIItemActivated>,
     menus: &mut Query<(Entity, &mut UIAnchoredPanel), With<NameMenu>>,
     theme: &UITheme,
     cmd: &mut CommandQueue,
@@ -67,87 +65,23 @@ pub fn open_name_menu_at(
         .with_side(UIAnchorSide::Below)
         .with_align(UIAnchorAlign::Start)
         .with_open(true);
-    fill_menu(panel, names, None, pick, menus, theme, cmd);
+    let content = spawn_picker_content(entries(names, None, pick), None, "None", theme, cmd);
+    let menu = menus.iter_mut().next().map(|(entity, _)| entity);
+    show_picker_menu(menu, panel, NameMenu, content, theme, cmd);
 }
 
-fn fill_menu(
-    placed: UIAnchoredPanel,
+fn entries(
     names: &[impl AsRef<str>],
     current: Option<&str>,
-    pick: impl Fn(&str) -> Listener<UIClick>,
-    menus: &mut Query<(Entity, &mut UIAnchoredPanel), With<NameMenu>>,
-    theme: &UITheme,
-    cmd: &mut CommandQueue,
-) {
-    let mut menu = match menus.iter_mut().next() {
-        Some((entity, mut panel)) => {
-            **panel = placed;
-            cmd.entity(entity).despawn_children()
-        }
-        None => cmd.spawn((
-            theme
-                .popup()
-                .width(UIValue::Px(MENU_WIDTH))
-                .padding(theme.spacing_xs),
-            placed,
-            NameMenu,
-        )),
-    };
-    if names.is_empty() {
-        menu.add_child(
-            theme
-                .label("None")
-                .muted()
-                .font_size(theme.font_size_sm)
-                .no_wrap()
-                .padding(UIRect::axes(6.0, 8.0)),
-        );
-        return;
-    }
-    let extent = names.len() as f32 * ITEM_HEIGHT;
-    menu.add_child_with(
-        theme
-            .column()
-            .fixed()
-            .height(UIValue::Px(extent.min(LIST_MAX_HEIGHT)))
-            .clipped(),
-        |mut view| {
-            let mut list = view.spawn_child(theme.column().gap(0.0).padding(UIRect {
-                right: SCROLLBAR_GUTTER,
-                ..UIRect::all(0.0)
-            }));
-            for name in names {
-                let name = name.as_ref();
-                list.add_child_with(
-                    theme
-                        .pressable()
-                        .selected(current == Some(name))
-                        .row()
-                        .fixed()
-                        .height(UIValue::Px(ITEM_HEIGHT))
-                        .padding(UIRect::axes(0.0, 8.0))
-                        .on_click(pick(name)),
-                    |mut item| {
-                        item.add_child(
-                            theme
-                                .label(name)
-                                .font_size(theme.font_size_sm)
-                                .single_line()
-                                .grow()
-                                .shrink(1.0)
-                                .min_width(UIValue::Px(0.0)),
-                        );
-                    },
-                );
-            }
-            let list = list.entity();
-            view.insert(UIScrollArea {
-                content: Some(list),
-                content_extent: extent,
-                ..Default::default()
-            });
-        },
-    );
+    pick: impl Fn(&str) -> Listener<UIItemActivated>,
+) -> Vec<PickerEntry> {
+    names
+        .iter()
+        .map(|name| {
+            let name = name.as_ref();
+            PickerEntry::new(name, pick(name)).with_current(current == Some(name))
+        })
+        .collect()
 }
 
 /// Closes the name menu.

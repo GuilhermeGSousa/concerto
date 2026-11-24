@@ -5,6 +5,7 @@ use concerto_ecs::{
 };
 use concerto_foundation::assets::{Asset, registry::AssetEntry};
 use concerto_mesh::Mesh;
+use concerto_ui::{list::UIList, search::UISearchText};
 
 fn entry(path: &str, kind: &str) -> AssetEntry {
     AssetEntry {
@@ -20,8 +21,8 @@ fn entry(path: &str, kind: &str) -> AssetEntry {
 #[derive(Resource, Default)]
 struct Picks(Vec<AssetId>);
 
-fn note_pick(id: AssetId) -> Listener<UIClick> {
-    (move |_: On<UIClick>, mut picks: ResMut<Picks>| picks.0.push(id)).into_listener()
+fn note_pick(id: AssetId) -> Listener<UIItemActivated> {
+    (move |_: On<UIItemActivated>, mut picks: ResMut<Picks>| picks.0.push(id)).into_listener()
 }
 
 fn open_with_no_row(
@@ -64,6 +65,7 @@ fn children(world: &World, entity: Entity) -> Vec<Entity> {
 struct Item {
     entity: Entity,
     name: String,
+    search: String,
 }
 
 fn items(world: &mut World) -> Vec<Item> {
@@ -75,11 +77,7 @@ fn items(world: &mut World) -> Vec<Item> {
     let lists: Vec<Entity> = menus
         .iter()
         .flat_map(|&menu| children(world, menu))
-        .filter_map(|view| {
-            world
-                .get_component_for_entity::<UIScrollArea>(view)?
-                .content
-        })
+        .filter(|&view| world.get_component_for_entity::<UIList>(view).is_some())
         .collect();
     lists
         .iter()
@@ -90,6 +88,10 @@ fn items(world: &mut World) -> Vec<Item> {
             Item {
                 entity: item,
                 name: text.text.clone(),
+                search: world
+                    .get_component_for_entity::<UISearchText>(item)
+                    .map(|search| search.0.clone())
+                    .unwrap_or_default(),
             }
         })
         .collect()
@@ -115,8 +117,12 @@ fn a_menu_with_no_row_lists_the_kind_and_runs_the_pick_it_was_given() {
     let items = items(&mut world);
     let names: Vec<&str> = items.iter().map(|item| item.name.as_str()).collect();
     assert_eq!(names, ["cube", "sphere"]);
+    assert_eq!(
+        items[1].search, "sphere content/props",
+        "a search matches the folder too"
+    );
 
-    click(&mut world, items[1].entity);
+    world.trigger_on(items[1].entity, UIItemActivated);
 
     assert_eq!(world.get_resource::<Picks>().unwrap().0, [sphere.id]);
 }

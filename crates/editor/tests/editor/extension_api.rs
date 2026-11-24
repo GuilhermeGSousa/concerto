@@ -10,10 +10,10 @@ use concerto_editor::asset_picker::{
     AssetPickerMenu, asset_name, open_asset_menu, picker_button, picker_caret, picker_label,
 };
 use concerto_foundation::assets::{AssetId, registry::AssetRegistry};
-use concerto_ui::{anchor::UIAnchoredPanel, interaction::UIClick, theme::UITheme};
+use concerto_ui::{anchor::UIAnchoredPanel, items::UIItemActivated, theme::UITheme};
 
-fn pick(_: AssetId) -> Listener<UIClick> {
-    (|_: On<UIClick>| {}).into_listener()
+fn pick(_: AssetId) -> Listener<UIItemActivated> {
+    (|_: On<UIItemActivated>| {}).into_listener()
 }
 
 fn open_menu(

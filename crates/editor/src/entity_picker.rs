@@ -6,7 +6,6 @@ use concerto_ecs::{
     command::{CommandQueue, EntityCommandQueue},
     component::{name::Name, scene::SceneEntityRef},
     entity::hierarchy::{ChildOf, Children},
-    events::event_reader::EventReader,
     query::filter::{With, Without},
     signal::{
         On,
@@ -16,32 +15,23 @@ use concerto_ecs::{
 };
 use concerto_ui::elements::{Listening, Pressable, Text, prelude::*};
 use concerto_ui::{
-    anchor::UIAnchoredPanel,
-    interaction::UIClick,
-    node::{UINode, UIRect},
-    scroll::UIScrollArea,
-    text::UIText,
-    text_input::UITextInputChanged,
+    anchor::UIAnchoredPanel, interaction::UIClick, items::UIItemActivated, text::UIText,
     theme::UITheme,
-    transform::UIValue,
 };
 use concerto_window::input::MouseButton;
 
 use crate::asset_editor::ActiveEditor;
-use crate::asset_picker::{
-    ITEM_HEIGHT, LIST_MAX_HEIGHT, MENU_WIDTH, SCROLLBAR_GUTTER, menu_panel, picker_button,
-    picker_caret, picker_label,
-};
+use crate::asset_picker::{picker_button, picker_caret, picker_label};
 use crate::fonts::{button_icon, glyph, icon_button};
 use crate::hierarchy::{HierarchyState, ListRoot, ListedEntity, listed_entities};
 use crate::hosted::{EditTarget, EditWorld, EditWorldSignals, PlayState};
 use crate::inspector::{
     EditContext, EditError, PropertyCommits, PropertyEditor, PropertyRow, PropertyRowValue,
 };
+use crate::picker_menu::{PickerEntry, picker_panel, show_picker_menu, spawn_picker_content};
 use crate::tools::{scene::SceneRoot, selection::Select};
 
 const NOT_IN_SCENE: &str = "(not in this scene)";
-const INDENT: f32 = 14.0;
 
 /// Picks the entity a [`SceneEntityRef`] names from the entities of the scene being edited.
 #[derive(Default)]
@@ -53,7 +43,6 @@ pub struct EntityPickerPlugin;
 impl Plugin for EntityPickerPlugin {
     fn build(&self, app: &mut App) {
         app.add_system(LateUpdate, refresh_entity_picker_labels)
-            .add_system(LateUpdate, filter_entity_picker)
             .add_listener(forget_scene);
     }
 }
@@ -118,24 +107,9 @@ fn select_button(theme: &UITheme, row: Entity) -> (Listening<Pressable, UIClick>
     )
 }
 
-/// The menu every entity picker shares, holding the text its filter field narrows the list by.
+/// The menu every entity picker shares.
 #[derive(Component)]
-pub struct EntityPickerMenu {
-    filter: String,
-}
-
-#[derive(Component)]
-struct EntityPickerFilter;
-
-#[derive(Component)]
-struct EntityPickerView;
-
-#[derive(Component, Clone)]
-struct EntityPickerItem {
-    entity: Option<Entity>,
-    parent: Option<Entity>,
-    label: String,
-}
+pub struct EntityPickerMenu;
 
 fn held(values: &Query<&PropertyRowValue>, row: Entity) -> Option<SceneEntityRef> {
     values
@@ -146,7 +120,7 @@ fn held(values: &Query<&PropertyRowValue>, row: Entity) -> Option<SceneEntityRef
 fn toggle_entity_picker(row: Entity) -> Listener<UIClick> {
     (move |on: On<UIClick>,
            values: Query<&PropertyRowValue>,
-           mut menus: Query<(Entity, &mut EntityPickerMenu, &mut UIAnchoredPanel)>,
+           mut menus: Query<(Entity, &mut UIAnchoredPanel), With<EntityPickerMenu>>,
            roots: EditWorld<Query<(Entity, &SceneRoot)>>,
            top_level: EditWorld<Query<Entity, (Without<ChildOf>, Without<GlobalListener>)>>,
            children: EditWorld<Query<&Children>>,
@@ -159,30 +133,14 @@ fn toggle_entity_picker(row: Entity) -> Listener<UIClick> {
             return;
         }
         let button = on.entity();
-        let mut menu = match menus.iter_mut().next() {
-            Some((entity, mut menu, mut panel)) => {
-                if panel.open && panel.owner == Some(button) {
-                    panel.open = false;
-                    return;
-                }
-                if !menu.filter.is_empty() {
-                    menu.filter.clear();
-                }
-                **panel = menu_panel(button);
-                cmd.entity(entity).despawn_children()
+        let mut menu = None;
+        if let Some((entity, mut panel)) = menus.iter_mut().next() {
+            if panel.open && panel.owner == Some(button) {
+                panel.open = false;
+                return;
             }
-            None => cmd.spawn((
-                theme
-                    .popup()
-                    .width(UIValue::Px(MENU_WIDTH))
-                    .padding(theme.spacing_xs)
-                    .gap(theme.spacing_xs),
-                menu_panel(button),
-                EntityPickerMenu {
-                    filter: String::new(),
-                },
-            )),
-        };
+            menu = Some(entity);
+        }
         let candidates = listed_entities(
             &roots,
             &top_level,
@@ -192,101 +150,63 @@ fn toggle_entity_picker(row: Entity) -> Listener<UIClick> {
             ListRoot::Exclude,
         );
         let current = held(&values, row).unwrap_or_default();
-        fill_menu(&mut menu, row, current, &candidates, &names, &theme);
+        let content = spawn_picker_content(
+            entries(row, current, &candidates, &names),
+            Some("Search entities…"),
+            "None",
+            &theme,
+            &mut cmd,
+        );
+        show_picker_menu(
+            menu,
+            picker_panel(button, content.field),
+            EntityPickerMenu,
+            content,
+            &theme,
+            &mut cmd,
+        );
     })
     .into_listener()
 }
 
-fn fill_menu(
-    menu: &mut EntityCommandQueue,
+fn entries(
     row: Entity,
     current: SceneEntityRef,
     candidates: &[ListedEntity],
     names: &Query<Option<&Name>>,
-    theme: &UITheme,
-) {
-    menu.add_child((theme.text_field("Search entities…"), EntityPickerFilter));
-    let items: Vec<EntityPickerItem> = std::iter::once(EntityPickerItem {
-        entity: None,
-        parent: None,
-        label: "None".into(),
-    })
-    .chain(candidates.iter().map(|listed| EntityPickerItem {
-        entity: Some(listed.entity),
-        parent: listed.parent,
-        label: entity_label(listed.entity, names.get_entity(listed.entity).flatten()),
-    }))
-    .collect();
-    let depths: Vec<usize> = std::iter::once(0)
-        .chain(candidates.iter().map(|listed| listed.depth))
+) -> Vec<PickerEntry> {
+    let none = SceneEntityRef::default();
+    let positions: HashMap<Entity, usize> = candidates
+        .iter()
+        .enumerate()
+        .map(|(index, listed)| (listed.entity, index + 1))
         .collect();
-    let extent = items.len() as f32 * ITEM_HEIGHT;
-    menu.add_child_with(
-        (
-            theme
-                .column()
-                .fixed()
-                .height(UIValue::Px(extent.min(LIST_MAX_HEIGHT)))
-                .clipped(),
-            EntityPickerView,
-        ),
-        |mut view| {
-            let mut list = view.spawn_child(theme.column().gap(0.0).padding(UIRect {
-                right: SCROLLBAR_GUTTER,
-                ..UIRect::all(0.0)
-            }));
-            for (item, depth) in items.iter().zip(&depths) {
-                let value = item
-                    .entity
-                    .map_or_else(SceneEntityRef::default, SceneEntityRef::Entity);
-                let label = item.label.clone();
-                list.add_child_with(
-                    (
-                        theme
-                            .pressable()
-                            .selected(current == value)
-                            .row()
-                            .fixed()
-                            .height(UIValue::Px(ITEM_HEIGHT))
-                            .padding(UIRect {
-                                left: 8.0 + *depth as f32 * INDENT,
-                                right: 8.0,
-                                ..UIRect::all(0.0)
-                            })
-                            .on_click(pick_entity(row, value)),
-                        item.clone(),
-                    ),
-                    |mut item| {
-                        item.add_child(
-                            theme
-                                .label(label.clone())
-                                .font_size(12.5)
-                                .single_line()
-                                .grow()
-                                .shrink(1.0)
-                                .min_width(UIValue::Px(0.0)),
-                        );
-                    },
-                );
-            }
-            let list = list.entity();
-            view.insert(UIScrollArea {
-                content: Some(list),
-                content_extent: extent,
-                ..Default::default()
-            });
-        },
-    );
+    std::iter::once(
+        PickerEntry::new("None", pick_entity(row, none))
+            .always_shown()
+            .with_current(current == none),
+    )
+    .chain(candidates.iter().map(|listed| {
+        let value = SceneEntityRef::Entity(listed.entity);
+        PickerEntry::new(
+            entity_label(listed.entity, names.get_entity(listed.entity).flatten()),
+            pick_entity(row, value),
+        )
+        .with_parent(
+            listed
+                .parent
+                .and_then(|parent| positions.get(&parent).copied()),
+        )
+        .with_current(current == value)
+    }))
+    .collect()
 }
 
-fn pick_entity(row: Entity, value: SceneEntityRef) -> Listener<UIClick> {
-    (move |on: On<UIClick>,
+fn pick_entity(row: Entity, value: SceneEntityRef) -> Listener<UIItemActivated> {
+    (move |_: On<UIItemActivated>,
            mut menus: Query<&mut UIAnchoredPanel, With<EntityPickerMenu>>,
            rows: Query<(&PropertyRow, &PropertyRowValue)>,
            mut commits: ResMut<PropertyCommits>| {
-        if on.signal().button != MouseButton::Left {
-            return;
-        }
         if let Some((property, held)) = rows.get_entity(row)
             && held.downcast::<SceneEntityRef>() != Some(&value)
             && let Err(error) = commits.push::<SceneEntityRef, EntityPicker>(property, value)
@@ -332,71 +252,6 @@ fn select_referenced(row: Entity) -> Listener<UIClick> {
         }
     })
     .into_listener()
-}
-
-fn filter_entity_picker(
-    mut events: EventReader<UITextInputChanged>,
-    filters: Query<&EntityPickerFilter>,
-    mut menus: Query<&mut EntityPickerMenu>,
-    mut items: Query<(&EntityPickerItem, &mut UINode)>,
-    mut views: Query<
-        (&mut UIScrollArea, &mut UINode),
-        (With<EntityPickerView>, Without<EntityPickerItem>),
-    >,
-) {
-    let Some(text) = events
-        .read()
-        .filter(|event| filters.get_entity(event.entity).is_some())
-        .last()
-        .map(|event| event.value.clone())
-    else {
-        return;
-    };
-    for mut menu in menus.iter_mut() {
-        if menu.filter != text {
-            menu.filter = text.clone();
-        }
-    }
-    let filter = text.to_lowercase();
-    let parents: HashMap<Entity, Option<Entity>> = items
-        .iter_mut()
-        .filter_map(|(item, _)| item.entity.map(|entity| (entity, item.parent)))
-        .collect();
-    let mut shown = HashSet::new();
-    for (item, _) in items.iter_mut() {
-        let Some(entity) = item.entity else {
-            continue;
-        };
-        if !item.label.to_lowercase().contains(&filter) {
-            continue;
-        }
-        let mut next = Some(entity);
-        while let Some(entity) = next {
-            if !shown.insert(entity) {
-                break;
-            }
-            next = parents.get(&entity).copied().flatten();
-        }
-    }
-    let mut count = 0;
-    for (item, mut node) in items.iter_mut() {
-        let visible = item.entity.is_none_or(|entity| shown.contains(&entity));
-        count += usize::from(visible);
-        if node.visible != visible {
-            node.visible = visible;
-        }
-    }
-    let extent = count as f32 * ITEM_HEIGHT;
-    let height = UIValue::Px(extent.min(LIST_MAX_HEIGHT));
-    for (mut area, mut node) in views.iter_mut() {
-        if area.content_extent != extent || area.offset != 0.0 {
-            area.content_extent = extent;
-            area.offset = 0.0;
-        }
-        if node.height != height {
-            node.height = height;
-        }
-    }
 }
 
 fn forget_scene(

@@ -3,7 +3,7 @@ use std::{any::Any, sync::Arc};
 use concerto_app::{App, Plugin, schedule_groups::LateUpdate};
 use concerto_ecs::{
     Component, Entity, Query, Res, ResMut,
-    command::{CommandQueue, EntityCommandQueue},
+    command::CommandQueue,
     signal::{
         On,
         lifecycle::Remove,
@@ -18,10 +18,10 @@ use concerto_foundation::assets::{
 use concerto_reflect::Reflect;
 use concerto_ui::elements::{Label, Pressable, Text, prelude::*};
 use concerto_ui::{
-    anchor::{UIAnchorAlign, UIAnchorSide, UIAnchorTarget, UIAnchoredPanel},
+    anchor::UIAnchoredPanel,
     interaction::UIClick,
+    items::UIItemActivated,
     node::{UINode, UIRect},
-    scroll::{SCROLLBAR_WIDTH, UIScrollArea},
     text::UIText,
     theme::UITheme,
     transform::UIValue,
@@ -34,11 +34,7 @@ use crate::inspector::{
     EditContext, EditError, ErasedEditor, PropertyCommit, PropertyCommits, PropertyRow,
     PropertyRowValue,
 };
-
-pub(crate) const MENU_WIDTH: f32 = 240.0;
-pub(crate) const ITEM_HEIGHT: f32 = 26.0;
-pub(crate) const LIST_MAX_HEIGHT: f32 = 280.0;
-pub(crate) const SCROLLBAR_GUTTER: f32 = SCROLLBAR_WIDTH + 2.0;
+use crate::picker_menu::{PickerEntry, picker_panel, show_picker_menu, spawn_picker_content};
 
 /// Picks the asset a reflected asset handle names from the project's assets of its kind.
 pub struct AssetPicker {
@@ -153,15 +149,6 @@ pub fn asset_name(registry: &AssetRegistry, id: AssetId) -> String {
         .map_or_else(|| "Missing".into(), |entry| entry.name().into())
 }
 
-pub(crate) fn menu_panel(button: Entity) -> UIAnchoredPanel {
-    UIAnchoredPanel::new(UIAnchorTarget::from_node(button))
-        .with_owner(button)
-        .with_side(UIAnchorSide::Below)
-        .with_align(UIAnchorAlign::End)
-        .with_gap(4.0)
-        .with_open(true)
-}
-
 /// A picker's button, which takes the free space of the row it sits in.
 pub fn picker_button(theme: &UITheme) -> Pressable {
     theme
@@ -222,122 +209,57 @@ fn toggle_asset_picker(row: Entity, kind: &'static str) -> Listener<UIClick> {
     .into_listener()
 }
 
-/// Opens the shared menu under `button` on `kind`'s assets, each item's click built by `pick`, or closes it if `button` opened it; `row` is `None` for a menu that commits to no property.
+/// Opens the shared menu under `button` on `kind`'s assets, searchable by name and folder, each item's pick built by `pick`, or closes it if `button` opened it; `row` is `None` for a menu that commits to no property.
 pub fn open_asset_menu(
     button: Entity,
     kind: &str,
     row: Option<Entity>,
     current: Option<AssetId>,
-    pick: impl Fn(AssetId) -> Listener<UIClick>,
+    pick: impl Fn(AssetId) -> Listener<UIItemActivated>,
     menus: &mut Query<(Entity, &mut AssetPickerMenu, &mut UIAnchoredPanel)>,
     registry: &AssetRegistry,
     theme: &UITheme,
     cmd: &mut CommandQueue,
 ) {
-    let mut menu = match menus.iter_mut().next() {
-        Some((entity, mut menu, mut panel)) => {
-            if panel.open && panel.owner == Some(button) {
-                panel.open = false;
-                return;
-            }
-            menu.row = row;
-            **panel = menu_panel(button);
-            cmd.entity(entity).despawn_children()
+    let mut menu = None;
+    if let Some((entity, _, mut panel)) = menus.iter_mut().next() {
+        if panel.open && panel.owner == Some(button) {
+            panel.open = false;
+            return;
         }
-        None => cmd.spawn((
-            theme
-                .popup()
-                .width(UIValue::Px(MENU_WIDTH))
-                .padding(theme.spacing_xs),
-            menu_panel(button),
-            AssetPickerMenu { row },
-        )),
-    };
-    fill_menu(&mut menu, kind, registry, current, pick, theme);
-}
-
-fn fill_menu(
-    menu: &mut EntityCommandQueue,
-    kind: &str,
-    registry: &AssetRegistry,
-    current: Option<AssetId>,
-    pick: impl Fn(AssetId) -> Listener<UIClick>,
-    theme: &UITheme,
-) {
-    let entries: Vec<_> = registry.of_kind(kind).collect();
-    if entries.is_empty() {
-        menu.add_child(
-            theme
-                .label(format!("No {kind} assets"))
-                .muted()
-                .font_size(12.0)
-                .no_wrap()
-                .padding(UIRect::axes(6.0, 8.0)),
-        );
-        return;
+        menu = Some(entity);
     }
-    let extent = entries.len() as f32 * ITEM_HEIGHT;
-    menu.add_child_with(
-        theme
-            .column()
-            .fixed()
-            .height(UIValue::Px(extent.min(LIST_MAX_HEIGHT)))
-            .clipped(),
-        |mut view| {
-            let mut list = view.spawn_child(theme.column().gap(0.0).padding(UIRect {
-                right: SCROLLBAR_GUTTER,
-                ..UIRect::all(0.0)
-            }));
-            for entry in &entries {
-                list.add_child_with(
-                    theme
-                        .pressable()
-                        .selected(current == Some(entry.id))
-                        .row()
-                        .gap(8.0)
-                        .fixed()
-                        .height(UIValue::Px(ITEM_HEIGHT))
-                        .padding(UIRect::axes(0.0, 8.0))
-                        .on_click(pick(entry.id)),
-                    |mut item| {
-                        item.add_child(
-                            theme
-                                .label(entry.name())
-                                .font_size(12.5)
-                                .single_line()
-                                .grow()
-                                .shrink(1.0)
-                                .min_width(UIValue::Px(0.0)),
-                        )
-                        .add_child(
-                            theme
-                                .label(entry.folder())
-                                .muted()
-                                .font_size(10.5)
-                                .no_wrap(),
-                        );
-                    },
-                );
-            }
-            let list = list.entity();
-            view.insert(UIScrollArea {
-                content: Some(list),
-                content_extent: extent,
-                ..Default::default()
-            });
-        },
+    let entries = registry
+        .of_kind(kind)
+        .map(|entry| {
+            PickerEntry::new(entry.name(), pick(entry.id))
+                .with_detail(entry.folder())
+                .with_current(current == Some(entry.id))
+        })
+        .collect();
+    let content = spawn_picker_content(
+        entries,
+        Some("Search assets…"),
+        &format!("No {kind} assets"),
+        theme,
+        cmd,
+    );
+    show_picker_menu(
+        menu,
+        picker_panel(button, content.field),
+        AssetPickerMenu { row },
+        content,
+        theme,
+        cmd,
     );
 }
 
 /// Commits `id` to the row the open menu was opened for, then closes the menu.
-fn pick_asset(id: AssetId) -> Listener<UIClick> {
-    (move |on: On<UIClick>,
+fn pick_asset(id: AssetId) -> Listener<UIItemActivated> {
+    (move |_: On<UIItemActivated>,
            mut menus: Query<(&AssetPickerMenu, &mut UIAnchoredPanel)>,
            rows: Query<(&PropertyRow, &PropertyRowValue)>,
            mut commits: ResMut<PropertyCommits>| {
-        if on.signal().button != MouseButton::Left {
-            return;
-        }
         for (menu, mut panel) in menus.iter_mut() {
             if let Some((row, value)) = menu
                 .row

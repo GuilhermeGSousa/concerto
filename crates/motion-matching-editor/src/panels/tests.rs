@@ -13,7 +13,10 @@ use concerto_editor::{
 use concerto_foundation::assets::{handle::AssetHandle, registry::AssetEntry};
 use concerto_mesh::{JointPose, Skeleton};
 use concerto_motion_matching::{MotionDatabase, MotionEntry, TimeRange};
-use concerto_ui::{anchor::UIAnchoredPanel, interaction::UIClick, node::UINode, text::UIText};
+use concerto_ui::{
+    anchor::UIAnchoredPanel, interaction::UIClick, items::UIItemActivated, node::UINode,
+    text::UIText,
+};
 use concerto_window::input::MouseButton;
 use glam::Mat4;
 use uuid::Uuid;
@@ -159,6 +162,10 @@ impl Tab {
         );
     }
 
+    fn activate(&mut self, item: Entity) {
+        self.f.world.trigger_on(item, UIItemActivated);
+    }
+
     pub(crate) fn clicked(&mut self, entity: Entity) {
         self.click(entity);
         self.f.frame();
@@ -264,13 +271,13 @@ fn the_left_panels_edits_of_the_skeleton_entries_ranges_and_channels_are_saved()
     let picker = tab.panels().skeleton_button;
     tab.click(picker);
     let item = tab.item_in::<AssetPickerMenu>("rig");
-    tab.click(item);
+    tab.activate(item);
     tab.f.frame();
     tab.until_read();
     let add = tab.panels().add_entry;
     tab.click(add);
     let item = tab.item_in::<AssetPickerMenu>("jog");
-    tab.click(item);
+    tab.activate(item);
     tab.f.frame();
     tab.until_read();
     let remove = tab.panels().entry_rows[0].remove;
@@ -288,7 +295,9 @@ fn the_left_panels_edits_of_the_skeleton_entries_ranges_and_channels_are_saved()
     let add = tab.panels().add_channel;
     tab.click(add);
     let item = tab.item_in::<NameMenu>("BonePositions");
-    tab.clicked(item);
+    tab.activate(item);
+    tab.f.frame();
+    tab.f.frame();
     let remove = tab.channel_remove(1);
     tab.clicked(remove);
     assert!(tab.unsaved());

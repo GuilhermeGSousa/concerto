@@ -22,6 +22,7 @@ pub mod joint_picker;
 pub mod links;
 pub mod mcp;
 pub mod name_menu;
+pub mod picker_menu;
 pub mod placement;
 pub mod preview;
 pub mod project;

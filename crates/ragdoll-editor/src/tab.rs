@@ -35,7 +35,7 @@ use concerto_ui::elements::{Label, prelude::*};
 use concerto_ui::{
     anchor::UIAnchoredPanel,
     interaction::UIClick,
-    items::{UIItemSelected, UISelected},
+    items::{UIItemActivated, UIItemSelected, UISelected},
     node::{UINode, UIRect},
     text::UIText,
     theme::UITheme,
@@ -560,13 +560,10 @@ fn add_part_menu(document: Entity) -> Listener<UIClick> {
     .into_listener()
 }
 
-fn add_part(document: Entity, bone: String) -> Listener<UIClick> {
-    (move |on: On<UIClick>,
+fn add_part(document: Entity, bone: String) -> Listener<UIItemActivated> {
+    (move |_: On<UIItemActivated>,
            mut menus: Query<&mut UIAnchoredPanel, With<NameMenu>>,
            mut cmd: CommandQueue| {
-        if on.signal().button != MouseButton::Left {
-            return;
-        }
         close_menu(&mut menus);
         cmd.trigger(EditRagdollPart {
             document,
