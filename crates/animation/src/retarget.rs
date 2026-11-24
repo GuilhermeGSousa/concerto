@@ -1198,23 +1198,13 @@ impl Running {
             &mut self.pool,
             &mut frame,
         ) {
-            match self
+            if let Err(error) = self
                 .retarget
                 .retarget_into(frame.joints(), output.pose_mut().joints_mut())
+                && !self.warned
             {
-                Ok(()) => {
-                    let motion = frame.root_motion();
-                    output.set_root_motion(RootMotion {
-                        translation: motion.translation * self.retarget.scale(),
-                        rotation: motion.rotation,
-                    });
-                }
-                Err(error) => {
-                    if !self.warned {
-                        warn!("RetargetNode does not retarget its inner pose: {error}");
-                        self.warned = true;
-                    }
-                }
+                warn!("RetargetNode does not retarget its inner pose: {error}");
+                self.warned = true;
             }
             for event in frame.events() {
                 output.push_event(*event);
@@ -3227,12 +3217,10 @@ mod tests {
 
         assert_poses(frame.joints(), &target.rest_pose);
         assert_vec3(
-            frame.root_motion().translation,
+            passed.translation,
             Vec3::new(0.2, 0.0, 0.4) * source_to_target().scale(),
         );
-        assert_quat(frame.root_motion().rotation, Quat::IDENTITY);
-        assert_vec3(passed.translation, frame.root_motion().translation);
-        assert_quat(passed.rotation, frame.root_motion().rotation);
+        assert_quat(passed.rotation, Quat::IDENTITY);
         assert_eq!(
             frame.events(),
             [FiredEvent {

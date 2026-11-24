@@ -317,7 +317,7 @@ mod tests {
         blackboard::AnimationBlackboard,
         evaluation::AnimationGraphContext,
         node::AnimationNode,
-        pose::{AnimationFrame, EvaluatedFrame, FiredEvent, FramePool, Pose, RootMotion},
+        pose::{AnimationFrame, EvaluatedFrame, FiredEvent, FramePool, Pose},
         testing::Walks,
     };
 
@@ -393,13 +393,6 @@ mod tests {
         .unwrap()
     }
 
-    fn input_motion() -> RootMotion {
-        RootMotion {
-            translation: Vec3::new(0.1, 0.0, 0.3),
-            rotation: Quat::from_rotation_y(0.05),
-        }
-    }
-
     fn input_event() -> FiredEvent {
         FiredEvent {
             clip: AssetId::from_path("ik_input"),
@@ -429,7 +422,6 @@ mod tests {
 
         fn input(&self) -> AnimationFrame {
             let mut frame = AnimationFrame::new(Pose::from_joints(self.skeleton.rest_pose.clone()));
-            frame.set_root_motion(input_motion());
             frame.push_event(input_event());
             frame
         }
@@ -532,7 +524,6 @@ mod tests {
         let frame = rig.solve(&node(on_grip(offset, Quat::IDENTITY)));
 
         assert_near(rig.model_position(&frame, HAND), rig.grip_point(offset));
-        assert_eq!(frame.root_motion(), input_motion());
         assert_eq!(frame.events(), [input_event()]);
         let input = rig.input();
         for bone in (0..rig.skeleton.bone_count()).filter(|bone| !CHAIN.contains(bone)) {

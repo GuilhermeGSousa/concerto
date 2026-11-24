@@ -133,24 +133,22 @@ impl Pose {
     }
 }
 
-/// What an animation graph gives for one frame: the pose, how the root moved, and the clip events crossed.
+/// What an animation graph gives for one frame: the pose and the clip events crossed.
 pub struct AnimationFrame {
     pose: Pose,
-    root_motion: RootMotion,
     pub(crate) events: Vec<FiredEvent>,
 }
 
 impl AnimationFrame {
-    /// A frame of `bone_count` identity joints, no root motion and no events.
+    /// A frame of `bone_count` identity joints, no events.
     pub fn identity(bone_count: usize) -> AnimationFrame {
         AnimationFrame::new(Pose::identity(bone_count))
     }
 
-    /// A frame of `pose`, with no root motion and no events.
+    /// A frame of `pose`, with no events.
     pub fn new(pose: Pose) -> AnimationFrame {
         AnimationFrame {
             pose,
-            root_motion: RootMotion::IDENTITY,
             events: Vec::new(),
         }
     }
@@ -190,16 +188,6 @@ impl AnimationFrame {
         self.pose.joint_mut(bone_index)
     }
 
-    /// How the root moved this frame.
-    pub fn root_motion(&self) -> RootMotion {
-        self.root_motion
-    }
-
-    /// Sets how the root moved this frame.
-    pub fn set_root_motion(&mut self, root_motion: RootMotion) {
-        self.root_motion = root_motion;
-    }
-
     /// The clip events this frame carries, each weighted by its source.
     pub fn events(&self) -> &[FiredEvent] {
         &self.events
@@ -210,10 +198,9 @@ impl AnimationFrame {
         self.events.push(event);
     }
 
-    /// Blends the pose and root motion toward `other` by `weight`, and weights both frames' events to match.
+    /// Blends the pose toward `other` by `weight`, and weights both frames' events to match.
     pub fn blend(&mut self, other: &AnimationFrame, weight: f32) {
         self.pose.blend(&other.pose, weight);
-        self.root_motion = self.root_motion.blend(other.root_motion, weight);
         for event in &mut self.events {
             event.weight *= 1.0 - weight;
         }
@@ -224,10 +211,9 @@ impl AnimationFrame {
             }));
     }
 
-    /// Overwrites this frame's joints, root motion and events with those of `other` (same skeleton / length).
+    /// Overwrites this frame's joints and events with those of `other` (same skeleton / length).
     pub fn copy_from(&mut self, other: &AnimationFrame) {
         self.pose.copy_from(&other.pose);
-        self.root_motion = other.root_motion;
         self.events.clone_from(&other.events);
     }
 }
@@ -275,7 +261,6 @@ impl FramePool {
         if !self.rest.is_empty() {
             frame.pose.joints.clone_from_slice(&self.rest);
         }
-        frame.root_motion = RootMotion::IDENTITY;
         frame.events.clear();
         frame
     }

@@ -63,13 +63,6 @@ pub(crate) fn skeleton_of(bones: &[Bone]) -> Skeleton {
     .unwrap()
 }
 
-pub(crate) fn input_motion() -> RootMotion {
-    RootMotion {
-        translation: Vec3::new(0.1, 0.0, 0.3),
-        rotation: Quat::from_rotation_y(0.05),
-    }
-}
-
 pub(crate) fn input_event() -> FiredEvent {
     FiredEvent {
         clip: AssetId::from_path("procedural_input"),

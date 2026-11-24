@@ -125,7 +125,6 @@ impl MotionMatchingState {
     }
 
     pub(crate) fn clear_root_motion(&mut self) {
-        self.output.set_root_motion(RootMotion::IDENTITY);
         self.delta = RootMotion::IDENTITY;
     }
 
@@ -464,7 +463,6 @@ impl MotionMatchingState {
         } else {
             self.root_delta(&sources)
         };
-        self.output.set_root_motion(delta);
         self.delta = delta;
         self.scatter(&sources);
         if started && better.is_none() {

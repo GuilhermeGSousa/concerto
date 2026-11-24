@@ -399,7 +399,7 @@ fn root_motion_reads_forward_for_a_walk_heading_away_from_model_forward() {
 
         state.step(&node, state.delta_time, 1.0, &quiet(), fixture.sources());
 
-        let motion = state.output.root_motion();
+        let motion = state.delta;
         assert!(
             motion.translation.distance(Vec3::new(0.0, 0.0, -0.1)) < 1e-3,
             "{:?}",
@@ -450,7 +450,7 @@ fn root_motion_turns_out_the_rest_of_the_skeleton_it_plays_on() {
     state.step(&node, state.delta_time, 1.0, &quiet(), sources);
 
     let expected = played_rest * baked_rest.inverse() * Vec3::new(0.0, 0.0, -0.1);
-    let motion = state.output.root_motion();
+    let motion = state.delta;
     assert!(
         motion.translation.distance(expected) < 1e-3,
         "{:?}",
@@ -478,7 +478,7 @@ fn root_motion_carries_a_leaning_root_to_where_it_faces_next() {
     state.step(&node, state.delta_time, 1.0, &quiet(), fixture.sources());
 
     let (_, time) = fixture.database.clip_time(state.frame).unwrap();
-    let arrived = facing(time) * state.output.root_motion().rotation;
+    let arrived = facing(time) * state.delta.rotation;
     assert!(arrived.angle_between(facing(time + dt)) < 1e-3);
 }
 
@@ -519,7 +519,7 @@ fn at_rate_zero_the_frame_holds_with_no_root_motion_and_no_search() {
     state.step(&node, 0.1, 0.0, &trajectory(0.25, 2), fixture.sources());
 
     assert_eq!(state.frame, start);
-    assert_eq!(state.output.root_motion(), RootMotion::IDENTITY);
+    assert_eq!(state.delta, RootMotion::IDENTITY);
     assert!(state.last_query.is_none());
 }
 
@@ -667,7 +667,7 @@ fn play_comes_out_the_same_at_any_tick_rate() {
     for _ in 0..steps {
         state.delta_time = dt;
         state.step(&node, state.delta_time, 1.0, &quiet(), fixture.sources());
-        travelled += state.output.root_motion().translation;
+        travelled += state.delta.translation;
     }
 
     assert!(
