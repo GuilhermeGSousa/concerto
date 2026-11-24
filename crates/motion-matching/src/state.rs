@@ -107,7 +107,7 @@ impl MotionMatchingState {
         self.frame
     }
 
-    /// The local pose of the frame the node plays, before blending.
+    /// The local pose at the node's playhead, between two database frames, before blending.
     pub fn pose(&self) -> &Pose {
         &self.pose
     }
@@ -248,7 +248,7 @@ impl MotionMatchingState {
             .and_then(|mut ranges| ranges.next())
             .map(|range| range.start)
             .ok_or_else(|| "the database has no frames".to_string())?;
-        let (pose, velocity) = sample(sources, frame).map_err(|error| error.to_string())?;
+        let (pose, velocity) = sample(sources, frame, 0.0).map_err(|error| error.to_string())?;
 
         self.output = AnimationFrame::new(Pose::from_joints(
             sources.player_skeleton.rest_pose.to_vec(),
@@ -391,7 +391,6 @@ impl MotionMatchingState {
         let previous_frame = self.frame;
         self.frame = (self.frame + whole).min(range.end - 1);
         let advanced = self.frame;
-        let moved = self.frame != previous_frame;
 
         let trajectory = blackboard.get::<MotionMatchingTrajectory>(trajectory_key());
         let forced = trajectory
@@ -410,8 +409,10 @@ impl MotionMatchingState {
             }
         }
 
+        let between = self.sub_frame_time * rate;
         if let Some(best) = better {
-            let (pose, velocity) = sample(&sources, best).map_err(|error| error.to_string())?;
+            let (pose, velocity) =
+                sample(&sources, best, between).map_err(|error| error.to_string())?;
             let source_velocity = if self.last_delta > 0.0 {
                 PoseVelocity::between(&self.previous_blended, &self.blended, self.last_delta)
             } else {
@@ -428,9 +429,9 @@ impl MotionMatchingState {
             self.frame = best;
             self.pose = pose;
             self.velocity = velocity;
-        } else if moved {
+        } else if dt * play_rate > 0.0 {
             let (pose, velocity) =
-                sample(&sources, self.frame).map_err(|error| error.to_string())?;
+                sample(&sources, self.frame, between).map_err(|error| error.to_string())?;
             self.pose = pose;
             self.velocity = velocity;
         }
@@ -506,7 +507,11 @@ fn rescaled(trajectory: &MotionMatchingTrajectory, play_rate: f32) -> Vec<Trajec
         .collect()
 }
 
-fn sample(sources: &Sources, frame: usize) -> Result<(Pose, PoseVelocity), BakeError> {
+fn sample(
+    sources: &Sources,
+    frame: usize,
+    between: f32,
+) -> Result<(Pose, PoseVelocity), BakeError> {
     let database = sources.database;
     let range = database.range_of(frame).ok_or(BakeError::FrameOutOfRange {
         frame,
@@ -517,14 +522,15 @@ fn sample(sources: &Sources, frame: usize) -> Result<(Pose, PoseVelocity), BakeE
     } else {
         (frame - 1, frame)
     };
-    let first_pose = Pose::from_joints(database.pose(first, sources.skeleton, &sources.clips)?);
+    let mut pose = Pose::from_joints(database.pose(first, sources.skeleton, &sources.clips)?);
     let second_pose = Pose::from_joints(database.pose(second, sources.skeleton, &sources.clips)?);
-    let velocity = PoseVelocity::between(&first_pose, &second_pose, 1.0 / database.rate);
-    let pose = if first == frame {
-        first_pose
+    let velocity = PoseVelocity::between(&pose, &second_pose, 1.0 / database.rate);
+    let weight = if first == frame {
+        between.clamp(0.0, 1.0)
     } else {
-        second_pose
+        1.0
     };
+    pose.blend(&second_pose, weight);
     Ok((pose, velocity))
 }
 
