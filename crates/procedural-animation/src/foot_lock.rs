@@ -6,7 +6,7 @@ use concerto_animation::{
         model_space::{WorldToModel, model_joint},
     },
     param::Param,
-    pose::{AnimationFrame, EvaluatedFrame, FramePool},
+    pose::{AnimationFrame, EvaluatedFrame, FramePool, RootMotion, WeightedMotion},
 };
 use concerto_foundation::math::Spring;
 use concerto_mesh::{JointName, Skeleton};
@@ -144,6 +144,7 @@ pub struct FootLockState {
     started: bool,
     weight: Spring<f32>,
     legs: Vec<LegLock>,
+    motion: RootMotion,
 }
 
 impl FootLockState {
@@ -154,6 +155,7 @@ impl FootLockState {
             started: false,
             weight: Spring::critically_damped_with_halflife(0.0, node.weight_halflife),
             legs: Vec::new(),
+            motion: RootMotion::IDENTITY,
         }
     }
 
@@ -334,8 +336,12 @@ struct ModelMotion {
 }
 
 impl ModelMotion {
-    fn of(root: Option<&RootBone>, skeleton: &Skeleton, frame: &AnimationFrame) -> Self {
-        let motion = frame.root_motion();
+    fn of(
+        root: Option<&RootBone>,
+        skeleton: &Skeleton,
+        frame: &AnimationFrame,
+        motion: RootMotion,
+    ) -> Self {
         let up = root.map_or(Vec3::Y, |root| root.up);
         let joint = root.and_then(|root| model_joint(skeleton, frame.joints(), root.index));
         let facing = root
@@ -383,6 +389,20 @@ impl AnimationNode for FootLockNode {
         _: &AnimationGraphContext<'_>,
     ) {
         state.elapsed = elapsed_after(state.elapsed, delta_time);
+    }
+
+    fn root_motion(
+        &self,
+        state: &mut FootLockState,
+        _: &(),
+        _: &AnimationGraphContext<'_>,
+        _: &[Uuid],
+        inputs: &[WeightedMotion],
+    ) -> RootMotion {
+        state.motion = inputs
+            .first()
+            .map_or(RootMotion::IDENTITY, |input| input.motion);
+        state.motion
     }
 
     fn evaluate(
@@ -440,7 +460,7 @@ impl AnimationNode for FootLockNode {
         let Some(points) = leg_points(&resolved, output) else {
             return;
         };
-        let motion = ModelMotion::of(context.root(), resolved.skeleton, output);
+        let motion = ModelMotion::of(context.root(), resolved.skeleton, output, state.motion);
         let floor = model_to_world.translation.y;
         for (leg, point) in state.legs.iter_mut().zip(&points) {
             let animated = model_to_world.transform_point3(point.contact);
@@ -496,7 +516,7 @@ mod tests {
         evaluation::AnimationGraphContext,
         node::{AnimationNode, InputSlots, ReflectAnimationNode},
         player::AnimationPlayer,
-        pose::{AnimationFrame, EvaluatedFrame, FramePool, JointPose, RootMotion},
+        pose::{AnimationFrame, EvaluatedFrame, FramePool, JointPose, RootMotion, WeightedMotion},
         root::AnimationRootBone,
     };
     use concerto_app::{App, schedule_groups::LateUpdate};
@@ -607,11 +627,24 @@ mod tests {
                     joint.rotation = *rotation;
                 }
             }
-            output.set_root_motion(RootMotion {
+            output.push_event(input_event());
+        }
+
+        fn root_motion(
+            &self,
+            _: &mut (),
+            _: &(),
+            context: &AnimationGraphContext<'_>,
+            _: &[Uuid],
+            _: &[WeightedMotion],
+        ) -> RootMotion {
+            let Some(script) = context.blackboard().get::<Script>(script_param()) else {
+                return RootMotion::IDENTITY;
+            };
+            RootMotion {
                 translation: script.root_translation,
                 rotation: script.root_rotation,
-            });
-            output.push_event(input_event());
+            }
         }
 
         fn reset(&self, _: &mut ()) {}

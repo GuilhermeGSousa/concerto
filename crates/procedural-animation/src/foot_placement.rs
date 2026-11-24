@@ -608,7 +608,7 @@ mod tests {
         evaluation::AnimationGraphContext,
         node::{AnimationNode, InputSlots, ReflectAnimationNode},
         player::AnimationPlayer,
-        pose::{AnimationFrame, EvaluatedFrame, FramePool, JointPose, RootMotion},
+        pose::{AnimationFrame, EvaluatedFrame, FramePool, JointPose, RootMotion, WeightedMotion},
     };
     use concerto_app::{App, schedule_groups::LateUpdate};
     use concerto_ecs::{
@@ -692,10 +692,20 @@ mod tests {
                     joint.rotation = *rotation;
                 }
             }
-            output.set_root_motion(RootMotion {
+        }
+
+        fn root_motion(
+            &self,
+            _: &mut (),
+            _: &(),
+            _: &AnimationGraphContext<'_>,
+            _: &[Uuid],
+            _: &[WeightedMotion],
+        ) -> RootMotion {
+            RootMotion {
                 translation: self.root_translation,
                 rotation: self.root_rotation,
-            });
+            }
         }
 
         fn reset(&self, _: &mut ()) {}

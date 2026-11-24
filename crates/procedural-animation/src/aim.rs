@@ -530,7 +530,7 @@ mod tests {
         look_at::{LookFrame, YawPitch, look_rotation, yaw_pitch_to},
         node::{AnimationNode, InputSlots, ReflectAnimationNode},
         player::AnimationPlayer,
-        pose::{AnimationFrame, EvaluatedFrame, FramePool, JointPose},
+        pose::{AnimationFrame, EvaluatedFrame, FramePool, JointPose, RootMotion, WeightedMotion},
     };
     use concerto_app::{App, schedule_groups::LateUpdate};
     use concerto_ecs::{Entity, entity::hierarchy::ChildOf, world::World};
@@ -638,8 +638,18 @@ mod tests {
                     joint.rotation = *rotation;
                 }
             }
-            output.set_root_motion(input_motion());
             output.push_event(input_event());
+        }
+
+        fn root_motion(
+            &self,
+            _: &mut (),
+            _: &(),
+            _: &AnimationGraphContext<'_>,
+            _: &[Uuid],
+            _: &[WeightedMotion],
+        ) -> RootMotion {
+            input_motion()
         }
 
         fn reset(&self, _: &mut ()) {}
