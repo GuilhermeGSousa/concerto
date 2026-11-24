@@ -59,6 +59,7 @@ pub struct MotionMatchingState {
     last_query: Option<LastQuery>,
     bone_indices: HashMap<Uuid, usize>,
     root_motion: BodyMotion,
+    delta: RootMotion,
     fired: Vec<FiredEvent>,
 }
 
@@ -88,6 +89,7 @@ impl MotionMatchingState {
             last_query: None,
             bone_indices: HashMap::new(),
             root_motion: BodyMotion::default(),
+            delta: RootMotion::IDENTITY,
             fired: Vec::new(),
         }
     }
@@ -124,6 +126,14 @@ impl MotionMatchingState {
 
     pub(crate) fn clear_root_motion(&mut self) {
         self.output.set_root_motion(RootMotion::IDENTITY);
+        self.delta = RootMotion::IDENTITY;
+    }
+
+    pub(crate) fn delta(&self, bone_count: usize) -> RootMotion {
+        if !self.initialised || self.output.len() != bone_count {
+            return RootMotion::IDENTITY;
+        }
+        self.delta
     }
 
     pub(crate) fn clear_fired(&mut self) {
@@ -455,6 +465,7 @@ impl MotionMatchingState {
             self.root_delta(&sources)
         };
         self.output.set_root_motion(delta);
+        self.delta = delta;
         self.scatter(&sources);
         if started && better.is_none() {
             self.fire(&sources, previous_frame, advanced);

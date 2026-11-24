@@ -18,6 +18,7 @@ use crate::{
     node::{CreateNodeInputs, EvaluateNodeInputs, UpdateNodeInputs},
     player::AnimationPlayer,
     plugin::register_animation_node_inputs,
+    pose::RootMotion,
     retarget::RetargetRig,
 };
 
@@ -116,7 +117,7 @@ impl Walks {
         let inputs = state
             .get(&self.world)
             .expect("a test walk fetches its inputs");
-        player.update(delta_time, self.graphs(), None, &inputs);
+        player.update(delta_time, self.graphs(), None, None, &inputs);
     }
 
     pub(crate) fn advance_with(
@@ -124,12 +125,25 @@ impl Walks {
         player: &mut AnimationPlayer,
         delta_time: f32,
         skeleton: &Skeleton,
+        root: Option<RootBone>,
     ) {
         let mut state = self.update.borrow_mut();
         let inputs = state
             .get(&self.world)
             .expect("a test walk fetches its inputs");
-        player.update(delta_time, self.graphs(), Some(skeleton), &inputs);
+        player.update(delta_time, self.graphs(), Some(skeleton), root, &inputs);
+    }
+
+    pub(crate) fn root_motion(
+        &self,
+        player: &mut AnimationPlayer,
+        skeleton: &Skeleton,
+    ) -> RootMotion {
+        let mut state = self.update.borrow_mut();
+        let inputs = state
+            .get(&self.world)
+            .expect("a test walk fetches its inputs");
+        player.root_motion(self.graphs(), skeleton, &inputs)
     }
 
     pub(crate) fn create<R>(
