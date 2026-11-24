@@ -189,7 +189,10 @@ impl Plugin for InspectorPlugin {
             .add_system(LateUpdate, collect_inspector_data)
             .add_system(LateUpdate, update_name_field)
             .add_system(LateUpdate, sync_inspected_components)
-            .add_system(LateUpdate, build_property_widgets)
+            .add_system(
+                LateUpdate,
+                build_property_widgets.after(sync_inspected_components),
+            )
             .add_system(
                 LateUpdate,
                 disable_read_only_cards.after(build_property_widgets),

@@ -60,10 +60,12 @@ cmd.despawn(enemy);
 cmd.insert_resource(Score(0));
 ```
 
-Commands are not applied immediately: they are queued and applied at the
-system's sync point, with exclusive access to the world. An entity spawned in
-a system is visible to systems that run after that point, not to the rest of
-the system that spawned it.
+Commands are not applied immediately: they are queued and applied later,
+with exclusive access to the world. An entity spawned in a system is visible
+to the systems ordered after it with `.after`, `.before`, `.chain()` or a set
+order, and to everything once the schedule's run ends; not to the rest of the
+system that spawned it, and not, in the same run, to a system that is merely
+registered later. See [docs/scheduling.md](../scheduling.md).
 
 ## Parents and children
 

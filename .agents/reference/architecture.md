@@ -21,7 +21,8 @@ Every directory under `crates/` is the package `concerto-<dir>`.
 `DefaultPlugins` in [src/lib.rs](../../src/lib.rs) registers the standard
 plugins in a fixed order. Whether an `App` has a window is its host's business,
 not a plugin's. Plugin order is also system registration order, which decides
-how unordered systems run.
+how unordered systems whose data access conflicts run, but never whether one
+sees another's commands.
 
 ## The frame
 
