@@ -695,12 +695,14 @@ fn ground_under(state: &PhysicsState, point: Vec3) -> Option<f32> {
         .map(|hit| hit.point.y)
 }
 
-fn yaw(rotation: Quat) -> Quat {
-    let twist = Quat::from_xyzw(0.0, rotation.y, 0.0, rotation.w);
-    if twist.length_squared() < 1e-8 {
+fn heading(rotation: Quat) -> Quat {
+    let across = (rotation * Vec3::X).cross(Vec3::Y);
+    let on_its_side = (1.0 - across.length() / 0.3).max(0.0).powi(2);
+    let ahead = across + (rotation * Vec3::Z).with_y(0.0) * on_its_side;
+    if ahead.length_squared() < 1e-8 {
         Quat::IDENTITY
     } else {
-        twist.normalize()
+        Quat::from_rotation_y(ahead.x.atan2(ahead.z))
     }
 }
 
@@ -768,7 +770,7 @@ pub fn carry_capsules(
         let rest = body.resolved.settings().parts[0].pose.rotation;
         let update = Carried {
             velocity: state.linear_velocity(root_body),
-            facing: yaw(root.rotation * rest.inverse()),
+            facing: heading(root.rotation * rest.inverse()),
         };
         match carried.get_entity_mut(carrying.capsule) {
             Some(mut carried) => **carried = update,
@@ -929,4 +931,38 @@ pub fn drop_replaced_ragdoll(
     mut cmd: CommandQueue,
 ) {
     drop_body(on.signal().entity, &bodies, &mut state, &mut cmd);
+}
+
+#[cfg(test)]
+mod tests {
+    use std::f32::consts::FRAC_PI_2;
+
+    use glam::{Quat, Vec3};
+
+    use super::heading;
+
+    #[test]
+    fn a_body_heads_the_way_its_hips_point_however_it_lies() {
+        let toward = 2.0;
+        let turned = Quat::from_rotation_y(toward);
+        let cases = [
+            ("upright", turned),
+            ("upright and leaning", turned * Quat::from_rotation_x(0.3)),
+            ("on its back", turned * Quat::from_rotation_x(-FRAC_PI_2)),
+            (
+                "on its back, rocked about its spine",
+                turned * Quat::from_rotation_x(-FRAC_PI_2) * Quat::from_rotation_y(0.6),
+            ),
+            (
+                "on its front, rocked about its spine",
+                turned * Quat::from_rotation_x(FRAC_PI_2) * Quat::from_rotation_y(-0.6),
+            ),
+            ("on its side", turned * Quat::from_rotation_z(FRAC_PI_2)),
+        ];
+
+        for (lying, rotation) in cases {
+            let error = (heading(rotation) * Vec3::Z).distance(turned * Vec3::Z);
+            assert!(error < 1e-4, "{lying}: heads {error} off");
+        }
+    }
 }
