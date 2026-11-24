@@ -3053,7 +3053,14 @@ mod tests {
             let player = &mut self.player;
             let skeleton = &self.player_skeleton;
             walks.update(&AnimationBlackboard::default(), |context| {
-                player.root_motion_pass(walks.graphs(), root, skeleton, context.inputs)
+                let context = AnimationGraphContext {
+                    root,
+                    skeleton: Some(skeleton),
+                    ..*context
+                };
+                player
+                    .graph_state
+                    .root_motion(walks.graphs(), &context, &skeleton.bone_ids)
             })
         }
 

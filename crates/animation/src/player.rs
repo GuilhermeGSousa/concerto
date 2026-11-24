@@ -43,7 +43,7 @@ impl ActiveNodeState {
 
 #[derive(Component)]
 pub struct AnimationPlayer {
-    graph_state: AnimationGraphState,
+    pub(crate) graph_state: AnimationGraphState,
     blackboard: AnimationBlackboard,
     frame_pool: FramePool,
     paused: bool,
@@ -195,25 +195,6 @@ impl AnimationPlayer {
             inputs,
         };
         self.graph_state.update(delta_time, graphs, &context);
-    }
-
-    #[cfg(any(test, feature = "test-support"))]
-    pub(crate) fn root_motion_pass(
-        &mut self,
-        graphs: &AssetStore<AnimationGraph>,
-        root: Option<RootBone>,
-        skeleton: &Skeleton,
-        inputs: &Inputs<'_, '_>,
-    ) -> crate::pose::RootMotion {
-        let context = AnimationGraphContext {
-            blackboard: &self.blackboard,
-            root,
-            skeleton: Some(skeleton),
-            model_to_world: None,
-            inputs,
-        };
-        self.graph_state
-            .root_motion(graphs, &context, &skeleton.bone_ids)
     }
 
     pub(crate) fn evaluate(
