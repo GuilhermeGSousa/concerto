@@ -1,9 +1,11 @@
-use concerto_physics::physics_state::PhysicsState;
+use concerto_foundation::transform::Transform;
 use concerto_physics::ragdoll::RagdollId;
+use concerto_physics::{collider::Collider, physics_state::PhysicsState};
+use concerto_ragdoll::Fall;
 use concerto_ragdoll::{
     Balance, BodySense, BodyState, CharacterRagdoll, FallReaction, RagdollBody, RagdollMode,
 };
-use glam::Vec3;
+use glam::{Quat, Vec3};
 
 use crate::balance::Stage;
 
@@ -43,6 +45,27 @@ fn fallen(strength: f32, push: Vec3) -> Fallen {
     stage.insert(Balance::default());
     stage.run(15);
     stage.push("spine_03", push);
+    watch(stage)
+}
+
+fn fallen_on_its_limbs() -> Fallen {
+    let mut stage = Stage::placed(Transform::from_translation_rotation(
+        Vec3::new(0.0, 1.3, 0.0),
+        Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
+    ));
+    stage.spread_limbs();
+    let world = stage.app.main_mut().world_mut();
+    for side in [1.0, -1.0] {
+        world.spawn((
+            Collider::cuboid(0.9, 0.5, 1.5),
+            Transform::from_translation(Vec3::new(side * 1.08, 0.5, 1.0)),
+        ));
+    }
+    stage.insert(Fall::default());
+    watch(stage)
+}
+
+fn watch(mut stage: Stage) -> Fallen {
     let mut hands_down = [None; 2];
     let mut chest_down = None;
     let mut head_peak: f32 = 0.0;
@@ -101,4 +124,9 @@ fn a_falling_body_lands_on_its_hands_spares_its_head_and_ends_down_and_limp() {
             );
         }
     }
+    let propped = fallen_on_its_limbs();
+    assert!(
+        propped.state == BodyState::Down && propped.mode == RagdollMode::Limp,
+        "a fall that comes to rest on the hands and thighs across a trench, the trunk held off the ground, ends down and limp: {propped:?}"
+    );
 }
