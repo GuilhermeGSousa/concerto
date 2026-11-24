@@ -824,7 +824,8 @@ mod tests {
     }
 
     #[test]
-    fn a_paused_player_leaves_no_root_motion_on_its_root_bone() {
+    fn a_paused_player_and_one_still_loading_its_skeleton_have_no_root_motion_and_the_loading_one_advances()
+     {
         let mut rig = Rig::new(Quat::IDENTITY).loaded_skeleton();
         let clip = rig.moving_clip(Vec3::X);
         let graph = rig.graph(AnimationGraph::from_node(AnimationClipNode::new(clip)));

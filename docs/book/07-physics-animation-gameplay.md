@@ -1899,7 +1899,7 @@ it has none, the target motion root takes the ground part of the root's motion:
 its turn about +Y and its scaled offset along X and Z. The root, below it,
 still reaches its full position and turn. A target without a motion root
 carries all of the motion on its root. `scale()` is also the factor for
-mapping a frame's root motion by hand.
+mapping root motion by hand.
 
 After this FK pass, each goal both rigs name moves the target limb with the
 two-bone IK of `concerto::animation::ik`. The pairs run in the target rig's

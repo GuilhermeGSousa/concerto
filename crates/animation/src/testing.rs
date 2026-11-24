@@ -162,6 +162,15 @@ impl Walks {
         walk(&self.world, &self.update, blackboard, None, None, None, f)
     }
 
+    pub(crate) fn pass<R>(
+        &self,
+        blackboard: &AnimationBlackboard,
+        root: Option<RootBone>,
+        f: impl FnOnce(&AnimationGraphContext<'_>) -> R,
+    ) -> R {
+        walk(&self.world, &self.update, blackboard, root, None, None, f)
+    }
+
     pub(crate) fn evaluate<R>(
         &self,
         blackboard: &AnimationBlackboard,
