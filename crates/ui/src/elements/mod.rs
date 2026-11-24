@@ -23,7 +23,7 @@ mod text;
 pub use button::{Button, Pressable};
 pub use chip::Chip;
 pub use controls::{Checkbox, ColorPicker, Slider, Splitter};
-pub use field::TextField;
+pub use field::{SearchField, TextField};
 pub use listen::{Listen, Listening};
 pub use popup::Popup;
 pub use surface::{Divider, Stack, Surface};

@@ -206,6 +206,7 @@ fn build_dialog(mut cmd: CommandQueue, theme: Res<UITheme>) {
                 UIList {
                     row_height: Some(ROW_HEIGHT),
                     selectable: true,
+                    click_activates: false,
                 },
                 DialogView,
             ))
