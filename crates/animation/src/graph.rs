@@ -576,6 +576,102 @@ pub struct AnimationGraphState {
     graph_handle: Option<AssetHandle<AnimationGraph>>,
     graph_state: HashMap<AnimationNodeIndex, ActiveNodeState>,
     warned_stateless: bool,
+    walk: EvaluationWalk,
+    evaluator: AnimationGraphEvaluator,
+}
+
+#[derive(Clone, Copy, Default)]
+struct WalkMark {
+    discovered: bool,
+    finished: bool,
+    read: bool,
+    skipped: bool,
+}
+
+struct WalkStep {
+    node: AnimationNodeIndex,
+    skipped: bool,
+}
+
+#[derive(Default)]
+struct EvaluationWalk {
+    pending: Vec<NodeIndex>,
+    marks: Vec<WalkMark>,
+}
+
+impl EvaluationWalk {
+    fn begin(&mut self, graph: &AnimationGraph) {
+        self.pending.clear();
+        self.marks.clear();
+        self.marks
+            .resize(graph.nodes.node_count(), WalkMark::default());
+        if let Some(mark) = self.marks.get_mut(graph.result_node.index()) {
+            mark.read = true;
+            self.pending.push(*graph.result_node);
+        }
+    }
+
+    fn next(
+        &mut self,
+        graph: &AnimationGraph,
+        states: &HashMap<AnimationNodeIndex, ActiveNodeState>,
+    ) -> Option<WalkStep> {
+        while let Some(&node) = self.pending.last() {
+            let mark = self.marks[node.index()];
+            if !mark.discovered {
+                self.discover(graph, states, node);
+                continue;
+            }
+            self.pending.pop();
+            if !mark.finished {
+                self.marks[node.index()].finished = true;
+                return Some(WalkStep {
+                    node: node.into(),
+                    skipped: mark.skipped,
+                });
+            }
+        }
+        None
+    }
+
+    fn discover(
+        &mut self,
+        graph: &AnimationGraph,
+        states: &HashMap<AnimationNodeIndex, ActiveNodeState>,
+        node: NodeIndex,
+    ) {
+        let index = AnimationNodeIndex::from(node);
+        let live = graph.live_node(index);
+        let mark = &mut self.marks[node.index()];
+        mark.discovered = true;
+        mark.skipped = !mark.read && live.is_some_and(|live| live.evaluate_only_writes_output());
+        let skipped = mark.skipped;
+        let reader = live.zip(states.get(&index));
+        let last_slot = graph.nodes.neighbors(node).count().saturating_sub(1);
+        for (position, input) in graph.nodes.neighbors(node).enumerate() {
+            let mark = &mut self.marks[input.index()];
+            if mark.discovered {
+                continue;
+            }
+            mark.read |= !skipped
+                && reader.is_none_or(|(live, active)| {
+                    let weight = input_weight(graph, states, input.into());
+                    live.reads_input(&active.node_state, last_slot - position, weight)
+                });
+            self.pending.push(input);
+        }
+    }
+}
+
+fn input_weight(
+    graph: &AnimationGraph,
+    states: &HashMap<AnimationNodeIndex, ActiveNodeState>,
+    node: AnimationNodeIndex,
+) -> f32 {
+    graph
+        .live_node(node)
+        .and(states.get(&node))
+        .map_or(1.0, |active| active.weight)
 }
 
 impl AnimationGraphState {
@@ -835,11 +931,14 @@ impl AnimationGraphState {
             return false;
         };
 
-        let mut graph_evaluator = AnimationGraphEvaluator::new();
+        let mut walk = std::mem::take(&mut self.walk);
+        let mut graph_evaluator = std::mem::take(&mut self.evaluator);
+        walk.begin(graph);
 
         let mut stateless = false;
 
-        for node_index in graph.iter_post_order() {
+        while let Some(step) = walk.next(graph, &self.graph_state) {
+            let node_index = step.node;
             let input_count = graph.get_node_inputs(node_index).count();
             let stack_start = graph_evaluator.stack_len().saturating_sub(input_count);
             let mut node_output = pool.acquire();
@@ -847,14 +946,16 @@ impl AnimationGraphState {
 
             if let Some(node) = graph.live_node(node_index) {
                 if let Some(node_state) = self.get_active_node_state_mut(&node_index) {
-                    node.evaluate(
-                        &mut node_state.node_state,
-                        context,
-                        bone_ids,
-                        graph_evaluator.view_stack(stack_start),
-                        pool,
-                        &mut node_output,
-                    );
+                    if !step.skipped {
+                        node.evaluate(
+                            &mut node_state.node_state,
+                            context,
+                            bone_ids,
+                            graph_evaluator.view_stack(stack_start),
+                            pool,
+                            &mut node_output,
+                        );
+                    }
                     weight = node_state.weight;
                 } else {
                     stateless = true;
@@ -889,6 +990,11 @@ impl AnimationGraphState {
 
         std::mem::swap(output_frame, &mut result);
         pool.release(result);
+        for evaluated in graph_evaluator.evaluation_stack.drain(..) {
+            pool.release(evaluated.frame);
+        }
+        self.walk = walk;
+        self.evaluator = graph_evaluator;
         true
     }
 
@@ -963,8 +1069,9 @@ mod tests {
     use concerto_ecs::resource::{Res, Resource};
     use concerto_foundation::assets::{AssetId, asset_store::AssetStore, handle::AssetHandle};
     use concerto_mesh::Skeleton;
+    use concerto_name::name;
     use concerto_reflect::{Reflect, TypeRegistry};
-    use glam::{Mat4, Vec3};
+    use glam::{Mat4, Vec2, Vec3};
     use uuid::Uuid;
 
     use super::{AnimationGraph, AnimationGraphState};
@@ -972,10 +1079,11 @@ mod tests {
         blackboard::AnimationBlackboard,
         clip::{AnimationChanelOutput, AnimationChannel, AnimationClip},
         evaluation::AnimationGraphContext,
+        event::AnimationEvent,
         mask::{BoneMask, BoneMaskBranch},
         node::{
             AnimationClipNode, AnimationNode, BlendNode, InputSlots, LayerNode, LayerSpace,
-            ReflectAnimationNode,
+            ReflectAnimationNode, register_node_inputs,
         },
         plugin::register_animation_types,
         pose::{AnimationFrame, EvaluatedFrame, FramePool, JointPose},
@@ -1235,5 +1343,272 @@ mod tests {
             (after_a_swap - REST_X).abs() < 1e-6,
             "a graph swapped under the states of a smaller one gives the rest pose, got {after_a_swap}"
         );
+    }
+
+    #[derive(Default, Reflect)]
+    #[reflect(AnimationNode)]
+    struct Tally {}
+
+    impl AnimationNode for Tally {
+        type State = u32;
+        type CreateInput = ();
+        type UpdateInput = ();
+        type EvaluateInput = ();
+
+        fn input_slots(&self) -> InputSlots {
+            InputSlots::None
+        }
+
+        fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) -> u32 {
+            0
+        }
+
+        fn update(&self, _: &mut u32, _: f32, _: &(), _: &AnimationGraphContext<'_>) {}
+
+        fn evaluate(
+            &self,
+            evaluations: &mut u32,
+            _: &(),
+            _: &AnimationGraphContext<'_>,
+            _: &[Uuid],
+            _: &[EvaluatedFrame],
+            _: &mut FramePool,
+            output: &mut AnimationFrame,
+        ) {
+            *evaluations += 1;
+            for joint in output.pose_mut().joints_mut() {
+                joint.translation.x = *evaluations as f32;
+            }
+        }
+
+        fn reset(&self, _: &mut u32) {}
+    }
+
+    fn rising_from(x: f32, event_times: &[f32]) -> AnimationClip {
+        let mut clip = AnimationClip::default();
+        for bone in [HIP, ARM] {
+            clip.add_channel(
+                bone,
+                AnimationChannel::new(
+                    vec![0.0, 1.0],
+                    AnimationChanelOutput::from_translation(
+                        [[x, 0.0, 0.0], [x + 1.0, 0.0, 0.0]].into_iter(),
+                    ),
+                ),
+            );
+        }
+        for time in event_times {
+            clip.add_event(*time, AnimationEvent::default());
+        }
+        clip
+    }
+
+    struct SpacePoint {
+        at: Vec2,
+        x: f32,
+        event_times: &'static [f32],
+    }
+
+    struct ExpectedEvent {
+        clip: AssetId,
+        weight: f32,
+    }
+
+    struct ExpectedFrame {
+        x: f32,
+        events: Vec<ExpectedEvent>,
+    }
+
+    struct Weighted {
+        walks: Walks,
+        state: AnimationGraphState,
+        blackboard: AnimationBlackboard,
+        pool: FramePool,
+        skeleton: Skeleton,
+        time: f32,
+    }
+
+    impl Weighted {
+        fn step(&mut self, expected: ExpectedFrame) {
+            const DELTA: f32 = 0.2;
+            let Self {
+                walks,
+                state,
+                blackboard,
+                pool,
+                skeleton,
+                time,
+            } = self;
+            *time += DELTA;
+            walks.update(blackboard, |context| {
+                state.update(DELTA, walks.graphs(), context)
+            });
+            pool.set_rest(&skeleton.rest_pose);
+            let mut output = pool.acquire();
+            let evaluated = walks.evaluate_with(blackboard, None, Some(skeleton), |context| {
+                state.evaluate(
+                    walks.graphs(),
+                    context,
+                    &skeleton.bone_ids,
+                    pool,
+                    &mut output,
+                )
+            });
+            assert!(evaluated, "the graph evaluated");
+
+            for joint in output.joints() {
+                assert!(
+                    (joint.translation.x - expected.x).abs() < 1e-5,
+                    "at {time}s the pose is at {}, not {}",
+                    joint.translation.x,
+                    expected.x
+                );
+            }
+            assert_eq!(
+                output.events().len(),
+                expected.events.len(),
+                "at {time}s the frame carries {:?}",
+                output.events()
+            );
+            for (fired, wanted) in output.events().iter().zip(&expected.events) {
+                assert_eq!(fired.clip, wanted.clip, "at {time}s");
+                assert!(
+                    (fired.weight - wanted.weight).abs() < 1e-6,
+                    "at {time}s an event weighs {}, not {}",
+                    fired.weight,
+                    wanted.weight
+                );
+            }
+            let mut clips = 0;
+            state.for_each_node(walks.graphs(), |visit| {
+                let Some(clip_time) = visit.report.clip_time else {
+                    return;
+                };
+                clips += 1;
+                assert!(
+                    (clip_time - *time).abs() < 1e-6,
+                    "a clip is at {clip_time}s after {time}s"
+                );
+            });
+            assert_eq!(clips, 6, "every clip reports its time");
+            pool.release(output);
+        }
+    }
+
+    #[test]
+    fn an_input_nothing_reads_keeps_its_clock_and_gives_its_pose_and_events_once_read() {
+        let points = [
+            SpacePoint {
+                at: Vec2::new(-1.0, -1.0),
+                x: 1.0,
+                event_times: &[0.1, 0.7],
+            },
+            SpacePoint {
+                at: Vec2::new(1.0, -1.0),
+                x: 2.0,
+                event_times: &[],
+            },
+            SpacePoint {
+                at: Vec2::new(1.0, 1.0),
+                x: 4.0,
+                event_times: &[],
+            },
+            SpacePoint {
+                at: Vec2::new(-1.0, 1.0),
+                x: 8.0,
+                event_times: &[],
+            },
+            SpacePoint {
+                at: Vec2::ZERO,
+                x: 16.0,
+                event_times: &[0.1],
+            },
+        ];
+        let mut walks = Walks::with(
+            AssetStore::new(),
+            AssetStore::new(),
+            register_node_inputs::<Tally>,
+        );
+        let point_ids: Vec<AssetId> = (0..points.len())
+            .map(|index| AssetId::from_path(&format!("weighted_point_{index}")))
+            .collect();
+        for (id, point) in point_ids.iter().zip(&points) {
+            walks
+                .clips_mut()
+                .insert(*id, rising_from(point.x, point.event_times));
+        }
+        let late = AssetId::from_path("weighted_late");
+        walks.clips_mut().insert(late, rising_from(32.0, &[0.5]));
+
+        let mut graph = AnimationGraph::new();
+        graph
+            .result_node()
+            .add_input_with(BlendNode {}, |mut blend| {
+                blend
+                    .add_blend_space_2d_input_with(name!("at"), |space| {
+                        for (id, point) in point_ids.iter().zip(&points) {
+                            space.animation_clip_input(AssetHandle::weak(*id), point.at);
+                        }
+                    })
+                    .add_input(AnimationClipNode::new(AssetHandle::weak(late)))
+                    .add_input(Tally {});
+            });
+        let blend = graph.inputs(graph.result_index())[0];
+        let blended = graph.inputs(blend);
+        let mut registry = TypeRegistry::default();
+        register_animation_types(&mut registry);
+        registry.register::<Tally>();
+        graph.make_live(&registry, None).unwrap();
+        let id = AssetId::from_path("weighted_graph");
+        walks.graphs_mut().insert(id, graph);
+
+        let mut blackboard = AnimationBlackboard::default();
+        blackboard.set(name!("at"), Vec2::new(0.5, 0.0));
+        let mut state = AnimationGraphState::default();
+        walks.create(&blackboard, |context| {
+            state.initialize(AssetHandle::weak(id), walks.graphs(), context)
+        });
+        state.set_node_weight(&blended[1], 0.0);
+        state.set_node_weight(&blended[2], 0.0);
+        let skeleton = skeleton();
+        let mut weighted = Weighted {
+            walks,
+            state,
+            blackboard,
+            pool: FramePool::new(skeleton.bone_count()),
+            skeleton,
+            time: 0.0,
+        };
+
+        weighted.step(ExpectedFrame {
+            x: 9.7,
+            events: vec![ExpectedEvent {
+                clip: point_ids[4],
+                weight: 0.5,
+            }],
+        });
+        weighted.step(ExpectedFrame {
+            x: 9.9,
+            events: Vec::new(),
+        });
+
+        weighted.state.set_node_weight(&blended[1], 1.0);
+        weighted.state.set_node_weight(&blended[2], 2.0);
+        weighted.step(ExpectedFrame {
+            x: 12.175,
+            events: vec![ExpectedEvent {
+                clip: late,
+                weight: 0.25,
+            }],
+        });
+
+        weighted.blackboard.set(name!("at"), Vec2::new(-0.5, 0.0));
+        weighted.step(ExpectedFrame {
+            x: 12.9625,
+            events: vec![ExpectedEvent {
+                clip: point_ids[0],
+                weight: 0.0625,
+            }],
+        });
     }
 }

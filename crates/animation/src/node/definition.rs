@@ -63,6 +63,16 @@ pub trait AnimationNode: Reflect + Send + Sync + 'static {
         true
     }
 
+    /// Whether `evaluate` reads the frame of the input in slot `input`, whose node weight is `weight`; `true` unless the node says otherwise.
+    fn reads_input(&self, _state: &Self::State, _input: usize, _weight: f32) -> bool {
+        true
+    }
+
+    /// Whether `evaluate` does nothing but write `output`, so a graph leaves the node out while nothing reads its frame; `false` unless the node says otherwise.
+    fn evaluate_only_writes_output(&self) -> bool {
+        false
+    }
+
     /// The inputs this node takes, in the order `evaluate` receives them.
     fn input_slots(&self) -> InputSlots;
 
@@ -174,6 +184,10 @@ pub trait ErasedAnimationNode: Send + Sync {
 
     fn is_finished(&self, state: &NodeState) -> bool;
 
+    fn reads_input(&self, state: &NodeState, input: usize, weight: f32) -> bool;
+
+    fn evaluate_only_writes_output(&self) -> bool;
+
     fn inner_graphs(&self, visit: &mut dyn FnMut(&AssetHandle<AnimationGraph>));
 
     fn input_slots(&self) -> InputSlots;
@@ -259,6 +273,16 @@ impl<T: AnimationNode> ErasedAnimationNode for T {
         state
             .downcast_ref::<T::State>()
             .is_none_or(|state| AnimationNode::is_finished(self, state))
+    }
+
+    fn reads_input(&self, state: &NodeState, input: usize, weight: f32) -> bool {
+        state
+            .downcast_ref::<T::State>()
+            .is_none_or(|state| AnimationNode::reads_input(self, state, input, weight))
+    }
+
+    fn evaluate_only_writes_output(&self) -> bool {
+        AnimationNode::evaluate_only_writes_output(self)
     }
 
     fn inner_graphs(&self, visit: &mut dyn FnMut(&AssetHandle<AnimationGraph>)) {

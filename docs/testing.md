@@ -48,7 +48,8 @@ shape into a new world. The `query_iteration` benchmark measures one system run
 over 100,000 entities: reading one component and writing another, in one
 archetype and across 100, a `With` filter that half the archetypes pass, a
 `Changed` filter when nothing changed, and 10,000 `get_entity` lookups of
-random entities.
+random entities. The `animation_graph` benchmark measures one frame of 16 players of a
+graph with a 9-input 2D blend space over a 60-bone skeleton.
 
 Benchmarks do not run in CI, and without the `run` feature the crate builds
 without `criterion` and skips them. Run them by hand before and after a change

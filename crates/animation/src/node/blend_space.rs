@@ -136,6 +136,17 @@ impl AnimationNode for BlendSpace2DNode {
         state.current_triangulated_point = None;
     }
 
+    fn reads_input(&self, state: &BlendSpace2DInstanceNode, input: usize, _weight: f32) -> bool {
+        state
+            .current_triangulated_point
+            .and_then(|point| state.triangulation.triangles().get(point.triangle))
+            .is_none_or(|triangle| [triangle.a, triangle.b, triangle.c].contains(&input))
+    }
+
+    fn evaluate_only_writes_output(&self) -> bool {
+        true
+    }
+
     fn input_added(&mut self, index: usize) {
         self.points.insert(index.min(self.points.len()), Vec2::ZERO);
     }

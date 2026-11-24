@@ -1034,7 +1034,9 @@ A graph is a tree of nodes under a result node:
 - **Blend** mixes its inputs, each in proportion to its node weight, set
   with `AnimationPlayer::set_node_weight(node, weight)`. Every weight starts
   at 1.0, so inputs mix equally; an input at weight 0 is left out, and with
-  none left the node gives the rest pose.
+  none left the node gives the rest pose. An input left out keeps its clock
+  running, so it is in step when its weight rises, but its pose is not
+  sampled: see [Your own nodes](#your-own-nodes).
 - **Additive** (`AdditiveNode`) plays an additive clip's delta (see
   [Additive clips](#additive-clips)) over its one input, the base; with no
   input it goes over the rest pose, and inputs after the first are ignored
@@ -1114,7 +1116,9 @@ A graph is a tree of nodes under a result node:
   );
   ```
 - **2D blend space** places clips at points and blends by a `Vec2`
-  parameter: the classic locomotion setup.
+  parameter: the classic locomotion setup. It blends the three points at the
+  corners of the triangle the parameter falls in; every input's clock runs,
+  and only those three are sampled.
 - **State machine** switches between sub-graphs on triggers such as
   `AnimationFSMTrigger::on_bool(name!("is_grounded"), false)` or
   `AnimationFSMTrigger::OnAnimationEnd`. Each transition takes a
@@ -1419,6 +1423,20 @@ none, as a clip does; `InputSlots::Fixed` with a name for each, as a layer's
 takes. A node that keeps data for each input, as the blend space keeps a point,
 also implements `input_added(index)` and `input_removed(index)`, which an
 editor calls when it gives the node an input or takes one away.
+
+`update` runs on every node every frame, whatever its weight. `evaluate` is
+left out for a node whose frame nothing reads, when the node allows it. A
+node says which inputs it reads this frame with `reads_input(state, input,
+weight)`, which is `true` unless overridden: a blend reads the inputs whose
+node weight is above 0, and a blend space the three corners of its triangle.
+A node whose `evaluate` does nothing but write `output` overrides
+`evaluate_only_writes_output` to return `true`, as the clip, the blend, the
+blend space and the motion matching node do; the graph then skips its
+`evaluate`, and stops reading its inputs, on a frame nothing reads its frame.
+A node that leaves it `false`, the default, is evaluated every frame with its
+inputs, so one that eases a value or keeps a pose in `evaluate` is safe as it
+is. What a parent does not read never reached the output, so the pose, the
+root motion and the events are the same either way.
 
 The three input types say what the node reads in each walk of the graph:
 `create_state` gets `CreateInput`, `update` gets `UpdateInput` and

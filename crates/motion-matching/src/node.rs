@@ -211,6 +211,10 @@ impl AnimationNode for MotionMatchingNode {
     fn reset(&self, state: &mut MotionMatchingState) {
         *state = MotionMatchingState::new(self.search_period);
     }
+
+    fn evaluate_only_writes_output(&self) -> bool {
+        true
+    }
 }
 
 #[cfg(test)]
