@@ -394,3 +394,37 @@ fn commands_are_seen_by_systems_ordered_after_them_and_by_everything_next_run() 
         );
     }
 }
+
+#[derive(Resource, PartialEq, Debug)]
+struct Winner(&'static str);
+
+fn slow_insert(mut cmd: CommandQueue) {
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    cmd.insert_resource(Winner("registered first"));
+}
+
+fn fast_insert(mut cmd: CommandQueue) {
+    cmd.insert_resource(Winner("registered second"));
+}
+
+fn winner<E: SystemExecutor + 'static>() -> Winner {
+    let mut world = World::new();
+    let mut schedule = Schedule::new();
+    schedule.add_system(slow_insert).add_system(fast_insert);
+    schedule.compile::<E>(&mut world).run(&mut world);
+    world.remove_resource::<Winner>().unwrap()
+}
+
+#[test]
+fn unordered_systems_apply_their_commands_in_registration_order_whatever_finishes_first() {
+    assert_eq!(
+        winner::<SingleThreadedExecutor>(),
+        Winner("registered second")
+    );
+    for _ in 0..8 {
+        assert_eq!(
+            winner::<MultiThreadedExecutor>(),
+            Winner("registered second")
+        );
+    }
+}

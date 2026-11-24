@@ -1,6 +1,7 @@
 use std::{
     any::TypeId,
-    collections::{HashMap, VecDeque},
+    cmp::Reverse,
+    collections::{BinaryHeap, HashMap, VecDeque},
     fmt,
 };
 
@@ -28,7 +29,6 @@ use derive_more::{Deref, From};
 use fixedbitset::FixedBitSet;
 use petgraph::{
     Direction,
-    algo::toposort,
     dot::{Config, Dot},
     graph::NodeIndex,
 };
@@ -354,11 +354,36 @@ impl ScheduleGraph<'_> {
     }
 
     fn topological_order(&self) -> Vec<usize> {
-        toposort(&*self.graph, None)
-            .expect("schedule graph is acyclic by construction")
-            .into_iter()
-            .map(|node| *self.graph.node_weight(node).unwrap().index())
-            .collect()
+        let count = self.nodes.len();
+        let mut waiting: Vec<usize> = self
+            .nodes
+            .iter()
+            .map(|node| {
+                self.graph
+                    .neighbors_directed(**node, Direction::Incoming)
+                    .count()
+            })
+            .collect();
+        let mut ready: BinaryHeap<Reverse<usize>> = (0..count)
+            .filter(|&index| waiting[index] == 0)
+            .map(Reverse)
+            .collect();
+        let mut order = Vec::with_capacity(count);
+        while let Some(Reverse(index)) = ready.pop() {
+            order.push(index);
+            for successor in self.successors(index) {
+                waiting[successor] -= 1;
+                if waiting[successor] == 0 {
+                    ready.push(Reverse(successor));
+                }
+            }
+        }
+        assert_eq!(
+            order.len(),
+            count,
+            "schedule graph is acyclic by construction"
+        );
+        order
     }
 
     fn link(&mut self, from: usize, to: usize) {
@@ -451,34 +476,46 @@ fn build_compiled_data(
     nodes: &[SystemNodeIndex],
     order: &[usize],
 ) -> CompiledScheduleData {
-    let dependency_count: Vec<usize> = nodes
+    let mut position = vec![0; order.len()];
+    for (new, &old) in order.iter().enumerate() {
+        position[old] = new;
+    }
+    let node = |old: usize| graph.node_weight(*nodes[old]).unwrap();
+
+    let mut slots: Vec<Option<BoxedSystem>> = systems.into_iter().map(Some).collect();
+    let systems = order
         .iter()
-        .map(|idx| graph.neighbors_directed(**idx, Direction::Incoming).count())
+        .map(|&old| slots[old].take().unwrap())
         .collect();
 
-    let dependants = nodes
+    let dependency_count = order
         .iter()
-        .map(|idx| {
+        .map(|&old| {
             graph
-                .neighbors_directed(**idx, Direction::Outgoing)
-                .map(|node_index| *graph.node_weight(node_index).unwrap().index())
+                .neighbors_directed(*nodes[old], Direction::Incoming)
+                .count()
+        })
+        .collect();
+
+    let dependants = order
+        .iter()
+        .map(|&old| {
+            graph
+                .neighbors_directed(*nodes[old], Direction::Outgoing)
+                .map(|next| position[*graph.node_weight(next).unwrap().index()])
                 .collect()
         })
         .collect();
 
-    let system_access: Vec<SystemAccess> = nodes
+    let system_access = order
         .iter()
-        .map(|idx| graph.node_weight(**idx).unwrap().access().clone())
+        .map(|&old| node(old).access().clone())
         .collect();
 
-    let system_meta: Vec<SystemMetadata> = nodes
-        .iter()
-        .map(|idx| graph.node_weight(**idx).unwrap().meta().clone())
-        .collect();
+    let system_meta = order.iter().map(|&old| node(old).meta().clone()).collect();
 
     CompiledScheduleData {
         systems,
-        sorted_systems: order.to_vec(),
         dependency_count,
         dependants,
         system_access,
@@ -530,10 +567,8 @@ impl fmt::Debug for CompiledSchedule {
 
 /// The resolved systems and dependency graph a [`SystemExecutor`] runs.
 pub struct CompiledScheduleData {
-    /// The initialized systems, including inserted sync points.
+    /// The initialized systems, including inserted sync points, in topological order.
     pub systems: Vec<BoxedSystem>,
-    /// Positions into `systems` in topological order.
-    pub sorted_systems: Vec<usize>,
     /// How many systems must finish before each system may start.
     pub dependency_count: Vec<usize>,
     /// For each system, the positions of the systems waiting on it.

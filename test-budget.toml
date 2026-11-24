@@ -10,7 +10,7 @@
 "crates/color" = 3
 "crates/debug-gizmos" = 1
 "crates/director" = 4
-"crates/ecs" = 92
+"crates/ecs" = 93
 "crates/editor" = 178
 "crates/foundation" = 67
 "crates/gameplay" = 11

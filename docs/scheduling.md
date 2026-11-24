@@ -281,6 +281,10 @@ across runs. A new instance is a first run and sees everything stamped within
 - Conflicting systems (overlapping data access) with no explicit constraint
   between them still run in registration order, but that order does not make
   one's commands visible to the other.
+- When several systems' commands apply together, they apply in schedule order:
+  the explicit constraints first, registration order where none decides. Two
+  unordered systems that insert the same resource always leave the later
+  registered one's value, whichever finished first and on either executor.
 - An explicit constraint always wins over registration order.
 - Contradictory explicit constraints panic at compile with
   `Cycle in schedule ordering`, naming the systems on the cycle.
