@@ -616,17 +616,23 @@ impl AssetEditor for RagdollEditor {
         let record = InspectedAsset::of::<Ragdoll>();
         InspectedAssetEditor { record }.build(editor);
         let document = editor.entity();
-        let ragdoll = DocumentValue::<InspectedDocument> {
-            name: record.kind.to_owned(),
+        let profiles = DocumentValue::<InspectedDocument> {
+            name: "Profiles".to_owned(),
             document,
-            read: Box::new(|held| held.value.as_deref()),
-            edit: Box::new(|held| held.value.as_deref_mut()),
+            read: Box::new(|held| {
+                let ragdoll = held.value.as_deref()?.downcast_ref::<Ragdoll>()?;
+                Some(&ragdoll.profiles as &dyn Reflect)
+            }),
+            edit: Box::new(|held| {
+                let ragdoll = held.value.as_deref_mut()?.downcast_mut::<Ragdoll>()?;
+                Some(&mut ragdoll.profiles as &mut dyn Reflect)
+            }),
         };
         editor.insert((
             InspectedValues(vec![
                 Arc::new(SelectedPartValue::new(document)),
                 Arc::new(RagdollPreviewValue { document }),
-                Arc::new(ragdoll),
+                Arc::new(profiles),
             ]),
             RagdollDocument::default(),
         ));

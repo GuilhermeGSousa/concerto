@@ -858,10 +858,12 @@ struct StatusReads {
     gizmos: String,
     unknown_gizmo: Value,
     bounds_always: String,
+    shading: String,
+    unlit: String,
 }
 
 #[test]
-fn status_reports_the_documents_and_selection_and_gizmos_lists_and_sets_the_gizmo_kinds() {
+fn status_reports_the_documents_and_selection_and_gizmos_and_shading_set_the_viewport() {
     let fixture = Fixture::new();
     let root = fixture.root().canonicalize().unwrap();
     let log = Log::default();
@@ -887,6 +889,8 @@ fn status_reports_the_documents_and_selection_and_gizmos_lists_and_sets_the_gizm
             json!({ "kind": "Bounds", "always": true }),
         )
         .await;
+        let shading = ok(&client, "viewport_shading").await;
+        let unlit = ok_with(&client, "viewport_shading", json!({ "unlit": true })).await;
         client.cancel().await.unwrap();
         StatusReads {
             before,
@@ -898,6 +902,8 @@ fn status_reports_the_documents_and_selection_and_gizmos_lists_and_sets_the_gizm
             gizmos,
             unknown_gizmo,
             bounds_always,
+            shading,
+            unlit,
         }
     }) else {
         return;
@@ -913,6 +919,8 @@ fn status_reports_the_documents_and_selection_and_gizmos_lists_and_sets_the_gizm
         gizmos,
         unknown_gizmo,
         bounds_always,
+        shading,
+        unlit,
     } = served.result;
     assert_eq!(line(&before, "project: "), root.display().to_string());
     let document = document_id(&before);
@@ -945,6 +953,8 @@ fn status_reports_the_documents_and_selection_and_gizmos_lists_and_sets_the_gizm
         bounds_always.lines().any(|kind| kind == "Bounds · always"),
         "{bounds_always}"
     );
+    assert_eq!(shading, "The viewport draws scenes lit.");
+    assert_eq!(unlit, "The viewport draws scenes unlit.");
 }
 
 struct Resized {

@@ -34,6 +34,7 @@ pub mod timeline;
 pub mod tools;
 mod tree_items;
 pub mod viewport;
+pub mod viewport_shading;
 pub mod window_chrome;
 mod workspace;
 
@@ -116,6 +117,7 @@ impl Plugin for EditorPlugin {
         );
         app.add_listener(workspace::reset_input_for_viewport_target);
         app.register_plugin(viewport::ViewportPlugin);
+        app.register_plugin(viewport_shading::ViewportShadingPlugin);
         app.register_plugin(gizmo_choices::ComponentGizmosPlugin);
         app.register_plugin(shell::ShellPlugin);
         app.register_plugin(tabs::TabsPlugin);

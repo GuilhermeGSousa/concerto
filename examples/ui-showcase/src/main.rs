@@ -122,7 +122,7 @@ fn spawn_showcase(mut cmd: CommandQueue, theme: Res<UITheme>, mut window: ResMut
     );
     root.add_child(
         theme
-            .label("CONCERTO  /  UI SHOWCASE\nLooking Glass foundations and layout")
+            .label("CONCERTO  /  UI SHOWCASE\nEditor foundations and layout")
             .font_size(18.0)
             .height(UIValue::Px(54.0))
             .fixed(),

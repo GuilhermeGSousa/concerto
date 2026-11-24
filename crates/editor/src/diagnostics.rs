@@ -89,11 +89,10 @@ fn refresh_panel(
     sampler.frames = 0;
 
     let value = format!(
-        "{fps:.0} fps · {} layouts · {} nodes · {} quads · {} shapes",
+        "{fps:.0} fps · {} layouts · {} nodes · {} quads",
         layout.layout_passes,
         layout.nodes_updated,
         render.geometry_rebuilds(),
-        render.text_reshapes(),
     );
     for (_, mut component) in readouts.iter_mut() {
         if component.text != value {

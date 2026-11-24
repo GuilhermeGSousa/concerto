@@ -75,6 +75,7 @@ struct CameraUniform {
     exposure: f32,
     tonemapping: u32,
     shadow_view: u32,
+    unlit: u32,
 };
 
 struct VertexInput {
@@ -267,6 +268,9 @@ fn pbr_fs(in: VertexOutput) -> vec4<f32> {
     let roughness = clamp(metallic_roughness.g * material.roughness_factor, MIN_ROUGHNESS, 1.0);
     let occlusion = mix(1.0, sample_occlusion(in.tex_coords).r, material.occlusion_strength);
     let emissive = sample_emissive(in.tex_coords).rgb * material.emissive_factor;
+    if camera.unlit != 0u {
+        return vec4<f32>(base_color.rgb + emissive, coverage);
+    }
 
     // Normal mapping calculations
     let object_normal = sample_normal(in.tex_coords);
