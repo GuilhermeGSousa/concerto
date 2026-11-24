@@ -48,7 +48,9 @@ shape into a new world. The `query_iteration` benchmark measures one system run
 over 100,000 entities: reading one component and writing another, in one
 archetype and across 100, a `With` filter that half the archetypes pass, a
 `Changed` filter when nothing changed, and 10,000 `get_entity` lookups of
-random entities.
+random entities. The `motion_matching` benchmark measures one search of a database
+of 20,000 frames of 27 features, with the weights it was loaded with and with
+weights changed in place afterwards, which searches the slower way.
 
 Benchmarks do not run in CI, and without the `run` feature the crate builds
 without `criterion` and skips them. Run them by hand before and after a change

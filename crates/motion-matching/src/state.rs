@@ -60,6 +60,7 @@ pub struct MotionMatchingState {
     bone_indices: HashMap<Uuid, usize>,
     root_motion: BodyMotion,
     fired: Vec<FiredEvent>,
+    normalised: Vec<f32>,
 }
 
 impl MotionMatchingState {
@@ -89,6 +90,7 @@ impl MotionMatchingState {
             bone_indices: HashMap::new(),
             root_motion: BodyMotion::default(),
             fired: Vec::new(),
+            normalised: Vec::new(),
         }
     }
 
@@ -329,8 +331,10 @@ impl MotionMatchingState {
             }
             Err(error) => return Err(error.to_string()),
         };
-        let mut features = raw.clone();
-        if database.normalise(&mut features).is_none() {
+        let features = &mut self.normalised;
+        features.clear();
+        features.extend_from_slice(&raw);
+        if database.normalise(features).is_none() {
             self.last_query = None;
             return Ok(None);
         }
@@ -340,7 +344,7 @@ impl MotionMatchingState {
         let current = (!end_of_range).then_some(self.frame);
         let found = search(
             database,
-            &features,
+            features,
             current,
             node.ignore_surrounding,
             node.ignore_range_end,
@@ -359,7 +363,7 @@ impl MotionMatchingState {
             return Ok((best != self.frame).then_some(best));
         }
         let differs = best.abs_diff(self.frame) > node.same_frame_tolerance;
-        let Some(current_cost) = cost_of(database, &features, self.frame) else {
+        let Some(current_cost) = cost_of(database, features, self.frame) else {
             return Ok(None);
         };
         Ok((best_cost < current_cost && differs).then_some(best))

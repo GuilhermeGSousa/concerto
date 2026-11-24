@@ -44,6 +44,18 @@ impl Span {
     }
 }
 
+#[derive(Clone, Debug, Default)]
+struct Prescaled {
+    weights: Vec<f32>,
+    features: Vec<f32>,
+}
+
+impl PartialEq for Prescaled {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
 /// What a bake computes from a motion database's inputs: per-frame features and simulation bone, where each entry's frames sit, and the normalization.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct BakedDatabase {
@@ -58,6 +70,8 @@ pub struct BakedDatabase {
     spans: Vec<Span>,
     offset: Vec<f32>,
     deviations: Vec<f32>,
+    #[serde(skip)]
+    prescaled: Prescaled,
 }
 
 impl BakedDatabase {
@@ -87,6 +101,7 @@ impl BakedDatabase {
             spans,
             offset,
             deviations,
+            prescaled: Prescaled::default(),
         }
     }
 
@@ -167,6 +182,7 @@ impl MotionDatabase {
     /// This database with `baked` as its computed part, for code that bakes inline.
     pub fn with_baked(mut self, baked: BakedDatabase) -> Self {
         self.baked = Some(baked);
+        self.prescale();
         self
     }
 
@@ -405,6 +421,47 @@ impl MotionDatabase {
         Some(divisors)
     }
 
+    fn weights(&self) -> impl Iterator<Item = Option<f32>> + '_ {
+        self.channels
+            .iter()
+            .map(|channel| Some(channel.channel().ok()?.weight()))
+    }
+
+    fn prescaled_features(&self) -> Option<Prescaled> {
+        let baked = self.baked.as_ref()?;
+        let divisors = self.divisors()?;
+        if baked.offset.len() != divisors.len() {
+            return None;
+        }
+        let scale = baked.offset.iter().zip(&divisors).cycle();
+        Some(Prescaled {
+            weights: self.weights().collect::<Option<_>>()?,
+            features: baked
+                .features
+                .iter()
+                .zip(scale)
+                .map(|(feature, (offset, divisor))| (feature - offset) / divisor)
+                .collect(),
+        })
+    }
+
+    fn prescale(&mut self) {
+        let prescaled = self.prescaled_features().unwrap_or_default();
+        if let Some(baked) = &mut self.baked {
+            baked.prescaled = prescaled;
+        }
+    }
+
+    pub(crate) fn prescaled(&self) -> Option<&[f32]> {
+        let baked = self.baked.as_ref()?;
+        let prescaled = &baked.prescaled;
+        let fresh = prescaled.features.len() == baked.features.len()
+            && self
+                .weights()
+                .eq(prescaled.weights.iter().copied().map(Some));
+        fresh.then_some(prescaled.features.as_slice())
+    }
+
     /// Subtracts the offset and divides by the scale in place; a group with no deviation becomes 0.
     pub fn normalise(&self, features: &mut [f32]) -> Option<()> {
         let scales = self.scales()?;
@@ -475,6 +532,7 @@ impl LoadableAsset for MotionDatabase {
                 context.asset_id()
             );
         }
+        self.prescale();
         Ok(())
     }
 }
@@ -517,6 +575,7 @@ impl DerivedData for MotionDatabase {
             bincode::deserialize(blob).context("failed to decode a baked motion database")?;
         baked.fits(self)?;
         self.baked = Some(baked);
+        self.prescale();
         Ok(())
     }
 }
