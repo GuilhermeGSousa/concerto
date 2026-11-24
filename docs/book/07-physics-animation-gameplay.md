@@ -905,8 +905,10 @@ standing character too. While it runs:
   backward, so one shoulder leads.
 - **Legs.** The knees bend by `knee_bend` at `legs` of the strength, so they
   fold.
-- **Landing.** Once the chest or pelvis touches something and the body is
-  slower than 0.5 m/s the state is `Down`. The strength then drains to
+- **Landing.** Once the body is slower than 0.5 m/s, and either its chest or
+  pelvis touches something or it lies (trunk leaning past 1 rad) on any part
+  other than a foot, the state is `Down`. A body that comes to rest on its
+  side, propped on an arm and a leg, lands too. The strength then drains to
   `resting` over `relax_seconds`, the ragdoll goes limp, and the behaviour
   ends with `BehaviourEnded` for `fall`.
 

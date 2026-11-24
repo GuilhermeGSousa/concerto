@@ -9,6 +9,7 @@ use concerto_ecs::resource::{ResMut, Resource};
 use concerto_ecs::signal::On;
 use concerto_foundation::assets::asset_server::AssetServer;
 use concerto_foundation::transform::Transform;
+use concerto_mesh::JointPose;
 use concerto_physics::collider::Collider;
 use concerto_physics::physics_state::PhysicsState;
 use concerto_physics::plugin::PhysicsPlugin;
@@ -20,7 +21,7 @@ use concerto_ragdoll::{
     Balance, BehaviourEnded, BodyDrive, BodySense, BodySettled, BodyState, CharacterRagdoll,
     Outcome, PhysicalState, RagdollBody, RagdollPlugin,
 };
-use glam::Vec3;
+use glam::{Quat, Vec3};
 
 #[derive(Resource, Default)]
 struct Ended(Vec<BehaviourEnded>);
@@ -40,10 +41,15 @@ pub struct Stage {
     pub app: App,
     pub humanoid: SpawnedHumanoid,
     pub character: Entity,
+    pub pose: Vec<JointPose>,
 }
 
 impl Stage {
     pub fn new() -> Self {
+        Self::placed(Transform::default())
+    }
+
+    pub fn placed(placement: Transform) -> Self {
         let mut app = App::new();
         app.register_plugin(MainSchedulePlugin)
             .register_plugin(TimePlugin)
@@ -67,7 +73,7 @@ impl Stage {
             Collider::cuboid(50.0, 0.5, 50.0),
             Transform::from_translation(Vec3::new(0.0, -0.5, 0.0)),
         ));
-        let humanoid = spawn_humanoid(world, skeleton, Transform::default());
+        let humanoid = spawn_humanoid(world, skeleton, placement);
         let character = humanoid.skeleton;
         world.insert(
             (
@@ -82,16 +88,34 @@ impl Stage {
             app,
             humanoid,
             character,
+            pose: humanoid_skeleton().rest_pose.to_vec(),
         };
         stage.run(5);
         stage
     }
 
+    /// Holds the arms half down and the legs apart.
+    pub fn spread_limbs(&mut self) {
+        self.turn(&[
+            ("upperarm_l", -0.9),
+            ("upperarm_r", 0.9),
+            ("thigh_l", 0.35),
+            ("thigh_r", -0.35),
+        ]);
+    }
+
+    fn turn(&mut self, bones: &[(&str, f32)]) {
+        let skeleton = humanoid_skeleton();
+        for &(bone, angle) in bones {
+            let index = skeleton.bone_index(bone.into()).unwrap();
+            self.pose[index].rotation = Quat::from_rotation_z(angle);
+        }
+    }
+
     pub fn run(&mut self, frames: usize) {
-        let rest = humanoid_skeleton();
         for _ in 0..frames {
             let world = self.app.main_mut().world_mut();
-            for (bone, local) in self.humanoid.bones.iter().zip(rest.rest_pose.iter()) {
+            for (bone, local) in self.humanoid.bones.iter().zip(self.pose.iter()) {
                 let transform = world
                     .get_component_for_entity_mut::<Transform>(*bone)
                     .unwrap();

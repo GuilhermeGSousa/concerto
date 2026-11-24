@@ -207,7 +207,7 @@ pub struct BehaviourEnded {
 
 impl Signal for BehaviourEnded {}
 
-const LYING: f32 = 1.0;
+pub(crate) const LYING: f32 = 1.0;
 
 /// Each fixed step, after the body is sensed, moves every character's `PhysicalState` where the body is: `Animated` while its ragdoll follows its animation and nothing claims a part, `Reacting` otherwise, `Down` once a falling or limp body lies at rest. Triggers `BodyStateChanged` for every change, whoever made it.
 pub fn update_physical_states(

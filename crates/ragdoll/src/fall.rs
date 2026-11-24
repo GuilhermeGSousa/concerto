@@ -14,7 +14,8 @@ use glam::{Quat, Vec3};
 use crate::{
     asset::{PartStrength, Side},
     behaviour::{
-        BehaviourEnded, BodyDrive, BodyState, BodyStateChanged, Outcome, PartCommand, PhysicalState,
+        BehaviourEnded, BodyDrive, BodyState, BodyStateChanged, LYING, Outcome, PartCommand,
+        PhysicalState,
     },
     character::{CharacterRagdoll, RagdollBody, RagdollMode},
     generate::BRACED,
@@ -195,7 +196,7 @@ fn horizontal(vector: Vec3) -> Vec3 {
     Vec3::new(vector.x, 0.0, vector.z)
 }
 
-/// Each fixed step, in `BehaviourSet`: for every falling body with a `Fall`, sends each hand towards where the chest will land, or to a wall about to be hit, lets an arm buckle once its hand is down, holds the head away from the way the body travels, curls the spine and folds the legs; once the trunk is down and slow the character is `Down`, the strength drains, and the body ends limp.
+/// Each fixed step, in `BehaviourSet`: for every falling body with a `Fall`, sends each hand towards where the chest will land, or to a wall about to be hit, lets an arm buckle once its hand is down, holds the head away from the way the body travels, curls the spine and folds the legs; once the trunk is down, or the body lies on any part but its feet, and is slow the character is `Down`, the strength drains, and the body ends limp.
 pub fn fall_bodies(
     mut characters: Query<(
         Entity,
@@ -262,8 +263,11 @@ pub fn fall_bodies(
                 .any(|contact| contact.other != Some(entity))
         };
 
+        let on_limbs = sense.lean > LYING
+            && (0..count).any(|part| !landmarks.feet().any(|foot| foot == part) && touching(part));
         let down = physical.state == BodyState::Down
-            || ((touching(chest) || touching(pelvis)) && sense.centre.velocity.length() < 0.5);
+            || ((touching(chest) || touching(pelvis) || on_limbs)
+                && sense.centre.velocity.length() < 0.5);
         if down || fall.landed.is_some() {
             let landed = fall.landed.map_or(0.0, |landed| landed + dt);
             fall.landed = Some(landed);
