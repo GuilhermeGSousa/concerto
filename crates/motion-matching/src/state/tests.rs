@@ -7,7 +7,7 @@ use concerto_animation::{
     pose::{FiredEvent, RootMotion},
 };
 use concerto_foundation::assets::{handle::AssetHandle, AssetId};
-use concerto_mesh::skeleton::Skeleton;
+use concerto_mesh::{skeleton::Skeleton, JointPose};
 use concerto_name::name;
 use glam::{Quat, Vec3};
 use uuid::Uuid;
@@ -482,29 +482,6 @@ fn root_motion_carries_a_leaning_root_to_where_it_faces_next() {
     assert!(arrived.angle_between(facing(time + dt)) < 1e-3);
 }
 
-#[test]
-fn steps_shorter_than_a_database_frame_add_up_to_the_distance_played() {
-    let fixture = fixture(1.0);
-    let node = MotionMatchingNode::default();
-    let mut state = state(&node, 0.0);
-    state.step(&node, state.delta_time, 1.0, &quiet(), fixture.sources());
-    state.frame = 20;
-    let steps = 40;
-    let dt = 0.5 / steps as f32;
-
-    let mut travelled = Vec3::ZERO;
-    for _ in 0..steps {
-        state.delta_time = dt;
-        state.step(&node, state.delta_time, 1.0, &quiet(), fixture.sources());
-        travelled += state.output.root_motion().translation;
-    }
-
-    assert!(
-        travelled.distance(Vec3::new(0.0, 0.0, -0.5)) < 1e-3,
-        "{travelled:?}"
-    );
-}
-
 fn started(fixture: &Fixture, node: &MotionMatchingNode) -> MotionMatchingState {
     let mut state = state(node, 0.0);
     state.step(node, state.delta_time, 1.0, &quiet(), fixture.sources());
@@ -645,4 +622,72 @@ fn a_search_jump_forward_within_an_entry_fires_nothing() {
     assert_eq!(fixture.database.entry_of(state.frame), Some(0));
     assert!(state.frame > 3, "{}", state.frame);
     assert!(state.fired.is_empty(), "{:?}", state.fired);
+}
+
+fn turned_after_walking(fixture: &Fixture, ticks_per_frame: usize) -> Vec<JointPose> {
+    let node = MotionMatchingNode::default().with_search_period(100.0);
+    let mut state = started(fixture, &node);
+    state.frame = 20;
+    let dt = 1.0001 / (fixture.database.rate * ticks_per_frame as f32);
+    let ticks = 8 * ticks_per_frame;
+    for _ in 0..ticks {
+        state.step(&node, dt, 1.0, &quiet(), fixture.sources());
+    }
+    state.search_timer = 0.0;
+    state.step(&node, 0.0, 1.0, &trajectory(0.0, 2), fixture.sources());
+    assert_eq!(fixture.database.entry_of(state.frame), Some(1));
+    for _ in 0..ticks {
+        state.step(&node, dt, 1.0, &quiet(), fixture.sources());
+    }
+    state.blended.joints().to_vec()
+}
+
+fn swinging(mut walk: AnimationClip) -> AnimationClip {
+    walk.add_channel(
+        Uuid::from_u128(3),
+        AnimationChannel::new(
+            vec![0.0, 2.0],
+            AnimationChanelOutput::Rotation(vec![Quat::IDENTITY, Quat::from_rotation_x(3.0)]),
+        ),
+    );
+    walk
+}
+
+#[test]
+fn play_comes_out_the_same_at_any_tick_rate() {
+    let fixture = fixture(1.0);
+    let node = MotionMatchingNode::default();
+    let mut state = state(&node, 0.0);
+    state.step(&node, state.delta_time, 1.0, &quiet(), fixture.sources());
+    state.frame = 20;
+    let steps = 40;
+    let dt = 0.5 / steps as f32;
+
+    let mut travelled = Vec3::ZERO;
+    for _ in 0..steps {
+        state.delta_time = dt;
+        state.step(&node, state.delta_time, 1.0, &quiet(), fixture.sources());
+        travelled += state.output.root_motion().translation;
+    }
+
+    assert!(
+        travelled.distance(Vec3::new(0.0, 0.0, -0.5)) < 1e-3,
+        "{travelled:?}"
+    );
+
+    let swinging = fixture_of(skeleton().rest_pose[0].rotation, swinging(walk_forward()));
+
+    let coarse = turned_after_walking(&swinging, 1);
+    let fine = turned_after_walking(&swinging, 16);
+
+    for (coarse, fine) in coarse.iter().zip(&fine) {
+        assert!(
+            coarse.translation.distance(fine.translation) < 1e-3,
+            "{coarse:?} at one tick a frame, {fine:?} at sixteen"
+        );
+        assert!(
+            coarse.rotation.angle_between(fine.rotation) < 1e-3,
+            "{coarse:?} at one tick a frame, {fine:?} at sixteen"
+        );
+    }
 }
