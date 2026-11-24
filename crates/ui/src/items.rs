@@ -27,6 +27,7 @@ use glam::Vec2;
 use crate::{
     focus::{FocusedWidget, UIFocusGained, UIFocusLost, UIFocusable},
     interaction::{HoveredNode, Interactable, UIClick, UIDoubleClick},
+    list::UIList,
     material::UIMaterial,
     node::{
         FlexDirection, Overflow, Position, UICulled, UIInset, UIIntrinsicHeight, UILayout, UINode,
@@ -156,6 +157,7 @@ fn click_item(
     on: On<UIClick>,
     items: Query<&UIItem>,
     selected: Query<&UISelected>,
+    (lists, trees): (Query<&UIList>, Query<&UITree>),
     mut cmd: CommandQueue,
 ) {
     let entity = on.entity();
@@ -167,15 +169,35 @@ fn click_item(
         MouseButton::Right => cmd.entity(entity).trigger(UIItemContextMenu {
             position: click.position,
         }),
-        MouseButton::Left if item.selectable => select(entity, &selected, &mut cmd),
+        MouseButton::Left if item.selectable => {
+            select(entity, &selected, &mut cmd);
+            if click_activates(item.owner, &lists, &trees) {
+                cmd.entity(entity).trigger(UIItemActivated);
+            }
+        }
         _ => {}
     }
 }
 
-fn double_click_item(on: On<UIDoubleClick>, items: Query<&UIItem>, mut cmd: CommandQueue) {
+fn click_activates(owner: Entity, lists: &Query<&UIList>, trees: &Query<&UITree>) -> bool {
+    lists
+        .get_entity(owner)
+        .map(|list| list.click_activates)
+        .or_else(|| trees.get_entity(owner).map(|tree| tree.click_activates))
+        .unwrap_or(false)
+}
+
+fn double_click_item(
+    on: On<UIDoubleClick>,
+    items: Query<&UIItem>,
+    (lists, trees): (Query<&UIList>, Query<&UITree>),
+    mut cmd: CommandQueue,
+) {
     let entity = on.entity();
     if on.signal().button == MouseButton::Left
-        && items.get_entity(entity).is_some_and(|item| item.selectable)
+        && items
+            .get_entity(entity)
+            .is_some_and(|item| item.selectable && !click_activates(item.owner, &lists, &trees))
     {
         cmd.entity(entity).trigger(UIItemActivated);
     }

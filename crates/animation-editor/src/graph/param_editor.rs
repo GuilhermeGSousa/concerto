@@ -27,6 +27,7 @@ use concerto_ui::{
     anchor::UIAnchoredPanel,
     focus::{FocusedWidget, UIFocusLost},
     interaction::UIClick,
+    items::UIItemActivated,
     node::UIRect,
     text_input::{UITextInput, UITextInputCancelled, UITextInputSubmitted},
     theme::UITheme,
@@ -160,14 +161,11 @@ fn toggle_param_menu<T: Reflect + Default>(row: Entity) -> Listener<UIClick> {
     .into_listener()
 }
 
-fn pick_param<T: Reflect + Default>(row: Entity, name: Name) -> Listener<UIClick> {
-    (move |on: On<UIClick>,
+fn pick_param<T: Reflect + Default>(row: Entity, name: Name) -> Listener<UIItemActivated> {
+    (move |_: On<UIItemActivated>,
            mut menus: Query<&mut UIAnchoredPanel, With<NameMenu>>,
            rows: Query<&PropertyRow>,
            mut commits: ResMut<PropertyCommits>| {
-        if on.signal().button != MouseButton::Left {
-            return;
-        }
         close_menu(&mut menus);
         let Some(target) = rows.get_entity(row) else {
             return;

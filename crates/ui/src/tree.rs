@@ -48,6 +48,8 @@ pub struct UITree {
     pub selectable: bool,
     /// While true every item shows as if expanded, caret clicks are ignored and `expanded` is left untouched.
     pub filtering: bool,
+    /// Whether a left click on an item activates it as well as selecting it, as a menu's items do; double clicks then send nothing more.
+    pub click_activates: bool,
 }
 
 impl Default for UITree {
@@ -56,6 +58,7 @@ impl Default for UITree {
             row_height: None,
             selectable: true,
             filtering: false,
+            click_activates: false,
         }
     }
 }

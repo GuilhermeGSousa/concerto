@@ -32,6 +32,7 @@ use concerto_ui::{
     anchor::UIAnchoredPanel,
     checkbox::{UICheckbox, UICheckboxChanged},
     interaction::{Interactable, UIClick, UIDisabled, UIInteractionStyle},
+    items::UIItemActivated,
     node::{FlexDirection, UILayout, UINode, UIRect},
     scroll::{SCROLLBAR_WIDTH, UIScrollArea},
     text::UIText,
@@ -239,15 +240,12 @@ fn toggle_skeleton_picker(document: Entity) -> Listener<UIClick> {
     .into_listener()
 }
 
-fn pick_skeleton(document: Entity) -> impl Fn(AssetId) -> Listener<UIClick> {
+fn pick_skeleton(document: Entity) -> impl Fn(AssetId) -> Listener<UIItemActivated> {
     move |id| {
-        (move |on: On<UIClick>,
+        (move |_: On<UIItemActivated>,
                mut menus: Query<&mut UIAnchoredPanel, With<AssetPickerMenu>>,
                mut documents: Query<&mut DefinitionDocument>,
                mut cmd: CommandQueue| {
-            if on.signal().button != MouseButton::Left {
-                return;
-            }
             for mut panel in menus.iter_mut() {
                 panel.open = false;
             }
@@ -286,15 +284,12 @@ fn toggle_clip_picker(document: Entity) -> Listener<UIClick> {
     .into_listener()
 }
 
-fn pick_clip(document: Entity) -> impl Fn(AssetId) -> Listener<UIClick> {
+fn pick_clip(document: Entity) -> impl Fn(AssetId) -> Listener<UIItemActivated> {
     move |id| {
-        (move |on: On<UIClick>,
+        (move |_: On<UIItemActivated>,
                mut menus: Query<&mut UIAnchoredPanel, With<AssetPickerMenu>>,
                mut documents: Query<&mut DefinitionDocument>,
                mut cmd: CommandQueue| {
-            if on.signal().button != MouseButton::Left {
-                return;
-            }
             for mut panel in menus.iter_mut() {
                 panel.open = false;
             }
@@ -408,8 +403,8 @@ fn toggle_channel_menu(document: Entity) -> Listener<UIClick> {
     .into_listener()
 }
 
-fn pick_channel(document: Entity, name: String) -> Listener<UIClick> {
-    (move |on: On<UIClick>,
+fn pick_channel(document: Entity, name: String) -> Listener<UIItemActivated> {
+    (move |_: On<UIItemActivated>,
            mut menus: Query<&mut UIAnchoredPanel, With<NameMenu>>,
            mut documents: Query<(
         &mut EditorDocument,
@@ -419,9 +414,6 @@ fn pick_channel(document: Entity, name: String) -> Listener<UIClick> {
         &ShownValue,
     )>,
            mut cmd: CommandQueue| {
-        if on.signal().button != MouseButton::Left {
-            return;
-        }
         close_menu(&mut menus);
         let Some((mut held, mut state, hosted, values, shown)) = documents.get_entity_mut(document)
         else {
