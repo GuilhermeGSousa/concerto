@@ -1,6 +1,7 @@
 use std::{
     any::TypeId,
-    collections::{HashMap, VecDeque},
+    cmp::Reverse,
+    collections::{BinaryHeap, HashMap, VecDeque},
     fmt,
 };
 
@@ -28,7 +29,6 @@ use derive_more::{Deref, From};
 use fixedbitset::FixedBitSet;
 use petgraph::{
     Direction,
-    algo::toposort,
     dot::{Config, Dot},
     graph::NodeIndex,
 };
@@ -129,36 +129,45 @@ impl Schedule {
         self.systems
             .iter_mut()
             .for_each(|system| system.initialize(world));
-        self.setup_systems_for_compilation(world);
 
         let mut graph = SystemDependencyGraph::new();
-        let nodes: Vec<SystemNodeIndex> = self
+        let mut nodes: Vec<SystemNodeIndex> = self
             .systems
             .iter()
             .enumerate()
-            .map(|(index, system)| {
-                let mut access = SystemAccess::default();
-                let mut metadata = SystemMetadata::default();
-                system.fill_access(&mut metadata, &mut access);
-                graph
-                    .add_node(SystemNode::new(
-                        index.into(),
-                        access,
-                        metadata,
-                        system.name(),
-                    ))
-                    .into()
-            })
+            .map(|(index, system)| add_node(&mut graph, index, system.as_ref()))
             .collect();
 
-        let by_type = self.index_by_type();
-        let by_set = self.index_by_set();
         let mut reachability = Reachability::new(self.systems.len());
-        let mut explicit = ExplicitEdges {
+        self.add_explicit_edges(&mut ExplicitEdges {
             graph: &mut graph,
             nodes: &nodes,
             reachability: &mut reachability,
+        });
+
+        let registered = self.systems.len();
+        let mut schedule_graph = ScheduleGraph {
+            systems: &mut self.systems,
+            graph: &mut graph,
+            nodes: &mut nodes,
+            reachability: &mut reachability,
         };
+        schedule_graph.insert_sync_points(world);
+        schedule_graph.add_implicit_edges(registered);
+        let order = schedule_graph.reduce_transitively();
+
+        let compiled_data = build_compiled_data(self.systems, &graph, &nodes, &order);
+
+        CompiledSchedule {
+            executor: Box::new(T::init(&compiled_data)),
+            compiled_data,
+            graph,
+        }
+    }
+
+    fn add_explicit_edges(&self, explicit: &mut ExplicitEdges) {
+        let by_type = self.index_by_type();
+        let by_set = self.index_by_set();
 
         for (index, config) in self.configs.iter().enumerate() {
             let owner = format!("`{}`", self.systems[index].name());
@@ -194,49 +203,11 @@ impl Schedule {
                 }
             }
         }
-
-        add_implicit_edges(&mut graph, &nodes, &mut reachability);
-
-        let compiled_data = build_compiled_data(self.systems, &graph, &nodes);
-
-        CompiledSchedule {
-            executor: Box::new(T::init(&compiled_data)),
-            compiled_data,
-            graph,
-        }
-    }
-
-    fn setup_systems_for_compilation(&mut self, world: &mut World) {
-        let mut systems = Vec::with_capacity(self.systems.len());
-        let mut configs = Vec::with_capacity(self.configs.len());
-
-        for (system, config) in self.systems.drain(..).zip(self.configs.drain(..)) {
-            let mut access = SystemAccess::default();
-            let mut metadata = SystemMetadata::default();
-            system.fill_access(&mut metadata, &mut access);
-            let needs_sync = access.needs_apply() && !is_sync_point(system.as_ref());
-
-            systems.push(system);
-            configs.push(config);
-
-            if needs_sync {
-                let mut sync_point: Box<dyn System<In = ()>> = Box::new(SyncPoint);
-                sync_point.initialize(world);
-                systems.push(sync_point);
-                configs.push(NodeConfig::default());
-            }
-        }
-
-        self.systems = systems;
-        self.configs = configs;
     }
 
     fn index_by_type(&self) -> HashMap<TypeId, FixedBitSet> {
         let mut index: HashMap<TypeId, FixedBitSet> = HashMap::new();
         for (position, system) in self.systems.iter().enumerate() {
-            if is_sync_point(system.as_ref()) {
-                continue;
-            }
             index
                 .entry(system.system_type())
                 .or_insert_with(|| FixedBitSet::with_capacity(self.systems.len()))
@@ -345,21 +316,157 @@ impl ExplicitEdges<'_> {
     }
 }
 
-fn add_implicit_edges(
+fn add_node(
     graph: &mut SystemDependencyGraph,
-    nodes: &[SystemNodeIndex],
-    reachability: &mut Reachability,
-) {
-    for later in 0..nodes.len() {
-        for earlier in 0..later {
-            let conflicts = !SystemAccess::are_disjoint(
-                graph.node_weight(*nodes[earlier]).unwrap().access(),
-                graph.node_weight(*nodes[later]).unwrap().access(),
-            );
-            if conflicts && reachability.try_add_edge(earlier, later) {
-                graph.update_edge(*nodes[earlier], *nodes[later], ());
+    index: usize,
+    system: &dyn System<In = ()>,
+) -> SystemNodeIndex {
+    let mut access = SystemAccess::default();
+    let mut metadata = SystemMetadata::default();
+    system.fill_access(&mut metadata, &mut access);
+    graph
+        .add_node(SystemNode::new(
+            index.into(),
+            access,
+            metadata,
+            system.name(),
+        ))
+        .into()
+}
+
+struct ScheduleGraph<'a> {
+    systems: &'a mut Vec<BoxedSystem>,
+    graph: &'a mut SystemDependencyGraph,
+    nodes: &'a mut Vec<SystemNodeIndex>,
+    reachability: &'a mut Reachability,
+}
+
+impl ScheduleGraph<'_> {
+    fn access(&self, index: usize) -> &SystemAccess {
+        self.graph.node_weight(*self.nodes[index]).unwrap().access()
+    }
+
+    fn successors(&self, index: usize) -> Vec<usize> {
+        self.graph
+            .neighbors_directed(*self.nodes[index], Direction::Outgoing)
+            .map(|node| *self.graph.node_weight(node).unwrap().index())
+            .collect()
+    }
+
+    fn topological_order(&self) -> Vec<usize> {
+        let count = self.nodes.len();
+        let mut waiting: Vec<usize> = self
+            .nodes
+            .iter()
+            .map(|node| {
+                self.graph
+                    .neighbors_directed(**node, Direction::Incoming)
+                    .count()
+            })
+            .collect();
+        let mut ready: BinaryHeap<Reverse<usize>> = (0..count)
+            .filter(|&index| waiting[index] == 0)
+            .map(Reverse)
+            .collect();
+        let mut order = Vec::with_capacity(count);
+        while let Some(Reverse(index)) = ready.pop() {
+            order.push(index);
+            for successor in self.successors(index) {
+                waiting[successor] -= 1;
+                if waiting[successor] == 0 {
+                    ready.push(Reverse(successor));
+                }
             }
         }
+        assert_eq!(
+            order.len(),
+            count,
+            "schedule graph is acyclic by construction"
+        );
+        order
+    }
+
+    fn link(&mut self, from: usize, to: usize) {
+        self.graph
+            .update_edge(*self.nodes[from], *self.nodes[to], ());
+        self.reachability.add_edge(from, to);
+    }
+
+    fn carries_commands_to(&self, from: usize, to: usize) -> bool {
+        self.access(from).needs_apply() && !self.access(to).is_exclusive()
+    }
+
+    fn sync_distances(&self) -> Vec<usize> {
+        let mut distance = vec![0; self.nodes.len()];
+        for from in self.topological_order() {
+            for to in self.successors(from) {
+                let step = usize::from(self.carries_commands_to(from, to));
+                distance[to] = distance[to].max(distance[from] + step);
+            }
+        }
+        distance
+    }
+
+    fn insert_sync_points(&mut self, world: &mut World) {
+        let distance = self.sync_distances();
+        let mut sync_points: HashMap<usize, usize> = HashMap::new();
+        for from in 0..distance.len() {
+            for to in self.successors(from) {
+                if !self.carries_commands_to(from, to) {
+                    continue;
+                }
+                let sync_point = match sync_points.get(&distance[to]) {
+                    Some(&sync_point) => sync_point,
+                    None => {
+                        let sync_point = self.add_sync_point(world);
+                        sync_points.insert(distance[to], sync_point);
+                        sync_point
+                    }
+                };
+                self.link(from, sync_point);
+                self.link(sync_point, to);
+            }
+        }
+    }
+
+    fn add_sync_point(&mut self, world: &mut World) -> usize {
+        let mut sync_point: BoxedSystem = Box::new(SyncPoint);
+        sync_point.initialize(world);
+        let index = self.systems.len();
+        self.nodes
+            .push(add_node(self.graph, index, sync_point.as_ref()));
+        self.systems.push(sync_point);
+        self.reachability.add_node();
+        index
+    }
+
+    fn add_implicit_edges(&mut self, registered: usize) {
+        for later in 0..registered {
+            for earlier in 0..later {
+                let conflicts =
+                    !SystemAccess::are_disjoint(self.access(earlier), self.access(later));
+                if conflicts
+                    && !self.reachability.reaches(earlier, later)
+                    && self.reachability.try_add_edge(earlier, later)
+                {
+                    self.graph
+                        .update_edge(*self.nodes[earlier], *self.nodes[later], ());
+                }
+            }
+        }
+    }
+
+    fn reduce_transitively(&mut self) -> Vec<usize> {
+        let order = self.topological_order();
+        let successors: Vec<Vec<usize>> = (0..order.len())
+            .map(|index| self.successors(index))
+            .collect();
+        let redundant = self.reachability.redundant_edges(&successors, &order);
+        self.graph.retain_edges(|graph, edge| {
+            let (from, to) = graph.edge_endpoints(edge).unwrap();
+            !redundant[*graph[from].index()].contains(*graph[to].index())
+        });
+        order
     }
 }
 
@@ -367,41 +474,48 @@ fn build_compiled_data(
     systems: Vec<BoxedSystem>,
     graph: &SystemDependencyGraph,
     nodes: &[SystemNodeIndex],
+    order: &[usize],
 ) -> CompiledScheduleData {
-    let dependency_count: Vec<usize> = nodes
+    let mut position = vec![0; order.len()];
+    for (new, &old) in order.iter().enumerate() {
+        position[old] = new;
+    }
+    let node = |old: usize| graph.node_weight(*nodes[old]).unwrap();
+
+    let mut slots: Vec<Option<BoxedSystem>> = systems.into_iter().map(Some).collect();
+    let systems = order
         .iter()
-        .map(|idx| graph.neighbors_directed(**idx, Direction::Incoming).count())
+        .map(|&old| slots[old].take().unwrap())
         .collect();
 
-    let dependants = nodes
+    let dependency_count = order
         .iter()
-        .map(|idx| {
+        .map(|&old| {
             graph
-                .neighbors_directed(**idx, Direction::Outgoing)
-                .map(|node_index| *graph.node_weight(node_index).unwrap().index())
+                .neighbors_directed(*nodes[old], Direction::Incoming)
+                .count()
+        })
+        .collect();
+
+    let dependants = order
+        .iter()
+        .map(|&old| {
+            graph
+                .neighbors_directed(*nodes[old], Direction::Outgoing)
+                .map(|next| position[*graph.node_weight(next).unwrap().index()])
                 .collect()
         })
         .collect();
 
-    let system_access: Vec<SystemAccess> = nodes
+    let system_access = order
         .iter()
-        .map(|idx| graph.node_weight(**idx).unwrap().access().clone())
+        .map(|&old| node(old).access().clone())
         .collect();
 
-    let system_meta: Vec<SystemMetadata> = nodes
-        .iter()
-        .map(|idx| graph.node_weight(**idx).unwrap().meta().clone())
-        .collect();
-
-    let sorted_systems = toposort(graph, None)
-        .expect("schedule graph is acyclic by construction")
-        .into_iter()
-        .map(|node_index| *graph.node_weight(node_index).unwrap().index())
-        .collect::<Vec<_>>();
+    let system_meta = order.iter().map(|&old| node(old).meta().clone()).collect();
 
     CompiledScheduleData {
         systems,
-        sorted_systems,
         dependency_count,
         dependants,
         system_access,
@@ -453,10 +567,8 @@ impl fmt::Debug for CompiledSchedule {
 
 /// The resolved systems and dependency graph a [`SystemExecutor`] runs.
 pub struct CompiledScheduleData {
-    /// The initialized systems, including inserted sync points.
+    /// The initialized systems, including inserted sync points, in topological order.
     pub systems: Vec<BoxedSystem>,
-    /// Positions into `systems` in topological order.
-    pub sorted_systems: Vec<usize>,
     /// How many systems must finish before each system may start.
     pub dependency_count: Vec<usize>,
     /// For each system, the positions of the systems waiting on it.
@@ -560,10 +672,6 @@ impl CompiledSchedules {
     }
 }
 
-pub(crate) fn is_sync_point(system: &dyn System<In = ()>) -> bool {
-    system.system_type() == TypeId::of::<SyncPoint>()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -597,5 +705,20 @@ mod tests {
         // Both schedules must have been put back after running, not dropped.
         world.run_schedule(Outer);
         assert_eq!(world.get_resource::<Counter>().unwrap().0, 2);
+    }
+
+    fn queue_one(_: crate::CommandQueue) {}
+
+    fn queue_two(_: crate::CommandQueue) {}
+
+    #[test]
+    fn unordered_command_systems_wait_on_nothing() {
+        let mut world = World::new();
+        let mut schedule = Schedule::new();
+        schedule.add_system(queue_one).add_system(queue_two);
+
+        let compiled = schedule.compile::<SingleThreadedExecutor>(&mut world);
+
+        assert_eq!(compiled.compiled_data.dependency_count, [0, 0]);
     }
 }

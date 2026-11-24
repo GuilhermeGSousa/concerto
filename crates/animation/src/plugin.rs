@@ -109,7 +109,12 @@ impl Plugin for AnimationPlugin {
                     .after(update_animation_players)
                     .at_preview_time(),
             )
-            .add_system(LateUpdate, initialize_animation_players.at_preview_time())
+            .add_system(
+                LateUpdate,
+                initialize_animation_players
+                    .after(initialize_skeletons)
+                    .at_preview_time(),
+            )
             .add_system(LateUpdate, update_animation_players.at_preview_time());
     }
 }

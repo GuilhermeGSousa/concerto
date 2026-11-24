@@ -69,7 +69,9 @@ Systems are added to a schedule. The ones a game uses:
 | `LateUpdate` | After `Update`; transform propagation and UI layout run here |
 
 They live in `concerto::app::schedule_groups`. Within a schedule, systems run
-in the order you constrain them to, and otherwise in registration order:
+in the order you constrain them to, and two systems that touch the same data
+otherwise in registration order. A system sees another's commands in the same
+frame only when it is ordered after it:
 
 ```rust
 use concerto::ecs::IntoSystemConfig;

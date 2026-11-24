@@ -103,11 +103,13 @@ impl Plugin for EditorPlugin {
         app.register_plugin(drag_drop::DragDropPlugin);
         app.add_system(
             concerto_app::schedule_groups::Update,
-            workspace::create_editor_hosts,
+            workspace::create_editor_hosts.after(asset_editor::process_editor_commands),
         );
         app.add_system(
             concerto_app::schedule_groups::Update,
-            workspace::sync_workspace.before(dock::apply_layout),
+            workspace::sync_workspace
+                .after(workspace::create_editor_hosts)
+                .before(dock::apply_layout),
         );
         app.add_system(
             concerto_app::schedule_groups::Update,

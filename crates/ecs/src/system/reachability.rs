@@ -11,6 +11,14 @@ impl Reachability {
         }
     }
 
+    pub(crate) fn add_node(&mut self) {
+        let count = self.descendants.len() + 1;
+        for descendants in &mut self.descendants {
+            descendants.grow(count);
+        }
+        self.descendants.push(FixedBitSet::with_capacity(count));
+    }
+
     pub(crate) fn reaches(&self, from: usize, to: usize) -> bool {
         self.descendants[from].contains(to)
     }
@@ -28,6 +36,35 @@ impl Reachability {
                 self.descendants[node].union_with(&closure);
             }
         }
+    }
+
+    pub(crate) fn redundant_edges(
+        &self,
+        successors: &[Vec<usize>],
+        order: &[usize],
+    ) -> Vec<FixedBitSet> {
+        let count = self.descendants.len();
+        let mut position = vec![0; count];
+        for (rank, &node) in order.iter().enumerate() {
+            position[node] = rank;
+        }
+        successors
+            .iter()
+            .map(|targets| {
+                let mut targets = targets.clone();
+                targets.sort_unstable_by_key(|&to| position[to]);
+                let mut covered = FixedBitSet::with_capacity(count);
+                let mut redundant = FixedBitSet::with_capacity(count);
+                for to in targets {
+                    if covered.contains(to) {
+                        redundant.insert(to);
+                    } else {
+                        covered.union_with(&self.descendants[to]);
+                    }
+                }
+                redundant
+            })
+            .collect()
     }
 
     pub(crate) fn try_add_edge(&mut self, from: usize, to: usize) -> bool {
@@ -66,7 +103,7 @@ mod tests {
 
     proptest! {
         #[test]
-        fn try_add_edge_keeps_the_graph_acyclic_and_reaches_its_transitive_closure(
+        fn try_add_edge_keeps_the_graph_acyclic_and_its_reduction_reaches_the_same_closure(
             nodes in 1usize..140,
             ends in prop::collection::vec(any::<Index>(), 0..120),
         ) {
@@ -90,6 +127,27 @@ mod tests {
                 let expected = descendants(nodes, &accepted, from);
                 for (to, reached) in expected.into_iter().enumerate() {
                     prop_assert_eq!(reachability.reaches(from, to), reached, "{} -> {}", from, to);
+                }
+            }
+
+            let mut successors = vec![Vec::new(); nodes];
+            for edge in &accepted {
+                if !successors[edge.from].contains(&edge.to) {
+                    successors[edge.from].push(edge.to);
+                }
+            }
+            let mut order: Vec<usize> = (0..nodes).collect();
+            order.sort_by_key(|&node| std::cmp::Reverse(descendants(nodes, &accepted, node).iter().filter(|reached| **reached).count()));
+            let redundant = reachability.redundant_edges(&successors, &order);
+            let reduced: Vec<Edge> = accepted
+                .iter()
+                .filter(|edge| !redundant[edge.from].contains(edge.to))
+                .map(|edge| Edge { from: edge.from, to: edge.to })
+                .collect();
+            for from in 0..nodes {
+                prop_assert_eq!(descendants(nodes, &reduced, from), descendants(nodes, &accepted, from));
+                for to in redundant[from].ones() {
+                    prop_assert!(successors[from].iter().any(|&other| other != to && reachability.reaches(other, to)));
                 }
             }
         }
