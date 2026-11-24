@@ -1,5 +1,3 @@
-use fixedbitset::FixedBitSet;
-
 use crate::{
     World,
     system::{BoxedSystem, executor::SystemExecutor, schedule::CompiledScheduleData},
@@ -7,7 +5,7 @@ use crate::{
 
 /// Runs every system on the calling thread, one at a time, in dependency order.
 pub struct SingleThreadedExecutor {
-    unapplied_systems: FixedBitSet,
+    unapplied_systems: Vec<usize>,
 }
 
 impl SystemExecutor for SingleThreadedExecutor {
@@ -16,7 +14,7 @@ impl SystemExecutor for SingleThreadedExecutor {
         Self: Sized,
     {
         Self {
-            unapplied_systems: FixedBitSet::with_capacity(compiled_data.systems.len()),
+            unapplied_systems: Vec::with_capacity(compiled_data.systems.len()),
         }
     }
 
@@ -33,7 +31,7 @@ impl SystemExecutor for SingleThreadedExecutor {
             profiling::scope!(compiled_data.systems[idx].name());
             compiled_data.systems[idx].run((), world);
             if access.needs_apply() {
-                self.unapplied_systems.insert(idx);
+                self.unapplied_systems.push(idx);
             }
         }
         apply_deferred(
@@ -44,10 +42,9 @@ impl SystemExecutor for SingleThreadedExecutor {
     }
 }
 
-fn apply_deferred(systems: &mut [BoxedSystem], unapplied: &mut FixedBitSet, world: &mut World) {
+fn apply_deferred(systems: &mut [BoxedSystem], unapplied: &mut Vec<usize>, world: &mut World) {
     profiling::scope!("apply_deferred");
-    for index in unapplied.ones() {
+    for index in unapplied.drain(..) {
         systems[index].apply(world);
     }
-    unapplied.clear();
 }

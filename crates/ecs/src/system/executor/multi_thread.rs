@@ -50,7 +50,7 @@ struct ExecutorState {
     ready_systems: FixedBitSet,
     ready_systems_copy: FixedBitSet,
     running_systems: FixedBitSet,
-    unapplied_systems: FixedBitSet,
+    unapplied_systems: Vec<usize>,
     dependency_count: Vec<usize>,
     dependants: Vec<Vec<usize>>,
     local_thread_running: bool,
@@ -85,7 +85,7 @@ impl SystemExecutor for MultiThreadedExecutor {
                 ready_systems: FixedBitSet::with_capacity(sys_count),
                 ready_systems_copy: FixedBitSet::with_capacity(sys_count),
                 running_systems: FixedBitSet::with_capacity(sys_count),
-                unapplied_systems: FixedBitSet::with_capacity(sys_count),
+                unapplied_systems: Vec::with_capacity(sys_count),
                 dependency_count: compiled_data.dependency_count.clone(),
                 dependants: compiled_data.dependants.clone(),
                 local_thread_running: false,
@@ -139,7 +139,7 @@ impl SystemExecutor for MultiThreadedExecutor {
             .get_mut()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         profiling::scope!("apply_deferred");
-        for system_index in state.unapplied_systems.ones() {
+        for &system_index in &state.unapplied_systems {
             compiled_data.systems[system_index].apply(world);
         }
         state.unapplied_systems.clear();
@@ -147,9 +147,9 @@ impl SystemExecutor for MultiThreadedExecutor {
 }
 
 impl Environment<'_> {
-    fn apply_deferred(&self, systems: &FixedBitSet) {
+    fn apply_deferred(&self, systems: &[usize]) {
         profiling::scope!("apply_deferred");
-        for system_index in systems.ones() {
+        for &system_index in systems {
             let sys = unsafe { &mut *self.systems[system_index].get() };
             // SAFETY: no system runs while an exclusive system applies deferred work.
             sys.apply(unsafe { self.world_cell.world_mut() });
@@ -270,7 +270,7 @@ impl ExecutorState {
     fn finish_system(&mut self, environment: &Environment, system_index: usize) {
         self.running_systems.remove(system_index);
         if environment.system_access[system_index].needs_apply() {
-            self.unapplied_systems.insert(system_index);
+            self.unapplied_systems.push(system_index);
         }
         if !environment.system_meta[system_index].is_send() {
             self.local_thread_running = false;
@@ -326,10 +326,8 @@ impl ExecutorState {
         self.ready_systems_copy = ready_systems;
     }
 
-    fn take_unapplied(&mut self) -> FixedBitSet {
-        let unapplied = self.unapplied_systems.clone();
-        self.unapplied_systems.clear();
-        unapplied
+    fn take_unapplied(&mut self) -> Vec<usize> {
+        mem::take(&mut self.unapplied_systems)
     }
 }
 
