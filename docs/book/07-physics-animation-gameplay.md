@@ -671,7 +671,10 @@ it:
   and no query sees it; it gets its own layers back when it is let go;
 - when every weight at the pelvis is back at 0 it is let go where it stands,
   and the springs restart from the body's velocity and facing, which `Carried`
-  holds, so the first animated frame does not snap.
+  holds, so the first animated frame does not snap. The facing is the way the
+  pelvis points across the hips, so a body on its back or front keeps one
+  heading however it rocks about its spine; only a body on its side takes it
+  from the way the pelvis faces.
 
 The capsule is not checked for a clear standing spot when it is let go; a body
 that came to rest inside a wall's reach is pushed out by the solver.
