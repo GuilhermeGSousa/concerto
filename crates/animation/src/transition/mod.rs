@@ -39,6 +39,8 @@ pub(crate) trait AnimationTransitionBlender: Send + Sync {
 
     fn in_flight(&self) -> Option<BlendInFlight>;
 
+    fn for_each_playing(&self, visit: &mut dyn FnMut(GraphId));
+
     fn sample(
         &mut self,
         bone_ids: &[Uuid],

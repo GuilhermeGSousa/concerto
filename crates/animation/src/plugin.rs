@@ -1,5 +1,9 @@
 use concerto_app::{App, edit_time::AtPreviewTime, plugins::Plugin, schedule_groups::LateUpdate};
-use concerto_ecs::{IntoSystemConfig, World, reflect::AppTypeRegistry};
+use concerto_ecs::{
+    CommandQueue, IntoSystemConfig, World,
+    reflect::AppTypeRegistry,
+    signal::{On, lifecycle::Add, listener::IntoListener},
+};
 use concerto_foundation::{
     assets::handle::AssetHandle,
     transform::systems::{propagate_global_transforms, update_simple_entities},
@@ -13,12 +17,14 @@ use crate::{
     event::{AnimationEvent, ClipEvent},
     graph::AnimationGraph,
     mask::BoneMask,
+    message::{AnimationMessage, queue_message},
     node::{
         AdditiveNode, AimOffsetNode, AnimationClipNode, AnimationNode, BlendNode, IkTarget,
         LayerNode, PlaceholderNode, ResultNode, TwoBoneIkNode, blend_space::BlendSpace2DNode,
         register_node_inputs, state_machine::AnimationStateMachine,
     },
     param::Param,
+    player::AnimationPlayer,
     retarget::{RetargetNode, RetargetRig},
     target::{
         animate_targets, initialize_animation_players, initialize_skeletons,
@@ -75,6 +81,11 @@ pub trait AnimationAppExt {
 
     /// Registers `S` with the type registry, so clips that store it make it live on load.
     fn register_clip_event<S: ClipEvent + GetTypeRegistration>(&mut self) -> &mut Self;
+
+    /// Registers `M` with the type registry, so `OnMessage` triggers that name it fire, and lets `SendAnimationMessage<M>` on a character queue it on its player.
+    fn register_animation_message<M: AnimationMessage + GetTypeRegistration>(
+        &mut self,
+    ) -> &mut Self;
 }
 
 impl AnimationAppExt for App {
@@ -88,6 +99,18 @@ impl AnimationAppExt for App {
         self.register_type::<S>();
         self
     }
+
+    fn register_animation_message<M: AnimationMessage + GetTypeRegistration>(
+        &mut self,
+    ) -> &mut Self {
+        self.register_type::<M>();
+        self.add_listener(listen_for_messages::<M>.at_preview_time());
+        self
+    }
+}
+
+fn listen_for_messages<M: AnimationMessage>(on: On<Add<AnimationPlayer>>, mut cmd: CommandQueue) {
+    cmd.insert(queue_message::<M>.into_listener(), on.signal().entity);
 }
 
 pub struct AnimationPlugin;

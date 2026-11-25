@@ -1181,6 +1181,7 @@ impl Running {
             skeleton: Some(skeleton),
             model_to_world: context.model_to_world,
             inputs: context.inputs,
+            extras: context.extras,
         }
     }
 
@@ -1227,6 +1228,7 @@ impl Running {
             for event in frame.events() {
                 output.push_event(*event);
             }
+            output.add_signals_of(&frame);
         }
         self.pool.release(frame);
     }

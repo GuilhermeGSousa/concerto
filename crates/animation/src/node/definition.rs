@@ -77,6 +77,20 @@ pub trait AnimationNode: Reflect + Send + Sync + 'static {
         true
     }
 
+    /// Takes one message sent to the player this frame, before the node advances; ignored by default.
+    fn receive(
+        &self,
+        _state: &mut Self::State,
+        _message: &dyn Reflect,
+        _context: &AnimationGraphContext<'_>,
+    ) {
+    }
+
+    /// Whether the node has succeeded or failed at what it does; none by default.
+    fn outcome(&self, _state: &Self::State) -> Option<NodeOutcome> {
+        None
+    }
+
     /// The inputs this node takes, in the order `evaluate` receives them.
     fn input_slots(&self) -> InputSlots;
 
@@ -111,6 +125,13 @@ pub trait AnimationNode: Reflect + Send + Sync + 'static {
         _visit: &mut dyn FnMut(&mut AnimationGraphState),
     ) {
     }
+}
+
+/// How a node ended what it does, read by a state machine's `OnSucceeded` and `OnFailed` triggers.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NodeOutcome {
+    Succeeded,
+    Failed,
 }
 
 /// What a playing node shows an editor beyond its weight.
@@ -195,6 +216,15 @@ pub trait ErasedAnimationNode: Send + Sync {
     fn reset(&self, state: &mut NodeState);
 
     fn is_finished(&self, state: &NodeState) -> bool;
+
+    fn receive(
+        &self,
+        state: &mut NodeState,
+        message: &dyn Reflect,
+        context: &AnimationGraphContext<'_>,
+    );
+
+    fn outcome(&self, state: &NodeState) -> Option<NodeOutcome>;
 
     fn inner_graphs(&self, visit: &mut dyn FnMut(&AssetHandle<AnimationGraph>));
 
@@ -297,6 +327,23 @@ impl<T: AnimationNode> ErasedAnimationNode for T {
         state
             .downcast_ref::<T::State>()
             .is_none_or(|state| AnimationNode::is_finished(self, state))
+    }
+
+    fn receive(
+        &self,
+        state: &mut NodeState,
+        message: &dyn Reflect,
+        context: &AnimationGraphContext<'_>,
+    ) {
+        if let Some(state) = state.downcast_mut::<T::State>() {
+            AnimationNode::receive(self, state, message, context);
+        }
+    }
+
+    fn outcome(&self, state: &NodeState) -> Option<NodeOutcome> {
+        state
+            .downcast_ref::<T::State>()
+            .and_then(|state| AnimationNode::outcome(self, state))
     }
 
     fn inner_graphs(&self, visit: &mut dyn FnMut(&AssetHandle<AnimationGraph>)) {

@@ -1,3 +1,8 @@
+use std::{
+    any::{Any, TypeId},
+    collections::HashMap,
+};
+
 use concerto_ecs::system::input::Inputs;
 use concerto_mesh::Skeleton;
 use glam::{Affine3A, Vec3};
@@ -49,6 +54,22 @@ pub struct RootBone {
     pub up: Vec3,
 }
 
+/// Typed per-character data a player hands its nodes, one value per type.
+#[derive(Default)]
+pub(crate) struct Extras {
+    values: HashMap<TypeId, Box<dyn Any + Send + Sync>>,
+}
+
+impl Extras {
+    pub(crate) fn set<T: Send + Sync + 'static>(&mut self, value: T) {
+        self.values.insert(TypeId::of::<T>(), Box::new(value));
+    }
+
+    pub(crate) fn get<T: Send + Sync + 'static>(&self) -> Option<&T> {
+        self.values.get(&TypeId::of::<T>())?.downcast_ref::<T>()
+    }
+}
+
 /// What every node of one player's graph is walked with: the player's own data and the walk's node inputs.
 pub struct AnimationGraphContext<'a> {
     pub(crate) blackboard: &'a AnimationBlackboard,
@@ -56,11 +77,17 @@ pub struct AnimationGraphContext<'a> {
     pub(crate) skeleton: Option<&'a Skeleton>,
     pub(crate) model_to_world: Option<Affine3A>,
     pub(crate) inputs: &'a Inputs<'a, 'a>,
+    pub(crate) extras: &'a Extras,
 }
 
 impl<'a> AnimationGraphContext<'a> {
     pub fn blackboard(&self) -> &AnimationBlackboard {
         self.blackboard
+    }
+
+    /// The value of type `T` the player was handed with `AnimationPlayer::set_extra`.
+    pub fn extra<T: Send + Sync + 'static>(&self) -> Option<&'a T> {
+        self.extras.get::<T>()
     }
 
     /// The root bone of the player being evaluated, if it has one.

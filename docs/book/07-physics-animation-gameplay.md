@@ -1122,7 +1122,10 @@ A graph is a tree of nodes under a result node:
   parameter: the classic locomotion setup.
 - **State machine** switches between sub-graphs on triggers such as
   `AnimationFSMTrigger::on_bool(name!("is_grounded"), false)` or
-  `AnimationFSMTrigger::OnAnimationEnd`. Each transition takes a
+  `AnimationFSMTrigger::OnAnimationEnd`, `AnimationFSMTrigger::on_message::<M>()`,
+  which fires when a message of type `M` was sent to the player this frame,
+  or `OnSucceeded` and `OnFailed`, which fire on the outcome the current
+  state's graph reports (below). Each transition takes a
   `blend_time`, and the machine's `TransitionBlender` (set with
   `.blender(..)` on the builder) decides what it means: `CrossFade`, the
   default, fades the old state out over `blend_time` seconds, and
@@ -1458,7 +1461,9 @@ player's own data: its blackboard, its root bone in `evaluate`, its skeleton,
 and, in `evaluate`, `model_to_world`: the transform of bone 0's parent, or
 identity when it has none. It is this frame's: the character has already moved by
 this frame's root motion when `evaluate` runs, so a node that reads the world
-reads where the character is now.
+reads where the character is now. `extra::<T>()` reads typed per-character
+data the game handed the player with `AnimationPlayer::set_extra(value)`, one
+value per type, replaced by the next of that type; `None` until one is set.
 
 `evaluate` writes an `AnimationFrame`: a `Pose`, the joints in bone order, with
 the clip events its sources fired this frame. Its inputs
@@ -1540,6 +1545,41 @@ Handles inside a node (the clip of an `AnimationClipNode`, the state graphs of
 an `AnimationStateMachine`) are stored as asset ids and loaded again by
 `make_live`. Keep the clip and state graph handles you give to a builder alive
 until `assets.add(graph)` has run.
+
+#### Messages, outcomes and signals
+
+A message is a value a graph reacts to: a type that derives `Reflect` and
+`Clone` and implements the marker trait `AnimationMessage`, registered with
+`app.register_animation_message::<M>()`. `AnimationPlayer::send(message)`
+queues it, and so does the entity signal `SendAnimationMessage(message)`
+triggered on the character, for code that holds no player. The player's next
+update takes each queued message in order: every state machine in the playing
+graphs first takes the first `OnMessage` transition out of its current state
+whose type the message has, then every node of the graphs that play, the
+states a cross-fade still blends included, gets it through
+`AnimationNode::receive(state, message, context)`, which does nothing unless
+the node overrides it. The queue then empties, and the nodes advance. An
+`OnMessage` trigger stores the message's type path and finds the type when its
+graph is made live; a path no registered type has leaves a load warning, and
+that trigger never fires.
+
+`AnimationNode::outcome(state)` says whether the node has `Succeeded` or
+`Failed` at what it does, a `NodeOutcome`; `None` by default. A graph's outcome
+is the first a node reports, inputs before the node they feed, and a state
+machine reports its current state's graph's outcome. `OnSucceeded` and
+`OnFailed` read it in the update that follows the messages, so a message that
+makes a node succeed moves its machine on that frame. A node whose state ends
+by outcome returns `false` from `is_finished`, so `OnAnimationEnd` leaves it
+alone.
+
+A node tells the game what happened with `AnimationFrame::emit(signal)` in
+`evaluate`, for any `EntitySignal` that is `Clone`. `copy_from`, `blend`, the
+layer's overlay and the retarget node's inner graph carry emitted signals
+along, unweighted, and `animate_targets` triggers each one on the player's
+entity after it evaluates, as it triggers clip events.
+
+`AnimationPlayer::in_state(graphs, name)` says whether a state machine playing
+in the player's graph is in the state `name`.
 
 ### Reading node state
 

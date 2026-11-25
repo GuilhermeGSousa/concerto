@@ -49,6 +49,12 @@ impl AnimationTransitionBlender for BlendStack {
             .graph_id
     }
 
+    fn for_each_playing(&self, visit: &mut dyn FnMut(GraphId)) {
+        for entry in &self.entries {
+            visit(entry.graph_id);
+        }
+    }
+
     fn in_flight(&self) -> Option<BlendInFlight> {
         let [.., from, to] = &self.entries[..] else {
             return None;

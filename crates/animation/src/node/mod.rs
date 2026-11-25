@@ -28,7 +28,7 @@ pub use additive::{AdditiveNode, AdditiveNodeState};
 pub use aim_offset::{AimOffsetNode, AimOffsetState, AimPoint};
 pub use definition::{
     AnimationNode, CreateNodeInputs, ErasedAnimationNode, EvaluateNodeInputs, InputSlots,
-    NodeReport, NodeState, PlaceholderNode, ReflectAnimationNode, StateMachineReport,
+    NodeOutcome, NodeReport, NodeState, PlaceholderNode, ReflectAnimationNode, StateMachineReport,
     TransitionReport, UpdateNodeInputs, register_node_inputs,
 };
 pub use layer::{LayerNode, LayerSpace};

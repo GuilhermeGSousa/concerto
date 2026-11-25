@@ -105,6 +105,12 @@ fn trigger_label(trigger: &AnimationFSMTrigger) -> String {
         AnimationFSMTrigger::OnAnimationEnd => "OnAnimationEnd".to_owned(),
         AnimationFSMTrigger::BoolEquals { param, value } => format!("{} = {value}", param.0),
         AnimationFSMTrigger::Vec2NonZero { param } => format!("{} ≠ 0", param.0),
+        AnimationFSMTrigger::OnMessage { message } => format!(
+            "on {}",
+            message.path().rsplit("::").next().unwrap_or_default()
+        ),
+        AnimationFSMTrigger::OnSucceeded => "OnSucceeded".to_owned(),
+        AnimationFSMTrigger::OnFailed => "OnFailed".to_owned(),
     }
 }
 

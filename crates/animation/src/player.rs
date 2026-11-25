@@ -18,10 +18,11 @@ use glam::{Affine3A, Vec2, Vec3};
 use crate::{
     attribute::PoseAttributes,
     blackboard::AnimationBlackboard,
-    evaluation::{AnimationGraphContext, RootBone},
+    evaluation::{AnimationGraphContext, Extras, RootBone},
     graph::{AnimationGraph, AnimationGraphState, AnimationNodeIndex, NodeVisit},
+    message::AnimationMessage,
     node::{AnimationNode, ErasedAnimationNode, NodeState},
-    pose::{FiredEvent, FramePool, RootMotion},
+    pose::{EmittedSignal, FiredEvent, FramePool, RootMotion},
     root::AnimationRootBone,
 };
 
@@ -50,7 +51,10 @@ pub struct AnimationPlayer {
     paused: bool,
     event_threshold: f32,
     pub(crate) fired: Vec<FiredEvent>,
+    pub(crate) emitted: Vec<Box<dyn EmittedSignal>>,
     attributes: PoseAttributes,
+    extras: Extras,
+    messages: Vec<Box<dyn Reflect>>,
 }
 
 impl AnimationPlayer {
@@ -63,8 +67,31 @@ impl AnimationPlayer {
             paused: false,
             event_threshold: 0.0,
             fired: Vec::new(),
+            emitted: Vec::new(),
             attributes: PoseAttributes::default(),
+            extras: Extras::default(),
+            messages: Vec::new(),
         }
+    }
+
+    /// Hands every node of the graph `value`, read with `AnimationGraphContext::extra`; replaces the value of the same type.
+    pub fn set_extra<T: Send + Sync + 'static>(&mut self, value: T) {
+        self.extras.set(value);
+    }
+
+    /// The value of type `T` handed to the player with `set_extra`.
+    pub fn extra<T: Send + Sync + 'static>(&self) -> Option<&T> {
+        self.extras.get::<T>()
+    }
+
+    /// Queues `message` for the next update, where state machines react to it and then every playing node receives it.
+    pub fn send(&mut self, message: impl AnimationMessage) {
+        self.messages.push(Box::new(message));
+    }
+
+    /// Whether a state machine playing in the player's graph is in the state named `name`.
+    pub fn in_state(&self, graphs: &AssetStore<AnimationGraph>, name: &Name) -> bool {
+        self.graph_state.in_state(graphs, name)
     }
 
     /// The per-bone attributes of the frame the player last evaluated.
@@ -184,6 +211,7 @@ impl AnimationPlayer {
             skeleton: None,
             model_to_world: None,
             inputs,
+            extras: &self.extras,
         };
         self.graph_state
             .initialize(animation_graph, graphs, &context);
@@ -204,7 +232,12 @@ impl AnimationPlayer {
             skeleton,
             model_to_world: None,
             inputs,
+            extras: &self.extras,
         };
+        for message in &self.messages {
+            self.graph_state.receive(graphs, message.as_ref(), &context);
+        }
+        self.messages.clear();
         self.graph_state.update(delta_time, graphs, &context);
     }
 
@@ -220,6 +253,7 @@ impl AnimationPlayer {
             skeleton: Some(skeleton),
             model_to_world: None,
             inputs,
+            extras: &self.extras,
         };
         self.graph_state
             .root_motion(graphs, &context, &skeleton.bone_ids)
@@ -255,6 +289,7 @@ impl AnimationPlayer {
             skeleton: Some(skeleton),
             model_to_world: Some(model_to_world),
             inputs,
+            extras: &self.extras,
         };
 
         self.frame_pool.set_rest(rest_pose);
@@ -278,6 +313,7 @@ impl AnimationPlayer {
                 .drain(..)
                 .filter(|event| event.weight > threshold),
         );
+        self.emitted.append(&mut output_frame.signals);
 
         for (bone_index, bone) in bones.iter().enumerate() {
             let Some(bone_entity) = bone.entity() else {

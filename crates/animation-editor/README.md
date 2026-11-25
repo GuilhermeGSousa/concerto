@@ -502,7 +502,8 @@ For a state machine the canvas is in `Diagram` mode: a box per state, titled
 with its name, its subtitle the name of the graph it plays or `no graph` in the
 warning colour, and the initial state with the badge `initial`; an arrow per
 transition, labelled with its trigger: `Instant`, `OnAnimationEnd`,
-`<param> = <value>` or `<param> ≠ 0`.
+`<param> = <value>`, `<param> ≠ 0`, `on <message>` with the last segment of
+the message's type path, `OnSucceeded` or `OnFailed`.
 
 - A right click on empty space offers New state, which puts the keyboard in
   the name field beside the breadcrumb, shown only for a diagram. Enter there

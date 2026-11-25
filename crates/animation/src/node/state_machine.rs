@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::fmt;
 
 use crate::graph::{AnimationGraph, AnimationGraphState, AnimationGraphStates, GraphId};
+use crate::message::{AnimationMessage, MessageType};
 use crate::param::Param;
 use crate::pose::{AnimationFrame, EvaluatedFrame, FramePool, RootMotion, WeightedMotion};
 use crate::transition::{
@@ -11,8 +12,8 @@ use crate::transition::{
 use crate::{
     evaluation::AnimationGraphContext,
     node::{
-        AnimationNode, InputSlots, NodeReport, ReflectAnimationNode, StateMachineReport,
-        TransitionReport,
+        AnimationNode, InputSlots, NodeOutcome, NodeReport, ReflectAnimationNode,
+        StateMachineReport, TransitionReport,
     },
 };
 
@@ -47,6 +48,14 @@ pub enum AnimationFSMTrigger {
     Vec2NonZero {
         param: Param<Vec2>,
     },
+    /// Fires when a message of this type was sent to the player this frame.
+    OnMessage {
+        message: MessageType,
+    },
+    /// Fires when the current state's graph reports that it succeeded.
+    OnSucceeded,
+    /// Fires when the current state's graph reports that it failed.
+    OnFailed,
 }
 
 impl AnimationFSMTrigger {
@@ -60,6 +69,13 @@ impl AnimationFSMTrigger {
     pub fn on_non_zero_vec(param: impl Into<Param<Vec2>>) -> Self {
         Self::Vec2NonZero {
             param: param.into(),
+        }
+    }
+
+    /// Fires on a message of type `M`.
+    pub fn on_message<M: AnimationMessage>() -> Self {
+        Self::OnMessage {
+            message: MessageType::of::<M>(),
         }
     }
 }
@@ -413,6 +429,7 @@ pub struct AnimationStateMachineState {
     current_state: StateId,
     state_names: Vec<Name>,
     blender: Box<dyn AnimationTransitionBlender>,
+    outcome: Option<NodeOutcome>,
 }
 
 impl AnimationStateMachineState {
@@ -434,11 +451,21 @@ impl AnimationStateMachineState {
             current_state: initial_state,
             state_names,
             blender,
+            outcome: None,
         }
     }
 
     pub fn current_state_name(&self) -> Option<Name> {
         self.state_names.get(*self.current_state).copied()
+    }
+
+    pub(crate) fn current_graph(&self) -> Option<&AnimationGraphState> {
+        self.state_graphs.get(self.current_state.as_graph_id())
+    }
+
+    fn current_outcome(&self, graphs: &AssetStore<AnimationGraph>) -> Option<NodeOutcome> {
+        self.current_graph()
+            .and_then(|current_graph| current_graph.outcome(graphs))
     }
 
     fn transition(
@@ -498,48 +525,56 @@ impl AnimationNode for AnimationStateMachine {
         graphs: &Res<AssetStore<AnimationGraph>>,
         context: &AnimationGraphContext<'_>,
     ) {
-        let Some(transitions) = self.get_state_transitions(state.current_state) else {
-            return;
-        };
-
-        for transition in transitions {
-            match &transition.trigger {
-                AnimationFSMTrigger::Instant => {
-                    state.transition(graphs, transition);
-                    break;
-                }
-                AnimationFSMTrigger::BoolEquals { param, value } => {
-                    if context.blackboard().read(param).is_some_and(|v| v == value) {
-                        state.transition(graphs, transition);
-                        break;
-                    }
-                }
-                AnimationFSMTrigger::Vec2NonZero { param } => {
-                    if context
-                        .blackboard()
-                        .read(param)
-                        .is_some_and(|v| v.length_squared() > f32::EPSILON)
-                    {
-                        state.transition(graphs, transition);
-                        break;
-                    }
-                }
-                AnimationFSMTrigger::OnAnimationEnd => {
-                    if state
-                        .state_graphs
-                        .get(state.current_state.as_graph_id())
-                        .is_some_and(|current_graph| current_graph.is_finished(graphs))
-                    {
-                        state.transition(graphs, transition);
-                        break;
-                    }
-                }
-            }
+        if let Some(transition) = self
+            .get_state_transitions(state.current_state)
+            .into_iter()
+            .flatten()
+            .find(|transition| fires(&transition.trigger, state, graphs, context))
+        {
+            state.transition(graphs, transition);
         }
 
         state
             .blender
             .update(delta_time, &mut state.state_graphs, graphs, context);
+        state.outcome = state.current_outcome(graphs);
+    }
+
+    fn receive(
+        &self,
+        state: &mut AnimationStateMachineState,
+        message: &dyn Reflect,
+        context: &AnimationGraphContext<'_>,
+    ) {
+        let Ok(graphs) = context
+            .inputs
+            .get::<Res<'static, AssetStore<AnimationGraph>>>()
+        else {
+            return;
+        };
+        if let Some(transition) = self
+            .get_state_transitions(state.current_state)
+            .into_iter()
+            .flatten()
+            .find(|transition| match &transition.trigger {
+                AnimationFSMTrigger::OnMessage { message: wanted } => wanted.matches(message),
+                _ => false,
+            })
+        {
+            state.transition(graphs, transition);
+        }
+
+        let state_graphs = &mut state.state_graphs;
+        state.blender.for_each_playing(&mut |graph_id| {
+            if let Some(graph_state) = state_graphs.get_mut(graph_id) {
+                graph_state.receive(graphs, message, context);
+            }
+        });
+        state.outcome = state.current_outcome(graphs);
+    }
+
+    fn outcome(&self, state: &AnimationStateMachineState) -> Option<NodeOutcome> {
+        state.outcome
     }
 
     fn evaluate(
@@ -616,6 +651,32 @@ impl AnimationNode for AnimationStateMachine {
         visit: &mut dyn FnMut(&mut AnimationGraphState),
     ) {
         state.state_graphs.iter_mut().for_each(visit);
+    }
+}
+
+fn fires(
+    trigger: &AnimationFSMTrigger,
+    state: &AnimationStateMachineState,
+    graphs: &AssetStore<AnimationGraph>,
+    context: &AnimationGraphContext<'_>,
+) -> bool {
+    match trigger {
+        AnimationFSMTrigger::Instant => true,
+        AnimationFSMTrigger::BoolEquals { param, value } => {
+            context.blackboard().read(param).is_some_and(|v| v == value)
+        }
+        AnimationFSMTrigger::Vec2NonZero { param } => context
+            .blackboard()
+            .read(param)
+            .is_some_and(|v| v.length_squared() > f32::EPSILON),
+        AnimationFSMTrigger::OnAnimationEnd => state
+            .current_graph()
+            .is_some_and(|current_graph| current_graph.is_finished(graphs)),
+        AnimationFSMTrigger::OnMessage { .. } => false,
+        AnimationFSMTrigger::OnSucceeded => {
+            state.current_outcome(graphs) == Some(NodeOutcome::Succeeded)
+        }
+        AnimationFSMTrigger::OnFailed => state.current_outcome(graphs) == Some(NodeOutcome::Failed),
     }
 }
 
@@ -862,6 +923,9 @@ mod tests {
                             AnimationFSMTrigger::OnAnimationEnd => "end",
                             AnimationFSMTrigger::BoolEquals { .. } => "bool",
                             AnimationFSMTrigger::Vec2NonZero { .. } => "vec2",
+                            AnimationFSMTrigger::OnMessage { .. } => "message",
+                            AnimationFSMTrigger::OnSucceeded => "succeeded",
+                            AnimationFSMTrigger::OnFailed => "failed",
                         };
                         format!(
                             "{}:{} {trigger} {}",

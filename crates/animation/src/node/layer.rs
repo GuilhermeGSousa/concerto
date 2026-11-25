@@ -137,6 +137,7 @@ impl AnimationNode for LayerNode {
                 ..*event
             });
         }
+        output.add_signals_of(&overlay.frame);
 
         let Some(mask) = masks.get(&self.mask) else {
             return;
