@@ -176,7 +176,7 @@ fn read(blackboard: &AnimationBlackboard, param: &Param<f32>) -> f32 {
     blackboard.read(param).copied().unwrap_or(1.0)
 }
 
-fn command(strength: PartStrength, scale: f32, target: Quat) -> MotorCommand {
+pub(crate) fn command(strength: PartStrength, scale: f32, target: Quat) -> MotorCommand {
     let mut command = MotorCommand {
         cover: 1.0,
         target,

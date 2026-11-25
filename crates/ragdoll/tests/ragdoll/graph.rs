@@ -4,8 +4,9 @@ use concerto_animation::{
     clip::{AnimationChanelOutput, AnimationChannel, AnimationClip},
     graph::AnimationGraph,
     mask::{BoneMask, BoneMaskBranch},
+    message::MessageType,
     node::{
-        AnimationClipNode, AnimationNode,
+        AnimationClipNode, AnimationNode, SlotEntry, SlotNode,
         state_machine::{AnimationFSMTrigger, AnimationStateMachine},
     },
     player::{AnimationHandleComponent, AnimationPlayer},
@@ -26,14 +27,17 @@ use concerto_name::{Name, name};
 use concerto_physics::carried::Carried;
 use concerto_physics::collider::Collider;
 use concerto_physics::layers::CollisionLayers;
+use concerto_physics::physics_state::PhysicsState;
 use concerto_physics::plugin::PhysicsPlugin;
+use concerto_physics::ragdoll::{BodyPose, RagdollId};
 use concerto_physics::rigid_body::{AllowedDofs, RigidBody};
+use concerto_ragdoll::messages::Hit;
 use concerto_ragdoll::testing::{
     SpawnedHumanoid, humanoid_skeleton, reference_humanoid, spawn_humanoid,
 };
 use concerto_ragdoll::{
-    BRACED, CharacterRagdoll, HoldNode, LimpNode, MotorCommand, PartStrength, PhysicsAmount,
-    RagdollBody, RagdollPlugin,
+    BRACED, BodyHit, CharacterRagdoll, FlinchNode, HoldNode, LimpNode, MotorCommand, PartStrength,
+    PhysicsAmount, RagdollBody, RagdollMode, RagdollPlugin,
 };
 use glam::{Quat, Vec3};
 
@@ -134,6 +138,7 @@ struct Stage {
     capsule: Entity,
     skeleton: Skeleton,
     walk: AssetHandle<AnimationGraph>,
+    plain: AssetHandle<AnimationGraph>,
     root: Vec3,
 }
 
@@ -157,9 +162,16 @@ impl Stage {
         ragdoll.skeleton = skeleton_handle.clone();
         let ragdoll = server.add(ragdoll);
         let left_leg = server.add(BoneMask::new().with_branch(BoneMaskBranch::new("thigh_l")));
-        let walk = server.add(AnimationGraph::from_node(AnimationClipNode::new(
+        let plain = server.add(AnimationGraph::from_node(AnimationClipNode::new(
             clip.clone(),
         )));
+        let walk = server.add(over_clip(
+            SlotNode::new().with_entry(
+                SlotEntry::new(name!("flinch"), FlinchNode::default())
+                    .with_on(MessageType::of::<Hit>()),
+            ),
+            &clip,
+        ));
         let hold = server.add(over_clip(
             HoldNode::new(BRACED)
                 .with_mask(left_leg)
@@ -229,6 +241,7 @@ impl Stage {
             capsule,
             skeleton,
             walk,
+            plain,
             root,
         }
     }
@@ -404,6 +417,59 @@ impl Stage {
             .distance(self.drawn(self.humanoid.bone(child)))
     }
 
+    fn offsets(&self) -> Vec<Vec3> {
+        let mut pose = Vec::new();
+        self.ragdoll_pose(&mut pose);
+        pose.iter()
+            .zip(self.body().animated_pose())
+            .map(|(simulated, animated)| simulated.translation - animated.translation)
+            .collect()
+    }
+
+    fn ragdoll_id(&self) -> RagdollId {
+        *self
+            .app
+            .main()
+            .world()
+            .get_component_for_entity::<RagdollId>(self.humanoid.skeleton)
+            .unwrap()
+    }
+
+    fn ragdoll_pose(&self, pose: &mut Vec<BodyPose>) {
+        self.app
+            .get_resource::<PhysicsState>()
+            .unwrap()
+            .ragdoll_pose(self.ragdoll_id(), pose);
+    }
+
+    fn velocity(&self, part: usize) -> Vec3 {
+        let state = self.app.get_resource::<PhysicsState>().unwrap();
+        state.linear_velocity(state.ragdoll_bodies(self.ragdoll_id())[part])
+    }
+
+    fn hit(&mut self, part: usize, impulse: Vec3) {
+        let mut pose = Vec::new();
+        self.ragdoll_pose(&mut pose);
+        let character = self.humanoid.skeleton;
+        self.app.main_mut().world_mut().trigger(BodyHit::new(
+            character,
+            part,
+            pose[part].translation,
+            impulse,
+        ));
+    }
+
+    fn struck_speed(&mut self, part: usize, impulse: Vec3) -> f32 {
+        let before = self.velocity(part);
+        self.hit(part, impulse);
+        let mut gained = 0.0f32;
+        for _ in 0..3 {
+            self.frame();
+            gained = gained.max((before - self.velocity(part)).dot(-impulse.normalize()));
+        }
+        gained
+    }
+
     fn carried(&self) -> bool {
         self.app
             .main()
@@ -573,4 +639,93 @@ fn behaviours_on_one_body_blend_per_limb_and_never_cut() {
     stage.app.main_mut().world_mut().insert(walk, skeleton);
     stage.walk(30);
     stage.assert_animated("a second after the graph was swapped mid-hold");
+}
+
+#[test]
+fn a_hit_flinches_from_a_slot_throws_the_part_back_and_the_body_returns_to_its_animation() {
+    let mut stage = Stage::new();
+    stage.walk(20);
+    stage.assert_animated("walking before the hit");
+    let shoulder = stage.part("upperarm_l");
+    let feet = [stage.part("foot_l"), stage.part("foot_r")];
+
+    stage.hit(shoulder, Vec3::new(0.0, 0.0, -30.0));
+    let mut thrown = 0.0f32;
+    for index in 0..10 {
+        stage.frame();
+        let offsets = stage.offsets();
+        thrown = thrown.max(-offsets[shoulder].z);
+        if index > 1 {
+            for foot in feet {
+                assert!(
+                    stage.body().is_kinematic(foot) && offsets[foot].length() < 2.0 * STRIDE + 5e-3,
+                    "a foot below the pelvis follows the animation during a flinch, it was {} m off",
+                    offsets[foot].length()
+                );
+            }
+        }
+    }
+    assert!(
+        thrown > 0.03,
+        "the hit shoulder is thrown back along the impulse, it went {thrown} m"
+    );
+    assert!(
+        stage.amount("upperarm_l") > 0.99 && !stage.body().is_kinematic(shoulder),
+        "the flinching shoulder is drawn from physics and dynamic"
+    );
+
+    let mut seconds = 0.0;
+    while stage.amount("upperarm_l") > 0.9 {
+        seconds += stage.frame();
+        assert!(seconds < 2.0, "the flinch settles within two seconds");
+    }
+    stage.hit(shoulder, Vec3::new(0.0, 0.0, -30.0));
+    stage.walk(2);
+    assert!(
+        stage.amount("upperarm_l") > 0.99,
+        "a second hit restarts the flinch at full amount, it is {}",
+        stage.amount("upperarm_l")
+    );
+
+    let mut lasted = 0.0;
+    while stage.amounts().iter().any(|amount| *amount > 0.0) {
+        lasted += stage.frame();
+        assert!(lasted < 2.0, "the flinch ends within two seconds");
+    }
+    assert!(
+        lasted > 0.7 && lasted < 1.2,
+        "a flinch lasts its hold and settle from the last hit, it lasted {lasted} s"
+    );
+    stage.walk(3);
+    stage.assert_animated("after the flinch settled");
+
+    let character = stage.humanoid.skeleton;
+    {
+        let world = stage.app.main_mut().world_mut();
+        let ragdoll = world
+            .get_component_for_entity_mut::<CharacterRagdoll>(character)
+            .unwrap();
+        ragdoll.mode = RagdollMode::Limp;
+        ragdoll.weight = 1.0;
+    }
+    stage.walk(5);
+    let calf = stage.part("calf_l");
+    let impulse = Vec3::new(0.0, 0.0, -100.0);
+    let plain = AnimationHandleComponent::new(stage.plain.clone());
+    stage.app.main_mut().world_mut().insert(plain, character);
+    stage.walk(5);
+    assert!(
+        stage.struck_speed(calf, impulse) > 1.0,
+        "a hit on a graph that reacts to nothing still takes its impulse"
+    );
+    stage
+        .app
+        .main_mut()
+        .world_mut()
+        .remove_component::<AnimationPlayer>(character);
+    stage.walk(5);
+    assert!(
+        stage.struck_speed(calf, impulse) > 1.0,
+        "a hit on a character with no player still takes its impulse"
+    );
 }

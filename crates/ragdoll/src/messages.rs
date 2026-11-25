@@ -1,0 +1,191 @@
+use concerto_animation::{message::AnimationMessage, player::AnimationPlayer};
+use concerto_ecs::{
+    CommandQueue, Component, Query, ResMut, Without,
+    signal::{EntitySignal, On, Signal},
+};
+use concerto_physics::{physics_state::PhysicsState, ragdoll::RagdollId};
+use concerto_reflect::{Reflect, ReflectDefault};
+use glam::Vec3;
+
+use crate::{
+    character::RagdollBody,
+    dying::Settled,
+    hit::{BodyHit, HitKind, HitReaction},
+    shot::{ShotReaction, Wounds},
+};
+
+/// A blow on `part` of a character's ragdoll at the world `point`, with `impulse` in N·s, sent to its animation graph.
+#[derive(Clone, Debug, Default, PartialEq, Reflect)]
+#[reflect(Default)]
+pub struct Hit {
+    pub part: usize,
+    pub point: Vec3,
+    pub impulse: Vec3,
+}
+
+impl AnimationMessage for Hit {}
+
+/// A gunshot on `part` of a character's ragdoll at the world `point`, with `impulse` in N·s, sent to its animation graph.
+#[derive(Clone, Debug, Default, PartialEq, Reflect)]
+#[reflect(Default)]
+pub struct Shot {
+    pub part: usize,
+    pub point: Vec3,
+    pub impulse: Vec3,
+}
+
+impl AnimationMessage for Shot {}
+
+/// Tells a graph to stagger towards `direction`, with `severity` from 0 to 1.
+#[derive(Clone, Debug, Default, PartialEq, Reflect)]
+#[reflect(Default)]
+pub struct Stagger {
+    pub direction: Vec3,
+    pub severity: f32,
+}
+
+impl AnimationMessage for Stagger {}
+
+/// Tells a graph its character is dying, its strength draining over `seconds`.
+#[derive(Clone, Debug, Default, PartialEq, Reflect)]
+#[reflect(Default)]
+pub struct Death {
+    pub seconds: f32,
+}
+
+impl AnimationMessage for Death {}
+
+/// A behaviour wounded `part` of the character it triggers on: it keeps `share` of its strength.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Wounded {
+    pub part: usize,
+    pub share: f32,
+}
+
+impl Signal for Wounded {}
+
+impl EntitySignal for Wounded {}
+
+/// A behaviour put the character on the ground.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BodyDown;
+
+impl Signal for BodyDown {}
+
+impl EntitySignal for BodyDown {}
+
+/// A behaviour drained the character's last strength.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BodyDead;
+
+impl Signal for BodyDead {}
+
+impl EntitySignal for BodyDead {}
+
+const PATIENCE: u32 = 10;
+
+#[derive(Clone, Debug)]
+struct PendingImpulse {
+    part: usize,
+    point: Vec3,
+    impulse: Vec3,
+    waited: u32,
+}
+
+/// The impulses of a character's hits that wait for their part to be dynamic.
+#[derive(Component, Clone, Debug, Default)]
+pub struct PendingImpulses {
+    waiting: Vec<PendingImpulse>,
+}
+
+/// Forwards a `BodyHit` to the character's animation graph as a `Hit` or a `Shot`. It takes the impulse itself, pending until the part is dynamic, unless the character has a `HitReaction` or a `ShotReaction`, which take it.
+pub fn route_hits(
+    on: On<BodyHit>,
+    mut characters: Query<
+        (
+            &RagdollBody,
+            &mut PendingImpulses,
+            Option<&mut AnimationPlayer>,
+            Option<&HitReaction>,
+            Option<&ShotReaction>,
+        ),
+        Without<Settled>,
+    >,
+) {
+    let hit = *on.signal();
+    let Some((body, mut pending, player, reaction, shot)) =
+        characters.get_entity_mut(hit.character)
+    else {
+        return;
+    };
+    if hit.part >= body.resolved().part_count() {
+        return;
+    }
+    if reaction.is_none() && shot.is_none() {
+        pending.waiting.push(PendingImpulse {
+            part: hit.part,
+            point: hit.point,
+            impulse: hit.impulse,
+            waited: 0,
+        });
+    }
+    let Some(mut player) = player else {
+        return;
+    };
+    match hit.kind {
+        HitKind::Blow => player.send(Hit {
+            part: hit.part,
+            point: hit.point,
+            impulse: hit.impulse,
+        }),
+        HitKind::Shot => player.send(Shot {
+            part: hit.part,
+            point: hit.point,
+            impulse: hit.impulse,
+        }),
+    }
+}
+
+/// Each fixed step, before physics steps, gives each part the impulses waiting on it once it is dynamic, and drops those that waited ten steps in vain.
+pub fn apply_impulses(
+    mut characters: Query<(&RagdollId, &RagdollBody, &mut PendingImpulses)>,
+    mut state: ResMut<PhysicsState>,
+) {
+    for (id, body, mut pending) in characters.iter_mut() {
+        if pending.waiting.is_empty() {
+            continue;
+        }
+        pending.waiting.retain_mut(|waiting| {
+            if body.is_kinematic(waiting.part) {
+                waiting.waited += 1;
+                return waiting.waited < PATIENCE;
+            }
+            if let Some(part) = state.ragdoll_bodies(*id).get(waiting.part).copied() {
+                state.add_impulse_at(part, waiting.impulse, waiting.point);
+            }
+            false
+        });
+    }
+}
+
+/// Keeps what a `Wounded` signal says on the character's `Wounds`.
+pub fn keep_wounds(
+    on: On<Wounded>,
+    mut characters: Query<(&RagdollBody, Option<&mut Wounds>)>,
+    mut cmd: CommandQueue,
+) {
+    let entity = on.entity();
+    let wounded = *on.signal();
+    let Some((body, wounds)) = characters.get_entity_mut(entity) else {
+        return;
+    };
+    let parts = body.resolved().part_count();
+    match wounds {
+        Some(mut wounds) => wounds.weaken(wounded.part, wounded.share, parts),
+        None => {
+            let mut wounds = Wounds::default();
+            wounds.weaken(wounded.part, wounded.share, parts);
+            cmd.insert(wounds, entity);
+        }
+    }
+}

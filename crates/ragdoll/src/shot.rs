@@ -134,7 +134,7 @@ impl Wounds {
         self.strength.get(part).copied().unwrap_or(1.0)
     }
 
-    fn weaken(&mut self, part: usize, share: f32, parts: usize) {
+    pub(crate) fn weaken(&mut self, part: usize, share: f32, parts: usize) {
         self.strength.resize(parts, 1.0);
         if let Some(strength) = self.strength.get_mut(part) {
             *strength = strength.min(share.clamp(0.0, 1.0));

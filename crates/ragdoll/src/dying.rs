@@ -1,3 +1,4 @@
+use concerto_animation::player::AnimationPlayer;
 use concerto_ecs::{
     CommandQueue, Component, Entity, Query, ResMut, Without,
     reflect::{ReflectComponent, ReflectSceneComponent},
@@ -14,6 +15,7 @@ use crate::{
     character::{CharacterRagdoll, RagdollBody, RagdollMode},
     fall::Fall,
     hit::{BodyHit, Flinch},
+    messages::Death,
     sensing::BodySense,
     shot::Shot,
     stagger::Stagger,
@@ -132,6 +134,16 @@ fn kill(
     }
     if flinch.is_some() {
         cmd.remove::<Flinch>(entity);
+    }
+}
+
+/// Sends a dying character's animation graph a `Death` message.
+pub fn forward_death(on: On<Die>, mut players: Query<&mut AnimationPlayer>) {
+    let die = *on.signal();
+    if let Some(mut player) = players.get_entity_mut(die.character) {
+        player.send(Death {
+            seconds: die.seconds,
+        });
     }
 }
 

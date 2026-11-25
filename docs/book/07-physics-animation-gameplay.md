@@ -629,6 +629,16 @@ follows its animation:
    then returns to the animation over `settle` seconds, after which the parts
    are kinematic again.
 
+Every `BodyHit` is also sent to the character's animation graph as a `Hit`
+message, or a `Shot` for a shot, both in `concerto_ragdoll::messages` with the
+part, the point and the impulse; a `Die` is sent as a `Death`. A character with
+neither a `HitReaction` nor a `ShotReaction` has the impulse applied by the
+router: it waits in the character's `PendingImpulses` until the part is dynamic,
+and is dropped after ten fixed steps in which it was not, so a hit on a part
+that stays kinematic moves nothing. A hit on a character with no player, or on
+a graph that reacts to nothing, still takes its impulse. What the graph does
+with the message is up to its nodes, such as `FlinchNode` below.
+
 A second hit during a flinch restarts the recovery and adds its impulse. A hit
 on a part the profile keeps kinematic, a leg, moves nothing. Without a
 `HitReaction`, or when the ragdoll is limp or powered by something else, the
@@ -737,6 +747,27 @@ player.set_float_param(name!("leg_hurt"), 0.5);
 with a torque limit of 0, keeping the stiffness its input asked for so a motor
 taking hold again does not jump. Cross-fading into a state with it and back
 out blends the body down and up again without a cut.
+
+`FlinchNode` is the graph's flinch, with the settings of `HitReaction`:
+`profile` (`flinch`), `dip`, `neighbour_dip`, `recover`, `hold` and `settle`.
+It acts on the parts its profile powers and waits for a `Hit` message. On one
+it dips the hit part's strength to `dip` and its neighbours' to
+`neighbour_dip`, brings them back over `recover` seconds, draws the powered
+parts in full for `hold` seconds after the last hit, then lets their amount fall
+to 0 over `settle` and succeeds. A second `Hit` restarts it. Play it from a
+`SlotNode` entry started `on` the `Hit` message type, so the walk plays
+underneath and the flinch is there only while it lasts:
+
+```rust
+let slot = SlotNode::new().with_entry(
+    SlotEntry::new(name!("flinch"), FlinchNode::default()).with_on(MessageType::of::<Hit>()),
+);
+graph.result_node().input(slot).input(AnimationClipNode::new(walk));
+```
+
+A character with a `HitReaction` or a `ShotReaction` is still flinched by the
+old components, which take its impulses; a character with neither is flinched
+by its graph.
 
 #### What the body senses
 

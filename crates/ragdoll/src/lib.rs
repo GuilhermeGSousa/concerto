@@ -11,6 +11,7 @@ pub mod fall;
 pub mod generate;
 pub mod hit;
 mod ik;
+pub mod messages;
 pub mod node;
 pub mod overlap;
 pub mod plugin;
@@ -42,7 +43,8 @@ pub use generate::{
     BRACED, FLINCH, GenerateError, HumanoidChains, HumanoidSettings, LIMP, generate_humanoid,
 };
 pub use hit::{BodyHit, Flinch, FlinchRecord, HitKind, HitReaction};
-pub use node::{HoldNode, LimpNode};
+pub use messages::{BodyDead, BodyDown, Death, Hit, PendingImpulses, Wounded};
+pub use node::{FlinchNode, HoldNode, LimpNode};
 pub use overlap::PartOverlap;
 pub use plugin::RagdollPlugin;
 pub use resolve::{Landmarks, Limbs, RagdollError, ResolvedRagdoll};
