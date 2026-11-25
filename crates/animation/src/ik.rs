@@ -1,8 +1,60 @@
+use concerto_mesh::Skeleton;
+use concerto_reflect::Reflect;
 use glam::{Quat, Vec3};
 
 const MIN_LENGTH_SQUARED: f32 = 1e-12;
 
 const CLEAR_BEND: f32 = std::f32::consts::PI / 36.0;
+
+/// Where a two-bone chain's hinge comes from, given in the mid bone's own frame.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Reflect, serde::Serialize, serde::Deserialize)]
+pub enum Hinge {
+    /// No hinge: the solve keeps the animation's own bend plane.
+    #[default]
+    Off,
+    /// The plane the chain's rest pose bends in, when it bends clearly.
+    Rest,
+    /// A fixed axis in the mid bone's frame.
+    Axis { axis: Vec3 },
+}
+
+impl Hinge {
+    /// The hinge in the mid bone's own frame, or `None` when this setting gives none.
+    pub fn local(&self, skeleton: &Skeleton, root: usize, mid: usize, tip: usize) -> Option<Vec3> {
+        match self {
+            Hinge::Off => None,
+            Hinge::Axis { axis } => (axis.is_finite()
+                && axis.length_squared() > MIN_LENGTH_SQUARED)
+                .then(|| axis.normalize()),
+            Hinge::Rest => {
+                let root_position = rest_model(skeleton, root).1;
+                let (mid_rotation, mid_position) = rest_model(skeleton, mid);
+                let tip_position = rest_model(skeleton, tip).1;
+                let upper = mid_position - root_position;
+                let lower = tip_position - mid_position;
+                let bend = upper.angle_between(lower);
+                if bend.is_nan() || bend < CLEAR_BEND {
+                    return None;
+                }
+                let normal = unit(upper.cross(lower))?;
+                Some(mid_rotation.inverse() * normal)
+            }
+        }
+    }
+}
+
+fn rest_model(skeleton: &Skeleton, bone: usize) -> (Quat, Vec3) {
+    let mut rotation = Quat::IDENTITY;
+    let mut position = Vec3::ZERO;
+    let mut at = Some(bone);
+    while let Some(index) = at {
+        let local = &skeleton.rest_pose[index];
+        position = local.translation + local.rotation * (local.scale * position);
+        rotation = local.rotation * rotation;
+        at = skeleton.parents[index].map(usize::from);
+    }
+    (rotation, position)
+}
 
 /// The positions of a two-bone chain's three joints, in one space.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -142,10 +194,12 @@ fn unit(v: Vec3) -> Option<Vec3> {
 
 #[cfg(test)]
 mod tests {
-    use glam::{Quat, Vec3};
+    use concerto_mesh::{JointPose, Skeleton};
+    use glam::{Mat4, Quat, Vec3};
     use proptest::prelude::*;
+    use uuid::Uuid;
 
-    use super::{TwoBoneChain, TwoBoneSolution, solve_two_bone};
+    use super::{Hinge, TwoBoneChain, TwoBoneSolution, solve_two_bone};
 
     const L1: f32 = 1.0;
     const L2: f32 = 0.8;
@@ -281,6 +335,55 @@ mod tests {
                 straight.mid
             );
         }
+
+        let turned = Quat::from_rotation_y(std::f32::consts::FRAC_PI_2);
+        let skeleton = |knee_degrees: f32| {
+            let pose = |translation: Vec3, rotation: Quat| JointPose {
+                translation,
+                rotation,
+                scale: Vec3::ONE,
+            };
+            Skeleton::new(
+                vec![Mat4::IDENTITY; 3],
+                vec![None, Some(0), Some(1)],
+                vec!["root".into(), "mid".into(), "tip".into()],
+                vec![
+                    pose(Vec3::ZERO, turned),
+                    pose(
+                        Vec3::Y * L1,
+                        Quat::from_rotation_x(knee_degrees.to_radians()),
+                    ),
+                    pose(Vec3::Y * L2, Quat::IDENTITY),
+                ],
+                vec![Uuid::from_u128(1), Uuid::from_u128(2), Uuid::from_u128(3)],
+            )
+            .unwrap()
+        };
+        let straight_rest = skeleton(0.0);
+        let bent_rest = skeleton(20.0);
+        let mid_rotation = turned * Quat::from_rotation_x(20f32.to_radians());
+        let mid_position = turned * Vec3::Y * L1;
+        let tip_position = mid_position + mid_rotation * Vec3::Y * L2;
+        let model_hinge = mid_position.cross(tip_position - mid_position).normalize();
+        let local = |hinge: Hinge, skeleton: &Skeleton| hinge.local(skeleton, 0, 1, 2);
+        assert_eq!(local(Hinge::Off, &bent_rest), None);
+        assert_eq!(local(Hinge::Axis { axis: Vec3::ZERO }, &bent_rest), None);
+        assert_eq!(
+            local(
+                Hinge::Axis {
+                    axis: Vec3::new(0.0, 0.0, 2.0)
+                },
+                &bent_rest
+            ),
+            Some(Vec3::Z)
+        );
+        assert_eq!(local(Hinge::Rest, &straight_rest), None);
+        let rest = local(Hinge::Rest, &bent_rest).expect("a bent rest chain has a hinge");
+        assert!(
+            (mid_rotation * rest).distance(model_hinge) < 1e-4,
+            "{} beside {model_hinge}",
+            mid_rotation * rest
+        );
 
         let mut previous = None;
         for step in 0..=260 {
