@@ -1470,6 +1470,21 @@ weighted as the joints are. A node that builds its output without `copy_from`
 or `blend` must forward its inputs' events itself, with
 `AnimationFrame::push_event`, or they never reach the player.
 
+A frame also carries typed per-bone attributes beside its joints, in
+`AnimationFrame::attributes`. An attribute is a type that implements
+`PoseAttribute`: its `neutral` value, read on every bone of a frame no node
+set it on, and how two values `blend` by weight. A node sets one with
+`attributes_mut().channel_mut::<A>(bone_count)` and reads one with
+`AnimationFrame::attribute::<A>(bone)`; nothing is registered. Every combiner
+blends them with the joints: `copy_from` and `blend` carry them, so the blend
+node, blend spaces and the cross-fade blend them by weight; a layer blends them
+per bone by its mask weight times its layer weight, in either space; additive
+and aim offset nodes keep their base's; the inertialization blender keeps the
+source's attributes and decays them into the destination's, halving their
+difference every halflife; a retarget node drops them, since they belong to the
+skeleton that set them. The player keeps the last evaluated frame's, read with
+`AnimationPlayer::attributes`.
+
 A node gives root motion with `root_motion(state, input, context, bone_ids,
 inputs)`, which returns a `RootMotion`. `update_animation_players` calls it for
 every node after the whole graph's `update`, from the leaves up, with the node's `UpdateInput`, so `inputs` holds

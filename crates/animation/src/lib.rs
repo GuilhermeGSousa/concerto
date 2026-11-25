@@ -1,3 +1,4 @@
+pub mod attribute;
 pub mod blackboard;
 pub mod clip;
 pub mod evaluation;

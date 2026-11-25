@@ -1341,6 +1341,7 @@ impl AnimationNode for RetargetNode {
         _pool: &mut FramePool,
         output: &mut AnimationFrame,
     ) {
+        output.attributes_mut().clear();
         match &mut state.stage {
             Stage::Pending => {}
             Stage::Ready(running) => {
