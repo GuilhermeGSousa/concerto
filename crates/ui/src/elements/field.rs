@@ -1,5 +1,5 @@
 use concerto_color::Color;
-use concerto_ecs::component::bundle::IntoBundle;
+use concerto_ecs::{component::bundle::IntoBundle, entity::Entity};
 
 use super::{Layout, Shape, Themed, Typography};
 use crate::{
@@ -7,6 +7,7 @@ use crate::{
     interaction::Interactable,
     material::UIMaterial,
     node::{Overflow, UINode, UIRect},
+    search::UISearchField,
     text::UIText,
     text_input::UITextInput,
     theme::UITheme,
@@ -42,6 +43,54 @@ impl UITheme {
             },
             input: UITextInput::new(placeholder),
         }
+    }
+}
+
+/// A [`TextField`] that narrows a `UIList` or `UITree` to the items whose `UISearchText` holds its text, and drives that list's highlight from the keyboard.
+pub struct SearchField {
+    field: TextField,
+    search: UISearchField,
+}
+
+impl UITheme {
+    /// A text field with a search placeholder that narrows the list `target`.
+    pub fn search_field(&self, placeholder: impl Into<String>, target: Entity) -> SearchField {
+        SearchField {
+            field: self.text_field(placeholder),
+            search: UISearchField { target },
+        }
+    }
+}
+
+impl IntoBundle for SearchField {
+    type Bundle = (<TextField as IntoBundle>::Bundle, UISearchField);
+
+    fn into_bundle(self) -> Self::Bundle {
+        (self.field.into_bundle(), self.search)
+    }
+}
+
+impl Themed for SearchField {
+    fn theme(&self) -> &UITheme {
+        self.field.theme()
+    }
+}
+
+impl Layout for SearchField {
+    fn node_mut(&mut self) -> &mut UINode {
+        self.field.node_mut()
+    }
+}
+
+impl Shape for SearchField {
+    fn material_mut(&mut self) -> &mut UIMaterial {
+        self.field.material_mut()
+    }
+}
+
+impl Typography for SearchField {
+    fn text_mut(&mut self) -> &mut UIText {
+        self.field.text_mut()
     }
 }
 

@@ -117,8 +117,9 @@ What you should see:
   `App::compile_render_schedules`, and `Startup` around the startup schedules
   of both worlds. In the editor these zones are on the `hosted-build` thread,
   which finishes each hosted `App`'s build off the editor's frame.
-- `apply_deferred` zones at sync points — long gaps right before them mean
-  the scheduler is stalled waiting on one straggler system.
+- `apply_deferred` zones at sync points, before `&mut World` systems and at
+  the end of each schedule run — long gaps right before one mean the
+  scheduler is stalled waiting on one straggler system.
 - wgpu-core's own zones (device/queue internals) appear automatically: wgpu
   is instrumented with the same `profiling` crate, and enabling our backend
   feature lights it up via feature unification.

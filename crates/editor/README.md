@@ -1437,7 +1437,8 @@ with `register_property_editor` still takes precedence.
 
 The row names the asset the handle holds, "None" for an empty handle or
 "Missing" for an id the registry does not know, and opens a menu of the
-project's assets of that kind. Picking one writes a handle loaded through the
+project's assets of that kind, with a search field that matches each asset's
+name and folder. Picking one writes a handle loaded through the
 scene's `AssetServer`, so the viewport shows the new asset at once. The edit is
 refused if the id is not an asset of that kind, or if the scene `App` never
 registered the asset type with `register_asset` nor named it with
@@ -1468,8 +1469,10 @@ The generic tab of an [inspected asset](#inspected-assets) fills its
 as the motion database editor does.
 
 The menu is `name_menu`'s `NameMenu`, opened under a button with
-`open_name_menu`, or at a point in the window with `open_name_menu_at`, as a
-right-click menu is, and closed with `close_menu`; `close_name_menu` closes it
+`open_name_menu`, which puts a search field over the names, or at a point in
+the window with `open_name_menu_at`, as a right-click menu is, without one, and
+closed with `close_menu`; each item's `pick` is a `Listener<UIItemActivated>`,
+which a click or Enter on the item runs; `close_name_menu` closes it
 when another tab comes to the front. An extension crate opens it for names of its own, as the motion database
 editor's channel-type picker does.
 
@@ -1483,11 +1486,10 @@ hierarchy writes an entity with no name or an empty one. It reads
 doesn't offer, the scene root included. The button beside it selects that
 entity and reveals it in the hierarchy.
 
-The row opens a menu with a filter field, `None`, and the entities the
-hierarchy lists for the edit target, indented by depth, without the scene root:
-a scene saves only its root's children, so a reference to the root couldn't be
-saved. Typing keeps the entities whose label contains the text, and their
-ancestors. `None` writes the unset value. A field whose entity was deleted keeps
+The row opens a menu with a search field, `None`, and a tree of the entities
+the hierarchy lists for the edit target, without the scene root: a scene saves
+only its root's children, so a reference to the root couldn't be saved. Typing
+keeps the entities whose label contains the text, and their ancestors. `None` writes the unset value. A field whose entity was deleted keeps
 naming it and makes saving fail until it is cleared or picked again. While a
 game plays the menu lists the running game's entities, and an edit is lost on
 Stop like any other. `EntityPickerPlugin`, added by `EditorPlugin`, keeps the

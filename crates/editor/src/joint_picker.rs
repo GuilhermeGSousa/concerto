@@ -12,6 +12,7 @@ use concerto_ui::elements::prelude::*;
 use concerto_ui::{
     anchor::UIAnchoredPanel,
     interaction::{UIClick, UIDisabled},
+    items::UIItemActivated,
     text::UIText,
     theme::UITheme,
 };
@@ -132,15 +133,12 @@ fn toggle_joint_menu(row: Entity) -> Listener<UIClick> {
     .into_listener()
 }
 
-fn pick_joint(row: Entity, name: JointName) -> Listener<UIClick> {
-    (move |on: On<UIClick>,
+fn pick_joint(row: Entity, name: JointName) -> Listener<UIItemActivated> {
+    (move |_: On<UIItemActivated>,
            mut menus: Query<&mut UIAnchoredPanel, With<NameMenu>>,
            rows: Query<&PropertyRow>,
            values: Query<&PropertyRowValue>,
            mut commits: ResMut<PropertyCommits>| {
-        if on.signal().button != MouseButton::Left {
-            return;
-        }
         close_menu(&mut menus);
         let Some(target) = rows.get_entity(row) else {
             return;

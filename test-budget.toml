@@ -10,7 +10,7 @@
 "crates/color" = 3
 "crates/debug-gizmos" = 1
 "crates/director" = 4
-"crates/ecs" = 90
+"crates/ecs" = 93
 "crates/editor" = 178
 "crates/foundation" = 67
 "crates/gameplay" = 11
@@ -42,6 +42,6 @@
 "crates/tasks" = 2
 "crates/terminal-renderer" = 2
 "crates/texture-editor" = 1
-"crates/ui" = 106
+"crates/ui" = 108
 "crates/window" = 31
 "crates/winit" = 8
