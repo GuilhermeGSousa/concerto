@@ -154,7 +154,7 @@ impl FootPlacementNode {
     }
 }
 
-/// A leg: the foot bone names the chain (its parent the knee, its grandparent the hip), and an optional toe bone adds a second ray.
+/// A leg: the foot bone names the chain (its parent the knee, its grandparent the hip), an optional toe bone adds a second ray, and `hinge` is the knee's hinge axis.
 #[derive(Clone, Debug, Default, PartialEq, Reflect, serde::Serialize, serde::Deserialize)]
 pub struct FootPlacementLeg {
     pub foot: JointName,
@@ -178,7 +178,7 @@ impl FootPlacementLeg {
         self
     }
 
-    /// Sets the side the knee bends toward.
+    /// Sets the knee's hinge axis; see `Hinge`.
     pub fn with_hinge(mut self, hinge: Hinge) -> Self {
         self.hinge = hinge;
         self

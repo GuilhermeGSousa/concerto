@@ -114,7 +114,7 @@ impl FootLockNode {
     }
 }
 
-/// A leg: the foot bone names the chain (its parent the knee, its grandparent the hip), and an optional toe bone is the point a plant is read from and held at.
+/// A leg: the foot bone names the chain (its parent the knee, its grandparent the hip), an optional toe bone is the point a plant is read from and held at, and `hinge` is the knee's hinge axis.
 #[derive(Clone, Debug, Default, PartialEq, Reflect, serde::Serialize, serde::Deserialize)]
 pub struct FootLockLeg {
     pub foot: JointName,
@@ -138,7 +138,7 @@ impl FootLockLeg {
         self
     }
 
-    /// Sets the side the knee bends toward.
+    /// Sets the knee's hinge axis; see `Hinge`.
     pub fn with_hinge(mut self, hinge: Hinge) -> Self {
         self.hinge = hinge;
         self
@@ -1168,7 +1168,8 @@ mod tests {
         for by in slides {
             stage.move_model(Affine3A::from_translation(by));
             stage.step(DT);
-            for (leg, hinged) in [(0, true), (1, false)] {
+            for leg in 0..2 {
+                let hinged = leg == 0;
                 let hip = stage.output_model(HIPS[leg]).translation;
                 let knee = stage.output_model(KNEES[leg]).translation;
                 let foot = stage.output_model(FEET[leg]).translation;
