@@ -8,7 +8,7 @@ use uuid::Uuid;
 use crate::{
     blackboard::AnimationBlackboard,
     evaluation::AnimationGraphContext,
-    ik::{TwoBoneChain, solve_two_bone},
+    ik::{Hinge, TwoBoneChain, solve_two_bone},
     node::{
         AnimationNode, InputSlots, ReflectAnimationNode, effective_weight,
         model_space::{ModelJoint, WorldToModel, bone_under_first, model_joint, parent},
@@ -27,6 +27,7 @@ pub struct TwoBoneIkNode {
     pub pole: Option<IkGoal>,
     pub tip_rotation: TipRotation,
     pub softness: f32,
+    pub hinge: Hinge,
     pub weight: f32,
     pub weight_param: Option<Param<f32>>,
 }
@@ -39,6 +40,7 @@ impl Default for TwoBoneIkNode {
             pole: None,
             tip_rotation: TipRotation::KeepInput,
             softness: 0.0,
+            hinge: Hinge::Off,
             weight: 1.0,
             weight_param: None,
         }
@@ -99,6 +101,7 @@ struct ResolvedChain<'a> {
     tip: usize,
     target: ResolvedGoal,
     pole: Option<ResolvedGoal>,
+    hinge: Option<Vec3>,
 }
 
 enum ResolvedGoal {
@@ -132,6 +135,7 @@ impl TwoBoneIkNode {
                 .as_ref()
                 .map(|pole| resolve_goal(skeleton, pole))
                 .transpose()?,
+            hinge: self.hinge.local(skeleton, root, mid, tip),
         })
     }
 
@@ -167,7 +171,7 @@ impl TwoBoneIkNode {
                 root: root.transform.translation.into(),
                 mid: mid.transform.translation.into(),
                 tip: tip.transform.translation.into(),
-                hinge: None,
+                hinge: chain.hinge.map(|axis| mid.rotation * axis),
             },
             target.position,
             pole.map(|pole| pole.position),
@@ -313,7 +317,7 @@ mod tests {
     use concerto_name::name;
     use glam::{Affine3A, Mat4, Quat, Vec3};
 
-    use super::{IkGoal, IkTarget, TipRotation, TwoBoneIkNode, TwoBoneIkState};
+    use super::{Hinge, IkGoal, IkTarget, TipRotation, TwoBoneIkNode, TwoBoneIkState};
     use crate::{
         blackboard::AnimationBlackboard,
         evaluation::AnimationGraphContext,
@@ -639,14 +643,14 @@ mod tests {
                 rotation: None,
             },
         );
-        let node = TwoBoneIkNode {
+        let poled = TwoBoneIkNode {
             pole: Some(IkGoal::Param {
                 param: name!("elbow_pole").into(),
             }),
             ..node(on_grip(Vec3::ZERO, Quat::IDENTITY))
         };
 
-        let frame = rig.solve(&node);
+        let frame = rig.solve(&poled);
 
         let axis = case.target - case.root;
         let side = across(rig.model_position(&frame, LOWER) - case.root, axis).normalize();
@@ -656,6 +660,44 @@ mod tests {
             "the mid is on {side}, the pole on {pole_side}"
         );
         assert!(case.unpoled_side.dot(pole_side) < 0.0);
+
+        let input = rig.input();
+        let input_bend = (rig.model_position(&input, LOWER) - rig.model_position(&input, UPPER))
+            .cross(rig.model_position(&input, HAND) - rig.model_position(&input, LOWER))
+            .normalize();
+        let against = -(rig.model_rotation(&input, LOWER).inverse() * input_bend);
+        let hinged = TwoBoneIkNode {
+            hinge: Hinge::Axis { axis: against },
+            ..node(on_grip(Vec3::ZERO, Quat::IDENTITY))
+        };
+        let hinge_side = axis.cross(-input_bend).normalize();
+
+        let frame = rig.solve(&hinged);
+
+        let side = across(rig.model_position(&frame, LOWER) - case.root, axis).normalize();
+        assert!(
+            side.dot(hinge_side) > 0.99,
+            "the mid is on {side}, the hinge side is {hinge_side}"
+        );
+
+        rig.blackboard.set(
+            name!("elbow_pole"),
+            IkTarget {
+                position: turned_world()
+                    .transform_point3(case.root + axis * 0.5 + case.unpoled_side.normalize()),
+                rotation: None,
+            },
+        );
+        let frame = rig.solve(&TwoBoneIkNode {
+            pole: poled.pole,
+            ..hinged
+        });
+
+        let side = across(rig.model_position(&frame, LOWER) - case.root, axis).normalize();
+        assert!(
+            side.dot(case.unpoled_side.normalize()) > 0.99,
+            "with a pole on the input side the mid is on {side}"
+        );
     }
 
     #[test]

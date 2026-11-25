@@ -10,6 +10,7 @@ use concerto_animation::event::{AnimationEvent, ClipEvent, ReflectClipEvent};
 use concerto_animation::graph::{
     AnimationGraph, AnimationNodeData, AnimationNodeIndex, ConnectError,
 };
+use concerto_animation::ik::Hinge;
 use concerto_animation::mask::{BoneMask, BoneMaskBranch};
 use concerto_animation::node::blend_space::BlendSpace2DNode;
 use concerto_animation::node::state_machine::{AnimationFSMTrigger, AnimationStateMachine};
@@ -271,6 +272,9 @@ fn the_ik_layer_and_aim_offset_nodes_keep_every_field_and_their_inputs_through_a
         }),
         tip_rotation: TipRotation::FromTarget,
         softness: 0.03,
+        hinge: Hinge::Axis {
+            axis: glam::Vec3::X,
+        },
         weight: 0.75,
         weight_param: Some(name!("grip_weight").into()),
     };

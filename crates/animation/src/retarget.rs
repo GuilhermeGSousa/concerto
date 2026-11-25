@@ -19,7 +19,7 @@ use crate::{
     clip::AnimationClip,
     evaluation::{AnimationGraphContext, RootBone},
     graph::{AnimationGraph, AnimationGraphState},
-    ik::{TwoBoneChain, solve_two_bone},
+    ik::{Hinge, TwoBoneChain, solve_two_bone},
     node::{AnimationNode, InputSlots, ReflectAnimationNode},
     pose::{AnimationFrame, EvaluatedFrame, FramePool, RootMotion, WeightedMotion, twist_about},
 };
@@ -68,6 +68,7 @@ pub struct RetargetGoalSettings {
     pub goal: Name,
     pub weight: f32,
     pub softness: f32,
+    pub hinge: Hinge,
 }
 
 impl Default for RetargetGoalSettings {
@@ -76,6 +77,7 @@ impl Default for RetargetGoalSettings {
             goal: Name::default(),
             weight: 1.0,
             softness: 0.0,
+            hinge: Hinge::Off,
         }
     }
 }
@@ -98,6 +100,12 @@ impl RetargetGoalSettings {
     /// Sets the distance below full extension where reach starts to ease.
     pub fn with_softness(mut self, softness: f32) -> Self {
         self.softness = softness;
+        self
+    }
+
+    /// Sets the hinge the target leg bends about, in the target mid bone's own frame.
+    pub fn with_hinge(mut self, hinge: Hinge) -> Self {
+        self.hinge = hinge;
         self
     }
 }
@@ -633,6 +641,8 @@ struct GoalPair {
     offset: Vec3,
     weight: f32,
     softness: f32,
+    hinge: Hinge,
+    rest_hinge: Option<Vec3>,
 }
 
 impl PoseRetarget {
@@ -701,6 +711,8 @@ impl PoseRetarget {
                         - (target_root_reference + source_offset * scale),
                     weight: 1.0,
                     softness: 0.0,
+                    hinge: Hinge::Off,
+                    rest_hinge: Hinge::Rest.local(target_skeleton, goal.root, goal.mid, goal.tip),
                 })
             })
             .collect();
@@ -836,6 +848,7 @@ impl PoseRetarget {
             })?;
         pair.weight = settings.weight;
         pair.softness = settings.softness;
+        pair.hinge = settings.hinge;
         Ok(())
     }
 
@@ -858,11 +871,16 @@ impl PoseRetarget {
                 * self.scale
             + twist_about(self.source_delta(self.source_root), Vec3::Y) * pair.offset;
         let tip = self.target_position(pair.tip);
+        let local = match pair.hinge {
+            Hinge::Off => None,
+            Hinge::Rest => pair.rest_hinge,
+            Hinge::Axis { axis } => axis.try_normalize(),
+        };
         let chain = TwoBoneChain {
             root: self.target_position(pair.root),
             mid: self.target_position(pair.mid),
             tip,
-            hinge: None,
+            hinge: local.map(|axis| self.target_rotation[pair.mid] * axis),
         };
         let solution = solve_two_bone(&chain, tip.lerp(full, weight), None, pair.softness);
         let root_rotation = (solution.root * self.target_rotation[pair.root]).normalize();
@@ -1533,6 +1551,7 @@ mod tests {
     use concerto_mesh::{JointName, JointPose, Skeleton};
     use concerto_name::Name;
 
+    use crate::ik::Hinge;
     use glam::{Mat4, Quat, Vec3};
     use proptest::prelude::*;
     use uuid::Uuid;
@@ -2811,6 +2830,38 @@ mod tests {
                 1e-4,
             );
         }
+    }
+
+    #[test]
+    fn a_retarget_goal_bends_its_target_leg_about_its_hinge() {
+        let target = goal_target_skeleton();
+        let source = crouched_source();
+        let [root, mid, tip] = ["thigh_l", "calf_l", "foot_l"].map(|name| bone(&target, name));
+        let opposite = Hinge::Axis {
+            axis: -Hinge::Rest.local(&target, root, mid, tip).unwrap(),
+        };
+        let knee_side = |hinge: Hinge| {
+            let mut pose_retarget = feet_retarget();
+            pose_retarget
+                .set_goal(&RetargetGoalSettings::new("foot_l").with_hinge(hinge))
+                .unwrap();
+            let out = retarget(&mut pose_retarget, &source, target.bone_count());
+            let model = target.forward_kinematics(&out).unwrap();
+            let from_root = |bone| model_position(&model, bone) - model_position(&model, root);
+            let line = from_root(tip).normalize();
+            let knee = from_root(mid);
+            (knee - line * knee.dot(line)).z
+        };
+
+        let rest_side = knee_side(Hinge::Off);
+        let hinged_side = knee_side(opposite);
+
+        assert!(rest_side > 0.01, "the knee bends {rest_side} off the line");
+        assert!(
+            hinged_side < -0.01,
+            "the knee bends {hinged_side} off the line"
+        );
+        assert!((knee_side(Hinge::Rest) - rest_side).abs() < 1e-4);
     }
 
     #[test]
