@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use concerto_ecs::Entity;
 use concerto_physics::ragdoll::{BodyPose, RagdollId};
-use glam::Vec3;
+use glam::{Quat, Vec3};
 
 use crate::{
     asset::StrengthProfile, character::RagdollBody, resolve::ResolvedRagdoll, sensing::BodySense,
@@ -79,6 +79,27 @@ impl BodyView {
     /// The world pose the animation asked of every part on the last frame, in part order.
     pub fn animated(&self) -> &[BodyPose] {
         &self.animated
+    }
+
+    /// The rotation `part` has relative to its parent part in the animated pose, the target a motor holding it to the animation aims at; identity for the root part.
+    pub fn animated_target(&self, part: usize) -> Quat {
+        let parent = self
+            .resolved
+            .settings()
+            .parts
+            .get(part)
+            .and_then(|settings| settings.parent);
+        match (
+            parent.and_then(|parent| self.animated.get(parent)),
+            self.animated.get(part),
+        ) {
+            (Some(parent), Some(child)) => (parent.rotation.inverse() * child.rotation).normalize(),
+            _ => Quat::IDENTITY,
+        }
+    }
+
+    pub(crate) fn shared_resolved(&self) -> &Arc<ResolvedRagdoll> {
+        &self.resolved
     }
 
     /// The linear velocity of `part` after the last physics step, in m/s.

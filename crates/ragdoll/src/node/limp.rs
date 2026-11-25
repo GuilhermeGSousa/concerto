@@ -11,7 +11,6 @@ use uuid::Uuid;
 
 use crate::{
     attributes::{MotorCommand, PhysicsAmount},
-    node::animated_target,
     view::BodyView,
 };
 
@@ -89,7 +88,7 @@ impl AnimationNode for LimpNode {
             let target = if command.cover > 0.0 {
                 command.target
             } else {
-                animated_target(body, part)
+                body.animated_target(part)
             };
             *command = MotorCommand {
                 cover: 1.0,

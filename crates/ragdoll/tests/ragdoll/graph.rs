@@ -32,7 +32,8 @@ use concerto_ragdoll::testing::{
     SpawnedHumanoid, humanoid_skeleton, reference_humanoid, spawn_humanoid,
 };
 use concerto_ragdoll::{
-    BRACED, CharacterRagdoll, HoldNode, LimpNode, PhysicsAmount, RagdollBody, RagdollPlugin,
+    BRACED, CharacterRagdoll, HoldNode, LimpNode, MotorCommand, PartStrength, PhysicsAmount,
+    RagdollBody, RagdollPlugin,
 };
 use glam::{Quat, Vec3};
 
@@ -163,6 +164,7 @@ impl Stage {
             HoldNode::new(BRACED)
                 .with_mask(left_leg)
                 .with_weight(name!("hurt"))
+                .with_strength(name!("grip"))
                 .with_fade(FADE),
             &clip,
         ));
@@ -277,6 +279,16 @@ impl Stage {
 
     fn part(&self, name: &str) -> usize {
         self.body().resolved().part_of(name).unwrap()
+    }
+
+    fn command(&self, name: &str) -> MotorCommand {
+        self.app
+            .main()
+            .world()
+            .get_component_for_entity::<AnimationPlayer>(self.humanoid.skeleton)
+            .unwrap()
+            .drive_attributes()
+            .get::<MotorCommand>(self.bone(name))
     }
 
     fn amount(&self, name: &str) -> f32 {
@@ -463,11 +475,33 @@ fn behaviours_on_one_body_blend_per_limb_and_never_cut() {
         "a bone with no part takes no physics amount from a mask that covers it"
     );
     let toe = stage.reach("foot_l", "ball_l");
-    let finger = stage.reach("hand_l", "index_l");
     assert!(
-        (toe - Vec3::new(0.0, -0.06, 0.12).length()).abs() < 1e-3 && (finger - 0.08).abs() < 1e-3,
-        "bones with no part keep their animated pose under their parent, the toe was {toe} m from the foot and the finger {finger} m from the hand"
+        (toe - Vec3::new(0.0, -0.06, 0.12).length()).abs() < 1e-3,
+        "a bone with no part keeps its animated pose under its parent, the toe was {toe} m from the foot"
     );
+    let braced = match reference_humanoid()
+        .ragdoll
+        .profile(BRACED)
+        .unwrap()
+        .strength_of("thigh_l")
+    {
+        PartStrength::Powered { stiffness, .. } => stiffness,
+        other => panic!("the braced profile powers the thigh, it is {other:?}"),
+    };
+    let held = stage.command("thigh_l");
+    assert!(
+        (held.cover - 0.5).abs() < 1e-3 && (held.stiffness - braced).abs() < 1e-3 * braced,
+        "the hold covers the thigh by its weight with the braced muscle at full strength, it asked {held:?} of a {braced} N·m/rad muscle"
+    );
+    stage.player_mut().set_float_param(name!("grip"), 0.5);
+    stage.walk(30);
+    let weaker = stage.command("thigh_l");
+    assert!(
+        (weaker.cover - 0.5).abs() < 1e-3
+            && (weaker.stiffness - braced * 0.5).abs() < 1e-3 * braced,
+        "a strength of 0.5 halves the hold's muscle, it asked {weaker:?} of a {braced} N·m/rad muscle"
+    );
+    stage.player_mut().set_float_param(name!("grip"), 1.0);
 
     stage.player_mut().set_float_param(name!("hurt"), 1.0);
     let mut before = stage.amount("thigh_l");
@@ -491,10 +525,24 @@ fn behaviours_on_one_body_blend_per_limb_and_never_cut() {
     stage.walk(30);
     stage.player_mut().set_bool_param(name!("limp"), true);
     stage.fade_until(|amounts| amounts.iter().all(|amount| *amount >= 1.0));
+    stage.frame();
     let body = stage.body();
     assert!(
         (0..body.resolved().part_count()).all(|part| !body.is_kinematic(part)) && stage.carried(),
         "a limp body has every part dynamic and its capsule carried"
+    );
+    for part in 0..body.resolved().part_count() {
+        let name = body.bone_name(part).unwrap();
+        let command = stage.command(&name);
+        assert!(
+            command.cover == 1.0 && command.torque_limit == 0.0 && command.stiffness == 0.0,
+            "a limp {name} is wholly covered with its motor off and the walk's stiffness kept, it asked {command:?}"
+        );
+    }
+    let finger = stage.reach("hand_l", "index_l");
+    assert!(
+        (finger - 0.08).abs() < 1e-3,
+        "a bone with no part keeps its animated pose under its limp parent, the finger was {finger} m from the hand"
     );
     stage.player_mut().set_bool_param(name!("limp"), false);
     let drift = stage.fade_until(|amounts| amounts.iter().all(|amount| *amount <= 0.0));

@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use concerto_animation::{
     attribute::PoseAttribute,
     blackboard::AnimationBlackboard,
@@ -8,7 +10,7 @@ use concerto_animation::{
     pose::{AnimationFrame, EvaluatedFrame, FramePool},
 };
 use concerto_ecs::Res;
-use concerto_foundation::assets::{asset_store::AssetStore, handle::AssetHandle};
+use concerto_foundation::assets::{AssetId, asset_store::AssetStore, handle::AssetHandle};
 use concerto_mesh::Skeleton;
 use concerto_name::{Name, name};
 use concerto_reflect::{Reflect, ReflectDefault};
@@ -20,7 +22,7 @@ use crate::{
     asset::PartStrength,
     attributes::{MotorCommand, PhysicsAmount},
     generate::BRACED,
-    node::animated_target,
+    resolve::ResolvedRagdoll,
     view::BodyView,
 };
 
@@ -108,41 +110,65 @@ impl HoldNode {
 
     fn find_parts(
         &self,
-        state: &mut HoldState,
+        mask: &mut MaskResolution,
         masks: &AssetStore<BoneMask>,
         skeleton: &Skeleton,
         root: Option<usize>,
         body: &BodyView,
-    ) {
-        state.parts.clear();
+    ) -> Option<Vec<HeldPart>> {
         let weights = match &self.mask {
             Some(handle) => {
-                let Some(mask) = masks.get(handle) else {
-                    return;
-                };
-                resolve_mask(mask, skeleton, root, &mut state.mask);
-                Some(&state.mask.weights)
+                resolve_mask(masks.get(handle)?, skeleton, root, mask);
+                Some(&mask.weights)
             }
             None => None,
         };
         let Some(profile) = body.profile(&self.profile) else {
-            return;
+            return Some(Vec::new());
         };
-        for (part, bone) in body.resolved().bones().iter().enumerate() {
-            let share = weights.map_or(1.0, |weights| weights.get(*bone).copied().unwrap_or(0.0));
-            let Some(name) = body.resolved().bone_name(part) else {
-                continue;
-            };
-            let strength = profile.strength_of(&name);
-            if share > 0.0 && strength != PartStrength::Kinematic {
-                state.parts.push(HeldPart {
-                    part,
-                    bone: *bone,
-                    share,
-                    strength,
+        let resolved = body.resolved();
+        Some(
+            resolved
+                .bones()
+                .iter()
+                .enumerate()
+                .filter_map(|(part, bone)| {
+                    let share =
+                        weights.map_or(1.0, |weights| weights.get(*bone).copied().unwrap_or(0.0));
+                    let strength = profile.strength_of(&resolved.bone_name(part)?);
+                    (share > 0.0 && strength != PartStrength::Kinematic).then_some(HeldPart {
+                        part,
+                        bone: *bone,
+                        share,
+                        strength,
+                    })
+                })
+                .collect(),
+        )
+    }
+
+    fn held_parts<'a>(
+        &self,
+        state: &'a mut HoldState,
+        masks: &AssetStore<BoneMask>,
+        skeleton: &Skeleton,
+        root: Option<usize>,
+        body: &BodyView,
+    ) -> &'a [HeldPart] {
+        let mask = self.mask.as_ref().map(|handle| handle.id());
+        let current = state.held.as_ref().is_some_and(|held| {
+            held.mask == mask && Arc::ptr_eq(&held.resolved, body.shared_resolved())
+        });
+        if !current {
+            state.held = self
+                .find_parts(&mut state.mask, masks, skeleton, root, body)
+                .map(|parts| HeldParts {
+                    resolved: Arc::clone(body.shared_resolved()),
+                    mask,
+                    parts,
                 });
-            }
         }
+        state.held.as_ref().map_or(&[], |held| &held.parts)
     }
 }
 
@@ -176,13 +202,19 @@ struct HeldPart {
     strength: PartStrength,
 }
 
-/// A [`HoldNode`]'s smoothed weight and strength, its resolved mask, and the parts it held last.
+struct HeldParts {
+    resolved: Arc<ResolvedRagdoll>,
+    mask: Option<AssetId>,
+    parts: Vec<HeldPart>,
+}
+
+/// A [`HoldNode`]'s smoothed weight and strength, its resolved mask, and the parts it holds on the body it last saw.
 #[derive(Default)]
 pub struct HoldState {
     weight: Option<f32>,
     strength: Option<f32>,
     mask: MaskResolution,
-    parts: Vec<HeldPart>,
+    held: Option<HeldParts>,
 }
 
 impl AnimationNode for HoldNode {
@@ -231,14 +263,14 @@ impl AnimationNode for HoldNode {
             return;
         };
         let root = context.root().map(|root| root.index);
-        self.find_parts(state, masks, skeleton, root, body);
         let weight = state
             .weight
             .unwrap_or_else(|| self.target_weight(context.blackboard()));
+        let parts = self.held_parts(state, masks, skeleton, root, body);
         let amounts = output
             .attributes_mut()
             .channel_mut::<PhysicsAmount>(skeleton.bone_count());
-        for held in &state.parts {
+        for held in parts {
             let share = weight * held.share;
             if let Some(amount) = amounts.get_mut(held.bone) {
                 amount.blend(1.0 - share, &PhysicsAmount(1.0), share);
@@ -264,20 +296,20 @@ impl AnimationNode for HoldNode {
             return;
         };
         let root = graph.root().map(|root| root.index);
-        self.find_parts(state, masks, skeleton, root, body);
         let weight = state
             .weight
             .unwrap_or_else(|| self.target_weight(graph.blackboard()));
         let strength = state
             .strength
             .unwrap_or_else(|| self.target_strength(graph.blackboard()));
+        let parts = self.held_parts(state, masks, skeleton, root, body);
         let commands = output
             .attributes_mut()
             .channel_mut::<MotorCommand>(skeleton.bone_count());
-        for held in &state.parts {
+        for held in parts {
             let share = weight * held.share;
             let muscle = strength * body.wounds().strength_of(held.part);
-            let wanted = command(held.strength, muscle, animated_target(body, held.part));
+            let wanted = command(held.strength, muscle, body.animated_target(held.part));
             if let Some(command) = commands.get_mut(held.bone) {
                 command.blend(1.0 - share, &wanted, share);
             }
@@ -297,7 +329,7 @@ impl AnimationNode for HoldNode {
         NodeReport {
             behaviour: Some(BehaviourReport::running(format!(
                 "holding {} parts at {} ×{:.2}",
-                state.parts.len(),
+                state.held.as_ref().map_or(0, |held| held.parts.len()),
                 self.profile,
                 state.strength.unwrap_or(1.0)
             ))),
