@@ -28,6 +28,8 @@ pub struct UIList {
     pub row_height: Option<f32>,
     /// Whether items can be highlighted, navigated by key, selected and activated.
     pub selectable: bool,
+    /// Whether a left click on an item activates it as well as selecting it, as a menu's items do; double clicks then send nothing more.
+    pub click_activates: bool,
 }
 
 impl Default for UIList {
@@ -35,6 +37,7 @@ impl Default for UIList {
         Self {
             row_height: None,
             selectable: true,
+            click_activates: false,
         }
     }
 }
@@ -179,28 +182,29 @@ pub(crate) mod tests {
             UIScrollArea, UIScrollBar, UIScrollThumb, setup_scrollbars, sync_scroll_content,
             sync_scrollbar_thumbs, sync_scrollbar_tracks, update_scroll_areas,
         },
+        search::update_search_fields,
         sets::UiSet,
         text::fonts::{UIFonts, build_font_system},
-        text_input::UITextInput,
+        text_input::{UITextInput, UITextInputCancelled, UITextInputSubmitted},
         theme::UITheme,
         transform::UIValue,
         tree::update_trees,
     };
 
     #[derive(Clone, Copy, Debug, PartialEq)]
-    enum Heard {
+    pub(crate) enum Heard {
         Selected,
         Activated,
         Menu(Vec2),
     }
 
     #[derive(Debug, PartialEq)]
-    struct HeardBy {
+    pub(crate) struct HeardBy {
         entity: Entity,
         heard: Heard,
     }
 
-    fn heard(entity: Entity, heard: Heard) -> HeardBy {
+    pub(crate) fn heard(entity: Entity, heard: Heard) -> HeardBy {
         HeardBy { entity, heard }
     }
 
@@ -228,6 +232,8 @@ pub(crate) mod tests {
             world.insert_resource(EventChannel::<ActionFired>::default());
             world.insert_resource(EventChannel::<UIFocusGained>::default());
             world.insert_resource(EventChannel::<UIFocusLost>::default());
+            world.insert_resource(EventChannel::<UITextInputSubmitted>::default());
+            world.insert_resource(EventChannel::<UITextInputCancelled>::default());
             world.insert_resource(Log::default());
             world.add_listener(set_up_list);
             crate::tree::install_listeners(&mut world);
@@ -249,6 +255,7 @@ pub(crate) mod tests {
                 (
                     keep_focus_on_shown_items,
                     navigate_items.after(keep_focus_on_shown_items),
+                    update_search_fields,
                 )
                     .in_set(UiSet::Widgets),
             );
@@ -330,7 +337,7 @@ pub(crate) mod tests {
                 .offset = offset;
         }
 
-        fn listen(&mut self, item: Entity) {
+        pub(crate) fn listen(&mut self, item: Entity) {
             fn hear<S: concerto_ecs::signal::Signal>(
                 heard: fn(&S) -> Heard,
             ) -> concerto_ecs::signal::listener::Listener<S> {
@@ -352,7 +359,7 @@ pub(crate) mod tests {
             );
         }
 
-        fn heard(&mut self) -> Vec<HeardBy> {
+        pub(crate) fn heard(&mut self) -> Vec<HeardBy> {
             std::mem::take(&mut self.world.get_resource_mut::<Log>().unwrap().0)
         }
 

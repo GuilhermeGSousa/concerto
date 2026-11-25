@@ -49,6 +49,7 @@ use concerto_ui::{
     checkbox::{UICheckbox, UICheckboxChanged},
     focus::FocusedWidget,
     interaction::UIClick,
+    items::UIItemActivated,
     node::UINode,
     text::UIText,
     text_input::{UITextInput, UITextInputSubmitted},
@@ -495,6 +496,21 @@ impl Editing {
         self.click(item);
     }
 
+    fn activate_labelled(&mut self, label: &str) {
+        let world = self.world();
+        let text = world
+            .query::<(Entity, &UIText), ()>()
+            .iter(world)
+            .find(|(_, text)| text.text == label)
+            .map(|(entity, _)| entity)
+            .unwrap();
+        let item = world
+            .get_component_for_entity::<ChildOf>(text)
+            .unwrap()
+            .parent();
+        world.trigger_on(item, UIItemActivated);
+    }
+
     fn text_field(&mut self, row: Entity) -> Entity {
         let world = self.world();
         let mut pending = vec![row];
@@ -657,7 +673,7 @@ fn a_values_list_asset_and_enum_rows_edit_it() {
     let mesh = w.row_entity("mesh");
     w.click_last_child(mesh);
     w.editor.update();
-    w.click_labelled(&cube.name());
+    w.activate_labelled(&cube.name());
     w.editor.update();
     w.world().insert(preview(), document);
     w.world()

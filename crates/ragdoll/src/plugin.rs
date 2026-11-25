@@ -122,6 +122,7 @@ impl Plugin for RagdollPlugin {
                 LateUpdate,
                 record_animated_poses
                     .after(propagate_global_transforms)
+                    .after(create_character_ragdolls)
                     .at_preview_time(),
             )
             .add_system(

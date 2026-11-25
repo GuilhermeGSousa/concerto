@@ -34,6 +34,7 @@ use concerto_ui::{
     checkbox::{UICheckbox, UICheckboxChanged},
     focus::FocusedWidget,
     interaction::{UIClick, UIInteractionStyle},
+    items::UIItemActivated,
     node::{UINode, UIRect},
     text::UIText,
     text_input::{UITextInput, UITextInputSubmitted},
@@ -92,22 +93,42 @@ fn write_preview(document: Entity, path: &'static str, json: Value) -> Listener<
            documents: Query<&GraphDocument>,
            mut menus: Query<&mut UIAnchoredPanel, With<NameMenu>>,
            mut cmd: CommandQueue| {
-        if on.signal().button != MouseButton::Left {
-            return;
-        }
-        close_menu(&mut menus);
-        let target = documents
-            .get_entity(document)
-            .and_then(GraphDocument::preview_value);
-        if let Some(target) = target {
-            cmd.trigger(WriteValue {
-                target,
-                path: path.to_owned(),
-                json: json.clone(),
-            });
+        if on.signal().button == MouseButton::Left {
+            send_preview(document, path, &json, &documents, &mut menus, &mut cmd);
         }
     })
     .into_listener()
+}
+
+fn pick_preview(document: Entity, path: &'static str, json: Value) -> Listener<UIItemActivated> {
+    (move |_: On<UIItemActivated>,
+           documents: Query<&GraphDocument>,
+           mut menus: Query<&mut UIAnchoredPanel, With<NameMenu>>,
+           mut cmd: CommandQueue| {
+        send_preview(document, path, &json, &documents, &mut menus, &mut cmd);
+    })
+    .into_listener()
+}
+
+fn send_preview(
+    document: Entity,
+    path: &str,
+    json: &Value,
+    documents: &Query<&GraphDocument>,
+    menus: &mut Query<&mut UIAnchoredPanel, With<NameMenu>>,
+    cmd: &mut CommandQueue,
+) {
+    close_menu(menus);
+    let target = documents
+        .get_entity(document)
+        .and_then(GraphDocument::preview_value);
+    if let Some(target) = target {
+        cmd.trigger(WriteValue {
+            target,
+            path: path.to_owned(),
+            json: json.clone(),
+        });
+    }
 }
 
 fn check_preview(document: Entity, path: &'static str) -> Listener<UICheckboxChanged> {
@@ -154,15 +175,12 @@ fn toggle_scene_picker(document: Entity) -> Listener<UIClick> {
     .into_listener()
 }
 
-fn pick_scene(document: Entity) -> impl Fn(AssetId) -> Listener<UIClick> {
+fn pick_scene(document: Entity) -> impl Fn(AssetId) -> Listener<UIItemActivated> {
     move |id| {
-        (move |on: On<UIClick>,
+        (move |_: On<UIItemActivated>,
                mut menus: Query<&mut UIAnchoredPanel, With<AssetPickerMenu>>,
                documents: Query<&GraphDocument>,
                mut cmd: CommandQueue| {
-            if on.signal().button != MouseButton::Left {
-                return;
-            }
             for mut panel in menus.iter_mut() {
                 panel.open = false;
             }
@@ -525,13 +543,10 @@ fn open_on_canvas(document: Entity) -> Listener<CanvasActivated> {
     .into_listener()
 }
 
-fn run_edit(document: Entity, edit: Option<GraphEdit>) -> Listener<UIClick> {
-    (move |on: On<UIClick>,
+fn run_edit(document: Entity, edit: Option<GraphEdit>) -> Listener<UIItemActivated> {
+    (move |_: On<UIItemActivated>,
            mut menus: Query<&mut UIAnchoredPanel, With<NameMenu>>,
            mut cmd: CommandQueue| {
-        if on.signal().button != MouseButton::Left {
-            return;
-        }
         close_menu(&mut menus);
         if let Some(edit) = &edit {
             cmd.trigger(EditGraph {
@@ -543,13 +558,10 @@ fn run_edit(document: Entity, edit: Option<GraphEdit>) -> Listener<UIClick> {
     .into_listener()
 }
 
-fn focus_field(field: Entity) -> Listener<UIClick> {
-    (move |on: On<UIClick>,
+fn focus_field(field: Entity) -> Listener<UIItemActivated> {
+    (move |_: On<UIItemActivated>,
            mut menus: Query<&mut UIAnchoredPanel, With<NameMenu>>,
            mut focused: ResMut<FocusedWidget>| {
-        if on.signal().button != MouseButton::Left {
-            return;
-        }
         close_menu(&mut menus);
         **focused = Some(field);
     })
@@ -645,7 +657,7 @@ fn open_canvas_menu(document: Entity, name: Entity) -> Listener<CanvasMenuReques
             open_name_menu_at(
                 at,
                 &[PREVIEW_FROM],
-                |_| write_preview(document, "from", from.clone()),
+                |_| pick_preview(document, "from", from.clone()),
                 &mut menus,
                 &theme,
                 &mut cmd,

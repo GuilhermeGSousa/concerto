@@ -35,18 +35,14 @@ fix the entry in the same commit as the change that made it false.
   of skeletons whose bones moved. A descendant's `GlobalTransform` written by
   other code is therefore not put back until its `Transform`, its parent or an
   ancestor changes; a root's is put back on the next run.
-- **A command-using system's sync point sits at its registration position,
-  not after it in the run order.** The scheduler inserts the sync point next
-  to the system in registration order, and orders it against other systems
-  only through conflicts, also by registration order
-  (`setup_systems_for_compilation` and `add_implicit_edges` in
-  `crates/ecs/src/system/schedule.rs`). So when `a` runs before `b` but is
-  registered after it, whether the edge is written `a.before(b)` or
-  `b.after(a)`, `a`'s commands apply after `b` under the multi-threaded
-  executor, the native default. The single-threaded executor,
-  used on wasm, applies each system's commands right after it, which hides
-  this. To make `b` see `a`'s decision, have `a` change data `b` reads, or
-  register `a` before `b`.
+- **Commands are seen only by systems explicitly ordered after their
+  producer.** A system's commands apply before every system ordered after it
+  through `.after`, `.before`, a chain or a set order, before any `&mut World`
+  system, and at the end of the schedule run. Registration order, and the order
+  the scheduler adds between systems whose data access conflicts, do not make
+  them visible. A system that spawns or inserts what another reads in the same
+  frame needs `consumer.after(producer)`; see
+  [docs/scheduling.md](../../docs/scheduling.md).
 - **A missing resource skips the system and warns every frame.** A system
   input declines through `SystemInput::get_data`, which returns a
   `ValidationError`. `Res`, `ResMut`, `EventReader`, `EventWriter`,
