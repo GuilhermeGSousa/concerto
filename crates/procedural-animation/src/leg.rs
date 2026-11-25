@@ -1,5 +1,5 @@
 use concerto_animation::{
-    ik::{TwoBoneChain, solve_two_bone},
+    ik::{Hinge, TwoBoneChain, solve_two_bone},
     node::model_space::{bone_under_first, model_joint, parent},
     pose::AnimationFrame,
 };
@@ -12,12 +12,14 @@ pub(crate) struct ResolvedLeg {
     pub(crate) knee: usize,
     pub(crate) foot: usize,
     pub(crate) toe: Option<usize>,
+    pub(crate) hinge: Option<Vec3>,
 }
 
 pub(crate) fn resolve_leg(
     skeleton: &Skeleton,
     foot: JointName,
     toe: Option<JointName>,
+    hinge: &Hinge,
 ) -> Result<ResolvedLeg, String> {
     let foot_bone = bone_under_first(skeleton, foot)?;
     let knee =
@@ -30,6 +32,7 @@ pub(crate) fn resolve_leg(
         knee,
         foot: foot_bone,
         toe,
+        hinge: hinge.local(skeleton, hip, knee, foot_bone),
     })
 }
 
@@ -90,7 +93,7 @@ pub(crate) fn bend_leg(
             root: hip.transform.translation.into(),
             mid: knee.transform.translation.into(),
             tip: foot.transform.translation.into(),
-            hinge: None,
+            hinge: leg.hinge.map(|axis| knee.rotation * axis),
         },
         goal_position,
         None,

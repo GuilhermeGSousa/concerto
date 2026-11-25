@@ -1,4 +1,5 @@
 use concerto_animation::graph::AnimationGraph;
+use concerto_animation::ik::Hinge;
 use concerto_animation::mask::BoneMask;
 use concerto_animation::node::{AnimationNode, ErasedAnimationNode};
 use concerto_animation::plugin::AnimationPlugin;
@@ -25,7 +26,11 @@ fn live_node<T: AnimationNode>(graph: &AnimationGraph) -> Option<&T> {
 
 fn foot_placement() -> FootPlacementNode {
     let node = FootPlacementNode::new("Hips")
-        .with_leg(FootPlacementLeg::new("LeftFoot").with_toe("LeftToe"))
+        .with_leg(
+            FootPlacementLeg::new("LeftFoot")
+                .with_toe("LeftToe")
+                .with_hinge(Hinge::Rest),
+        )
         .with_leg(FootPlacementLeg::new("RightFoot"))
         .with_max_step_up(0.4)
         .with_max_step_down(0.6)
@@ -176,7 +181,11 @@ fn procedural_motion() -> ProceduralMotionNode {
 
 fn foot_lock() -> FootLockNode {
     let node = FootLockNode::new()
-        .with_leg(FootLockLeg::new("LeftFoot").with_toe("LeftToe"))
+        .with_leg(
+            FootLockLeg::new("LeftFoot")
+                .with_toe("LeftToe")
+                .with_hinge(Hinge::Rest),
+        )
         .with_leg(FootLockLeg::new("RightFoot"))
         .with_plant_speed(0.2)
         .with_plant_height(0.08)
