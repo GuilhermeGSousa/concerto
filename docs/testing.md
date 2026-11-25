@@ -48,7 +48,10 @@ shape into a new world. The `query_iteration` benchmark measures one system run
 over 100,000 entities: reading one component and writing another, in one
 archetype and across 100, a `With` filter that half the archetypes pass, a
 `Changed` filter when nothing changed, and 10,000 `get_entity` lookups of
-random entities.
+random entities. The `schedule_run` benchmark measures one run of a
+schedule of 64 systems under the multi-threaded executor, half of them taking a
+`CommandQueue` and a quarter of those inserting a component, mostly unordered
+with three short chains, each summing a query over 1,000 entities.
 
 Benchmarks do not run in CI, and without the `run` feature the crate builds
 without `criterion` and skips them. Run them by hand before and after a change

@@ -21,7 +21,8 @@ Every directory under `crates/` is the package `concerto-<dir>`.
 `DefaultPlugins` in [src/lib.rs](../../src/lib.rs) registers the standard
 plugins in a fixed order. Whether an `App` has a window is its host's business,
 not a plugin's. Plugin order is also system registration order, which decides
-how unordered systems run.
+how unordered systems whose data access conflicts run, but never whether one
+sees another's commands.
 
 ## The frame
 
@@ -88,10 +89,12 @@ reads whether the last frame prepared or deferred any render asset under the
 ## ECS
 
 - Systems are plain functions with up to twelve parameters.
-- A system that uses `CommandQueue` gets its own sync point, where its
-  commands are applied with exclusive access to the world. The sync point sits
-  at the system's registration position, not after it in the run order; see
-  [gotchas.md](gotchas.md).
+- A system's `CommandQueue` is applied with exclusive access to the world at
+  a sync point the scheduler puts between it and each system explicitly
+  ordered after it, before any `&mut World` system, and at the end of the
+  schedule run. Sync points are shared by depth, and the dependency graph the
+  executor walks is transitively reduced; see
+  [docs/scheduling.md](../../docs/scheduling.md).
 - A query resolves its columns once per archetype. `QueryState` keeps a bitset
   of the archetypes its data and filter match, extended as archetypes are
   created. Iteration walks those archetypes in creation order and each one's
@@ -105,7 +108,7 @@ reads whether the last frame prepared or deferred any render asset under the
   resolves that archetype for the one row.
 - A `Signal` is dispatched to listeners. `World::add_listener` registers a
   global one; an entity carries at most one `Listener<S>` per signal type.
-  `cmd.trigger(signal)` queues the dispatch for the next sync point.
+  `cmd.trigger(signal)` queues the dispatch for when the commands apply.
 - Ordering is by reference, never by registration: see
   [docs/scheduling.md](../../docs/scheduling.md).
 - Under the multi-threaded executor, a `Send` system runs on a pool thread,
@@ -114,7 +117,7 @@ reads whether the last frame prepared or deferred any render asset under the
   schedule. A non-`Send` system runs on the `MainThreadExecutor`'s thread, or
   on the thread that runs the schedule when there is none.
 - Commands apply on the thread that runs the schedule, when the executor
-  reaches their sync point.
+  reaches a sync point, a `&mut World` system, or the end of the run.
 
 ## Assets
 

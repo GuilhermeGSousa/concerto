@@ -24,6 +24,7 @@ use concerto_ui::{
     anchor::UIAnchoredPanel,
     checkbox::{UICheckbox, UICheckboxChanged},
     interaction::UIClick,
+    items::UIItemActivated,
     node::{UINode, UIRect},
     text::UIText,
     theme::UITheme,
@@ -166,17 +167,14 @@ fn toggle_scene_picker(document: Entity) -> Listener<UIClick> {
     .into_listener()
 }
 
-fn pick_scene(document: Entity) -> impl Fn(AssetId) -> Listener<UIClick> {
+fn pick_scene(document: Entity) -> impl Fn(AssetId) -> Listener<UIItemActivated> {
     move |id| {
-        (move |on: On<UIClick>,
+        (move |_: On<UIItemActivated>,
                mut menus: Query<&mut UIAnchoredPanel, With<AssetPickerMenu>>,
                mut documents: Query<(&EditorDocument, &mut ClipDocument)>,
                project: Res<ProjectState>,
                assets: Res<AssetRegistry>,
                mut previews: PreviewSignals| {
-            if on.signal().button != MouseButton::Left {
-                return;
-            }
             for mut panel in menus.iter_mut() {
                 panel.open = false;
             }
@@ -674,7 +672,7 @@ mod tests {
         let picker = tab.parent(tab.panels().left.scene);
         tab.click(picker);
         let item = tab.menu_item("level");
-        tab.click(item);
+        tab.f.world.trigger_on(item, UIItemActivated);
         tab.f
             .frames_until("the pick never reached the preview", |f| {
                 f.scene_names(document).contains(&"level".to_owned())

@@ -2,8 +2,12 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Mutex;
 
 use concerto_ecs::{
-    CommandQueue, IntoSetConfig, IntoSystemConfig, Res, Resource, Schedule, SystemSet, SystemTag,
-    TagFilter, World, resource::ResMut, system::executor::single_thread::SingleThreadedExecutor,
+    CommandQueue, Component, IntoSetConfig, IntoSystemConfig, Query, Res, Resource, Schedule,
+    SystemSet, SystemTag, TagFilter, World,
+    resource::ResMut,
+    system::executor::{
+        SystemExecutor, multi_thread::MultiThreadedExecutor, single_thread::SingleThreadedExecutor,
+    },
 };
 
 #[derive(Resource, Default)]
@@ -245,4 +249,182 @@ fn a_cycle_through_a_set_panics() {
     }));
 
     assert!(outcome.is_err());
+}
+
+#[derive(Component)]
+struct A;
+
+#[derive(Component)]
+struct B;
+
+#[derive(Component)]
+struct C;
+
+#[derive(Resource, Default)]
+struct Seen(Vec<usize>);
+
+fn spawn_a(existing: Query<&A>, mut cmd: CommandQueue) {
+    if existing.iter().next().is_none() {
+        cmd.spawn(A);
+    }
+}
+
+fn spawn_b(a: Query<&A>, b: Query<&B>, mut cmd: CommandQueue) {
+    if a.iter().next().is_some() && b.iter().next().is_none() {
+        cmd.spawn(B);
+    }
+}
+
+fn spawn_c(b: Query<&B>, c: Query<&C>, mut cmd: CommandQueue) {
+    if b.iter().next().is_some() && c.iter().next().is_none() {
+        cmd.spawn(C);
+    }
+}
+
+fn unrelated(log: Res<Log>) {
+    push(&log, "unrelated");
+}
+
+fn count_a(a: Query<&A>, mut seen: ResMut<Seen>) {
+    seen.0.push(a.iter().count());
+}
+
+fn count_c(c: Query<&C>, mut seen: ResMut<Seen>) {
+    seen.0.push(c.iter().count());
+}
+
+fn count_a_exclusively(world: &mut World) {
+    let count = world.query::<&A, ()>().iter(world).count();
+    world.get_resource_mut::<Seen>().unwrap().0.push(count);
+}
+
+fn seen_over_two_runs<E: SystemExecutor + 'static>(build: fn(&mut Schedule)) -> Vec<usize> {
+    let mut world = World::new();
+    world.insert_resource(Log::default());
+    world.insert_resource(Seen::default());
+    let mut schedule = Schedule::new();
+    build(&mut schedule);
+    let mut compiled = schedule.compile::<E>(&mut world);
+    compiled.run(&mut world);
+    compiled.run(&mut world);
+    world.remove_resource::<Seen>().unwrap().0
+}
+
+struct VisibilityCase {
+    name: &'static str,
+    build: fn(&mut Schedule),
+    seen: [usize; 2],
+}
+
+#[test]
+fn commands_are_seen_by_systems_ordered_after_them_and_by_everything_next_run() {
+    let cases = [
+        VisibilityCase {
+            name: "a system ordered after the producer sees its spawn in the same run",
+            build: |schedule| {
+                schedule
+                    .add_system(spawn_a)
+                    .add_system(count_a.after(spawn_a));
+            },
+            seen: [1, 1],
+        },
+        VisibilityCase {
+            name: "an unordered system sees the spawn only on the next run",
+            build: |schedule| {
+                schedule.add_system(spawn_a).add_system(count_a);
+            },
+            seen: [0, 1],
+        },
+        VisibilityCase {
+            name: "a producer registered after its consumer but ordered before it is seen",
+            build: |schedule| {
+                schedule
+                    .add_system(count_a)
+                    .add_system(spawn_a.before(count_a));
+            },
+            seen: [1, 1],
+        },
+        VisibilityCase {
+            name: "a chain of command systems applies each before the next",
+            build: |schedule| {
+                schedule.add_system((spawn_a, spawn_b, spawn_c, count_c).chain());
+            },
+            seen: [1, 1],
+        },
+        VisibilityCase {
+            name: "an order through a system without commands carries the commands",
+            build: |schedule| {
+                schedule
+                    .add_system(count_a.after(unrelated))
+                    .add_system(unrelated.after(spawn_a))
+                    .add_system(spawn_a);
+            },
+            seen: [1, 1],
+        },
+        VisibilityCase {
+            name: "an order between sets carries the commands",
+            build: |schedule| {
+                schedule.configure_sets((Phase::Early, Phase::Late).chain());
+                schedule
+                    .add_system(count_a.in_set(Phase::Late))
+                    .add_system(spawn_a.in_set(Phase::Early));
+            },
+            seen: [1, 1],
+        },
+        VisibilityCase {
+            name: "a system taking the world sees what ran before it",
+            build: |schedule| {
+                schedule.add_system(spawn_a).add_system(count_a_exclusively);
+            },
+            seen: [1, 1],
+        },
+    ];
+    for case in cases {
+        assert_eq!(
+            seen_over_two_runs::<SingleThreadedExecutor>(case.build),
+            case.seen,
+            "single-threaded: {}",
+            case.name
+        );
+        assert_eq!(
+            seen_over_two_runs::<MultiThreadedExecutor>(case.build),
+            case.seen,
+            "multi-threaded: {}",
+            case.name
+        );
+    }
+}
+
+#[derive(Resource, PartialEq, Debug)]
+struct Winner(&'static str);
+
+fn slow_insert(mut cmd: CommandQueue) {
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    cmd.insert_resource(Winner("registered first"));
+}
+
+fn fast_insert(mut cmd: CommandQueue) {
+    cmd.insert_resource(Winner("registered second"));
+}
+
+fn winner<E: SystemExecutor + 'static>() -> Winner {
+    let mut world = World::new();
+    let mut schedule = Schedule::new();
+    schedule.add_system(slow_insert).add_system(fast_insert);
+    schedule.compile::<E>(&mut world).run(&mut world);
+    world.remove_resource::<Winner>().unwrap()
+}
+
+#[test]
+fn unordered_systems_apply_their_commands_in_registration_order_whatever_finishes_first() {
+    assert_eq!(
+        winner::<SingleThreadedExecutor>(),
+        Winner("registered second")
+    );
+    for _ in 0..8 {
+        assert_eq!(
+            winner::<MultiThreadedExecutor>(),
+            Winner("registered second")
+        );
+    }
 }

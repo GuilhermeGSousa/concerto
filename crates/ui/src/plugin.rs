@@ -152,6 +152,7 @@ impl Plugin for UIPlugin {
                 update_scroll_areas,
                 keep_focus_on_shown_items,
                 navigate_items.after(keep_focus_on_shown_items),
+                crate::search::update_search_fields.after(update_text_inputs),
             )
                 .in_set(UiSet::Widgets),
         );
