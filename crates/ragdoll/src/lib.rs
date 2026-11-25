@@ -1,9 +1,11 @@
 //! A character's physical body: the ragdoll asset and what is built from it.
 
 pub mod asset;
+pub mod attributes;
 pub mod balance;
 pub mod behaviour;
 pub mod character;
+pub mod drive;
 pub mod dying;
 pub mod fall;
 pub mod generate;
@@ -18,11 +20,13 @@ pub mod shot;
 pub mod stagger;
 #[cfg(feature = "test-support")]
 pub mod testing;
+pub mod view;
 
 pub use asset::{
     BoneStrength, PartStrength, Ragdoll, RagdollJoint, RagdollMotor, RagdollPart, RagdollShape,
     Segment, Side, StrengthProfile,
 };
+pub use attributes::{MotorCommand, PhysicsAmount};
 pub use balance::{BALANCE, BALANCE_PRIORITY, Balance, Hindrance};
 pub use behaviour::{
     BehaviourEnded, BehaviourSet, BodyDrive, BodyState, BodyStateChanged, Claim, Outcome,
@@ -44,3 +48,4 @@ pub use sandbox::{Trial, TrialReport, run_trial};
 pub use sensing::{BodySense, Impact, MassPoint};
 pub use shot::{SHOT, SHOT_PRIORITY, Shot, ShotReaction, Wound, Wounds};
 pub use stagger::{STAGGER, STAGGER_PRIORITY, Stagger};
+pub use view::BodyView;

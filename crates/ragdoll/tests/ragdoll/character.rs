@@ -1014,3 +1014,33 @@ fn a_body_senses_its_support_its_balance_its_fall_and_its_rest() {
     );
     assert!(dropped.head_impact.is_some());
 }
+
+#[test]
+fn a_drive_input_that_reads_what_the_graph_drive_writes_panics_when_the_drive_is_built() {
+    use concerto_animation::{node::DriveNodeInputs, player::AnimationPlayer};
+    use concerto_ecs::Query;
+
+    let mut app = App::new();
+    app.register_plugin(MainSchedulePlugin)
+        .register_plugin(TimePlugin)
+        .register_plugin(AssetManagerPlugin)
+        .register_plugin(TransformPlugin)
+        .register_plugin(PhysicsPlugin)
+        .register_plugin(RagdollPlugin);
+    app.register_input::<DriveNodeInputs, Query<'static, 'static, &'static AnimationPlayer>>();
+
+    let built = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        app.finish_plugin_build();
+        app.update();
+    }));
+    let panic = built.expect_err("a drive input that reads the player conflicts with the drive");
+    let message = panic
+        .downcast_ref::<String>()
+        .cloned()
+        .or_else(|| panic.downcast_ref::<&str>().map(|text| text.to_string()))
+        .unwrap_or_default();
+    assert!(
+        message.contains("drive_graphs") && message.contains("AnimationPlayer"),
+        "the panic names the drive and the conflict: {message}"
+    );
+}

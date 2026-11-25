@@ -337,6 +337,18 @@ impl Stage {
             .set_node_weight(&node, weight);
     }
 
+    fn swap_to_unloaded(&mut self, player: Entity) {
+        let unloaded = AnimationHandleComponent::new(AssetHandle::weak(AssetId::new()));
+        self.world().insert(unloaded, player);
+    }
+
+    fn pause(&mut self, player: Entity) {
+        self.world()
+            .get_component_for_entity_mut::<AnimationPlayer>(player)
+            .unwrap()
+            .set_paused(true);
+    }
+
     fn amounts(&mut self, player: Entity) -> Vec<f32> {
         let attributes = self
             .world()
@@ -470,5 +482,21 @@ fn attributes_travel_with_the_pose_through_every_blend() {
     assert!(
         (following - 0.96875).abs() < 0.01,
         "a second into a transition to an amount rising by 1 a second, with the source's share down to 1/32, the amount is {following}"
+    );
+
+    stage.swap_to_unloaded(blend_player);
+    stage.advance(0.0);
+    stage.advance(0.0);
+    assert_eq!(
+        stage.amounts(blend_player),
+        [0.0; BONES],
+        "a player swapped to a graph that is not loaded keeps no attributes"
+    );
+    assert_eq!(stage.driven(blend_player), [0.0; BONES]);
+    stage.pause(layer_player);
+    assert_eq!(
+        stage.driven(layer_player),
+        [0.0; BONES],
+        "a paused player is not driven"
     );
 }

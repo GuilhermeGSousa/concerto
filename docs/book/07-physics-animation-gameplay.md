@@ -658,9 +658,25 @@ own entity is. Changing a weight over time is how animation and physics are
 blended. While a character whose parts have weight is itself moving, the drawn
 body trails it by one frame's motion.
 
-While the character's root part, its pelvis, has any weight, the character is
-a body and not a walker, and its `capsule` follows the body instead of driving
-it:
+The character's animation graph can ask for physics too, per bone, through two
+pose attributes that blend with the pose. `PhysicsAmount` is how much of a bone
+is drawn from physics; a bone is drawn by its amount or its part's weight,
+whichever is larger. `MotorCommand` is what behaviours ask of the bone's motor
+in each physics step: a target, a strength, a force and a torque, and a `cover`
+from 0 to 1 saying how much of the bone they hold. Where they hold less than
+all of it, the rest is held to the animation at the strength of the
+`CharacterRagdoll::follow` profile, `braced` by default; the pelvis, and a
+part that profile leaves kinematic or limp, gets no such share. A part whose
+bone has neither an amount nor a cover is kinematic, as it is in
+`FollowsAnimation`. Each physics step the ragdoll hands the player a
+`BodyView`, a snapshot of the body, which the graph's nodes read as an extra.
+While the mode is not `FollowsAnimation`, or a behaviour claims a part, the
+mode and the claims drive the body and the graph's commands are ignored.
+`RagdollBody::is_animated(player)` says whether no bone has an amount.
+
+While the character's root part, its pelvis, is drawn from physics by any
+weight or amount, the character is a body and not a walker, and its `capsule`
+follows the body instead of driving it:
 
 - the capsule gets a `Carried` component, and whatever drives it leaves it
   alone: the motion-matching springs, and so nav steering and root motion, and
@@ -669,12 +685,12 @@ it:
   the character returns to animation it is already there and nothing teleports;
 - it is in no collision layer while it is carried, so it collides with nothing
   and no query sees it; it gets its own layers back when it is let go;
-- when every weight at the pelvis is back at 0 it is let go where it stands,
-  and the springs restart from the body's velocity and facing, which `Carried`
-  holds, so the first animated frame does not snap. The facing is the way the
-  pelvis points across the hips, so a body on its back or front keeps one
-  heading however it rocks about its spine; only a body on its side takes it
-  from the way the pelvis faces.
+- when the weight and the amount at the pelvis are back at 0 it is let go
+  where it stands, and the springs restart from the body's velocity and
+  facing, which `Carried` holds, so the first animated frame does not snap.
+  The facing is the way the pelvis points across the hips, so a body on its
+  back or front keeps one heading however it rocks about its spine; only a
+  body on its side takes it from the way the pelvis faces.
 
 The capsule is not checked for a clear standing spot when it is let go; a body
 that came to rest inside a wall's reach is pushed out by the solver.

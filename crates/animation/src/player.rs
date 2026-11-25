@@ -105,12 +105,12 @@ impl AnimationPlayer {
         self.graph_state.in_state(graphs, name)
     }
 
-    /// The per-bone attributes of the frame the player last evaluated.
+    /// The per-bone attributes of the frame the player last evaluated; none once its graph gives no frame.
     pub fn attributes(&self) -> &PoseAttributes {
         &self.attributes
     }
 
-    /// Walks the graph once for a physics step of `delta_time` seconds, each node saying through `AnimationNode::drive` what it asks of physics with `skeleton`'s bone ids, and keeps the attributes it gives; the graph does not advance.
+    /// Walks the graph once for a physics step of `delta_time` seconds, each node saying through `AnimationNode::drive` what it asks of physics with `skeleton`'s bone ids, and keeps the attributes it gives; the graph does not advance. A paused player, or one whose graph gives no frame, keeps no attributes, so every bone reads neutral.
     pub fn drive(
         &mut self,
         graphs: &AssetStore<AnimationGraph>,
@@ -118,6 +118,10 @@ impl AnimationPlayer {
         inputs: &Inputs<'_, '_>,
         delta_time: f32,
     ) -> &PoseAttributes {
+        if self.paused {
+            self.drive_attributes.clear();
+            return &self.drive_attributes;
+        }
         let outbox = Outbox::default();
         let graph = AnimationGraphContext {
             blackboard: &self.blackboard,
@@ -142,6 +146,8 @@ impl AnimationPlayer {
             &mut output,
         ) {
             std::mem::swap(&mut self.drive_attributes, output.attributes_mut());
+        } else {
+            self.drive_attributes.clear();
         }
         self.frame_pool.release(output);
         self.emitted.extend(outbox.into_signals());
@@ -372,6 +378,7 @@ impl AnimationPlayer {
         self.emitted.extend(outbox.into_signals());
         if !evaluated {
             // No graph evaluated — keep the bones' current (default) pose.
+            self.attributes.clear();
             self.frame_pool.release(output_frame);
             return false;
         }

@@ -1,4 +1,4 @@
-use concerto_animation::target::animate_targets;
+use concerto_animation::target::{animate_targets, update_animation_players};
 use concerto_app::{
     App,
     edit_time::AtPreviewTime,
@@ -22,6 +22,7 @@ use crate::{
         drop_removed_ragdoll, drop_replaced_ragdoll, record_animated_poses, record_ragdoll_poses,
         write_ragdoll_poses,
     },
+    drive::{drive_from_graph, drive_graphs, view_bodies},
     dying::{Dying, Settled, die_when_told, drain_dying, settle_dead_bodies, wake_when_hit},
     fall::{Fall, FallReaction, fall_bodies, fall_when_falling},
     hit::{HitReaction, flinch_when_hit, update_flinches},
@@ -30,7 +31,7 @@ use crate::{
     stagger::{Stagger, end_staggers, note_balance_ended, stagger_bodies},
 };
 
-/// Registers the ragdoll asset and gives every `CharacterRagdoll` a physical body that follows its animation, is powered towards it or falls limp, drawn on its skeleton by weight; register it after `PhysicsPlugin`. Its systems also run in a preview `App`, where they do nothing until the preview has a `PhysicsPipeline`.
+/// Registers the ragdoll asset and gives every `CharacterRagdoll` a physical body that follows its animation, is powered towards it or falls limp, drawn on its skeleton by weight or by the physics amount its animation graph gives each bone; register it after `PhysicsPlugin`. Its systems also run in a preview `App`, where they do nothing until the preview has a `PhysicsPipeline`.
 pub struct RagdollPlugin;
 
 impl Plugin for RagdollPlugin {
@@ -132,9 +133,29 @@ impl Plugin for RagdollPlugin {
                     .at_preview_time(),
             )
             .add_system(
+                LateUpdate,
+                view_bodies
+                    .before(update_animation_players)
+                    .at_preview_time(),
+            )
+            .add_system(
+                LateFixedUpdate,
+                drive_graphs
+                    .after(drive_character_ragdolls)
+                    .before(drive_from_graph)
+                    .at_preview_time(),
+            )
+            .add_system(
+                LateFixedUpdate,
+                drive_from_graph
+                    .after(drive_character_ragdolls)
+                    .before(step_simulation)
+                    .at_preview_time(),
+            )
+            .add_system(
                 LateFixedUpdate,
                 carry_capsules
-                    .after(drive_character_ragdolls)
+                    .after(drive_from_graph)
                     .before(step_simulation)
                     .at_preview_time(),
             )
