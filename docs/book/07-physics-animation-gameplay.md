@@ -668,11 +668,14 @@ all of it, the rest is held to the animation at the strength of the
 `CharacterRagdoll::follow` profile, `braced` by default; the pelvis, and a
 part that profile leaves kinematic or limp, gets no such share. A part whose
 bone has neither an amount nor a cover is kinematic, as it is in
-`FollowsAnimation`. Each physics step the ragdoll hands the player a
+`FollowsAnimation`, and so is the pelvis while it has no cover. A command's
+force and torque are scaled by its cover. A paused player asks for nothing,
+but its bones keep the amounts it last gave them. Each physics step the ragdoll hands the player a
 `BodyView`, a snapshot of the body, which the graph's nodes read as an extra.
 While the mode is not `FollowsAnimation`, or a behaviour claims a part, the
 mode and the claims drive the body and the graph's commands are ignored.
-`RagdollBody::is_animated(player)` says whether no bone has an amount.
+`RagdollBody::is_animated(player)` says whether no bone is drawn from
+physics, by amount or by weight.
 
 While the character's root part, its pelvis, is drawn from physics by any
 weight or amount, the character is a body and not a walker, and its `capsule`

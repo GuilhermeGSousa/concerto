@@ -33,7 +33,7 @@ use glam::{Affine3A, Mat4, Quat, Vec3};
 use log::warn;
 
 use crate::{
-    asset::{PartStrength, Ragdoll},
+    asset::{PartStrength, Ragdoll, StrengthProfile},
     behaviour::{BodyDrive, Claim},
     drive::{drawn_amount, old_path_owns, physics_amount},
     dying::{Dying, Settled},
@@ -270,6 +270,9 @@ pub struct RagdollBody {
     previous: Vec<BodyPose>,
     current: Vec<BodyPose>,
     velocities: Vec<Vec3>,
+    part_of_bone: Arc<[Option<usize>]>,
+    profiles: Arc<[StrengthProfile]>,
+    drawn: Vec<f32>,
     drawn_roots: Vec<Option<Mat4>>,
     carrying: Option<Carrying>,
 }
@@ -317,20 +320,26 @@ impl RagdollBody {
         &self.bones
     }
 
-    /// Whether every part's bone is drawn wholly from the animation by `player`'s graph: no bone has a physics amount.
+    /// Whether the body is drawn wholly from the animation: no bone has a physics amount in `player`'s graph, and no part was drawn from physics by its weight on the last frame.
     pub fn is_animated(&self, player: &AnimationPlayer) -> bool {
-        self.resolved
-            .bones()
-            .iter()
-            .all(|bone| physics_amount(Some(player), *bone) <= 0.0)
+        self.drawn.iter().all(|amount| *amount <= 0.0)
+            && self
+                .resolved
+                .bones()
+                .iter()
+                .all(|bone| physics_amount(Some(player), *bone) <= 0.0)
     }
 
     pub(crate) fn shared_resolved(&self) -> Arc<ResolvedRagdoll> {
         Arc::clone(&self.resolved)
     }
 
-    pub(crate) fn skeleton_bone_count(&self) -> usize {
-        self.skeleton_bones.len()
+    pub(crate) fn shared_part_of_bone(&self) -> Arc<[Option<usize>]> {
+        Arc::clone(&self.part_of_bone)
+    }
+
+    pub(crate) fn shared_profiles(&self) -> Arc<[StrengthProfile]> {
+        Arc::clone(&self.profiles)
     }
 
     pub(crate) fn simulated_pose(&self) -> &[BodyPose] {
@@ -447,6 +456,10 @@ pub fn create_character_ragdolls(
         for part in 0..resolved.part_count() {
             state.set_ragdoll_part_motion(id, part, MotionType::Kinematic);
         }
+        let mut part_of_bone = vec![None; skeleton_bones.len()];
+        for (part, bone) in resolved.bones().iter().enumerate() {
+            part_of_bone[*bone] = Some(part);
+        }
         cmd.insert(
             (
                 id,
@@ -465,6 +478,9 @@ pub fn create_character_ragdolls(
                     animated_model: vec![Mat4::IDENTITY; pose.len()],
                     part_roots,
                     velocities: vec![Vec3::ZERO; pose.len()],
+                    part_of_bone: part_of_bone.into(),
+                    profiles: ragdoll.profiles.as_slice().into(),
+                    drawn: vec![0.0; pose.len()],
                     previous: pose.clone(),
                     current: pose,
                     carrying: None,
@@ -909,10 +925,7 @@ pub fn write_ragdoll_poses(
             .map(|part| drawn_amount(character, player, &body, part))
             .collect();
         let simulated = body.interpolated_pose(alpha);
-        let mut part_of_bone: Vec<Option<usize>> = vec![None; body.skeleton_bones.len()];
-        for (part, bone) in body.resolved.bones().iter().enumerate() {
-            part_of_bone[*bone] = Some(part);
-        }
+        let part_of_bone = body.shared_part_of_bone();
         let root_parents: Vec<Mat4> = body
             .skeleton_bones
             .iter()
@@ -966,6 +979,7 @@ pub fn write_ragdoll_poses(
         for (part, bone) in body.resolved.bones().iter().enumerate() {
             body.animated_model[part] = model[*bone];
         }
+        body.drawn = weights;
     }
 }
 

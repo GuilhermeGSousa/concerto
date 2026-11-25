@@ -5,10 +5,7 @@ use concerto_physics::ragdoll::{BodyPose, RagdollId};
 use glam::Vec3;
 
 use crate::{
-    asset::{Ragdoll, StrengthProfile},
-    character::RagdollBody,
-    resolve::ResolvedRagdoll,
-    sensing::BodySense,
+    asset::StrengthProfile, character::RagdollBody, resolve::ResolvedRagdoll, sensing::BodySense,
     shot::Wounds,
 };
 
@@ -18,13 +15,13 @@ pub struct BodyView {
     entity: Entity,
     ragdoll_id: RagdollId,
     resolved: Arc<ResolvedRagdoll>,
-    profiles: Vec<StrengthProfile>,
+    profiles: Arc<[StrengthProfile]>,
     pose: Vec<BodyPose>,
     animated: Vec<BodyPose>,
     velocities: Vec<Vec3>,
     sense: Option<BodySense>,
     wounds: Wounds,
-    part_of_bone: Vec<Option<usize>>,
+    part_of_bone: Arc<[Option<usize>]>,
 }
 
 impl BodyView {
@@ -32,28 +29,20 @@ impl BodyView {
         entity: Entity,
         ragdoll_id: RagdollId,
         body: &RagdollBody,
-        ragdoll: Option<&Ragdoll>,
         sense: Option<&BodySense>,
         wounds: Option<&Wounds>,
     ) -> Self {
-        let resolved = body.shared_resolved();
-        let mut part_of_bone = vec![None; body.skeleton_bone_count()];
-        for (part, bone) in resolved.bones().iter().enumerate() {
-            if let Some(slot) = part_of_bone.get_mut(*bone) {
-                *slot = Some(part);
-            }
-        }
         Self {
             entity,
             ragdoll_id,
-            resolved,
-            profiles: ragdoll.map_or_else(Vec::new, |ragdoll| ragdoll.profiles.clone()),
+            resolved: body.shared_resolved(),
+            profiles: body.shared_profiles(),
             pose: body.simulated_pose().to_vec(),
             animated: body.animated_pose().to_vec(),
             velocities: body.velocities().to_vec(),
             sense: sense.cloned(),
             wounds: wounds.cloned().unwrap_or_default(),
-            part_of_bone,
+            part_of_bone: body.shared_part_of_bone(),
         }
     }
 
@@ -72,7 +61,7 @@ impl BodyView {
         &self.resolved
     }
 
-    /// The strength profiles of the ragdoll asset.
+    /// The strength profiles of the ragdoll asset the body was built from.
     pub fn profiles(&self) -> &[StrengthProfile] {
         &self.profiles
     }

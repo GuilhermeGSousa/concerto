@@ -74,6 +74,7 @@ mod tests {
     use glam::{Quat, Vec3};
 
     use super::{MotorCommand, PhysicsAmount};
+    use crate::{character::Held, drive::part_drive};
 
     struct CommandRow {
         case: &'static str,
@@ -81,6 +82,18 @@ mod tests {
         b: MotorCommand,
         weight: f32,
         expected: MotorCommand,
+    }
+
+    struct DriveRow {
+        case: &'static str,
+        root: bool,
+        amount: f32,
+        command: MotorCommand,
+        follow: Option<Held>,
+        kinematic: bool,
+        stiffness: f32,
+        force: Vec3,
+        target: Quat,
     }
 
     struct AmountRow {
@@ -232,5 +245,108 @@ mod tests {
         let mut unweighted = PhysicsAmount(0.3);
         unweighted.blend(0.0, &PhysicsAmount(1.0), 0.0);
         assert!(unweighted.0.is_finite());
+
+        let animated = Quat::from_rotation_x(0.4);
+        let follow = Some(Held {
+            kinematic: false,
+            stiffness: 200.0,
+            damping: 20.0,
+            torque_limit: 100.0,
+        });
+        let pushing = MotorCommand {
+            target: turned,
+            force: Vec3::X * 10.0,
+            ..held(0.5, 100.0)
+        };
+        let drives = [
+            DriveRow {
+                case: "a root with an amount and no cover stays kinematic",
+                root: true,
+                amount: 0.5,
+                command: MotorCommand::neutral(),
+                follow,
+                kinematic: true,
+                stiffness: 0.0,
+                force: Vec3::ZERO,
+                target: animated,
+            },
+            DriveRow {
+                case: "a covered root takes the command alone, its force scaled by cover",
+                root: true,
+                amount: 0.0,
+                command: pushing,
+                follow,
+                kinematic: false,
+                stiffness: 100.0,
+                force: Vec3::X * 5.0,
+                target: turned,
+            },
+            DriveRow {
+                case: "a limb with an amount and no cover is held by follow to the animation",
+                root: false,
+                amount: 0.5,
+                command: MotorCommand::neutral(),
+                follow,
+                kinematic: false,
+                stiffness: 200.0,
+                force: Vec3::ZERO,
+                target: animated,
+            },
+            DriveRow {
+                case: "a limb with neither amount nor cover is kinematic",
+                root: false,
+                amount: 0.0,
+                command: MotorCommand::neutral(),
+                follow,
+                kinematic: true,
+                stiffness: 0.0,
+                force: Vec3::ZERO,
+                target: animated,
+            },
+            DriveRow {
+                case: "half cover mixes the command with follow halfway",
+                root: false,
+                amount: 0.0,
+                command: pushing,
+                follow,
+                kinematic: false,
+                stiffness: 150.0,
+                force: Vec3::X * 5.0,
+                target: animated.slerp(turned, 0.5),
+            },
+            DriveRow {
+                case: "without follow a limb's force still fades with its cover",
+                root: false,
+                amount: 0.0,
+                command: pushing,
+                follow: None,
+                kinematic: false,
+                stiffness: 100.0,
+                force: Vec3::X * 5.0,
+                target: turned,
+            },
+        ];
+        for row in drives {
+            let drive = part_drive(row.root, row.amount, row.command, row.follow, animated);
+            assert_eq!(drive.held.kinematic, row.kinematic, "{}", row.case);
+            assert!(
+                (drive.held.stiffness - row.stiffness).abs() < 1e-3,
+                "{}: stiffness {}",
+                row.case,
+                drive.held.stiffness
+            );
+            assert!(
+                drive.force.distance(row.force) < 1e-3,
+                "{}: force {}",
+                row.case,
+                drive.force
+            );
+            assert!(
+                drive.target.angle_between(row.target) < 1e-3,
+                "{}: target {}",
+                row.case,
+                drive.target
+            );
+        }
     }
 }

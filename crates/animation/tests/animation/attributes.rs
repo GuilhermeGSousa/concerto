@@ -494,9 +494,15 @@ fn attributes_travel_with_the_pose_through_every_blend() {
     );
     assert_eq!(stage.driven(blend_player), [0.0; BONES]);
     stage.pause(layer_player);
+    stage.advance(0.0);
     assert_eq!(
         stage.driven(layer_player),
         [0.0; BONES],
         "a paused player is not driven"
+    );
+    assert_eq!(
+        stage.amounts(layer_player),
+        [0.0, 0.0, 0.5],
+        "a paused player keeps the attributes it last evaluated"
     );
 }

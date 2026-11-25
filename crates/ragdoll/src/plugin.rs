@@ -149,6 +149,7 @@ impl Plugin for RagdollPlugin {
                 LateFixedUpdate,
                 drive_from_graph
                     .after(drive_character_ragdolls)
+                    .after(update_flinches)
                     .before(step_simulation)
                     .at_preview_time(),
             )
