@@ -87,7 +87,7 @@ pub fn solve_two_bone(
     let Some(target_dir) = unit(target - a) else {
         return TwoBoneSolution { root, mid };
     };
-    let aim = Quat::from_rotation_arc(chain_dir, target_dir);
+    let aim = arc(chain_dir, target_dir, normal);
     root = aim * root;
     mid = aim * mid;
 
@@ -242,6 +242,8 @@ mod tests {
             ..chain
         };
         let solve = |chain: &TwoBoneChain| apply(chain, &solve_two_bone(chain, goal, None, 0.0));
+        let straight = solve(&hinged(bend_toward(Vec3::X, 0.0)));
+        assert!(straight.mid.z.abs() < 1e-4, "mid {}", straight.mid);
         let cases = [
             HingeCase {
                 name: "straight",
@@ -255,6 +257,10 @@ mod tests {
                 name: "bent sideways",
                 chain: bend_toward(Vec3::Z, 2.0),
             },
+            HingeCase {
+                name: "a hair bent, half sideways",
+                chain: bend_toward(Vec3::new(1.0, 0.0, 1.0).normalize(), 0.02),
+            },
         ];
 
         for case in cases {
@@ -267,9 +273,14 @@ mod tests {
                 solved.tip
             );
             assert!(solved.mid.x > 0.0, "{}: mid {}", case.name, solved.mid);
+            assert!(
+                solved.mid.distance(straight.mid) < 1e-3,
+                "{}: mid {} beside {}",
+                case.name,
+                solved.mid,
+                straight.mid
+            );
         }
-        let straight = solve(&hinged(bend_toward(Vec3::X, 0.0)));
-        assert!(straight.mid.z.abs() < 1e-4, "mid {}", straight.mid);
 
         let mut previous = None;
         for step in 0..=260 {
@@ -368,6 +379,8 @@ mod tests {
     #[test]
     fn a_degenerate_chain_or_target_gives_finite_rotations_and_a_broken_chain_none() {
         let target = Vec3::new(1.0, 0.5, 0.0);
+        let hair_off_line =
+            Quat::from_rotation_z(3e-4) * (bent().tip - bent().root).normalize() * 1.2;
         let mut nan_mid = bent();
         nan_mid.mid.x = f32::NAN;
         let case = |name, chain, target, pole, outcome| Degenerate {
@@ -405,6 +418,13 @@ mod tests {
                 Some(target * 0.5),
                 Outcome::Reaches(target),
             ),
+            case(
+                "a target a hair off the chain's line",
+                bent(),
+                hair_off_line,
+                None,
+                Outcome::Reaches(hair_off_line),
+            ),
             Degenerate {
                 softness: 0.2,
                 ..case(
@@ -424,7 +444,7 @@ mod tests {
                 Outcome::Reaches(goal) => {
                     assert!(is_finite(&solution), "{}", case.name);
                     let tip = apply(&case.chain, &solution).tip;
-                    assert!(tip.distance(goal) < 1e-4, "{}: tip {tip}", case.name);
+                    assert!(tip.distance(goal) < 1e-5, "{}: tip {tip}", case.name);
                 }
                 Outcome::Finite => assert!(is_finite(&solution), "{}", case.name),
                 Outcome::Identity => {
