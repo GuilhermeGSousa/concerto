@@ -651,8 +651,11 @@ fn die(characters: Query<&mut CharacterRagdoll, With<Dead>>) {
 Each frame, after the animation has written the bones and before transforms
 propagate, the bones of parts with a weight above 0 are moved towards the
 ragdoll's pose, interpolated between the last two fixed steps so the body does
-not judder at the fixed rate. A bone with no part keeps its animated pose under
-its parent, so fingers and a face still animate on a limp body. Bones are
+not judder at the fixed rate. Each such bone is blended between its own
+animated pose and its part's simulated one, so at half weight it is drawn
+halfway between them however its parents are drawn. A bone with no part keeps
+its animated pose under its parent, so fingers and a face still animate on a
+limp body. Bones are
 placed in world terms, so the mesh stays on the body wherever the character's
 own entity is. Changing a weight over time is how animation and physics are
 blended. While a character whose parts have weight is itself moving, the drawn

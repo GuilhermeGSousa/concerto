@@ -306,6 +306,17 @@ impl Stage {
             .distance(body.animated_pose()[part].translation)
     }
 
+    fn off_blend(&self, name: &str) -> f32 {
+        let body = self.body();
+        let part = self.part(name);
+        let alpha = self.app.get_resource::<Time>().unwrap().fixed_alpha();
+        let blended = body.animated_pose()[part].translation.lerp(
+            body.interpolated_pose(alpha)[part].translation,
+            self.amount(name),
+        );
+        self.drawn(body.bone(part).unwrap()).distance(blended)
+    }
+
     fn reach(&self, parent: &str, child: &str) -> f32 {
         self.drawn(self.humanoid.bone(parent))
             .distance(self.drawn(self.humanoid.bone(child)))
@@ -411,6 +422,7 @@ fn behaviours_on_one_body_blend_per_limb_and_never_cut() {
     stage.player_mut().set_bool_param(name!("limp"), true);
     let mut before = stage.amounts();
     let mut limp = true;
+    let mut off: f32 = 0.0;
     for _ in 0..300 {
         if limp && before.iter().all(|amount| *amount >= 1.0) {
             let body = stage.body();
@@ -430,6 +442,11 @@ fn behaviours_on_one_body_blend_per_limb_and_never_cut() {
                 "a cross-fade moves every bone's amount over its blend, one went from {then} to {now} in {delta} s"
             );
         }
+        if !limp && stage.amount("pelvis") > 0.2 && stage.amount("pelvis") < 0.8 {
+            off = off
+                .max(stage.off_blend("hand_l"))
+                .max(stage.off_blend("foot_r"));
+        }
         before = after;
         if !limp && before.iter().all(|amount| *amount <= 0.0) {
             break;
@@ -438,6 +455,10 @@ fn behaviours_on_one_body_blend_per_limb_and_never_cut() {
     assert!(
         !limp && before.iter().all(|amount| *amount <= 0.0),
         "the body went limp and came back to its walk"
+    );
+    assert!(
+        off < 1e-3,
+        "a fallen body blended back is drawn on the straight blend of each bone's animated and simulated places, a hand or foot was {off} m off it"
     );
 
     stage.player_mut().set_bool_param(name!("hold"), true);
