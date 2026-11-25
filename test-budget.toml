@@ -1,7 +1,7 @@
 "." = 3
 "crates/animation" = 100
 "crates/animation-editor" = 23
-"crates/app" = 17
+"crates/app" = 18
 "crates/asset-build" = 4
 "crates/asset-format" = 6
 "crates/asset-import" = 2

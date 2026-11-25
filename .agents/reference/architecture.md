@@ -28,8 +28,9 @@ how unordered systems run.
 One `App` holds two worlds, `main` and `render`, as fixed sub-apps
 ([crates/app/src/subapp.rs](../../crates/app/src/subapp.rs)). Each frame:
 
-1. The main world runs `Main`: `First`, then zero or more
-   `FixedUpdate` + `LateFixedUpdate` steps, then `Update`, then `LateUpdate`,
+1. The main world runs `Main`: `First`, where `TimePlugin` updates `Time`, so
+   the fixed steps and every later system see this frame's delta; then zero or
+   more `FixedUpdate` + `LateFixedUpdate` steps, as many as that delta pays for, then `Update`, then `LateUpdate`,
    then `world.tick()` marks the frame boundary for change detection read
    outside any system.
 2. Extract runs on the main thread with both worlds. It links each
