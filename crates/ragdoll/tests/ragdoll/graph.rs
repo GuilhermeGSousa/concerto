@@ -299,6 +299,32 @@ impl Stage {
             .collect()
     }
 
+    fn fade_until(&mut self, done: impl Fn(&[f32]) -> bool) -> f32 {
+        let mut before = self.amounts();
+        let mut off: f32 = 0.0;
+        for _ in 0..300 {
+            if done(&before) {
+                return off;
+            }
+            let delta = self.frame();
+            let after = self.amounts();
+            for (now, then) in after.iter().zip(&before) {
+                assert!(
+                    (now - then).abs() <= delta / LIMP_BLEND + 0.01,
+                    "a cross-fade moves every bone's amount over its blend, one went from {then} to {now} in {delta} s"
+                );
+            }
+            let pelvis = self.amount("pelvis");
+            if pelvis > 0.2 && pelvis < 0.8 {
+                off = off
+                    .max(self.off_blend("hand_l"))
+                    .max(self.off_blend("foot_r"));
+            }
+            before = after;
+        }
+        panic!("the cross-fade did not end within 300 frames, its amounts are {before:?}");
+    }
+
     fn trail(&self, name: &str) -> f32 {
         let body = self.body();
         let part = self.part(name);
@@ -420,46 +446,23 @@ fn behaviours_on_one_body_blend_per_limb_and_never_cut() {
     stage.player_mut().set_bool_param(name!("hold"), false);
     stage.walk(30);
     stage.player_mut().set_bool_param(name!("limp"), true);
-    let mut before = stage.amounts();
-    let mut limp = true;
-    let mut off: f32 = 0.0;
-    for _ in 0..300 {
-        if limp && before.iter().all(|amount| *amount >= 1.0) {
-            let body = stage.body();
-            assert!(
-                (0..body.resolved().part_count()).all(|part| !body.is_kinematic(part))
-                    && stage.carried(),
-                "a limp body has every part dynamic and its capsule carried"
-            );
-            stage.player_mut().set_bool_param(name!("limp"), false);
-            limp = false;
-        }
-        let delta = stage.frame();
-        let after = stage.amounts();
-        for (now, then) in after.iter().zip(&before) {
-            assert!(
-                (now - then).abs() <= delta / LIMP_BLEND + 0.01,
-                "a cross-fade moves every bone's amount over its blend, one went from {then} to {now} in {delta} s"
-            );
-        }
-        if !limp && stage.amount("pelvis") > 0.2 && stage.amount("pelvis") < 0.8 {
-            off = off
-                .max(stage.off_blend("hand_l"))
-                .max(stage.off_blend("foot_r"));
-        }
-        before = after;
-        if !limp && before.iter().all(|amount| *amount <= 0.0) {
-            break;
-        }
-    }
+    stage.fade_until(|amounts| amounts.iter().all(|amount| *amount >= 1.0));
+    let body = stage.body();
     assert!(
-        !limp && before.iter().all(|amount| *amount <= 0.0),
-        "the body went limp and came back to its walk"
+        (0..body.resolved().part_count()).all(|part| !body.is_kinematic(part)) && stage.carried(),
+        "a limp body has every part dynamic and its capsule carried"
     );
+    stage.player_mut().set_bool_param(name!("limp"), false);
+    let off = stage.fade_until(|amounts| amounts.iter().all(|amount| *amount <= 0.0));
     assert!(
         off < 1e-3,
         "a fallen body blended back is drawn on the straight blend of each bone's animated and simulated places, a hand or foot was {off} m off it"
     );
+
+    stage.player_mut().set_bool_param(name!("limp"), true);
+    stage.fade_until(|amounts| amounts.iter().all(|amount| *amount >= 0.5));
+    stage.player_mut().set_bool_param(name!("limp"), false);
+    stage.fade_until(|amounts| amounts.iter().all(|amount| *amount <= 0.0));
 
     stage.player_mut().set_bool_param(name!("hold"), true);
     stage.walk(20);

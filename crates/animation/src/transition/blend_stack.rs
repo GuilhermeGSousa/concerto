@@ -2,8 +2,9 @@ use concerto_foundation::assets::asset_store::AssetStore;
 use uuid::Uuid;
 
 use crate::{
+    attribute::PoseAttributes,
     evaluation::{AnimationGraphContext, DriveContext},
-    graph::{AnimationGraph, AnimationGraphState, AnimationGraphStates, GraphId},
+    graph::{AnimationGraph, AnimationGraphStates, GraphId},
     pose::{AnimationFrame, FramePool, RootMotion},
     transition::{AnimationTransitionBlender, BlendInFlight},
 };
@@ -11,23 +12,52 @@ use crate::{
 /// One active graph in the cross-fade. The stack is ordered oldest → newest; only the newest
 /// entry (the state being transitioned into) fades in.
 struct BlendStackEntry {
-    graph_id: GraphId,
+    source: Source,
     fade_speed: f32,
     weight: f32,
 }
 
+#[derive(Clone, Copy)]
+enum Source {
+    Graph(GraphId),
+    Snapshot(GraphId),
+}
+
+impl Source {
+    fn graph_id(self) -> GraphId {
+        match self {
+            Source::Graph(graph_id) | Source::Snapshot(graph_id) => graph_id,
+        }
+    }
+
+    fn playing(self) -> Option<GraphId> {
+        match self {
+            Source::Graph(graph_id) => Some(graph_id),
+            Source::Snapshot(_) => None,
+        }
+    }
+}
+
 pub(crate) struct BlendStack {
     entries: Vec<BlendStackEntry>,
+    last_pose: AnimationFrame,
+    last_drive: PoseAttributes,
+    snapshot_pose: AnimationFrame,
+    snapshot_drive: PoseAttributes,
 }
 
 impl BlendStack {
     pub(crate) fn new(initial_graph: GraphId) -> Self {
         Self {
             entries: vec![BlendStackEntry {
-                graph_id: initial_graph,
+                source: Source::Graph(initial_graph),
                 fade_speed: 0.0,
                 weight: 1.0,
             }],
+            last_pose: AnimationFrame::identity(0),
+            last_drive: PoseAttributes::default(),
+            snapshot_pose: AnimationFrame::identity(0),
+            snapshot_drive: PoseAttributes::default(),
         }
     }
 
@@ -41,30 +71,42 @@ impl BlendStack {
 
     fn mix(
         &self,
-        graph_states: &mut AnimationGraphStates,
         pool: &mut FramePool,
         output: &mut AnimationFrame,
-        mut play: impl FnMut(&mut AnimationGraphState, &mut FramePool, &mut AnimationFrame),
+        mut play: impl FnMut(Source, &mut FramePool, &mut AnimationFrame),
         blend: impl Fn(&mut AnimationFrame, &AnimationFrame, f32),
     ) {
         let Some((base, fading_in)) = self.entries.split_first() else {
             return;
         };
 
-        if let Some(graph_state) = graph_states.get_mut(base.graph_id) {
-            play(graph_state, pool, output);
-        }
+        play(base.source, pool, output);
 
         for entry in fading_in {
             let mut layer = pool.acquire();
-
-            if let Some(graph_state) = graph_states.get_mut(entry.graph_id) {
-                play(graph_state, pool, &mut layer);
-            }
-
+            play(entry.source, pool, &mut layer);
             blend(output, &layer, entry.weight);
             pool.release(layer);
         }
+    }
+
+    fn holds(&self, graph: GraphId) -> bool {
+        self.entries
+            .iter()
+            .any(|entry| entry.source.playing().is_some_and(|held| *held == *graph))
+    }
+
+    fn freeze(&mut self) {
+        let from = self.current();
+        std::mem::swap(&mut self.snapshot_pose, &mut self.last_pose);
+        self.snapshot_pose.events.clear();
+        std::mem::swap(&mut self.snapshot_drive, &mut self.last_drive);
+        self.entries.clear();
+        self.entries.push(BlendStackEntry {
+            source: Source::Snapshot(from),
+            fade_speed: 0.0,
+            weight: 1.0,
+        });
     }
 }
 
@@ -74,12 +116,15 @@ impl AnimationTransitionBlender for BlendStack {
         self.entries
             .last()
             .expect("blend stack always retains the current graph")
-            .graph_id
+            .source
+            .graph_id()
     }
 
     fn for_each_playing(&self, visit: &mut dyn FnMut(GraphId)) {
         for entry in &self.entries {
-            visit(entry.graph_id);
+            if let Some(graph_id) = entry.source.playing() {
+                visit(graph_id);
+            }
         }
     }
 
@@ -88,8 +133,8 @@ impl AnimationTransitionBlender for BlendStack {
             return None;
         };
         Some(BlendInFlight {
-            from: from.graph_id,
-            to: to.graph_id,
+            from: from.source.graph_id(),
+            to: to.source.graph_id(),
             progress: to.weight,
         })
     }
@@ -103,19 +148,28 @@ impl AnimationTransitionBlender for BlendStack {
         pool: &mut FramePool,
         output: &mut AnimationFrame,
     ) {
+        let snapshot = &self.snapshot_pose;
         self.mix(
-            graph_states,
             pool,
             output,
-            |graph_state, pool, frame| {
-                graph_state.evaluate(graphs, context, bone_ids, pool, frame);
+            |source, pool, frame| match source {
+                Source::Graph(graph_id) => {
+                    if let Some(graph_state) = graph_states.get_mut(graph_id) {
+                        graph_state.evaluate(graphs, context, bone_ids, pool, frame);
+                    }
+                }
+                Source::Snapshot(_) => frame.copy_from(snapshot),
             },
             |output, layer, weight| output.blend(layer, weight),
         );
+        if self.last_pose.len() != output.len() {
+            self.last_pose = AnimationFrame::identity(output.len());
+        }
+        self.last_pose.copy_from(output);
     }
 
     fn drive(
-        &self,
+        &mut self,
         bone_ids: &[Uuid],
         graph_states: &mut AnimationGraphStates,
         graphs: &AssetStore<AnimationGraph>,
@@ -123,17 +177,23 @@ impl AnimationTransitionBlender for BlendStack {
         pool: &mut FramePool,
         output: &mut AnimationFrame,
     ) {
+        let snapshot = &self.snapshot_drive;
         self.mix(
-            graph_states,
             pool,
             output,
-            |graph_state, pool, frame| {
-                graph_state.drive(graphs, context, bone_ids, pool, frame);
+            |source, pool, frame| match source {
+                Source::Graph(graph_id) => {
+                    if let Some(graph_state) = graph_states.get_mut(graph_id) {
+                        graph_state.drive(graphs, context, bone_ids, pool, frame);
+                    }
+                }
+                Source::Snapshot(_) => frame.attributes_mut().copy_from(snapshot),
             },
             |output, layer, weight| {
                 output.attributes_mut().blend(layer.attributes(), weight);
             },
         );
+        self.last_drive.copy_from(output.attributes());
     }
 
     fn root_motion(
@@ -143,23 +203,20 @@ impl AnimationTransitionBlender for BlendStack {
         graphs: &AssetStore<AnimationGraph>,
         context: &AnimationGraphContext<'_>,
     ) -> RootMotion {
+        let mut motion_of = |source: Source| {
+            source
+                .playing()
+                .and_then(|graph_id| graph_states.get_mut(graph_id))
+                .map_or(RootMotion::IDENTITY, |graph_state| {
+                    graph_state.root_motion(graphs, context, bone_ids)
+                })
+        };
         let Some((base, fading_in)) = self.entries.split_first() else {
             return RootMotion::IDENTITY;
         };
-
-        let mut motion = graph_states
-            .get_mut(base.graph_id)
-            .map_or(RootMotion::IDENTITY, |graph_state| {
-                graph_state.root_motion(graphs, context, bone_ids)
-            });
-
+        let mut motion = motion_of(base.source);
         for entry in fading_in {
-            let layer = graph_states
-                .get_mut(entry.graph_id)
-                .map_or(RootMotion::IDENTITY, |graph_state| {
-                    graph_state.root_motion(graphs, context, bone_ids)
-                });
-            motion = motion.blend(layer, entry.weight);
+            motion = motion.blend(motion_of(entry.source), entry.weight);
         }
         motion
     }
@@ -172,7 +229,11 @@ impl AnimationTransitionBlender for BlendStack {
         context: &AnimationGraphContext<'_>,
     ) {
         for entry in &self.entries {
-            if let Some(graph_state) = graph_states.get_mut(entry.graph_id) {
+            if let Some(graph_state) = entry
+                .source
+                .playing()
+                .and_then(|graph_id| graph_states.get_mut(graph_id))
+            {
                 graph_state.update(delta_time, graphs, context);
             }
         }
@@ -199,9 +260,18 @@ impl AnimationTransitionBlender for BlendStack {
             return;
         }
 
-        // Re-entering a state still fading lower in the stack: drop the stale occurrence so its
-        // single graph state is not advanced twice and the reset below is unambiguous (invariant 2).
-        self.entries.retain(|entry| *entry.graph_id != *next_graph);
+        if self.holds(next_graph) {
+            if !self.last_pose.is_empty() {
+                self.freeze();
+            } else {
+                self.entries.retain(|entry| {
+                    entry
+                        .source
+                        .playing()
+                        .is_none_or(|held| *held != *next_graph)
+                });
+            }
+        }
 
         // Anchor the target's clip (and OnAnimationEnd) to the moment of entry (invariant 3).
         if let Some(graph_state) = graph_states.get_mut(next_graph) {
@@ -209,7 +279,7 @@ impl AnimationTransitionBlender for BlendStack {
         }
 
         self.entries.push(BlendStackEntry {
-            graph_id: next_graph,
+            source: Source::Graph(next_graph),
             fade_speed: 1.0 / transition_time,
             weight: 0.0,
         });

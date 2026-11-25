@@ -1201,7 +1201,9 @@ A graph is a tree of nodes under a result node:
   state's graph reports (below). Each transition takes a
   `blend_time`, and the machine's `TransitionBlender` (set with
   `.blender(..)` on the builder) decides what it means: `CrossFade`, the
-  default, fades the old state out over `blend_time` seconds, and
+  default, fades the old state out over `blend_time` seconds (a transition
+  back into a state that is still fading freezes the blend as it stands, pose
+  and attributes, and fades that out instead, so nothing jumps), and
   `Inertialization` plays only the new state and decays the pose difference
   to the old one with `blend_time` as the halflife. A built machine is read
   with `states()`, `initial_state()` and `transitions(from)`, and edited by

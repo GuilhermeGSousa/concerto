@@ -52,7 +52,7 @@ pub(crate) trait AnimationTransitionBlender: Send + Sync {
     );
 
     fn drive(
-        &self,
+        &mut self,
         bone_ids: &[Uuid],
         graph_states: &mut AnimationGraphStates,
         graphs: &AssetStore<AnimationGraph>,
