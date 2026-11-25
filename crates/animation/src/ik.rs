@@ -27,23 +27,28 @@ impl Hinge {
                 && axis.length_squared() > MIN_LENGTH_SQUARED)
                 .then(|| axis.normalize()),
             Hinge::Rest => {
-                let root_position = rest_model(skeleton, root).1;
-                let (mid_rotation, mid_position) = rest_model(skeleton, mid);
-                let tip_position = rest_model(skeleton, tip).1;
-                let upper = mid_position - root_position;
-                let lower = tip_position - mid_position;
+                let root_position = rest_model(skeleton, root).position;
+                let mid_model = rest_model(skeleton, mid);
+                let tip_position = rest_model(skeleton, tip).position;
+                let upper = mid_model.position - root_position;
+                let lower = tip_position - mid_model.position;
                 let bend = upper.angle_between(lower);
                 if bend.is_nan() || bend < CLEAR_BEND {
                     return None;
                 }
                 let normal = unit(upper.cross(lower))?;
-                Some(mid_rotation.inverse() * normal)
+                Some(mid_model.rotation.inverse() * normal)
             }
         }
     }
 }
 
-fn rest_model(skeleton: &Skeleton, bone: usize) -> (Quat, Vec3) {
+struct RestModel {
+    rotation: Quat,
+    position: Vec3,
+}
+
+fn rest_model(skeleton: &Skeleton, bone: usize) -> RestModel {
     let mut rotation = Quat::IDENTITY;
     let mut position = Vec3::ZERO;
     let mut at = Some(bone);
@@ -53,7 +58,7 @@ fn rest_model(skeleton: &Skeleton, bone: usize) -> (Quat, Vec3) {
         rotation = local.rotation * rotation;
         at = skeleton.parents[index].map(usize::from);
     }
-    (rotation, position)
+    RestModel { rotation, position }
 }
 
 /// The positions of a two-bone chain's three joints, in one space.
