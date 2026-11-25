@@ -1549,20 +1549,22 @@ until `assets.add(graph)` has run.
 #### Messages, outcomes and signals
 
 A message is a value a graph reacts to: a type that derives `Reflect` and
-`Clone`, implements the marker trait `AnimationMessage`, is marked
-`#[reflect(AnimationMessage)]`, and is registered with
-`app.register_animation_message::<M>()`.
+`Clone`, implements the marker trait `AnimationMessage`, and is registered
+with `app.register_animation_message::<M>()`, which registers the type as a
+message. Call it before anything else registers `M`; a type registered
+earlier is not marked as a message, which the call warns about.
 
 ```rust
-use concerto::animation::message::{AnimationMessage, ReflectAnimationMessage};
+use concerto::animation::message::AnimationMessage;
 
 #[derive(Clone, Default, Reflect)]
-#[reflect(AnimationMessage)]
 struct Hit {
     strength: f32,
 }
 
 impl AnimationMessage for Hit {}
+
+app.register_animation_message::<Hit>();
 ```
 
 `AnimationPlayer::send(message)` queues it, and so does the signal `SendAnimationMessage { character, message }`,
@@ -1582,9 +1584,8 @@ the node overrides it. The queue then empties, and the nodes advance. A paused
 player keeps its queue until it resumes; a player whose graph is not
 initialized yet drops what it was sent. An `OnMessage` trigger stores the
 message's full type path and finds the type by that exact path when its graph
-is made live, with no fallback to a short name; a path that names no
-registered type, or a type not marked `#[reflect(AnimationMessage)]`, leaves a
-load warning, and that trigger never fires.
+is made live, with no fallback to a short name; a path that names no type
+registered as a message leaves a load warning, and that trigger never fires.
 
 `AnimationNode::outcome(state)` says whether the node has `Succeeded` or
 `Failed` at what it does, a `NodeOutcome`; `None` by default. A graph's outcome
@@ -1596,11 +1597,13 @@ by outcome returns `false` from `is_finished`, so `OnAnimationEnd` leaves it
 alone.
 
 A node tells the game what happened with `context.emit(signal)`, for any
-`EntitySignal` that is `Clone`, from any pass: `create_state`, `update`,
+`EntitySignal`, from any pass: `create_state`, `update`,
 `receive`, `root_motion` or `evaluate`. The signals go to a per-player outbox,
 not into the frame, so one emitted by a state the machine leaves at once still
 arrives, and `animate_targets` triggers every signal in it on the player's
-entity each frame, in the order they were emitted, after the clip events.
+entity each frame, in the order they were emitted, after the clip events. It
+does so for every player, one without a `SkeletonComponent` or paused
+included; only evaluating needs a skeleton and an unpaused player.
 
 `AnimationPlayer::in_state(graphs, name)` says whether a state machine playing
 in the player's graph is in the state `name`.

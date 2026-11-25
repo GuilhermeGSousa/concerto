@@ -5,25 +5,18 @@ use concerto_ecs::{
     signal::{On, Signal},
 };
 use concerto_reflect::{
-    FromType, PropertyVisitorMut, Reflect, TypeData, TypeRegistration, TypeRegistry, ValueWarning,
+    PropertyVisitorMut, Reflect, TypeData, TypeRegistration, TypeRegistry, ValueWarning,
 };
 
 use crate::player::AnimationPlayer;
 
-/// A value an animation graph can receive, queued with `AnimationPlayer::send`; mark it `#[reflect(AnimationMessage)]`.
+/// A value an animation graph can receive, queued with `AnimationPlayer::send`; register it with `register_animation_message`.
 pub trait AnimationMessage: Reflect + Clone + Send + Sync + 'static {}
 
-/// Says a registered type is an [`AnimationMessage`], so `OnMessage` triggers stored with its path fire.
 #[derive(Clone, Copy)]
-pub struct ReflectAnimationMessage;
+pub(crate) struct ReflectAnimationMessage;
 
 impl TypeData for ReflectAnimationMessage {}
-
-impl<M: AnimationMessage> FromType<M> for ReflectAnimationMessage {
-    fn from_type() -> Self {
-        Self
-    }
-}
 
 /// Queues `message` on the `AnimationPlayer` of `character`, which does nothing without one; the message type must be registered with `register_animation_message`.
 pub struct SendAnimationMessage<M: AnimationMessage> {
@@ -102,21 +95,17 @@ impl Resolver<'_> {
             .get_by_name(&message.path)
             .filter(|registration| registration.type_path() == message.path);
         message.id = registration
-            .as_ref()
             .filter(|registration| registration.data::<ReflectAnimationMessage>().is_some())
-            .map(|registration| TypeRegistration::type_id(registration));
-        let problem = match (&registration, message.id) {
-            (None, _) => "is not registered",
-            (Some(_), None) => "is not marked #[reflect(AnimationMessage)]",
-            (Some(_), Some(_)) => return,
-        };
-        self.warnings.push(ValueWarning {
-            path: self.path.join("."),
-            reason: format!(
-                "message type {} {problem}, so its trigger never fires",
-                message.path
-            ),
-        });
+            .map(|registration| TypeRegistration::type_id(&registration));
+        if message.id.is_none() {
+            self.warnings.push(ValueWarning {
+                path: self.path.join("."),
+                reason: format!(
+                    "message type {} is not registered with register_animation_message, so its trigger never fires",
+                    message.path
+                ),
+            });
+        }
     }
 }
 

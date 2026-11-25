@@ -1,7 +1,7 @@
 use concerto_animation::{
     evaluation::AnimationGraphContext,
     graph::AnimationGraph,
-    message::{AnimationMessage, ReflectAnimationMessage, SendAnimationMessage},
+    message::{AnimationMessage, SendAnimationMessage},
     node::{
         AnimationNode, InputSlots, NodeOutcome, ReflectAnimationNode,
         state_machine::{AnimationFSMTrigger, AnimationStateMachine},
@@ -32,7 +32,6 @@ use glam::Mat4;
 use uuid::Uuid;
 
 #[derive(Clone, Default, Reflect)]
-#[reflect(AnimationMessage)]
 struct Poke {
     strength: f32,
 }
@@ -40,7 +39,6 @@ struct Poke {
 impl AnimationMessage for Poke {}
 
 #[derive(Clone, Default, Reflect)]
-#[reflect(AnimationMessage)]
 struct Other {}
 
 impl AnimationMessage for Other {}
@@ -173,6 +171,7 @@ fn saw(received: u32) -> CounterSaw {
 struct Stage {
     app: App,
     character: Entity,
+    bodiless: Entity,
 }
 
 impl Stage {
@@ -188,6 +187,7 @@ impl Stage {
         app.main_mut().world_mut().register_component::<Transform>();
         let idle = graph(&mut app, AnimationGraph::new());
         let poked = graph(&mut app, AnimationGraph::from_node(Counter {}));
+        let machine_poked = poked.clone();
         let elsewhere = graph(&mut app, AnimationGraph::new());
         let machine =
             AnimationStateMachine::from_initial_state(name!("Idle"), idle, |transition| {
@@ -197,7 +197,7 @@ impl Stage {
                     0.1,
                 );
             })
-            .state(name!("Poked"), poked, |transition| {
+            .state(name!("Poked"), machine_poked, |transition| {
                 transition.to(name!("Idle"), AnimationFSMTrigger::OnSucceeded, 0.0);
                 transition.to(
                     name!("Elsewhere"),
@@ -227,7 +227,16 @@ impl Stage {
             SkeletonComponent::new(skeleton, vec![SceneEntityRef::Entity(bone)], None),
             hear_counted.into_listener(),
         ));
-        Self { app, character }
+        let bodiless = world.spawn((
+            AnimationPlayer::new(1),
+            AnimationHandleComponent::new(poked),
+            hear_counted.into_listener(),
+        ));
+        Self {
+            app,
+            character,
+            bodiless,
+        }
     }
 
     fn world(&mut self) -> &mut World {
@@ -287,11 +296,13 @@ impl Stage {
         counts
     }
 
-    fn heard(&mut self) -> Vec<u32> {
-        let character = self.character;
+    fn heard_by(&mut self, entity: Entity) -> Vec<u32> {
         let heard = &self.world().get_resource::<HeardCounts>().unwrap().0;
-        assert!(heard.iter().all(|heard| heard.entity == character));
-        heard.iter().map(|heard| heard.count).collect()
+        heard
+            .iter()
+            .filter(|heard| heard.entity == entity)
+            .map(|heard| heard.count)
+            .collect()
     }
 }
 
@@ -313,9 +324,9 @@ fn messages_move_the_graph_and_nodes_answer_with_outcomes_and_signals() {
     stage.frame();
     assert_eq!(stage.counters(), [saw(2)]);
     assert!(stage.in_state(name!("Idle")));
-    assert_eq!(stage.heard(), [1, 2]);
-
     let character = stage.character;
+    assert_eq!(stage.heard_by(character), [1, 2]);
+
     stage.world().trigger(SendAnimationMessage {
         character,
         message: Poke { strength: 1.0 },
@@ -323,5 +334,13 @@ fn messages_move_the_graph_and_nodes_answer_with_outcomes_and_signals() {
     stage.frame();
     assert!(stage.in_state(name!("Poked")));
     assert_eq!(stage.counters(), [saw(1)]);
-    assert_eq!(stage.heard(), [1, 2, 1]);
+    assert_eq!(stage.heard_by(character), [1, 2, 1]);
+
+    let bodiless = stage.bodiless;
+    stage.world().trigger(SendAnimationMessage {
+        character: bodiless,
+        message: Poke { strength: 1.0 },
+    });
+    stage.frame();
+    assert_eq!(stage.heard_by(bodiless), [1]);
 }

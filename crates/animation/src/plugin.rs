@@ -1,3 +1,5 @@
+use std::any::TypeId;
+
 use concerto_app::{App, edit_time::AtPreviewTime, plugins::Plugin, schedule_groups::LateUpdate};
 use concerto_ecs::{IntoSystemConfig, World, reflect::AppTypeRegistry};
 use concerto_foundation::{
@@ -7,13 +9,14 @@ use concerto_foundation::{
 use concerto_mesh::skeleton::Skeleton;
 use concerto_reflect::{GetTypeRegistration, TypeRegistry};
 use glam::{Vec2, Vec3};
+use log::warn;
 
 use crate::{
     clip::AnimationClip,
     event::{AnimationEvent, ClipEvent},
     graph::AnimationGraph,
     mask::BoneMask,
-    message::{AnimationMessage, queue_message},
+    message::{AnimationMessage, ReflectAnimationMessage, queue_message},
     node::{
         AdditiveNode, AimOffsetNode, AnimationClipNode, AnimationNode, BlendNode, IkTarget,
         LayerNode, PlaceholderNode, ResultNode, TwoBoneIkNode, blend_space::BlendSpace2DNode,
@@ -77,7 +80,7 @@ pub trait AnimationAppExt {
     /// Registers `S` with the type registry, so clips that store it make it live on load.
     fn register_clip_event<S: ClipEvent + GetTypeRegistration>(&mut self) -> &mut Self;
 
-    /// Registers `M`, marked `#[reflect(AnimationMessage)]`, with the type registry, so `OnMessage` triggers stored with its path fire, and listens for `SendAnimationMessage<M>` to queue it on a character's player.
+    /// Registers `M` with the type registry as an animation message, so `OnMessage` triggers stored with its path fire, and listens for `SendAnimationMessage<M>` to queue it on a character's player; call it before anything else registers `M`.
     fn register_animation_message<M: AnimationMessage + GetTypeRegistration>(
         &mut self,
     ) -> &mut Self;
@@ -98,7 +101,24 @@ impl AnimationAppExt for App {
     fn register_animation_message<M: AnimationMessage + GetTypeRegistration>(
         &mut self,
     ) -> &mut Self {
-        self.register_type::<M>();
+        let registry = self.main_mut().world_mut().type_registry();
+        let mut registry = registry.write();
+        match registry.get(TypeId::of::<M>()) {
+            Some(registration) if registration.data::<ReflectAnimationMessage>().is_none() => {
+                warn!(
+                    "{} was registered before register_animation_message, so OnMessage triggers never fire on it",
+                    std::any::type_name::<M>()
+                );
+            }
+            Some(_) => {}
+            None => {
+                let mut registration = M::get_type_registration();
+                registration.insert(ReflectAnimationMessage);
+                registry.add(registration);
+                M::register_dependencies(&mut registry);
+            }
+        }
+        drop(registry);
         self.add_listener(queue_message::<M>.at_preview_time());
         self
     }

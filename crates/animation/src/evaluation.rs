@@ -108,7 +108,7 @@ impl<'a> AnimationGraphContext<'a> {
     }
 
     /// Queues `signal`, triggered on the player's entity when `animate_targets` next runs.
-    pub fn emit<S: EntitySignal + Clone>(&self, signal: S) {
+    pub fn emit<S: EntitySignal>(&self, signal: S) {
         self.outbox.signals.borrow_mut().push(Box::new(signal));
     }
 

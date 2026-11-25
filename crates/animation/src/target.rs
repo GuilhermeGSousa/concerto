@@ -40,7 +40,7 @@ pub(crate) fn initialize_skeletons(
 }
 
 pub fn animate_targets(
-    mut animation_players: Query<(Entity, &mut AnimationPlayer, &SkeletonComponent)>,
+    mut animation_players: Query<(Entity, &mut AnimationPlayer, Option<&SkeletonComponent>)>,
     mut transforms: Query<&mut Transform>,
     parents: Query<&ChildOf>,
     globals: Query<&GlobalTransform>,
@@ -52,19 +52,21 @@ pub fn animate_targets(
 ) {
     for (entity, mut animation_player, skeleton_component) in animation_players.iter_mut() {
         let evaluated = !animation_player.is_paused()
-            && skeletons
-                .get(skeleton_component.skeleton())
-                .is_some_and(|skeleton| {
-                    animation_player.evaluate(
-                        &animation_graphs,
-                        &inputs,
-                        skeleton,
-                        skeleton_component.bones(),
-                        &mut transforms,
-                        &parents,
-                        &globals,
-                    )
-                });
+            && skeleton_component.is_some_and(|skeleton_component| {
+                skeletons
+                    .get(skeleton_component.skeleton())
+                    .is_some_and(|skeleton| {
+                        animation_player.evaluate(
+                            &animation_graphs,
+                            &inputs,
+                            skeleton,
+                            skeleton_component.bones(),
+                            &mut transforms,
+                            &parents,
+                            &globals,
+                        )
+                    })
+            });
         if evaluated {
             for event in animation_player.fired.drain(..) {
                 trigger(&clips, event, entity, &mut cmd);
