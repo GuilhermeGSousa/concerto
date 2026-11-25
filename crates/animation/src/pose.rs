@@ -1,4 +1,3 @@
-use concerto_ecs::{CommandQueue, Entity, signal::EntitySignal};
 use concerto_foundation::{assets::AssetId, blend::Blendable};
 pub use concerto_mesh::skeleton::JointPose;
 use glam::{Quat, Vec3};
@@ -70,22 +69,6 @@ pub struct FiredEvent {
     pub mirrored: bool,
 }
 
-pub(crate) trait EmittedSignal: Send + Sync {
-    fn boxed_clone(&self) -> Box<dyn EmittedSignal>;
-
-    fn trigger(self: Box<Self>, entity: Entity, cmd: &mut CommandQueue);
-}
-
-impl<S: EntitySignal + Clone> EmittedSignal for S {
-    fn boxed_clone(&self) -> Box<dyn EmittedSignal> {
-        Box::new(self.clone())
-    }
-
-    fn trigger(self: Box<Self>, entity: Entity, cmd: &mut CommandQueue) {
-        cmd.entity(entity).trigger(*self);
-    }
-}
-
 /// The joints of a skeleton, in bone order.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Pose {
@@ -152,12 +135,11 @@ impl Pose {
     }
 }
 
-/// What an animation graph gives for one frame: the pose, its attributes, the clip events crossed and the signals its nodes emitted.
+/// What an animation graph gives for one frame: the pose, its attributes and the clip events crossed.
 pub struct AnimationFrame {
     pose: Pose,
     attributes: PoseAttributes,
     pub(crate) events: Vec<FiredEvent>,
-    pub(crate) signals: Vec<Box<dyn EmittedSignal>>,
 }
 
 impl AnimationFrame {
@@ -172,7 +154,6 @@ impl AnimationFrame {
             pose,
             attributes: PoseAttributes::default(),
             events: Vec::new(),
-            signals: Vec::new(),
         }
     }
 
@@ -236,17 +217,7 @@ impl AnimationFrame {
         self.events.push(event);
     }
 
-    /// Emits `signal`, triggered on the player's entity once the frame is evaluated.
-    pub fn emit<S: EntitySignal + Clone>(&mut self, signal: S) {
-        self.signals.push(Box::new(signal));
-    }
-
-    pub(crate) fn add_signals_of(&mut self, other: &AnimationFrame) {
-        self.signals
-            .extend(other.signals.iter().map(|signal| signal.boxed_clone()));
-    }
-
-    /// Blends the pose and attributes toward `other` by `weight`, weights both frames' events to match, and keeps both frames' signals.
+    /// Blends the pose and attributes toward `other` by `weight`, and weights both frames' events to match.
     pub fn blend(&mut self, other: &AnimationFrame, weight: f32) {
         self.pose.blend(&other.pose, weight);
         self.attributes.blend(&other.attributes, weight);
@@ -258,16 +229,13 @@ impl AnimationFrame {
                 weight: event.weight * weight,
                 ..*event
             }));
-        self.add_signals_of(other);
     }
 
-    /// Overwrites this frame's joints, attributes, events and signals with those of `other` (same skeleton / length).
+    /// Overwrites this frame's joints, attributes and events with those of `other` (same skeleton / length).
     pub fn copy_from(&mut self, other: &AnimationFrame) {
         self.pose.copy_from(&other.pose);
         self.attributes.copy_from(&other.attributes);
         self.events.clone_from(&other.events);
-        self.signals.clear();
-        self.add_signals_of(other);
     }
 }
 
@@ -316,7 +284,6 @@ impl FramePool {
         }
         frame.attributes.clear();
         frame.events.clear();
-        frame.signals.clear();
         frame
     }
 

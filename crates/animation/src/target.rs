@@ -69,16 +69,13 @@ pub fn animate_targets(
             for event in animation_player.fired.drain(..) {
                 trigger(&clips, event, entity, &mut cmd);
             }
-            for signal in animation_player.emitted.drain(..) {
-                signal.trigger(entity, &mut cmd);
-            }
-            continue;
-        }
-        if !animation_player.fired.is_empty() {
+        } else if !animation_player.fired.is_empty() {
             animation_player.fired.clear();
         }
         if !animation_player.emitted.is_empty() {
-            animation_player.emitted.clear();
+            for signal in animation_player.emitted.drain(..) {
+                signal.trigger(entity, &mut cmd);
+            }
         }
     }
 }

@@ -12,7 +12,7 @@ use glam::Affine3A;
 use crate::{
     blackboard::AnimationBlackboard,
     clip::AnimationClip,
-    evaluation::{AnimationGraphContext, Extras, RootBone},
+    evaluation::{AnimationGraphContext, Extras, Outbox, RootBone},
     graph::AnimationGraph,
     mask::BoneMask,
     node::{CreateNodeInputs, EvaluateNodeInputs, UpdateNodeInputs},
@@ -229,6 +229,7 @@ fn walk<K: 'static, R>(
     let mut state = state.borrow_mut();
     let inputs = state.get(world).expect("a test walk fetches its inputs");
     let extras = Extras::default();
+    let outbox = Outbox::default();
     let context = AnimationGraphContext {
         blackboard,
         root,
@@ -236,6 +237,7 @@ fn walk<K: 'static, R>(
         model_to_world,
         inputs: &inputs,
         extras: &extras,
+        outbox: &outbox,
     };
     f(&context)
 }

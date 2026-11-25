@@ -77,7 +77,7 @@ pub trait AnimationAppExt {
     /// Registers `S` with the type registry, so clips that store it make it live on load.
     fn register_clip_event<S: ClipEvent + GetTypeRegistration>(&mut self) -> &mut Self;
 
-    /// Registers `M` with the type registry, so `OnMessage` triggers that name it fire, and listens for `SendAnimationMessage<M>` to queue it on a character's player.
+    /// Registers `M`, marked `#[reflect(AnimationMessage)]`, with the type registry, so `OnMessage` triggers stored with its path fire, and listens for `SendAnimationMessage<M>` to queue it on a character's player.
     fn register_animation_message<M: AnimationMessage + GetTypeRegistration>(
         &mut self,
     ) -> &mut Self;

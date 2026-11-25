@@ -1,7 +1,7 @@
 use concerto_animation::{
     evaluation::AnimationGraphContext,
     graph::AnimationGraph,
-    message::{AnimationMessage, SendAnimationMessage},
+    message::{AnimationMessage, ReflectAnimationMessage, SendAnimationMessage},
     node::{
         AnimationNode, InputSlots, NodeOutcome, ReflectAnimationNode,
         state_machine::{AnimationFSMTrigger, AnimationStateMachine},
@@ -32,6 +32,7 @@ use glam::Mat4;
 use uuid::Uuid;
 
 #[derive(Clone, Default, Reflect)]
+#[reflect(AnimationMessage)]
 struct Poke {
     strength: f32,
 }
@@ -39,6 +40,7 @@ struct Poke {
 impl AnimationMessage for Poke {}
 
 #[derive(Clone, Default, Reflect)]
+#[reflect(AnimationMessage)]
 struct Other {}
 
 impl AnimationMessage for Other {}
@@ -61,7 +63,6 @@ struct Counter {}
 #[derive(Default)]
 struct Count {
     received: u32,
-    emitted: u32,
     marker: Option<u32>,
 }
 
@@ -83,20 +84,14 @@ impl AnimationNode for Counter {
 
     fn evaluate(
         &self,
-        state: &mut Count,
+        _: &mut Count,
         _: &(),
         _: &AnimationGraphContext<'_>,
         _: &[Uuid],
         _: &[EvaluatedFrame],
         _: &mut FramePool,
-        output: &mut AnimationFrame,
+        _: &mut AnimationFrame,
     ) {
-        if state.received != state.emitted {
-            output.emit(Counted {
-                count: state.received,
-            });
-            state.emitted = state.received;
-        }
     }
 
     fn receive(&self, state: &mut Count, message: &dyn Reflect, context: &AnimationGraphContext) {
@@ -106,6 +101,9 @@ impl AnimationNode for Counter {
         {
             state.received += 1;
             state.marker = context.extra::<Marker>().map(|marker| marker.0);
+            context.emit(Counted {
+                count: state.received,
+            });
         }
     }
 
@@ -138,6 +136,10 @@ fn graph(app: &mut App, mut graph: AnimationGraph) -> AssetHandle<AnimationGraph
         graph.make_live(&registry, None).unwrap();
     }
     insert(app, graph)
+}
+
+fn stored(graph: AnimationGraph) -> AnimationGraph {
+    bincode::deserialize(&bincode::serialize(&graph).unwrap()).unwrap()
 }
 
 struct Heard {
@@ -196,7 +198,7 @@ impl Stage {
                 );
             })
             .state(name!("Poked"), poked, |transition| {
-                transition.to(name!("Idle"), AnimationFSMTrigger::OnSucceeded, 0.1);
+                transition.to(name!("Idle"), AnimationFSMTrigger::OnSucceeded, 0.0);
                 transition.to(
                     name!("Elsewhere"),
                     AnimationFSMTrigger::on_message::<Other>(),
@@ -205,7 +207,7 @@ impl Stage {
             })
             .state(name!("Elsewhere"), elsewhere, |_| {})
             .build();
-        let machine = graph(&mut app, AnimationGraph::from_node(machine));
+        let machine = graph(&mut app, stored(AnimationGraph::from_node(machine)));
         let skeleton = insert(
             &mut app,
             Skeleton::new(

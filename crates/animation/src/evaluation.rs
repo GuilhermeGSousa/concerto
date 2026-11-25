@@ -1,9 +1,10 @@
 use std::{
     any::{Any, TypeId},
+    cell::RefCell,
     collections::HashMap,
 };
 
-use concerto_ecs::system::input::Inputs;
+use concerto_ecs::{CommandQueue, Entity, signal::EntitySignal, system::input::Inputs};
 use concerto_mesh::Skeleton;
 use glam::{Affine3A, Vec3};
 
@@ -54,7 +55,6 @@ pub struct RootBone {
     pub up: Vec3,
 }
 
-/// Typed per-character data a player hands its nodes, one value per type.
 #[derive(Default)]
 pub(crate) struct Extras {
     values: HashMap<TypeId, Box<dyn Any + Send + Sync>>,
@@ -70,6 +70,27 @@ impl Extras {
     }
 }
 
+pub(crate) trait EmittedSignal: Send + Sync {
+    fn trigger(self: Box<Self>, entity: Entity, cmd: &mut CommandQueue);
+}
+
+impl<S: EntitySignal> EmittedSignal for S {
+    fn trigger(self: Box<Self>, entity: Entity, cmd: &mut CommandQueue) {
+        cmd.entity(entity).trigger(*self);
+    }
+}
+
+#[derive(Default)]
+pub(crate) struct Outbox {
+    signals: RefCell<Vec<Box<dyn EmittedSignal>>>,
+}
+
+impl Outbox {
+    pub(crate) fn into_signals(self) -> Vec<Box<dyn EmittedSignal>> {
+        self.signals.into_inner()
+    }
+}
+
 /// What every node of one player's graph is walked with: the player's own data and the walk's node inputs.
 pub struct AnimationGraphContext<'a> {
     pub(crate) blackboard: &'a AnimationBlackboard,
@@ -78,11 +99,17 @@ pub struct AnimationGraphContext<'a> {
     pub(crate) model_to_world: Option<Affine3A>,
     pub(crate) inputs: &'a Inputs<'a, 'a>,
     pub(crate) extras: &'a Extras,
+    pub(crate) outbox: &'a Outbox,
 }
 
 impl<'a> AnimationGraphContext<'a> {
     pub fn blackboard(&self) -> &AnimationBlackboard {
         self.blackboard
+    }
+
+    /// Queues `signal`, triggered on the player's entity when `animate_targets` next runs.
+    pub fn emit<S: EntitySignal + Clone>(&self, signal: S) {
+        self.outbox.signals.borrow_mut().push(Box::new(signal));
     }
 
     /// The value of type `T` the player was handed with `AnimationPlayer::set_extra`.

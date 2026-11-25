@@ -1549,23 +1549,42 @@ until `assets.add(graph)` has run.
 #### Messages, outcomes and signals
 
 A message is a value a graph reacts to: a type that derives `Reflect` and
-`Clone` and implements the marker trait `AnimationMessage`, registered with
-`app.register_animation_message::<M>()`. `AnimationPlayer::send(message)`
-queues it, and so does the signal `SendAnimationMessage { character, message }`,
+`Clone`, implements the marker trait `AnimationMessage`, is marked
+`#[reflect(AnimationMessage)]`, and is registered with
+`app.register_animation_message::<M>()`.
+
+```rust
+use concerto::animation::message::{AnimationMessage, ReflectAnimationMessage};
+
+#[derive(Clone, Default, Reflect)]
+#[reflect(AnimationMessage)]
+struct Hit {
+    strength: f32,
+}
+
+impl AnimationMessage for Hit {}
+```
+
+`AnimationPlayer::send(message)` queues it, and so does the signal `SendAnimationMessage { character, message }`,
 for code that holds no player: a listener the registration adds queues it on
 the character's player, and does nothing when the character has none. In the
 player's next update, every state machine in the playing graphs first checks
 its current state's transitions in order against the whole queue: an
 `OnMessage` transition fires when any queued message has its type, and a
 machine takes at most one transition a frame, so a machine that moved on a
-message does not check its other triggers again that frame. Only then does
+message does not check its other triggers again that frame: in a frame with a
+matching message, `OnMessage` transitions are taken before any other trigger,
+even one listed earlier. Only then does
 every node of the graphs that play, the states entered this frame and those a
 cross-fade still blends included, get each message in queue order through
 `AnimationNode::receive(state, message, context)`, which does nothing unless
-the node overrides it. The queue then empties, and the nodes advance. An
-`OnMessage` trigger stores the message's type path and finds the type when its
-graph is made live; a path no registered type has leaves a load warning, and
-that trigger never fires.
+the node overrides it. The queue then empties, and the nodes advance. A paused
+player keeps its queue until it resumes; a player whose graph is not
+initialized yet drops what it was sent. An `OnMessage` trigger stores the
+message's full type path and finds the type by that exact path when its graph
+is made live, with no fallback to a short name; a path that names no
+registered type, or a type not marked `#[reflect(AnimationMessage)]`, leaves a
+load warning, and that trigger never fires.
 
 `AnimationNode::outcome(state)` says whether the node has `Succeeded` or
 `Failed` at what it does, a `NodeOutcome`; `None` by default. A graph's outcome
@@ -1576,11 +1595,12 @@ makes a node succeed moves its machine on that frame. A node whose state ends
 by outcome returns `false` from `is_finished`, so `OnAnimationEnd` leaves it
 alone.
 
-A node tells the game what happened with `AnimationFrame::emit(signal)` in
-`evaluate`, for any `EntitySignal` that is `Clone`. `copy_from`, `blend`, the
-layer's overlay and the retarget node's inner graph carry emitted signals
-along, unweighted, and `animate_targets` triggers each one on the player's
-entity after it evaluates, as it triggers clip events.
+A node tells the game what happened with `context.emit(signal)`, for any
+`EntitySignal` that is `Clone`, from any pass: `create_state`, `update`,
+`receive`, `root_motion` or `evaluate`. The signals go to a per-player outbox,
+not into the frame, so one emitted by a state the machine leaves at once still
+arrives, and `animate_targets` triggers every signal in it on the player's
+entity each frame, in the order they were emitted, after the clip events.
 
 `AnimationPlayer::in_state(graphs, name)` says whether a state machine playing
 in the player's graph is in the state `name`.
