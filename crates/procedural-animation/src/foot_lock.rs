@@ -661,39 +661,52 @@ mod tests {
         fn reset(&self, _: &mut ()) {}
     }
 
-    fn leg_bones(names: [&'static str; 4], hip_x: f32, first: u16) -> [Bone; 4] {
-        let joint = |translation| JointPose {
+    fn leg_bones(
+        names: [&'static str; 4],
+        hip_x: f32,
+        first: u16,
+        hip_turn: Quat,
+        knee_turn: Quat,
+    ) -> [Bone; 4] {
+        let hip_frame = hip_turn;
+        let knee_frame = hip_turn * knee_turn;
+        let joint = |translation, rotation| JointPose {
             translation,
+            rotation,
             ..JointPose::IDENTITY
         };
         [
             Bone {
                 name: names[0],
                 parent: Some(0),
-                joint: joint(Vec3::new(hip_x, 0.0, 0.0)),
+                joint: joint(Vec3::new(hip_x, 0.0, 0.0), hip_turn),
             },
             Bone {
                 name: names[1],
                 parent: Some(first),
-                joint: joint(Vec3::new(
-                    0.0,
-                    -HALF_LEG * KNEE_BEND.cos(),
-                    HALF_LEG * KNEE_BEND.sin(),
-                )),
+                joint: joint(
+                    hip_frame.inverse()
+                        * Vec3::new(0.0, -HALF_LEG * KNEE_BEND.cos(), HALF_LEG * KNEE_BEND.sin()),
+                    knee_turn,
+                ),
             },
             Bone {
                 name: names[2],
                 parent: Some(first + 1),
-                joint: joint(Vec3::new(
-                    0.0,
-                    -HALF_LEG * KNEE_BEND.cos(),
-                    -HALF_LEG * KNEE_BEND.sin(),
-                )),
+                joint: joint(
+                    knee_frame.inverse()
+                        * Vec3::new(
+                            0.0,
+                            -HALF_LEG * KNEE_BEND.cos(),
+                            -HALF_LEG * KNEE_BEND.sin(),
+                        ),
+                    Quat::IDENTITY,
+                ),
             },
             Bone {
                 name: names[3],
                 parent: Some(first + 2),
-                joint: joint(TOE_AHEAD),
+                joint: joint(knee_frame.inverse() * TOE_AHEAD, Quat::IDENTITY),
             },
         ]
     }
@@ -703,6 +716,10 @@ mod tests {
     }
 
     fn rig_with_pelvis_at(pelvis: Vec3) -> Skeleton {
+        rig_turned(pelvis, Quat::IDENTITY, Quat::IDENTITY)
+    }
+
+    fn rig_turned(pelvis: Vec3, hip_turn: Quat, knee_turn: Quat) -> Skeleton {
         let mut bones = vec![Bone {
             name: "pelvis",
             parent: None,
@@ -715,11 +732,15 @@ mod tests {
             ["left_hip", "left_knee", "left_foot", "left_toe"],
             0.1,
             1,
+            hip_turn,
+            knee_turn,
         ));
         bones.extend(leg_bones(
             ["right_hip", "right_knee", "right_foot", "right_toe"],
             -0.1,
             5,
+            hip_turn,
+            knee_turn,
         ));
         skeleton_of(&bones)
     }
@@ -1115,7 +1136,14 @@ mod tests {
 
     #[test]
     fn a_locked_leg_bends_about_its_hinge() {
-        let skeleton = rig();
+        let build = || {
+            rig_turned(
+                PELVIS,
+                Quat::from_rotation_z(0.5),
+                Quat::from_rotation_y(0.7),
+            )
+        };
+        let skeleton = build();
         let opposite = -Hinge::Rest
             .local(&skeleton, HIPS[0], KNEES[0], FEET[0])
             .expect("the rig's knee is bent");
@@ -1126,7 +1154,11 @@ mod tests {
                     .with_hinge(Hinge::Axis { axis: opposite }),
             )
             .with_leg(FootLockLeg::new("right_foot").with_toe("right_toe"));
-        let mut stage = locked(node);
+        let script = Script::rest_of(&skeleton);
+        let mut stage = Stage::new(build(), script, node).under(Affine3A::IDENTITY);
+        stage.settle();
+        stage.step(DT);
+        assert_eq!(stage.phases(), [LockPhase::Locked; 2]);
         let slides = [
             Vec3::new(0.05, 0.0, 0.0),
             Vec3::new(0.0, 0.0, 0.06),
@@ -1149,7 +1181,10 @@ mod tests {
                         .local(&skeleton, HIPS[leg], KNEES[leg], FEET[leg])
                         .unwrap();
                 let side = if hinged { -hinge } else { hinge };
-                assert!(bend.dot(side) > 0.0, "leg {leg} at {by}: {bend}");
+                assert!(
+                    bend.normalize().dot(side) > 0.99,
+                    "leg {leg} at {by}: {bend}"
+                );
             }
         }
     }
