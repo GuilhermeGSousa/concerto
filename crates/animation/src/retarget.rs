@@ -862,6 +862,7 @@ impl PoseRetarget {
             root: self.target_position(pair.root),
             mid: self.target_position(pair.mid),
             tip,
+            hinge: None,
         };
         let solution = solve_two_bone(&chain, tip.lerp(full, weight), None, pair.softness);
         let root_rotation = (solution.root * self.target_rotation[pair.root]).normalize();
@@ -2740,6 +2741,7 @@ mod tests {
                 root: at(root),
                 mid: at(mid),
                 tip: at(tip),
+                hinge: None,
             },
             goal,
             None,

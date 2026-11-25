@@ -167,6 +167,7 @@ impl TwoBoneIkNode {
                 root: root.transform.translation.into(),
                 mid: mid.transform.translation.into(),
                 tip: tip.transform.translation.into(),
+                hinge: None,
             },
             target.position,
             pole.map(|pole| pole.position),

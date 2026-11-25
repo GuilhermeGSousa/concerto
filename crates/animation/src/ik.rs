@@ -2,12 +2,16 @@ use glam::{Quat, Vec3};
 
 const MIN_LENGTH_SQUARED: f32 = 1e-12;
 
+const CLEAR_BEND: f32 = std::f32::consts::PI / 36.0;
+
 /// The positions of a two-bone chain's three joints, in one space.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TwoBoneChain {
     pub root: Vec3,
     pub mid: Vec3,
     pub tip: Vec3,
+    /// The axis the mid joint bends about, in the chain's space, by the right-hand rule from the upper bone to the lower; it decides the bend where the chain is too straight to show its own, and `None` leaves the solve as it was.
+    pub hinge: Option<Vec3>,
 }
 
 /// The rotations that bring a chain's tip to its goal, in the chain's space: each joint's rotation in that space is pre-multiplied by its entry.
@@ -51,23 +55,34 @@ pub fn solve_two_bone(
     let reach = soft_reach((target - a).length(), full, shortest, softness);
 
     let chain_dir = unit(chain.tip - a).unwrap_or(u1);
-    let normal = unit(chain_dir.cross(upper))
-        .or_else(|| pole.and_then(|pole| unit(chain_dir.cross(pole - a))))
-        .unwrap_or_else(|| chain_dir.any_orthonormal_vector());
+    let own = unit(chain_dir.cross(upper));
+    let hinge = chain
+        .hinge
+        .filter(|hinge| hinge.is_finite())
+        .and_then(|hinge| unit(hinge - chain_dir * hinge.dot(chain_dir)))
+        .map(|hinge| -hinge);
+    let normal = match hinge {
+        Some(hinge) => own.map_or(hinge, |own| {
+            let bend = u1.dot(u2).clamp(-1.0, 1.0).acos();
+            let weight = smoothstep(bend / CLEAR_BEND) * own.dot(hinge).clamp(0.0, 1.0);
+            unit(own * weight + hinge * (1.0 - weight)).unwrap_or(hinge)
+        }),
+        None => own
+            .or_else(|| pole.and_then(|pole| unit(chain_dir.cross(pole - a))))
+            .unwrap_or_else(|| chain_dir.any_orthonormal_vector()),
+    };
 
-    let angle_a = chain_dir.dot(u1).clamp(-1.0, 1.0).acos();
-    let angle_b = (-u1).dot(u2).clamp(-1.0, 1.0).acos();
     let cos_a = if reach * reach <= MIN_LENGTH_SQUARED {
         1.0
     } else {
         (l1 * l1 + reach * reach - l2 * l2) / (2.0 * l1 * reach)
     };
-    let cos_b = (l1 * l1 + l2 * l2 - reach * reach) / (2.0 * l1 * l2);
-    let turn_a = cos_a.clamp(-1.0, 1.0).acos() - angle_a;
-    let turn_b = cos_b.clamp(-1.0, 1.0).acos() - angle_b;
+    let angle_a = cos_a.clamp(-1.0, 1.0).acos();
+    let upper_after = chain_dir * angle_a.cos() + normal.cross(chain_dir) * angle_a.sin();
+    let lower_after = unit(chain_dir * reach - upper_after * l1).unwrap_or(u2);
 
-    let mut root = Quat::from_axis_angle(normal, turn_a);
-    let mut mid = Quat::from_axis_angle(normal, turn_a + turn_b);
+    let mut root = arc(u1, upper_after, normal);
+    let mut mid = arc(u2, lower_after, normal);
 
     let Some(target_dir) = unit(target - a) else {
         return TwoBoneSolution { root, mid };
@@ -106,13 +121,28 @@ fn soft_reach(distance: f32, full: f32, shortest: f32, softness: f32) -> f32 {
     eased.clamp(shortest, full)
 }
 
+fn arc(from: Vec3, to: Vec3, half_turn_axis: Vec3) -> Quat {
+    let cross = from.cross(to);
+    let half = Quat::from_xyzw(cross.x, cross.y, cross.z, 1.0 + from.dot(to));
+    if half.length_squared() > MIN_LENGTH_SQUARED {
+        half.normalize()
+    } else {
+        Quat::from_axis_angle(half_turn_axis, std::f32::consts::PI)
+    }
+}
+
+fn smoothstep(t: f32) -> f32 {
+    let t = t.clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
 fn unit(v: Vec3) -> Option<Vec3> {
     (v.length_squared() > MIN_LENGTH_SQUARED).then(|| v.normalize())
 }
 
 #[cfg(test)]
 mod tests {
-    use glam::Vec3;
+    use glam::{Quat, Vec3};
     use proptest::prelude::*;
 
     use super::{TwoBoneChain, TwoBoneSolution, solve_two_bone};
@@ -126,6 +156,7 @@ mod tests {
             root: Vec3::ZERO,
             mid: Vec3::new(0.0, L1, 0.0),
             tip: Vec3::new(L2, L1, 0.0),
+            hinge: None,
         }
     }
 
@@ -161,8 +192,9 @@ mod tests {
             target in any_vec3(3.0).prop_filter("off the root", |target| target.length() > 1e-2),
             pole in prop::option::of(any_vec3(2.0)),
             softness in prop_oneof![Just(0.0f32), 0.0f32..10.0],
+            hinge in prop::option::of(any_vec3(2.0)),
         ) {
-            let chain = bent();
+            let chain = TwoBoneChain { hinge, ..bent() };
 
             let solution = solve_two_bone(&chain, target, pole, softness);
 
@@ -182,6 +214,82 @@ mod tests {
                 prop_assert!((distance - hard).abs() < 1e-3, "{distance} != {hard}");
             }
         }
+    }
+
+    fn bend_toward(dir: Vec3, degrees: f32) -> TwoBoneChain {
+        let axis = Vec3::Y.cross(dir).normalize();
+        let half = degrees.to_radians() / 2.0;
+        let mid = Quat::from_axis_angle(axis, half) * Vec3::Y * L1;
+        TwoBoneChain {
+            root: Vec3::ZERO,
+            mid,
+            tip: mid + Quat::from_axis_angle(axis, -half) * Vec3::Y * L2,
+            hinge: None,
+        }
+    }
+
+    struct HingeCase {
+        name: &'static str,
+        chain: TwoBoneChain,
+    }
+
+    #[test]
+    fn a_straight_or_overstraight_chain_bends_about_its_hinge_and_turns_smoothly_into_its_own_bend()
+    {
+        let goal = Vec3::new(0.0, 0.9 * FULL, 0.0);
+        let hinged = |chain: TwoBoneChain| TwoBoneChain {
+            hinge: Some(Vec3::Z),
+            ..chain
+        };
+        let solve = |chain: &TwoBoneChain| apply(chain, &solve_two_bone(chain, goal, None, 0.0));
+        let cases = [
+            HingeCase {
+                name: "straight",
+                chain: bend_toward(Vec3::X, 0.0),
+            },
+            HingeCase {
+                name: "bent backward",
+                chain: bend_toward(Vec3::NEG_X, 2.0),
+            },
+            HingeCase {
+                name: "bent sideways",
+                chain: bend_toward(Vec3::Z, 2.0),
+            },
+        ];
+
+        for case in cases {
+            let solved = solve(&hinged(case.chain));
+
+            assert!(
+                solved.tip.distance(goal) < 1e-4,
+                "{}: tip {}",
+                case.name,
+                solved.tip
+            );
+            assert!(solved.mid.x > 0.0, "{}: mid {}", case.name, solved.mid);
+        }
+        let straight = solve(&hinged(bend_toward(Vec3::X, 0.0)));
+        assert!(straight.mid.z.abs() < 1e-4, "mid {}", straight.mid);
+
+        let mut previous = None;
+        for step in 0..=260 {
+            let degrees = -3.0 + 0.05 * step as f32;
+            let mid = solve(&hinged(bend_toward(Vec3::X, degrees))).mid;
+            if let Some(previous) = previous {
+                assert!(
+                    mid.distance(previous) < 0.002,
+                    "{degrees}: mid {mid} after {previous}"
+                );
+            }
+            previous = Some(mid);
+        }
+        let clear = bend_toward(Vec3::X, 10.0);
+        let hingeless = solve(&clear).mid;
+        let hinged_mid = solve(&hinged(clear)).mid;
+        assert!(
+            hinged_mid.distance(hingeless) < 1e-4,
+            "{hinged_mid} != {hingeless}"
+        );
     }
 
     #[test]
@@ -277,6 +385,7 @@ mod tests {
                     root: Vec3::ZERO,
                     mid: Vec3::new(0.0, L1, 0.0),
                     tip: Vec3::new(0.0, FULL, 0.0),
+                    hinge: None,
                 },
                 Vec3::new(0.5, 1.0, 0.0),
                 None,

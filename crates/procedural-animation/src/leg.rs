@@ -90,6 +90,7 @@ pub(crate) fn bend_leg(
             root: hip.transform.translation.into(),
             mid: knee.transform.translation.into(),
             tip: foot.transform.translation.into(),
+            hinge: None,
         },
         goal_position,
         None,
