@@ -698,6 +698,41 @@ follows the body instead of driving it:
 The capsule is not checked for a clear standing spot when it is let go; a body
 that came to rest inside a wall's reach is pushed out by the solver.
 
+#### Behaviour nodes
+
+A behaviour node is a modifier in the character's graph: it takes the pose to
+act on as its input, passes it through, and sets the physics attributes on the
+bones of the parts it acts on, which it reads from the `BodyView`. A character
+without a ragdoll has no view, and the node only passes its pose through.
+Behaviour nodes never finish on their own, so a state holding one ends by a
+trigger or an outcome. `RagdollPlugin` registers them.
+
+`HoldNode` holds the parts on a mask's bones with the muscles of a strength
+`profile`, `braced` by default, and acts on every part that profile does not
+leave kinematic; with no mask it holds all of them. Its `weight` is both how
+much of the parts is drawn from physics and how much of them its muscles hold,
+the rest being held by follow; its `strength` multiplies the profile's
+stiffness, damping and torque limit, and the character's `Wounds` scale each
+part's further. Both are `f32` blackboard params that read 1 while the
+blackboard has no such value, and both move towards a new value over `fade`
+seconds, so a game that sets a hurt leg's weight from a wound in one frame
+does not snap it. A bone of the mask with no part, a toe, keeps its animated
+pose under its parent.
+
+```rust
+let hurt_leg = HoldNode::new("braced")
+    .with_mask(left_leg)
+    .with_weight(name!("leg_hurt"))
+    .with_fade(0.3);
+graph.result_node().input(hurt_leg).input(AnimationClipNode::new(walk));
+player.set_float_param(name!("leg_hurt"), 0.5);
+```
+
+`LimpNode` lets the whole body go: every part is drawn from physics and held
+with a torque limit of 0, keeping the stiffness its input asked for so a motor
+taking hold again does not jump. Cross-fading into a state with it and back
+out blends the body down and up again without a cut.
+
 #### What the body senses
 
 A `BodySense` beside a `CharacterRagdoll` is rewritten after each fixed step

@@ -1,4 +1,7 @@
-use concerto_animation::target::{animate_targets, update_animation_players};
+use concerto_animation::{
+    plugin::AnimationAppExt,
+    target::{animate_targets, update_animation_players},
+};
 use concerto_app::{
     App,
     edit_time::AtPreviewTime,
@@ -26,6 +29,7 @@ use crate::{
     dying::{Dying, Settled, die_when_told, drain_dying, settle_dead_bodies, wake_when_hit},
     fall::{Fall, FallReaction, fall_bodies, fall_when_falling},
     hit::{HitReaction, flinch_when_hit, update_flinches},
+    node::{HoldNode, LimpNode},
     sensing::sense_bodies,
     shot::{ShotReaction, end_shots, note_shot_balance_ended, react_when_shot, shot_bodies},
     stagger::{Stagger, end_staggers, note_balance_ended, stagger_bodies},
@@ -40,6 +44,8 @@ impl Plugin for RagdollPlugin {
         app.register_asset::<Skeleton>();
         app.register_type::<AssetHandle<Ragdoll>>();
         app.register_type::<CharacterRagdoll>();
+        app.register_animation_node::<HoldNode>()
+            .register_animation_node::<LimpNode>();
         app.register_type::<HitReaction>();
         app.add_listener(flinch_when_hit.at_preview_time())
             .add_system(
