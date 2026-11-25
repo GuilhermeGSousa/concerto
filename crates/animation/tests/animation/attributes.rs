@@ -45,7 +45,7 @@ const LONGEST_FRAME: Duration = Duration::from_millis(250);
 const PHYSICS_STEP: f32 = 1.0 / 60.0;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-struct Amount(f32);
+pub(crate) struct Amount(pub(crate) f32);
 
 impl PoseAttribute for Amount {
     fn neutral() -> Self {

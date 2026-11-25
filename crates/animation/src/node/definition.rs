@@ -7,8 +7,8 @@ use concerto_ecs::{
 use concerto_foundation::assets::handle::{AssetHandle, LiveLeaves};
 use concerto_name::{Name, name};
 use concerto_reflect::{
-    EncodeError, FromType, Reflect, ReflectedValue, TypeData, ValueWarning, apply_value_with,
-    to_value,
+    EncodeError, FromType, Reflect, ReflectedValue, TypeData, TypeRegistry, ValueWarning,
+    apply_value_with, to_value,
 };
 use log::warn;
 use uuid::Uuid;
@@ -95,6 +95,15 @@ pub trait AnimationNode: Reflect + Send + Sync + 'static {
         true
     }
 
+    /// Looks over every message queued for the player this frame before any node receives one, so a node can move or start something the messages call for; nothing by default.
+    fn route(
+        &self,
+        _state: &mut Self::State,
+        _messages: &[Box<dyn Reflect>],
+        _context: &AnimationGraphContext<'_>,
+    ) {
+    }
+
     /// Takes one message sent to the player this frame, before the node advances; ignored by default.
     fn receive(
         &self,
@@ -111,6 +120,15 @@ pub trait AnimationNode: Reflect + Send + Sync + 'static {
 
     /// The inputs this node takes, in the order `evaluate` receives them.
     fn input_slots(&self) -> InputSlots;
+
+    /// Builds the nodes this node holds inside itself from their stored values, once, when the graph holding it is made live; returns what could not be applied.
+    fn make_live(
+        &mut self,
+        _registry: &TypeRegistry,
+        _leaves: &mut LiveLeaves,
+    ) -> Vec<ValueWarning> {
+        Vec::new()
+    }
 
     /// Called when an editor gives the node an input at `index`.
     fn input_added(&mut self, _index: usize) {}
@@ -249,6 +267,13 @@ pub trait ErasedAnimationNode: Send + Sync {
 
     fn is_finished(&self, state: &NodeState) -> bool;
 
+    fn route(
+        &self,
+        state: &mut NodeState,
+        messages: &[Box<dyn Reflect>],
+        context: &AnimationGraphContext<'_>,
+    );
+
     fn receive(
         &self,
         state: &mut NodeState,
@@ -257,6 +282,8 @@ pub trait ErasedAnimationNode: Send + Sync {
     );
 
     fn outcome(&self, state: &NodeState) -> Option<NodeOutcome>;
+
+    fn make_live(&mut self, registry: &TypeRegistry, leaves: &mut LiveLeaves) -> Vec<ValueWarning>;
 
     fn inner_graphs(&self, visit: &mut dyn FnMut(&AssetHandle<AnimationGraph>));
 
@@ -377,6 +404,17 @@ impl<T: AnimationNode> ErasedAnimationNode for T {
             .is_none_or(|state| AnimationNode::is_finished(self, state))
     }
 
+    fn route(
+        &self,
+        state: &mut NodeState,
+        messages: &[Box<dyn Reflect>],
+        context: &AnimationGraphContext<'_>,
+    ) {
+        if let Some(state) = state.downcast_mut::<T::State>() {
+            AnimationNode::route(self, state, messages, context);
+        }
+    }
+
     fn receive(
         &self,
         state: &mut NodeState,
@@ -386,6 +424,10 @@ impl<T: AnimationNode> ErasedAnimationNode for T {
         if let Some(state) = state.downcast_mut::<T::State>() {
             AnimationNode::receive(self, state, message, context);
         }
+    }
+
+    fn make_live(&mut self, registry: &TypeRegistry, leaves: &mut LiveLeaves) -> Vec<ValueWarning> {
+        AnimationNode::make_live(self, registry, leaves)
     }
 
     fn outcome(&self, state: &NodeState) -> Option<NodeOutcome> {

@@ -544,6 +544,41 @@ impl AnimationNode for AnimationStateMachine {
         state.outcome = state.current_outcome(graphs);
     }
 
+    fn route(
+        &self,
+        state: &mut AnimationStateMachineState,
+        messages: &[Box<dyn Reflect>],
+        context: &AnimationGraphContext<'_>,
+    ) {
+        let Ok(graphs) = context
+            .inputs
+            .get::<Res<'static, AssetStore<AnimationGraph>>>()
+        else {
+            return;
+        };
+        if let Some(transition) = self
+            .get_state_transitions(state.current_state)
+            .into_iter()
+            .flatten()
+            .find(|transition| match &transition.trigger {
+                AnimationFSMTrigger::OnMessage { message: wanted } => messages
+                    .iter()
+                    .any(|message| wanted.matches(message.as_ref())),
+                _ => false,
+            })
+        {
+            state.transition(graphs, transition);
+            state.moved_on_message = true;
+        }
+
+        let state_graphs = &mut state.state_graphs;
+        state.blender.for_each_playing(&mut |graph_id| {
+            if let Some(graph_state) = state_graphs.get_mut(graph_id) {
+                graph_state.route(graphs, messages, context);
+            }
+        });
+    }
+
     fn receive(
         &self,
         state: &mut AnimationStateMachineState,
@@ -663,38 +698,6 @@ impl AnimationNode for AnimationStateMachine {
         visit: &mut dyn FnMut(&mut AnimationGraphState),
     ) {
         state.state_graphs.iter_mut().for_each(visit);
-    }
-}
-
-impl AnimationStateMachine {
-    pub(crate) fn route(
-        &self,
-        state: &mut AnimationStateMachineState,
-        graphs: &AssetStore<AnimationGraph>,
-        messages: &[Box<dyn Reflect>],
-        context: &AnimationGraphContext<'_>,
-    ) {
-        if let Some(transition) = self
-            .get_state_transitions(state.current_state)
-            .into_iter()
-            .flatten()
-            .find(|transition| match &transition.trigger {
-                AnimationFSMTrigger::OnMessage { message: wanted } => messages
-                    .iter()
-                    .any(|message| wanted.matches(message.as_ref())),
-                _ => false,
-            })
-        {
-            state.transition(graphs, transition);
-            state.moved_on_message = true;
-        }
-
-        let state_graphs = &mut state.state_graphs;
-        state.blender.for_each_playing(&mut |graph_id| {
-            if let Some(graph_state) = state_graphs.get_mut(graph_id) {
-                graph_state.route(graphs, messages, context);
-            }
-        });
     }
 }
 

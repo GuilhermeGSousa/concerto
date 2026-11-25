@@ -1118,6 +1118,22 @@ A graph is a tree of nodes under a result node:
       AnimationClipNode::new(aim),
   );
   ```
+- **Slot** (`SlotNode`) plays authored entries over its one input, the base,
+  when messages call for them, like a montage slot. A `SlotEntry` holds a
+  `name`, one node of any registered type (stored and made live with the graph,
+  so nothing is built at run time), an optional `BoneMask`, `fade_in` and
+  `fade_out` seconds (0 is at once) and the message types `on` that start it;
+  build it with `SlotEntry::new(name, node)` and `with_mask`, `with_fade_in`,
+  `with_fade_out` and `with_on`. An entry plays when a queued message matches
+  one of its `on` types or a `PlayInSlot { entry }` message names it, and a
+  message that arrives while it plays resets it. The entry's node takes the
+  slot's base as its input and is layered over it in the order the entries
+  started, by its fade weight times its mask, in the pose, in the attributes
+  of the drive pass and in root motion (an entry with a mask leaves the root
+  motion to the base). An entry fades out once its node reports an outcome or
+  is finished, and stops at weight 0; the slot reports no outcome of its own.
+  A slot reacts only while it is in a playing graph, so one inside the walk
+  state's graph flinches a walking body and a falling body has none.
 - **2D blend space** places clips at points and blends by a `Vec2`
   parameter: the classic locomotion setup.
 - **State machine** switches between sub-graphs on triggers such as

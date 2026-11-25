@@ -1,9 +1,13 @@
+use std::{thread, time::Duration};
+
 use concerto_animation::{
+    clip::AnimationClip,
     evaluation::AnimationGraphContext,
     graph::AnimationGraph,
-    message::{AnimationMessage, SendAnimationMessage},
+    message::{AnimationMessage, MessageType, SendAnimationMessage},
     node::{
-        AnimationNode, InputSlots, NodeOutcome, ReflectAnimationNode,
+        AnimationClipNode, AnimationNode, InputSlots, NodeOutcome, PlayInSlot,
+        ReflectAnimationNode, SlotEntry, SlotNode,
         state_machine::{AnimationFSMTrigger, AnimationStateMachine},
     },
     player::{AnimationHandleComponent, AnimationPlayer},
@@ -30,6 +34,10 @@ use concerto_name::{Name, name};
 use concerto_reflect::Reflect;
 use glam::Mat4;
 use uuid::Uuid;
+
+use crate::attributes::Amount;
+
+const LONGEST_FRAME: Duration = Duration::from_millis(250);
 
 #[derive(Clone, Default, Reflect)]
 struct Poke {
@@ -87,10 +95,18 @@ impl AnimationNode for Counter {
         _: &(),
         _: &AnimationGraphContext<'_>,
         _: &[Uuid],
-        _: &[EvaluatedFrame],
+        evaluated_inputs: &[EvaluatedFrame],
         _: &mut FramePool,
-        _: &mut AnimationFrame,
+        output: &mut AnimationFrame,
     ) {
+        if let Some(input) = evaluated_inputs.first() {
+            output.copy_from(&input.frame);
+        }
+        let bone_count = output.len();
+        output
+            .attributes_mut()
+            .channel_mut::<Amount>(bone_count)
+            .fill(Amount(1.0));
     }
 
     fn receive(&self, state: &mut Count, message: &dyn Reflect, context: &AnimationGraphContext) {
@@ -173,6 +189,29 @@ struct Stage {
     app: App,
     character: Entity,
     bodiless: Entity,
+    slotted: Entity,
+}
+
+fn slot_graph(clip: AssetHandle<AnimationClip>) -> AnimationGraph {
+    let slot = SlotNode::new()
+        .with_entry(
+            SlotEntry::new(name!("count"), Counter {})
+                .with_fade_in(0.2)
+                .with_fade_out(0.2)
+                .with_on(MessageType::of::<Poke>()),
+        )
+        .with_entry(
+            SlotEntry::new(name!("snap"), Counter {})
+                .with_fade_in(0.0)
+                .with_fade_out(0.0)
+                .with_on(MessageType::of::<Other>()),
+        );
+    let mut graph = AnimationGraph::new();
+    graph
+        .result_node()
+        .input(slot)
+        .add_input(AnimationClipNode::new(clip));
+    stored(graph)
 }
 
 impl Stage {
@@ -209,6 +248,8 @@ impl Stage {
             .state(name!("Elsewhere"), elsewhere, |_| {})
             .build();
         let machine = graph(&mut app, stored(AnimationGraph::from_node(machine)));
+        let clip = insert(&mut app, AnimationClip::default());
+        let slotted = graph(&mut app, slot_graph(clip));
         let skeleton = insert(
             &mut app,
             Skeleton::new(
@@ -225,7 +266,7 @@ impl Stage {
         let character = world.spawn((
             AnimationPlayer::new(1),
             AnimationHandleComponent::new(machine),
-            SkeletonComponent::new(skeleton, vec![SceneEntityRef::Entity(bone)], None),
+            SkeletonComponent::new(skeleton.clone(), vec![SceneEntityRef::Entity(bone)], None),
             hear_counted.into_listener(),
         ));
         let bodiless = world.spawn((
@@ -233,10 +274,17 @@ impl Stage {
             AnimationHandleComponent::new(poked),
             hear_counted.into_listener(),
         ));
+        let slotted = world.spawn((
+            AnimationPlayer::new(1),
+            AnimationHandleComponent::new(slotted),
+            SkeletonComponent::new(skeleton, vec![SceneEntityRef::Entity(bone)], None),
+            hear_counted.into_listener(),
+        ));
         Self {
             app,
             character,
             bodiless,
+            slotted,
         }
     }
 
@@ -261,6 +309,28 @@ impl Stage {
         let world = self.world();
         world.get_resource_mut::<Time>().unwrap().update();
         world.run_schedule(LateUpdate);
+    }
+
+    fn advance(&mut self, seconds: f32) {
+        let world = self.world();
+        let time = world.get_resource_mut::<Time>().unwrap();
+        time.set_time_scale(seconds / LONGEST_FRAME.as_secs_f32());
+        if seconds > 0.0 {
+            thread::sleep(LONGEST_FRAME + Duration::from_millis(10));
+        }
+        time.update();
+        world.run_schedule(LateUpdate);
+    }
+
+    fn slot_player(&mut self) -> &mut AnimationPlayer {
+        let slotted = self.slotted;
+        self.world()
+            .get_component_for_entity_mut::<AnimationPlayer>(slotted)
+            .unwrap()
+    }
+
+    fn slot_amount(&mut self) -> f32 {
+        self.slot_player().attributes().get::<Amount>(0).0
     }
 
     fn player(&mut self) -> &mut AnimationPlayer {
@@ -344,4 +414,60 @@ fn messages_move_the_graph_and_nodes_answer_with_outcomes_and_signals() {
     });
     stage.frame();
     assert_eq!(stage.heard_by(bodiless), [1]);
+
+    let slotted = stage.slotted;
+    stage.advance(0.0);
+    assert_eq!(stage.slot_amount(), 0.0);
+
+    stage.slot_player().send(Poke { strength: 1.0 });
+    stage.advance(0.1);
+    let fading_in = stage.slot_amount();
+    assert!(
+        (fading_in - 0.5).abs() < 0.05,
+        "half way through a 0.2 s fade in the amount is {fading_in}"
+    );
+    assert_eq!(stage.heard_by(slotted), [1]);
+
+    stage.slot_player().send(Poke { strength: 1.0 });
+    stage.advance(0.1);
+    assert_eq!(
+        stage.heard_by(slotted),
+        [1, 1],
+        "a repeat poke restarts the entry"
+    );
+    assert!((stage.slot_amount() - 1.0).abs() < 0.05);
+
+    stage.slot_player().send(Poke { strength: 1.0 });
+    stage.slot_player().send(Poke { strength: 1.0 });
+    stage.advance(0.1);
+    assert_eq!(stage.heard_by(slotted), [1, 1, 1, 2]);
+    let fading_out = stage.slot_amount();
+    assert!(
+        (fading_out - 0.5).abs() < 0.05,
+        "half way through a 0.2 s fade out the amount is {fading_out}"
+    );
+
+    stage.advance(0.1);
+    assert_eq!(stage.slot_amount(), 0.0);
+    stage.advance(0.1);
+    assert_eq!(stage.slot_amount(), 0.0);
+    assert_eq!(stage.heard_by(slotted), [1, 1, 1, 2]);
+
+    stage.slot_player().send(PlayInSlot {
+        entry: name!("count"),
+    });
+    stage.advance(0.1);
+    let played = stage.slot_amount();
+    assert!(
+        (played - 0.5).abs() < 0.05,
+        "a play message starts the entry, and the amount is {played}"
+    );
+
+    stage.slot_player().send(Other {});
+    stage.advance(0.0);
+    assert_eq!(
+        stage.slot_amount(),
+        1.0,
+        "an entry with no fade in is at full weight at once"
+    );
 }

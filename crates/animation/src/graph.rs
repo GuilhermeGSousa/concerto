@@ -26,9 +26,8 @@ use crate::{
     message::resolve_message_types,
     node::{
         AnimationNode, ErasedAnimationNode, LayerNode, NodeOutcome, NodeReport, NodeState,
-        PlaceholderNode, ReflectAnimationNode, ResultNode,
-        blend_space::BlendSpace2DBuilderContext,
-        state_machine::{AnimationStateMachine, AnimationStateMachineState},
+        PlaceholderNode, ReflectAnimationNode, ResultNode, blend_space::BlendSpace2DBuilderContext,
+        state_machine::AnimationStateMachineState,
     },
     param::Param,
     player::ActiveNodeState,
@@ -40,6 +39,8 @@ type AnimationDirectedGraph = DiGraph<AnimationNodeData, ()>;
 static PLACEHOLDER: PlaceholderNode = PlaceholderNode {};
 
 /// One node as a graph holds it: `Stored` until built, `Live` once built, or a `Placeholder` that plays as [`PlaceholderNode`] and keeps the value it could not build.
+#[derive(Reflect)]
+#[reflect(opaque)]
 pub enum AnimationNodeData {
     Stored {
         type_name: String,
@@ -89,6 +90,66 @@ impl AnimationNodeData {
             }
             Self::Live { node, .. } => to_value(node.as_reflect()).map(Cow::Owned),
         }
+    }
+
+    /// Builds the node from its stored value, or from a placeholder's kept value, loading handles through `leaves`; a node that cannot be built becomes a placeholder, and `label` names it in the warnings returned.
+    pub(crate) fn make_live(
+        &mut self,
+        registry: &TypeRegistry,
+        leaves: &mut LiveLeaves,
+        label: &str,
+    ) -> Vec<ValueWarning> {
+        let (Self::Stored { type_name, value } | Self::Placeholder { type_name, value }) = self
+        else {
+            return Vec::new();
+        };
+        let mut warnings = Vec::new();
+        let failure =
+            match registry
+                .get_by_name(type_name)
+                .and_then(|registration| registration.data::<ReflectAnimationNode>().copied())
+            {
+                Some(data) => {
+                    let (mut built, node_warnings) = (data.from_value)(value, leaves);
+                    if node_warnings.is_empty() {
+                        warnings.extend(
+                            resolve_message_types(built.as_reflect_mut(), registry)
+                                .into_iter()
+                                .map(|warning| ValueWarning {
+                                    path: type_name.clone(),
+                                    reason: format!("{label} {}: {}", warning.path, warning.reason),
+                                }),
+                        );
+                        warnings.extend(built.make_live(registry, leaves).into_iter().map(
+                            |warning| ValueWarning {
+                                path: type_name.clone(),
+                                reason: format!("{label} {}: {}", warning.path, warning.reason),
+                            },
+                        ));
+                        *self = Self::Live {
+                            type_name: std::mem::take(type_name),
+                            node: built,
+                        };
+                        return warnings;
+                    }
+                    node_warnings
+                        .into_iter()
+                        .map(|warning| format!("{label} replaced by a placeholder: {warning}"))
+                        .collect()
+                }
+                None => vec![format!(
+                    "{label} replaced by a placeholder: type is not registered as an animation node"
+                )],
+            };
+        warnings.extend(failure.into_iter().map(|reason| ValueWarning {
+            path: type_name.clone(),
+            reason,
+        }));
+        *self = Self::Placeholder {
+            type_name: std::mem::take(type_name),
+            value: std::mem::replace(value, ReflectedValue::List(Vec::new())),
+        };
+        warnings
     }
 
     /// The node that plays: the live one, the placeholder, or none before the graph is made live.
@@ -265,52 +326,7 @@ impl AnimationGraph {
         let mut warnings = Vec::new();
 
         for (index, node) in self.nodes.node_weights_mut().enumerate() {
-            let (AnimationNodeData::Stored { type_name, value }
-            | AnimationNodeData::Placeholder { type_name, value }) = node
-            else {
-                continue;
-            };
-            let failure = match registry
-                .get_by_name(type_name)
-                .and_then(|registration| registration.data::<ReflectAnimationNode>().copied())
-            {
-                Some(data) => {
-                    let (mut built, node_warnings) = (data.from_value)(value, &mut leaves);
-                    if node_warnings.is_empty() {
-                        warnings.extend(
-                            resolve_message_types(built.as_reflect_mut(), registry)
-                                .into_iter()
-                                .map(|warning| ValueWarning {
-                                    path: type_name.clone(),
-                                    reason: format!(
-                                        "node {index} {}: {}",
-                                        warning.path, warning.reason
-                                    ),
-                                }),
-                        );
-                        *node = AnimationNodeData::Live {
-                            type_name: std::mem::take(type_name),
-                            node: built,
-                        };
-                        continue;
-                    }
-                    node_warnings
-                        .into_iter()
-                        .map(|warning| format!("node {index} replaced by a placeholder: {warning}"))
-                        .collect()
-                }
-                None => vec![format!(
-                    "node {index} replaced by a placeholder: type is not registered as an animation node"
-                )],
-            };
-            warnings.extend(failure.into_iter().map(|reason| ValueWarning {
-                path: type_name.clone(),
-                reason,
-            }));
-            *node = AnimationNodeData::Placeholder {
-                type_name: std::mem::take(type_name),
-                value: std::mem::replace(value, ReflectedValue::List(Vec::new())),
-            };
+            warnings.extend(node.make_live(registry, &mut leaves, &format!("node {index}")));
         }
 
         self.load_warnings = warnings;
@@ -852,15 +868,7 @@ impl AnimationGraphState {
             let Some(node) = graph.live_node(*node_index) else {
                 continue;
             };
-            let Some(machine) = node.as_reflect().downcast_ref::<AnimationStateMachine>() else {
-                continue;
-            };
-            if let Some(state) = node
-                .state_as_any_mut(&mut node_state.node_state)
-                .downcast_mut::<AnimationStateMachineState>()
-            {
-                machine.route(state, graphs, messages, context);
-            }
+            node.route(&mut node_state.node_state, messages, context);
         }
     }
 

@@ -19,8 +19,8 @@ use crate::{
     message::{AnimationMessage, ReflectAnimationMessage, queue_message},
     node::{
         AdditiveNode, AimOffsetNode, AnimationClipNode, AnimationNode, BlendNode, IkTarget,
-        LayerNode, PlaceholderNode, ResultNode, TwoBoneIkNode, blend_space::BlendSpace2DNode,
-        register_node_inputs, state_machine::AnimationStateMachine,
+        LayerNode, PlaceholderNode, PlayInSlot, ResultNode, SlotNode, TwoBoneIkNode,
+        blend_space::BlendSpace2DNode, register_node_inputs, state_machine::AnimationStateMachine,
     },
     param::Param,
     retarget::{RetargetNode, RetargetRig},
@@ -36,6 +36,7 @@ pub fn register_animation_types(registry: &mut TypeRegistry) {
     registry.register::<BlendNode>();
     registry.register::<TwoBoneIkNode>();
     registry.register::<LayerNode>();
+    registry.register::<SlotNode>();
     registry.register::<AdditiveNode>();
     registry.register::<AimOffsetNode>();
     registry.register::<AnimationClipNode>();
@@ -63,6 +64,7 @@ pub fn register_animation_node_inputs(world: &mut World) {
     register_node_inputs::<BlendNode>(world);
     register_node_inputs::<TwoBoneIkNode>(world);
     register_node_inputs::<LayerNode>(world);
+    register_node_inputs::<SlotNode>(world);
     register_node_inputs::<AdditiveNode>(world);
     register_node_inputs::<AimOffsetNode>(world);
     register_node_inputs::<AnimationClipNode>(world);
@@ -138,6 +140,7 @@ impl Plugin for AnimationPlugin {
             register_animation_types(&mut registry.write());
         }
         register_animation_node_inputs(app.main_mut().world_mut());
+        app.register_animation_message::<PlayInSlot>();
 
         app.add_system(LateUpdate, initialize_skeletons.at_preview_time())
             .add_system(
