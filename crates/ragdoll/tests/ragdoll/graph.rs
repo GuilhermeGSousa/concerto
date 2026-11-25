@@ -112,6 +112,21 @@ fn over_clip(node: impl AnimationNode, clip: &AssetHandle<AnimationClip>) -> Ani
     graph
 }
 
+#[derive(Default)]
+struct Drift {
+    stretch: f32,
+    turn: f32,
+}
+
+impl Drift {
+    fn max(self, other: Drift) -> Drift {
+        Drift {
+            stretch: self.stretch.max(other.stretch),
+            turn: self.turn.max(other.turn),
+        }
+    }
+}
+
 struct Stage {
     app: App,
     humanoid: SpawnedHumanoid,
@@ -299,12 +314,12 @@ impl Stage {
             .collect()
     }
 
-    fn fade_until(&mut self, done: impl Fn(&[f32]) -> bool) -> f32 {
+    fn fade_until(&mut self, done: impl Fn(&[f32]) -> bool) -> Drift {
         let mut before = self.amounts();
-        let mut off: f32 = 0.0;
+        let mut drift = Drift::default();
         for _ in 0..300 {
             if done(&before) {
-                return off;
+                return drift;
             }
             let delta = self.frame();
             let after = self.amounts();
@@ -316,9 +331,7 @@ impl Stage {
             }
             let pelvis = self.amount("pelvis");
             if pelvis > 0.2 && pelvis < 0.8 {
-                off = off
-                    .max(self.off_blend("hand_l"))
-                    .max(self.off_blend("foot_r"));
+                drift = drift.max(self.drift());
             }
             before = after;
         }
@@ -332,15 +345,46 @@ impl Stage {
             .distance(body.animated_pose()[part].translation)
     }
 
-    fn off_blend(&self, name: &str) -> f32 {
+    fn drift(&self) -> Drift {
         let body = self.body();
-        let part = self.part(name);
         let alpha = self.app.get_resource::<Time>().unwrap().fixed_alpha();
-        let blended = body.animated_pose()[part].translation.lerp(
-            body.interpolated_pose(alpha)[part].translation,
-            self.amount(name),
-        );
-        self.drawn(body.bone(part).unwrap()).distance(blended)
+        let simulated = body.interpolated_pose(alpha);
+        let amounts = self.amounts();
+        let stretch = self
+            .skeleton
+            .parents
+            .iter()
+            .enumerate()
+            .filter_map(|(bone, parent)| {
+                let parent = (*parent)? as usize;
+                let root = body
+                    .resolved()
+                    .part_of(&self.skeleton.names[bone])
+                    .is_some_and(|part| body.resolved().settings().parts[part].parent.is_none());
+                if root {
+                    return None;
+                }
+                let drawn = self
+                    .drawn(self.humanoid.bones[bone])
+                    .distance(self.drawn(self.humanoid.bones[parent]));
+                Some((drawn - self.skeleton.rest_pose[bone].translation.length()).abs())
+            })
+            .fold(0.0, f32::max);
+        let turn = (0..body.resolved().part_count())
+            .map(|part| {
+                let blended = body.animated_pose()[part]
+                    .rotation
+                    .slerp(simulated[part].rotation, amounts[part]);
+                self.app
+                    .main()
+                    .world()
+                    .get_component_for_entity::<GlobalTransform>(body.bone(part).unwrap())
+                    .unwrap()
+                    .rotation()
+                    .angle_between(blended)
+            })
+            .fold(0.0, f32::max);
+        Drift { stretch, turn }
     }
 
     fn reach(&self, parent: &str, child: &str) -> f32 {
@@ -453,10 +497,16 @@ fn behaviours_on_one_body_blend_per_limb_and_never_cut() {
         "a limp body has every part dynamic and its capsule carried"
     );
     stage.player_mut().set_bool_param(name!("limp"), false);
-    let off = stage.fade_until(|amounts| amounts.iter().all(|amount| *amount <= 0.0));
+    let drift = stage.fade_until(|amounts| amounts.iter().all(|amount| *amount <= 0.0));
     assert!(
-        off < 1e-3,
-        "a fallen body blended back is drawn on the straight blend of each bone's animated and simulated places, a hand or foot was {off} m off it"
+        drift.stretch < 1e-3,
+        "a fallen body blended back keeps every bone's length, one changed by {} m",
+        drift.stretch
+    );
+    assert!(
+        drift.turn < 2e-3,
+        "a fallen body blended back turns each part's bone by the slerp of its animated and simulated rotations, one was {} rad off",
+        drift.turn
     );
 
     stage.player_mut().set_bool_param(name!("limp"), true);

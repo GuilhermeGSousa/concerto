@@ -367,10 +367,15 @@ fn a_walking_character_gone_limp_keeps_its_speed_falls_to_rest_and_is_drawn_by_w
         "at weight 0.5 the pelvis is halfway between {animated} and {fallen}, it was at {shown}"
     );
     let head = body.resolved().part_of("Head").unwrap();
-    let shown = position(&app, humanoid.bone("Head"));
+    let shown = app
+        .main()
+        .world()
+        .get_component_for_entity::<GlobalTransform>(humanoid.bone("Head"))
+        .unwrap()
+        .rotation();
     assert!(
-        shown.distance(pose[head].translation) < 1e-3,
-        "a part with its own weight of 1 is drawn on its body"
+        shown.angle_between(pose[head].rotation) < 1e-3,
+        "a part with its own weight of 1 is turned as its body, under its drawn neck"
     );
     assert_eq!(character(&mut app, &humanoid).weight_of("Head"), 1.0);
 }

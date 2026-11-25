@@ -651,9 +651,11 @@ fn die(characters: Query<&mut CharacterRagdoll, With<Dead>>) {
 Each frame, after the animation has written the bones and before transforms
 propagate, the bones of parts with a weight above 0 are moved towards the
 ragdoll's pose, interpolated between the last two fixed steps so the body does
-not judder at the fixed rate. Each such bone is blended between its own
-animated pose and its part's simulated one, so at half weight it is drawn
-halfway between them however its parents are drawn. A bone with no part keeps
+not judder at the fixed rate. Each such bone is turned halfway, at half
+weight, between its own animated rotation and its part's simulated one, and
+keeps its animated offset from its drawn parent, so no bone stretches; only
+the pelvis, the root part, is moved between its animated and simulated places.
+A bone with no part keeps
 its animated pose under its parent, so fingers and a face still animate on a
 limp body. Bones are
 placed in world terms, so the mesh stays on the body wherever the character's
