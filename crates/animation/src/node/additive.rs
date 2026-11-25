@@ -244,9 +244,7 @@ mod tests {
         evaluation::{AnimationGraphContext, RootBone},
         event::AnimationEvent,
         node::AnimationNode,
-        pose::{
-            AnimationFrame, EvaluatedFrame, FiredEvent, FramePool, JointPose, Pose, RootMotion,
-        },
+        pose::{AnimationFrame, EvaluatedFrame, FiredEvent, FramePool, JointPose, Pose},
         testing::Walks,
     };
 
@@ -389,13 +387,6 @@ mod tests {
         pose
     }
 
-    fn base_motion() -> RootMotion {
-        RootMotion {
-            translation: Vec3::new(0.0, 0.0, 0.3),
-            rotation: Quat::from_rotation_y(0.1),
-        }
-    }
-
     fn base_event() -> FiredEvent {
         FiredEvent {
             clip: AssetId::from_path("walk"),
@@ -413,7 +404,6 @@ mod tests {
             .map(|bone| sampled(&neutral, *bone, time))
             .collect();
         let mut frame = AnimationFrame::new(Pose::from_joints(joints));
-        frame.set_root_motion(base_motion());
         frame.push_event(base_event());
         frame
     }
@@ -546,8 +536,7 @@ mod tests {
     }
 
     #[test]
-    fn the_child_moves_by_the_weight_times_the_delta_and_the_root_keeps_its_tilt_lift_and_base_root_motion()
-     {
+    fn the_child_moves_by_the_weight_times_the_delta_and_the_root_keeps_its_tilt_and_lift() {
         let base = base_at(0.5);
         let cases = [
             WeightCase {
@@ -572,7 +561,6 @@ mod tests {
             );
 
             assert_joint_near(&frame.joints()[1], &case.child);
-            assert_eq!(frame.root_motion(), base_motion());
             assert_eq!(frame.events(), [base_event()]);
         }
         let full = rig.played(&rig.node(), &[0.5], &input(base_at(0.5)));

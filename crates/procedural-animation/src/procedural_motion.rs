@@ -472,8 +472,8 @@ mod tests {
 
     use super::{ProceduralMotionChannel, ProceduralMotionNode, Waveform};
     use crate::testing::{
-        Bone, Frame, app_with, bone, captured, captured_graph, compile, input_event, input_motion,
-        insert_asset, read_state, skeleton_of, spawn_rigged, write_state,
+        Bone, Frame, app_with, bone, captured, captured_graph, compile, input_event, insert_asset,
+        read_state, skeleton_of, spawn_rigged, write_state,
     };
 
     const HIPS: usize = 0;
@@ -580,7 +580,6 @@ mod tests {
                     *joint = input;
                 }
             }
-            output.set_root_motion(input_motion());
             output.push_event(input_event());
         }
 
@@ -753,7 +752,6 @@ mod tests {
 
     fn assert_input(frame: &Frame) {
         assert_eq!(frame.joints, input_joints());
-        assert_eq!(frame.root_motion, input_motion());
         assert_eq!(frame.events, [input_event()]);
     }
 
@@ -890,7 +888,6 @@ mod tests {
                 for bone in row.untouched {
                     assert_eq!(frame.joints[*bone], input[*bone]);
                 }
-                assert_eq!(frame.root_motion, input_motion());
             });
         }
     }
@@ -924,12 +921,11 @@ mod tests {
     }
 
     #[test]
-    fn root_motion_events_translations_scales_and_unmasked_bones_pass_through() {
+    fn events_translations_scales_and_unmasked_bones_pass_through() {
         let frame = Stage::one(single(noise("chest"))).run(10, 0.1);
 
         let input = input_joints();
         assert_ne!(frame.joints[CHEST].rotation, input[CHEST].rotation);
-        assert_eq!(frame.root_motion, input_motion());
         assert_eq!(frame.events, [input_event()]);
         for (joint, input) in frame.joints.iter().zip(&input) {
             assert_eq!(joint.translation, input.translation);

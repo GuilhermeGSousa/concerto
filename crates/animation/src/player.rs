@@ -21,7 +21,7 @@ use crate::{
     evaluation::{AnimationGraphContext, RootBone},
     graph::{AnimationGraph, AnimationGraphState, AnimationNodeIndex, NodeVisit},
     node::{AnimationNode, ErasedAnimationNode, NodeState},
-    pose::{FiredEvent, FramePool},
+    pose::{FiredEvent, FramePool, RootMotion},
     root::AnimationRootBone,
 };
 
@@ -46,6 +46,7 @@ pub struct AnimationPlayer {
     graph_state: AnimationGraphState,
     blackboard: AnimationBlackboard,
     frame_pool: FramePool,
+    root: Option<RootBone>,
     paused: bool,
     event_threshold: f32,
     pub(crate) fired: Vec<FiredEvent>,
@@ -57,6 +58,7 @@ impl AnimationPlayer {
             graph_state: AnimationGraphState::default(),
             blackboard: AnimationBlackboard::default(),
             frame_pool: FramePool::new(bone_count),
+            root: None,
             paused: false,
             event_threshold: 0.0,
             fired: Vec::new(),
@@ -185,16 +187,35 @@ impl AnimationPlayer {
         delta_time: f32,
         graphs: &AssetStore<AnimationGraph>,
         skeleton: Option<&Skeleton>,
+        root: Option<RootBone>,
         inputs: &Inputs<'_, '_>,
     ) {
+        self.root = root;
         let context = AnimationGraphContext {
             blackboard: &self.blackboard,
-            root: None,
+            root: self.root.clone(),
             skeleton,
             model_to_world: None,
             inputs,
         };
         self.graph_state.update(delta_time, graphs, &context);
+    }
+
+    pub(crate) fn root_motion(
+        &mut self,
+        graphs: &AssetStore<AnimationGraph>,
+        skeleton: &Skeleton,
+        inputs: &Inputs<'_, '_>,
+    ) -> RootMotion {
+        let context = AnimationGraphContext {
+            blackboard: &self.blackboard,
+            root: self.root.clone(),
+            skeleton: Some(skeleton),
+            model_to_world: None,
+            inputs,
+        };
+        self.graph_state
+            .root_motion(graphs, &context, &skeleton.bone_ids)
     }
 
     pub(crate) fn evaluate(
@@ -204,34 +225,28 @@ impl AnimationPlayer {
         skeleton: &Skeleton,
         bones: &[SceneEntityRef],
         transforms: &mut Query<&mut Transform>,
-        root_bones: &mut Query<&mut AnimationRootBone>,
         parents: &Query<&ChildOf>,
         globals: &Query<&GlobalTransform>,
     ) -> bool {
         self.fired.clear();
         let bone_ids = &skeleton.bone_ids;
         let rest_pose = &skeleton.rest_pose;
-        let root = bones
-            .iter()
-            .enumerate()
-            .find_map(|(index, bone)| {
-                let entity = bone.entity()?;
-                root_bones
-                    .contains_entity(entity)
-                    .then_some((index, entity))
-            })
-            .and_then(|(index, entity)| {
-                Some(RootBone {
-                    index,
-                    rest: rest_pose.get(index)?.clone(),
-                    up: up_of(entity, parents, globals),
-                })
-            });
+        let model_to_world =
+            bones
+                .first()
+                .and_then(|bone| bone.entity())
+                .map_or(Affine3A::IDENTITY, |bone| {
+                    parent_world_of(bone, parents, globals, |entity| {
+                        transforms
+                            .get_entity_mut(entity)
+                            .map(|transform| local_of(&transform))
+                    })
+                });
         let context = AnimationGraphContext {
             blackboard: &self.blackboard,
-            root,
+            root: self.root.clone(),
             skeleton: Some(skeleton),
-            model_to_world: Some(model_to_world_of(bones, parents, globals)),
+            model_to_world: Some(model_to_world),
             inputs,
         };
 
@@ -257,7 +272,6 @@ impl AnimationPlayer {
                 .filter(|event| event.weight > threshold),
         );
 
-        let root_motion = output_frame.root_motion();
         for (bone_index, bone) in bones.iter().enumerate() {
             let Some(bone_entity) = bone.entity() else {
                 continue;
@@ -265,10 +279,6 @@ impl AnimationPlayer {
             let Some(joint_pose) = output_frame.joint(bone_index) else {
                 continue;
             };
-
-            if let Some(mut root_bone) = root_bones.get_entity_mut(bone_entity) {
-                root_bone.root_motion = root_motion;
-            }
 
             if let Some(mut transform) = transforms.get_entity_mut(bone_entity) {
                 transform.translation = joint_pose.translation;
@@ -282,28 +292,62 @@ impl AnimationPlayer {
     }
 }
 
-fn model_to_world_of(
+pub(crate) fn root_bone_of(
+    skeleton: &Skeleton,
     bones: &[SceneEntityRef],
+    root_bones: &Query<&mut AnimationRootBone>,
     parents: &Query<&ChildOf>,
+    transforms: &Query<&Transform>,
     globals: &Query<&GlobalTransform>,
-) -> Affine3A {
-    bones
-        .first()
-        .and_then(|bone| bone.entity())
-        .and_then(|bone| parents.get_entity(bone))
-        .and_then(|parent| globals.get_entity(parent.parent()))
-        .map_or(Affine3A::IDENTITY, |global| {
-            Affine3A::from_mat4(global.matrix())
-        })
+) -> Option<RootBone> {
+    let (index, entity) = bones.iter().enumerate().find_map(|(index, bone)| {
+        let entity = bone.entity()?;
+        root_bones
+            .contains_entity(entity)
+            .then_some((index, entity))
+    })?;
+    let parent = parent_world_of(entity, parents, globals, |entity| {
+        transforms.get_entity(entity).map(local_of)
+    });
+    let up = Some(parent.to_scale_rotation_translation().1.inverse() * Vec3::Y)
+        .filter(|up| up.is_finite())
+        .unwrap_or(Vec3::Y);
+    Some(RootBone {
+        index,
+        rest: skeleton.rest_pose.get(index)?.clone(),
+        up,
+    })
 }
 
-fn up_of(root: Entity, parents: &Query<&ChildOf>, globals: &Query<&GlobalTransform>) -> Vec3 {
-    parents
-        .get_entity(root)
-        .and_then(|parent| globals.get_entity(parent.parent()))
-        .map(|parent| parent.rotation().inverse() * Vec3::Y)
-        .filter(|up| up.is_finite())
-        .unwrap_or(Vec3::Y)
+fn local_of(transform: &Transform) -> Affine3A {
+    Affine3A::from_scale_rotation_translation(
+        transform.scale,
+        transform.rotation,
+        transform.translation,
+    )
+}
+
+fn parent_world_of(
+    entity: Entity,
+    parents: &Query<&ChildOf>,
+    globals: &Query<&GlobalTransform>,
+    mut local: impl FnMut(Entity) -> Option<Affine3A>,
+) -> Affine3A {
+    let mut world = Affine3A::IDENTITY;
+    let mut next = parents.get_entity(entity).map(ChildOf::parent);
+    while let Some(ancestor) = next {
+        let Some(matrix) = local(ancestor) else {
+            let global = globals
+                .get_entity(ancestor)
+                .map_or(Affine3A::IDENTITY, |global| {
+                    Affine3A::from_mat4(global.matrix())
+                });
+            return global * world;
+        };
+        world = matrix * world;
+        next = parents.get_entity(ancestor).map(ChildOf::parent);
+    }
+    world
 }
 
 #[derive(Component)]

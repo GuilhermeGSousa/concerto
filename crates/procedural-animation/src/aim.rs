@@ -547,7 +547,7 @@ mod tests {
     use super::{AimBone, AimNode, AimState, Muzzle};
     use crate::testing::{
         Frame, angle, app_with, assert_near, bone, captured, captured_graph, compile, input_event,
-        input_motion, insert_asset, read_state, skeleton_of, spawn_rigged, write_state,
+        insert_asset, read_state, skeleton_of, spawn_rigged, write_state,
     };
 
     const SPINE: usize = 1;
@@ -638,7 +638,6 @@ mod tests {
                     joint.rotation = *rotation;
                 }
             }
-            output.set_root_motion(input_motion());
             output.push_event(input_event());
         }
 
@@ -894,7 +893,6 @@ mod tests {
 
     fn assert_unchanged(rig: &Rig, frame: &Frame) {
         assert_eq!(frame.joints, rig.input());
-        assert_eq!(frame.root_motion, input_motion());
         assert_eq!(frame.events, [input_event()]);
     }
 
@@ -1030,7 +1028,7 @@ mod tests {
     }
 
     #[test]
-    fn root_motion_events_translations_and_other_bones_pass_through() {
+    fn events_translations_and_other_bones_pass_through() {
         let rig = Rig::aimed(Rig::new().toward(0.3, 0.1, 2.0));
         let mut stage = Stage::new(&rig, aim());
 
@@ -1038,7 +1036,6 @@ mod tests {
 
         assert!(!stage.warned());
         let input = rig.input();
-        assert_eq!(frame.root_motion, input_motion());
         assert_eq!(frame.events, [input_event()]);
         for (output, input) in frame.joints.iter().zip(&input) {
             assert_eq!(output.translation, input.translation);

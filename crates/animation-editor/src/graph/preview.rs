@@ -4,7 +4,7 @@ use concerto_animation::{
     param::ReflectParam,
     player::{AnimationHandleComponent, AnimationPlayer},
     root::AnimationRootBone,
-    target::animate_targets,
+    target::{animate_targets, update_animation_players},
 };
 use concerto_app::{
     App,
@@ -321,9 +321,14 @@ pub fn graph_preview(app: &mut App) {
         .add_system(Update, start_graph_players.at_preview_time())
         .add_system(
             LateUpdate,
-            (carry_root_motion, report_graph_state)
-                .after(animate_targets)
+            carry_root_motion
+                .after(update_animation_players)
+                .before(animate_targets)
                 .at_preview_time(),
+        )
+        .add_system(
+            LateUpdate,
+            report_graph_state.after(animate_targets).at_preview_time(),
         )
         .add_listener(show_graphs.at_preview_time())
         .add_listener(set_graph_param.at_preview_time())

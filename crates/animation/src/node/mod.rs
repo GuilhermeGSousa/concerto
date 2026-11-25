@@ -10,7 +10,8 @@ use crate::{
     evaluation::{AnimationGraphContext, RootBone},
     param::Param,
     pose::{
-        AnimationFrame, EvaluatedFrame, FiredEvent, FramePool, JointPose, RootMotion, twist_about,
+        AnimationFrame, EvaluatedFrame, FiredEvent, FramePool, JointPose, RootMotion,
+        WeightedMotion, twist_about,
     },
 };
 
@@ -150,6 +151,27 @@ impl AnimationNode for BlendNode {
             total_weight += input.weight;
             output.blend(&input.frame, input.weight / total_weight);
         }
+    }
+
+    fn root_motion(
+        &self,
+        _: &mut (),
+        _: &(),
+        _: &AnimationGraphContext<'_>,
+        _: &[Uuid],
+        inputs: &[WeightedMotion],
+    ) -> RootMotion {
+        let mut weighted = inputs.iter().filter(|input| input.weight > 0.0);
+        let Some(first) = weighted.next() else {
+            return RootMotion::IDENTITY;
+        };
+        let mut motion = first.motion;
+        let mut total_weight = first.weight;
+        for input in weighted {
+            total_weight += input.weight;
+            motion = motion.blend(input.motion, input.weight / total_weight);
+        }
+        motion
     }
 
     fn reset(&self, _: &mut ()) {}
@@ -400,13 +422,19 @@ impl AnimationNode for AnimationClipNode {
                 net_of_root_motion(joint_pose, root);
             }
         }
+    }
 
-        output.set_root_motion(root_motion(
-            &state.clock,
-            animation_clip,
-            context.root(),
-            bone_ids,
-        ));
+    fn root_motion(
+        &self,
+        state: &mut AnimationClipNodeState,
+        clips: &Res<AssetStore<AnimationClip>>,
+        context: &AnimationGraphContext<'_>,
+        bone_ids: &[Uuid],
+        _inputs: &[WeightedMotion],
+    ) -> RootMotion {
+        clips.get(&self.clip).map_or(RootMotion::IDENTITY, |clip| {
+            root_motion(&state.clock, clip, context.root(), bone_ids)
+        })
     }
 
     fn report(&self, state: &AnimationClipNodeState) -> NodeReport {
@@ -544,6 +572,7 @@ mod tests {
         event::AnimationEvent,
         pose::{
             AnimationFrame, EvaluatedFrame, FiredEvent, FramePool, JointPose, Pose, RootMotion,
+            WeightedMotion,
         },
         testing::Walks,
     };
@@ -635,10 +664,10 @@ mod tests {
             node: &AnimationClipNode,
             state: &mut AnimationClipNodeState,
         ) -> RootMotion {
-            let mut pool = FramePool::new(1);
-            let mut output = pool.acquire();
-            self.evaluate(node, state, &[ROOT], &mut pool, &mut output);
-            output.root_motion()
+            self.walks
+                .pass(&self.blackboard, Some(self.root()), |context| {
+                    AnimationNode::root_motion(node, state, clips(context), context, &[ROOT], &[])
+                })
         }
 
         fn step(
@@ -1074,15 +1103,11 @@ mod tests {
     }
 
     fn weighted(translation: Vec3, weight: f32) -> EvaluatedFrame {
-        let mut frame = AnimationFrame::new(Pose::from_joints(vec![JointPose {
+        let frame = AnimationFrame::new(Pose::from_joints(vec![JointPose {
             translation,
             rotation: Quat::IDENTITY,
             scale: Vec3::ONE,
         }]));
-        frame.set_root_motion(RootMotion {
-            translation,
-            rotation: Quat::IDENTITY,
-        });
         EvaluatedFrame { frame, weight }
     }
 
@@ -1133,13 +1158,32 @@ mod tests {
 
         for case in cases {
             let blended = blend(&case.inputs);
+            let motions: Vec<WeightedMotion> = case
+                .inputs
+                .iter()
+                .map(|input| WeightedMotion {
+                    motion: RootMotion {
+                        translation: input.frame.joints()[0].translation,
+                        rotation: Quat::IDENTITY,
+                    },
+                    weight: input.weight,
+                })
+                .collect();
+            let walks = Walks::new(AssetStore::new(), AssetStore::new());
+            let pass = walks.evaluate(&AnimationBlackboard::default(), None, |context| {
+                AnimationNode::root_motion(&BlendNode {}, &mut (), &(), context, &[], &motions)
+            });
+            assert!(
+                pass.translation.abs_diff_eq(case.translation, 1e-5)
+                    && pass.rotation.abs_diff_eq(Quat::IDENTITY, 1e-5),
+                "{}: the pass gives {pass:?}",
+                case.name
+            );
 
             let joint = blended.joints()[0].translation;
-            let root = blended.root_motion().translation;
             assert!(
-                joint.abs_diff_eq(case.translation, 1e-5)
-                    && root.abs_diff_eq(case.translation, 1e-5),
-                "{}: joint {joint}, root motion {root}",
+                joint.abs_diff_eq(case.translation, 1e-5),
+                "{}: joint {joint}",
                 case.name
             );
         }

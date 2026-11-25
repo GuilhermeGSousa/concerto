@@ -4,7 +4,7 @@ use uuid::Uuid;
 use crate::{
     evaluation::AnimationGraphContext,
     graph::{AnimationGraph, AnimationGraphStates, GraphId},
-    pose::{AnimationFrame, FramePool},
+    pose::{AnimationFrame, FramePool, RootMotion},
     transition::{AnimationTransitionBlender, BlendInFlight},
 };
 
@@ -89,6 +89,34 @@ impl AnimationTransitionBlender for BlendStack {
             output.blend(&layer, entry.weight);
             pool.release(layer);
         }
+    }
+
+    fn root_motion(
+        &mut self,
+        bone_ids: &[Uuid],
+        graph_states: &mut AnimationGraphStates,
+        graphs: &AssetStore<AnimationGraph>,
+        context: &AnimationGraphContext<'_>,
+    ) -> RootMotion {
+        let Some((base, fading_in)) = self.entries.split_first() else {
+            return RootMotion::IDENTITY;
+        };
+
+        let mut motion = graph_states
+            .get_mut(base.graph_id)
+            .map_or(RootMotion::IDENTITY, |graph_state| {
+                graph_state.root_motion(graphs, context, bone_ids)
+            });
+
+        for entry in fading_in {
+            let layer = graph_states
+                .get_mut(entry.graph_id)
+                .map_or(RootMotion::IDENTITY, |graph_state| {
+                    graph_state.root_motion(graphs, context, bone_ids)
+                });
+            motion = motion.blend(layer, entry.weight);
+        }
+        motion
     }
 
     fn update(

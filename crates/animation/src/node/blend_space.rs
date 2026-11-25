@@ -12,7 +12,7 @@ use crate::{
     graph::{AnimationGraph, AnimationNodeContext, AnimationNodeData, AnimationNodeIndex},
     node::{AnimationClipNode, AnimationNode, InputSlots, ReflectAnimationNode},
     param::Param,
-    pose::{AnimationFrame, EvaluatedFrame, FramePool},
+    pose::{AnimationFrame, EvaluatedFrame, FramePool, RootMotion, WeightedMotion},
 };
 
 /// Which blackboard `Vec2` param drives a blend space. Read with
@@ -132,6 +132,35 @@ impl AnimationNode for BlendSpace2DNode {
         output.blend(&evaluated_inputs[triangle.c].frame, lambda_c);
     }
 
+    fn root_motion(
+        &self,
+        state: &mut BlendSpace2DInstanceNode,
+        _: &(),
+        _context: &AnimationGraphContext<'_>,
+        _bone_ids: &[uuid::Uuid],
+        inputs: &[WeightedMotion],
+    ) -> RootMotion {
+        if inputs.is_empty() || inputs.len() != self.points().len() {
+            return RootMotion::IDENTITY;
+        }
+
+        let Some(triangulated_point) = state.current_triangulated_point else {
+            return RootMotion::IDENTITY;
+        };
+
+        let triangle = &state.triangulation.triangles()[triangulated_point.triangle];
+        let lambda_a = triangulated_point.lambda_a;
+        let lambda_b = triangulated_point.lambda_b;
+        let lambda_c = triangulated_point.lambda_c;
+
+        let mut motion = inputs[triangle.a].motion;
+        let ab_sum = lambda_a + lambda_b;
+        if ab_sum > 1e-6 {
+            motion = motion.blend(inputs[triangle.b].motion, lambda_b / ab_sum);
+        }
+        motion.blend(inputs[triangle.c].motion, lambda_c)
+    }
+
     fn reset(&self, state: &mut BlendSpace2DInstanceNode) {
         state.current_triangulated_point = None;
     }
@@ -197,11 +226,20 @@ mod tests {
     use concerto_name::name;
     use glam::Vec2;
 
-    use super::{BlendInput, BlendSpace2DNode};
-    use crate::node::AnimationNode;
+    use concerto_foundation::assets::asset_store::AssetStore;
+    use glam::Vec3;
+
+    use super::{BlendInput, BlendSpace2DInstanceNode, BlendSpace2DNode};
+    use crate::{
+        blackboard::AnimationBlackboard,
+        node::AnimationNode,
+        pose::{RootMotion, WeightedMotion},
+        testing::Walks,
+    };
 
     #[test]
-    fn the_blend_space_keeps_a_point_per_input_as_inputs_come_and_go() {
+    fn the_blend_space_keeps_a_point_per_input_as_inputs_come_and_go_and_blends_no_motion_when_they_differ()
+     {
         let mut space = BlendSpace2DNode::new(
             vec![Vec2::X, Vec2::Y],
             BlendInput {
@@ -216,5 +254,35 @@ mod tests {
         space.input_removed(0);
         space.input_removed(2);
         assert_eq!(space.points(), [Vec2::ZERO, Vec2::Y]);
+
+        let triangle = [Vec2::ZERO, Vec2::X, Vec2::Y];
+        let space = BlendSpace2DNode::new(
+            triangle[..2].to_vec(),
+            BlendInput {
+                param: name!("at").into(),
+            },
+        );
+        let mut state = BlendSpace2DInstanceNode::new(&triangle);
+        let moving = |x| WeightedMotion {
+            motion: RootMotion {
+                translation: Vec3::new(x, 0.0, 0.0),
+                ..RootMotion::IDENTITY
+            },
+            weight: 1.0,
+        };
+        let walks = Walks::new(AssetStore::new(), AssetStore::new());
+
+        let motion = walks.evaluate(&AnimationBlackboard::default(), None, |context| {
+            space.update(&mut state, 0.0, &(), context);
+            space.root_motion(
+                &mut state,
+                &(),
+                context,
+                &[],
+                &[moving(1.0), moving(2.0), moving(3.0)],
+            )
+        });
+
+        assert_eq!(motion, RootMotion::IDENTITY);
     }
 }

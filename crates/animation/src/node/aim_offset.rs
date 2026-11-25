@@ -616,8 +616,7 @@ mod tests {
         evaluation::AnimationGraphContext,
         node::AnimationNode,
         pose::{
-            AnimationFrame, EvaluatedFrame, FiredEvent, FramePool, JointPose, Pose, RootMotion,
-            apply_additive,
+            AnimationFrame, EvaluatedFrame, FiredEvent, FramePool, JointPose, Pose, apply_additive,
         },
         testing::Walks,
     };
@@ -806,13 +805,6 @@ mod tests {
         Uuid::from_u128(bone as u128)
     }
 
-    fn input_motion() -> RootMotion {
-        RootMotion {
-            translation: Vec3::new(0.1, 0.0, 0.3),
-            rotation: Quat::from_rotation_y(0.05),
-        }
-    }
-
     fn input_event() -> FiredEvent {
         FiredEvent {
             clip: AssetId::from_path("aim_input"),
@@ -942,7 +934,6 @@ mod tests {
 
         fn input(&self) -> AnimationFrame {
             let mut frame = AnimationFrame::new(Pose::from_joints(self.skeleton.rest_pose.clone()));
-            frame.set_root_motion(input_motion());
             frame.push_event(input_event());
             frame
         }
@@ -1094,7 +1085,6 @@ mod tests {
 
     fn assert_unchanged(rig: &Rig, frame: &AnimationFrame) {
         assert_eq!(frame.joints(), rig.input().joints());
-        assert_eq!(frame.root_motion(), input_motion());
         assert_eq!(frame.events(), [input_event()]);
     }
 
@@ -1120,7 +1110,6 @@ mod tests {
 
         let level_frame = rig.run(&pitch_node(&clips));
         assert_aimed(&rig, &level_frame, &level().pose());
-        assert_eq!(level_frame.root_motion(), input_motion());
         assert_eq!(level_frame.events(), [input_event()]);
         assert_pitch_blend(&mut rig, &pitch_node(&clips));
 

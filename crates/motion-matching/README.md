@@ -429,9 +429,11 @@ bone. `clips` is one clip per entry, as given to `bake`. It returns
 - `publish_trajectory`, in `LateFixedUpdate`, after `step_simulation`: predicts
   the path from where the body ended the step and writes it to the
   `AnimationPlayer` on the skeleton of each `CharacterLink`.
-- `apply_character_displacement`, in `LateUpdate`, after `animate_targets` and
-  before `update_simple_entities` and `propagate_global_transforms`: places each
-  character; see [Displacement](#displacement).
+- `apply_character_displacement`, in `LateUpdate`, after
+  `update_animation_players` and before `animate_targets`,
+  `update_simple_entities` and `propagate_global_transforms`: places each
+  character by this frame's root motion, so its pose is evaluated where it moved
+  to; see [Displacement](#displacement).
 
 An entity without a `BodyId` is skipped. The simulation holds no position: the
 body has it.
@@ -542,8 +544,10 @@ a node the walk does not reach, such as one in a state machine state that is
 not playing, does not advance. Its `UpdateInput` reads the stores of motion
 databases, skeletons and clips, and the player's skeleton comes from the graph
 context; when any of them is missing, or the database is not baked yet, the
-node does not step and its root motion is `RootMotion::IDENTITY`. `animate_targets` then only copies the pose the step
-left. No other system declares the `MotionDatabase` store.
+node does not step and its root motion is `RootMotion::IDENTITY`. The player's
+root-motion pass, which `update_animation_players` runs after the walk, takes the
+node's root motion and writes it to `AnimationRootBone`. `animate_targets` then
+only copies the pose the step left. No other system declares the `MotionDatabase` store.
 
 Clip events fire from the clip time crossed within an entry. A step whose
 playhead advances, with no search jump, fires the events of the entry's clip in
@@ -578,11 +582,13 @@ query is not drawn. A frame with no search due keeps the last one.
 The state keeps the simulation bone's velocity and angular velocity at the
 playhead, in model space. Each step turns them back by
 the root joint's rotation away from rest, `q = simulation * root * rest⁻¹`, and
-scales them by the frame's animation time into a `RootMotion` on `state.output`:
+scales them by the frame's animation time into the step's `RootMotion`:
 `translation = q⁻¹ * (velocity * dt * r)` and `rotation =
 from_scaled_angle_axis(q⁻¹ * (angular_velocity * dt * r))`. That is the frame a
-clip's root motion reads in, so it reaches `AnimationRootBone` through the graph
-the same way. The root joint is the database skeleton's first without a parent,
+clip's root motion reads in. The node's `root_motion` gives it to the root-motion
+pass once the node is initialised and its pose has a joint per bone of the
+player's skeleton, and `RootMotion::IDENTITY` before, so it reaches
+`AnimationRootBone` the way a clip's does. The root joint is the database skeleton's first without a parent,
 and `rest` is that bone's rest on the skeleton playing it, so a database baked on
 one skeleton plays on another with the same bone ids. A frame with no step, on a
 missing asset, gives `RootMotion::IDENTITY`, and so does a frame that holds the
@@ -715,13 +721,19 @@ fixed rate.
 
 ### Transform order
 
-Writing the character's `Transform` before propagation means the character, its
-skeleton and its model reach rendering in the same frame, whether the character
-has children or not. The orderings on
-`apply_character_displacement` also put `update_simple_entities` and
-`propagate_global_transforms` after `animate_targets` in every `App` with both
-`MotionMatchingPlugin` and `AnimationPlugin`, so bones reach their globals a
-frame sooner there than in an `App` with `AnimationPlugin` alone.
+`LateUpdate` runs `update_animation_players`, which advances each graph and
+writes its root motion to `AnimationRootBone`, then
+`apply_character_displacement`, then `animate_targets`, then
+`propagate_global_transforms`. The character moves before its pose is
+evaluated, and `evaluate` reads the skeleton's world transform for this frame by
+composing the local `Transform`s up from bone 0's parent, so a node that works
+in world space, such as IK, sees where the character is now rather than where
+it was a frame ago. Writing the character's `Transform` before propagation
+means the character, its skeleton and its model reach rendering in the same
+frame, whether the character has children or not. `AnimationPlugin` orders
+`animate_targets` before `update_simple_entities` and
+`propagate_global_transforms` itself, so an `App` with `AnimationPlugin` alone,
+such as a graph preview, gets its bones' globals in the same frame too.
 
 The system is not marked `.at_preview_time()`, since a preview has no physics.
 Its orderings still hold there, so a preview has the same transform order.

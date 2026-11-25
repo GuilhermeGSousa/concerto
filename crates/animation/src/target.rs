@@ -21,7 +21,7 @@ use crate::{
     event::Fired,
     graph::AnimationGraph,
     node::{CreateNodeInputs, EvaluateNodeInputs, UpdateNodeInputs},
-    player::{AnimationHandleComponent, AnimationPlayer},
+    player::{AnimationHandleComponent, AnimationPlayer, root_bone_of},
     pose::{FiredEvent, RootMotion},
     root::AnimationRootBone,
 };
@@ -42,7 +42,6 @@ pub(crate) fn initialize_skeletons(
 pub fn animate_targets(
     mut animation_players: Query<(Entity, &mut AnimationPlayer, &SkeletonComponent)>,
     mut transforms: Query<&mut Transform>,
-    mut root_bones: Query<&mut AnimationRootBone>,
     parents: Query<&ChildOf>,
     globals: Query<&GlobalTransform>,
     animation_graphs: Res<AssetStore<AnimationGraph>>,
@@ -62,7 +61,6 @@ pub fn animate_targets(
                         skeleton,
                         skeleton_component.bones(),
                         &mut transforms,
-                        &mut root_bones,
                         &parents,
                         &globals,
                     )
@@ -75,14 +73,6 @@ pub fn animate_targets(
         }
         if !animation_player.fired.is_empty() {
             animation_player.fired.clear();
-        }
-        for bone in skeleton_component.bones() {
-            if let Some(mut root_bone) = bone
-                .entity()
-                .and_then(|bone| root_bones.get_entity_mut(bone))
-            {
-                root_bone.root_motion = RootMotion::IDENTITY;
-            }
         }
     }
 }
@@ -111,6 +101,10 @@ fn trigger(
 
 pub fn update_animation_players(
     mut animation_players: Query<(&mut AnimationPlayer, Option<&SkeletonComponent>)>,
+    mut root_bones: Query<&mut AnimationRootBone>,
+    parents: Query<&ChildOf>,
+    transforms: Query<&Transform>,
+    globals: Query<&GlobalTransform>,
     animation_graphs: Res<AssetStore<AnimationGraph>>,
     skeletons: Res<AssetStore<Skeleton>>,
     time: Res<Time>,
@@ -118,11 +112,32 @@ pub fn update_animation_players(
 ) {
     let delta_time = time.delta().as_secs_f32();
     for (mut animation_player, component) in animation_players.iter_mut() {
-        if animation_player.is_paused() {
-            continue;
+        let mut root_motion = RootMotion::IDENTITY;
+        if !animation_player.is_paused() {
+            let skeleton = component.and_then(|component| skeletons.get(component.skeleton()));
+            let root = skeleton.zip(component).and_then(|(skeleton, component)| {
+                root_bone_of(
+                    skeleton,
+                    component.bones(),
+                    &root_bones,
+                    &parents,
+                    &transforms,
+                    &globals,
+                )
+            });
+            animation_player.update(delta_time, &animation_graphs, skeleton, root, &inputs);
+            if let Some(skeleton) = skeleton {
+                root_motion = animation_player.root_motion(&animation_graphs, skeleton, &inputs);
+            }
         }
-        let skeleton = component.and_then(|component| skeletons.get(component.skeleton()));
-        animation_player.update(delta_time, &animation_graphs, skeleton, &inputs);
+        for bone in component.iter().flat_map(|component| component.bones()) {
+            if let Some(mut root_bone) = bone
+                .entity()
+                .and_then(|bone| root_bones.get_entity_mut(bone))
+            {
+                root_bone.root_motion = root_motion;
+            }
+        }
     }
 }
 
@@ -141,6 +156,8 @@ pub(crate) fn initialize_animation_players(
 
 #[cfg(test)]
 mod tests {
+    use std::{thread, time::Duration};
+
     use concerto_ecs::{
         Entity, IntoSystem, System, World,
         component::scene::SceneEntityRef,
@@ -153,6 +170,7 @@ mod tests {
     };
     use concerto_foundation::{
         assets::{asset_server::AssetServer, asset_store::AssetStore, handle::AssetHandle},
+        time::Time,
         transform::{GlobalTransform, Transform},
     };
     use concerto_mesh::skeleton::{JointPose, Skeleton, SkeletonComponent};
@@ -161,9 +179,10 @@ mod tests {
     use glam::{Affine3A, Mat4, Quat, Vec2, Vec3};
     use uuid::Uuid;
 
-    use super::{animate_targets, initialize_animation_players};
+    use super::{animate_targets, initialize_animation_players, update_animation_players};
     use crate::{
         clip::{AnimationChanelOutput, AnimationChannel, AnimationClip},
+        evaluation::RootBone,
         event::{AnimationEvent, AnimationSignal},
         graph::{AnimationGraph, AnimationNodeIndex},
         node::{
@@ -374,35 +393,22 @@ mod tests {
         }
 
         fn update(&self, player: &mut AnimationPlayer, delta_time: f32) {
-            self.walks.advance(player, delta_time);
+            let Some(skeleton) = self.skeletons.get(&self.skeleton) else {
+                self.walks.advance(player, delta_time);
+                return;
+            };
+            let root = RootBone {
+                index: 0,
+                rest: self.rest.clone(),
+                up: Vec3::Y,
+            };
+            self.walks
+                .advance_with(player, delta_time, skeleton, Some(root));
         }
 
-        fn root_motion_after_animating(self, player: AnimationPlayer) -> RootMotion {
-            let mut world = self.walks.into_world();
-            let root = world.spawn((
-                Transform::IDENTITY,
-                AnimationRootBone {
-                    root_motion: stale_motion(),
-                },
-            ));
-            world.spawn((
-                player,
-                SkeletonComponent {
-                    skeleton: self.skeleton,
-                    bones: vec![SceneEntityRef::Entity(root)],
-                    root: Some(SceneEntityRef::Entity(root)),
-                },
-            ));
-            world.insert_resource(self.skeletons);
-
-            let mut system = animate_targets.into_system();
-            system.initialize(&mut world);
-            system.run_and_apply((), &mut world);
-
-            world
-                .get_component_for_entity::<AnimationRootBone>(root)
-                .unwrap()
-                .root_motion
+        fn root_motion(&self, player: &mut AnimationPlayer) -> RootMotion {
+            let skeleton = self.skeletons.get(&self.skeleton).unwrap();
+            self.walks.root_motion(player, skeleton)
         }
 
         fn firing_clip(&mut self, time: f32, name: &str) -> AssetHandle<AnimationClip> {
@@ -489,6 +495,7 @@ mod tests {
                 },
             ));
             world.insert_resource(self.skeletons);
+            world.insert_resource(Time::new());
             TwoBones {
                 world,
                 owner,
@@ -546,9 +553,12 @@ mod tests {
 
     impl TwoBones {
         fn animate(&mut self) {
-            let mut system = animate_targets.into_system();
-            system.initialize(&mut self.world);
-            system.run_and_apply((), &mut self.world);
+            let mut update = update_animation_players.into_system();
+            update.initialize(&mut self.world);
+            update.run_and_apply((), &mut self.world);
+            let mut animate = animate_targets.into_system();
+            animate.initialize(&mut self.world);
+            animate.run_and_apply((), &mut self.world);
         }
 
         fn play(&mut self, graph: AssetHandle<AnimationGraph>) {
@@ -734,7 +744,7 @@ mod tests {
         player.set_vec2_param(name!("at"), Vec2::new(0.25, 0.25));
         rig.update(&mut player, 0.5);
 
-        let motion = rig.root_motion_after_animating(player);
+        let motion = rig.root_motion(&mut player);
 
         assert!(
             motion
@@ -763,7 +773,7 @@ mod tests {
         let mut player = rig.player(outer);
         rig.update(&mut player, 0.5);
 
-        let motion = rig.root_motion_after_animating(player);
+        let motion = rig.root_motion(&mut player);
 
         assert!(
             motion
@@ -779,18 +789,82 @@ mod tests {
         );
     }
 
+    struct Rooted {
+        owner: Entity,
+        root: Entity,
+    }
+
+    fn spawn_rooted(
+        world: &mut World,
+        player: AnimationPlayer,
+        skeleton: AssetHandle<Skeleton>,
+    ) -> Rooted {
+        let root = world.spawn((
+            Transform::IDENTITY,
+            AnimationRootBone {
+                root_motion: stale_motion(),
+            },
+        ));
+        let owner = world.spawn((
+            player,
+            SkeletonComponent {
+                skeleton,
+                bones: vec![SceneEntityRef::Entity(root)],
+                root: Some(SceneEntityRef::Entity(root)),
+            },
+        ));
+        Rooted { owner, root }
+    }
+
+    fn root_motion_of(world: &World, root: Entity) -> RootMotion {
+        world
+            .get_component_for_entity::<AnimationRootBone>(root)
+            .unwrap()
+            .root_motion
+    }
+
     #[test]
-    fn a_paused_player_leaves_no_root_motion_on_its_root_bone() {
+    fn a_paused_player_and_one_still_loading_its_skeleton_have_no_root_motion_and_the_loading_one_advances()
+     {
         let mut rig = Rig::new(Quat::IDENTITY).loaded_skeleton();
         let clip = rig.moving_clip(Vec3::X);
         let graph = rig.graph(AnimationGraph::from_node(AnimationClipNode::new(clip)));
-        let mut player = rig.player(graph);
-        rig.update(&mut player, 0.5);
-        player.set_paused(true);
+        let mut paused = rig.player(graph.clone());
+        rig.update(&mut paused, 0.5);
+        paused.set_paused(true);
+        let loading = rig.player(graph);
+        let unloaded = rig.server.add(one_bone_skeleton(ROOT_ID));
+        let mut world = rig.walks.into_world();
+        world.insert_resource(rig.skeletons);
+        world.insert_resource(Time::new());
+        let paused = spawn_rooted(&mut world, paused, rig.skeleton);
+        let loading = spawn_rooted(&mut world, loading, unloaded);
 
+        let mut system = update_animation_players.into_system();
+        system.initialize(&mut world);
+        for _ in 0..2 {
+            thread::sleep(Duration::from_millis(5));
+            world.get_resource_mut::<Time>().unwrap().update();
+            system.run_and_apply((), &mut world);
+        }
+
+        assert_eq!(root_motion_of(&world, paused.root), RootMotion::IDENTITY);
         assert_eq!(
-            rig.root_motion_after_animating(player),
-            RootMotion::IDENTITY
+            root_motion_of(&world, loading.root),
+            RootMotion::IDENTITY,
+            "a player whose skeleton is loading has no root motion yet"
+        );
+        let graphs = world.get_resource::<AssetStore<AnimationGraph>>().unwrap();
+        let mut clip_time = None;
+        world
+            .get_component_for_entity::<AnimationPlayer>(loading.owner)
+            .unwrap()
+            .for_each_node(graphs, |visit| {
+                clip_time = clip_time.or(visit.report.clip_time)
+            });
+        assert!(
+            clip_time.is_some_and(|time| time > 0.0),
+            "a player whose skeleton is loading still advances its clip, got {clip_time:?}"
         );
     }
 

@@ -487,7 +487,7 @@ mod tests {
     use super::{LookAtBone, LookAtEye, LookAtNode, LookAtState};
     use crate::testing::{
         Frame, app_with, assert_near, bone, captured, captured_graph, compile, input_event,
-        input_motion, insert_asset, skeleton_of, spawn_rigged, write_state,
+        insert_asset, skeleton_of, spawn_rigged, write_state,
     };
 
     const HIPS: usize = 0;
@@ -590,7 +590,6 @@ mod tests {
                     joint.rotation = *rotation;
                 }
             }
-            output.set_root_motion(input_motion());
             output.push_event(input_event());
         }
 
@@ -895,7 +894,6 @@ mod tests {
 
     fn assert_unchanged(rig: &Rig, frame: &Frame) {
         assert_eq!(frame.joints, rig.input());
-        assert_eq!(frame.root_motion, input_motion());
         assert_eq!(frame.events, [input_event()]);
     }
 
@@ -1080,14 +1078,13 @@ mod tests {
     }
 
     #[test]
-    fn root_motion_events_translations_scales_and_other_bones_pass_through() {
+    fn events_translations_scales_and_other_bones_pass_through() {
         let mut rig = Rig::new();
         rig.aim(rig.toward(HEAD, 0.4, 0.2, 0.5));
 
         let frame = rig.solve(&with_eyes());
 
         let input = rig.input();
-        assert_eq!(frame.root_motion, input_motion());
         assert_eq!(frame.events, [input_event()]);
         assert_eq!(frame.joints.len(), rig.skeleton.bone_count());
         for (output, input) in frame.joints.iter().zip(&input) {

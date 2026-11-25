@@ -16,7 +16,7 @@ use uuid::Uuid;
 use crate::{
     evaluation::AnimationGraphContext,
     graph::{AnimationGraph, AnimationGraphState},
-    pose::{AnimationFrame, EvaluatedFrame, FramePool},
+    pose::{AnimationFrame, EvaluatedFrame, FramePool, RootMotion, WeightedMotion},
 };
 
 /// The runtime state of one node in one player, erased.
@@ -56,6 +56,20 @@ pub trait AnimationNode: Reflect + Send + Sync + 'static {
         pool: &mut FramePool,
         output: &mut AnimationFrame,
     );
+
+    /// How the root moved this frame, from the node's state after `update` and its inputs' root motion; the first input's by default.
+    fn root_motion(
+        &self,
+        _state: &mut Self::State,
+        _input: &SystemInputData<'_, '_, Self::UpdateInput>,
+        _context: &AnimationGraphContext<'_>,
+        _bone_ids: &[Uuid],
+        inputs: &[WeightedMotion],
+    ) -> RootMotion {
+        inputs
+            .first()
+            .map_or(RootMotion::IDENTITY, |input| input.motion)
+    }
 
     fn reset(&self, state: &mut Self::State);
 
@@ -170,6 +184,14 @@ pub trait ErasedAnimationNode: Send + Sync {
         output: &mut AnimationFrame,
     );
 
+    fn root_motion(
+        &self,
+        state: &mut NodeState,
+        context: &AnimationGraphContext<'_>,
+        bone_ids: &[Uuid],
+        inputs: &[WeightedMotion],
+    ) -> RootMotion;
+
     fn reset(&self, state: &mut NodeState);
 
     fn is_finished(&self, state: &NodeState) -> bool;
@@ -246,6 +268,22 @@ impl<T: AnimationNode> ErasedAnimationNode for T {
                 pool,
                 output,
             );
+        }
+    }
+
+    fn root_motion(
+        &self,
+        state: &mut NodeState,
+        context: &AnimationGraphContext<'_>,
+        bone_ids: &[Uuid],
+        inputs: &[WeightedMotion],
+    ) -> RootMotion {
+        if let Some(state) = state.downcast_mut::<T::State>()
+            && let Some(input) = fetched::<T, T::UpdateInput>(context)
+        {
+            AnimationNode::root_motion(self, state, input, context, bone_ids, inputs)
+        } else {
+            RootMotion::IDENTITY
         }
     }
 

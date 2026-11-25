@@ -21,7 +21,7 @@ use crate::{
     graph::{AnimationGraph, AnimationGraphState},
     ik::{TwoBoneChain, solve_two_bone},
     node::{AnimationNode, InputSlots, ReflectAnimationNode},
-    pose::{AnimationFrame, EvaluatedFrame, FramePool, RootMotion, twist_about},
+    pose::{AnimationFrame, EvaluatedFrame, FramePool, RootMotion, WeightedMotion, twist_about},
 };
 
 /// A skeleton described for retargeting: its named bone chains, its retarget root and motion root, and the pose it is aligned in.
@@ -1166,6 +1166,22 @@ impl Running {
         }
     }
 
+    fn root_motion(
+        &mut self,
+        graphs: &AssetStore<AnimationGraph>,
+        context: &AnimationGraphContext<'_>,
+        source: &Skeleton,
+    ) -> RootMotion {
+        let inner_context = self.inner_context(context, source);
+        let motion = self
+            .inner
+            .root_motion(graphs, &inner_context, &source.bone_ids);
+        RootMotion {
+            translation: motion.translation * self.retarget.scale(),
+            rotation: motion.rotation,
+        }
+    }
+
     fn play(
         &mut self,
         graphs: &AssetStore<AnimationGraph>,
@@ -1182,23 +1198,13 @@ impl Running {
             &mut self.pool,
             &mut frame,
         ) {
-            match self
+            if let Err(error) = self
                 .retarget
                 .retarget_into(frame.joints(), output.pose_mut().joints_mut())
+                && !self.warned
             {
-                Ok(()) => {
-                    let motion = frame.root_motion();
-                    output.set_root_motion(RootMotion {
-                        translation: motion.translation * self.retarget.scale(),
-                        rotation: motion.rotation,
-                    });
-                }
-                Err(error) => {
-                    if !self.warned {
-                        warn!("RetargetNode does not retarget its inner pose: {error}");
-                        self.warned = true;
-                    }
-                }
+                warn!("RetargetNode does not retarget its inner pose: {error}");
+                self.warned = true;
             }
             for event in frame.events() {
                 output.push_event(*event);
@@ -1336,6 +1342,29 @@ impl AnimationNode for RetargetNode {
                     }
                 }
             }
+        }
+    }
+
+    fn root_motion(
+        &self,
+        state: &mut RetargetNodeState,
+        (graphs, skeletons, _, _): &(
+            Res<AssetStore<AnimationGraph>>,
+            Res<AssetStore<Skeleton>>,
+            Res<AssetStore<RetargetRig>>,
+            Res<AssetStore<AnimationClip>>,
+        ),
+        context: &AnimationGraphContext<'_>,
+        _bone_ids: &[Uuid],
+        _inputs: &[WeightedMotion],
+    ) -> RootMotion {
+        match &mut state.stage {
+            Stage::Ready(running) => skeletons
+                .get(&running.source_skeleton)
+                .map_or(RootMotion::IDENTITY, |source| {
+                    running.root_motion(graphs, context, source)
+                }),
+            Stage::Pending | Stage::Failed { .. } => RootMotion::IDENTITY,
         }
     }
 
@@ -1519,7 +1548,7 @@ mod tests {
         ik::{TwoBoneChain, solve_two_bone},
         node::{AnimationClipNode, AnimationNode, AnimationPlayMode},
         player::AnimationPlayer,
-        pose::{AnimationFrame, FiredEvent, FramePool},
+        pose::{AnimationFrame, FiredEvent, FramePool, RootMotion},
         testing::{Walks, made_live},
     };
 
@@ -3001,11 +3030,18 @@ mod tests {
 
         fn advance_by(&mut self, delta_time: f32) {
             self.walks
-                .advance_with(&mut self.player, delta_time, &self.player_skeleton);
+                .advance_with(&mut self.player, delta_time, &self.player_skeleton, None);
         }
 
         fn pose(&mut self) -> Vec<JointPose> {
             self.frame(None).joints().to_vec()
+        }
+
+        fn advance_rooted(&mut self, root: RootBone) -> RootMotion {
+            self.walks
+                .advance_with(&mut self.player, 0.1, &self.player_skeleton, Some(root));
+            self.walks
+                .root_motion(&mut self.player, &self.player_skeleton)
         }
 
         fn frame(&mut self, root: Option<RootBone>) -> AnimationFrame {
@@ -3165,15 +3201,15 @@ mod tests {
             up: Vec3::Y,
         };
 
-        played.advance();
+        let passed = played.advance_rooted(outer_root.clone());
         let frame = played.frame(Some(outer_root));
 
         assert_poses(frame.joints(), &target.rest_pose);
         assert_vec3(
-            frame.root_motion().translation,
+            passed.translation,
             Vec3::new(0.2, 0.0, 0.4) * source_to_target().scale(),
         );
-        assert_quat(frame.root_motion().rotation, Quat::IDENTITY);
+        assert_quat(passed.rotation, Quat::IDENTITY);
         assert_eq!(
             frame.events(),
             [FiredEvent {

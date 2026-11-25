@@ -260,9 +260,7 @@ mod tests {
         blackboard::AnimationBlackboard,
         mask::{BoneMask, BoneMaskBranch},
         node::{ErasedAnimationNode, NodeState, model_space::parent},
-        pose::{
-            AnimationFrame, EvaluatedFrame, FiredEvent, FramePool, JointPose, Pose, RootMotion,
-        },
+        pose::{AnimationFrame, EvaluatedFrame, FiredEvent, FramePool, JointPose, Pose},
         testing::Walks,
     };
 
@@ -337,20 +335,6 @@ mod tests {
             .collect()
     }
 
-    fn base_motion() -> RootMotion {
-        RootMotion {
-            translation: Vec3::new(0.0, 0.0, 0.2),
-            rotation: Quat::from_rotation_y(0.1),
-        }
-    }
-
-    fn overlay_motion() -> RootMotion {
-        RootMotion {
-            translation: Vec3::new(0.4, 0.0, 0.0),
-            rotation: Quat::from_rotation_y(-0.3),
-        }
-    }
-
     fn base_event() -> FiredEvent {
         FiredEvent {
             clip: AssetId::from_path("layer_base"),
@@ -371,19 +355,18 @@ mod tests {
         }
     }
 
-    fn frame(joints: Vec<JointPose>, motion: RootMotion, event: FiredEvent) -> AnimationFrame {
+    fn frame(joints: Vec<JointPose>, event: FiredEvent) -> AnimationFrame {
         let mut frame = AnimationFrame::new(Pose::from_joints(joints));
-        frame.set_root_motion(motion);
         frame.push_event(event);
         frame
     }
 
     fn base() -> AnimationFrame {
-        frame(base_joints(), base_motion(), base_event())
+        frame(base_joints(), base_event())
     }
 
     fn overlay() -> AnimationFrame {
-        frame(overlay_joints(), overlay_motion(), overlay_event())
+        frame(overlay_joints(), overlay_event())
     }
 
     fn weighted(frame: AnimationFrame, weight: f32) -> EvaluatedFrame {
@@ -488,7 +471,7 @@ mod tests {
     }
 
     #[test]
-    fn the_masked_arm_moves_by_the_layer_weight_and_the_rest_and_the_root_motion_keep_the_base() {
+    fn the_masked_arm_moves_by_the_layer_weight_and_the_rest_keeps_the_base() {
         let mut rig = Rig::new();
         let node = local(rig.left_arm()).with_weight(0.5);
 
@@ -511,7 +494,6 @@ mod tests {
                 }
             ]
         );
-        assert_eq!(frame.root_motion(), base_motion());
     }
 
     #[test]
@@ -525,8 +507,8 @@ mod tests {
         overlay_joints[5].rotation = Quat::from_rotation_z(0.3);
         overlay_joints[6].rotation = Quat::from_rotation_y(0.2);
         overlay_joints[7].rotation = Quat::from_rotation_x(0.7);
-        let base = frame(base_joints.clone(), base_motion(), base_event());
-        let overlay = frame(overlay_joints, overlay_motion(), overlay_event());
+        let base = frame(base_joints.clone(), base_event());
+        let overlay = frame(overlay_joints, overlay_event());
         let overlay_models: Vec<Quat> = LEFT_ARM
             .iter()
             .map(|bone| rig.model_rotation(&overlay, *bone))
