@@ -1,7 +1,8 @@
 use std::any::{Any, TypeId};
 
 use concerto_ecs::{
-    Entity, Query,
+    Entity, Query, Res,
+    reflect::AppTypeRegistry,
     signal::{On, Signal},
 };
 use concerto_reflect::{
@@ -79,6 +80,29 @@ pub struct SendAnimationMessage<M: AnimationMessage> {
 }
 
 impl<M: AnimationMessage> Signal for SendAnimationMessage<M> {}
+
+/// Queues the message of the registered type `type_path` built from the stored `value` on the `AnimationPlayer` of `character`; nothing happens without a player or when the type is not registered with `register_animation_message`. `decode_animation_message` reads the value.
+pub struct SendReflectedMessage {
+    pub character: Entity,
+    pub type_path: String,
+    pub value: ReflectedValue,
+}
+
+impl Signal for SendReflectedMessage {}
+
+pub(crate) fn queue_reflected_message(
+    on: On<SendReflectedMessage>,
+    types: Res<AppTypeRegistry>,
+    mut players: Query<&mut AnimationPlayer>,
+) {
+    let sent = on.signal();
+    let types = types.read();
+    if let Some(mut player) = players.get_entity_mut(sent.character)
+        && let Some(message) = build_animation_message(&types, &sent.type_path, &sent.value)
+    {
+        player.send_reflected(message, &types);
+    }
+}
 
 pub(crate) fn queue_message<M: AnimationMessage>(
     on: On<SendAnimationMessage<M>>,

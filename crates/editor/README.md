@@ -439,7 +439,7 @@ tab's preview is the value `Preview`, whose `scene`, `skeleton`, `playing`,
 `speed` and `from`, the node to preview from, `set_property` writes, and its
 parameters are the value `Parameters`, one field per parameter; neither is
 saved. `send_animation_message` sends a typed message, `type` and `value`, to
-the characters the preview plays and answers with the states the graphs are
+the character `entity` of the playing game, or without it to the characters the preview plays and answers with the states the graphs are
 in and what each slot plays; a type that is not a registered animation
 message is refused with the registered ones. An
 edit the tab refuses, such as a connection that would close a cycle or opening

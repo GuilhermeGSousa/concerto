@@ -1,22 +1,25 @@
 use std::time::Duration;
 
 use concerto_animation::{
-    message::{animation_message_types, decode_animation_message},
+    graph::AnimationGraph,
+    message::{SendReflectedMessage, animation_message_types, decode_animation_message},
     node::{StateMachineReport, state_machine::AnimationStateMachine},
+    player::AnimationPlayer,
 };
 use concerto_app::{App, schedule_groups::LateUpdate};
 use concerto_ecs::{
-    Component, Entity, Query, Res, command::CommandQueue, events::event_reader::EventReader,
+    Component, Entity, Query, Res, With, command::CommandQueue, events::event_reader::EventReader,
+    reflect::AppTypeRegistry,
 };
 use concerto_editor::{
     asset_editor::{ActiveEditor, EditorDocument},
-    hosted::{Hosted, HostedApp},
+    hosted::{EditTarget, EditWorld, EditWorldSignals, Hosted, HostedApp, PlayState},
     inspector::WriteValue,
     preview::PreviewSignals,
     project::ProjectState,
     tools::edits::PropertyCommitted,
 };
-use concerto_foundation::assets::{AssetId, registry::AssetRegistry};
+use concerto_foundation::assets::{AssetId, asset_store::AssetStore, registry::AssetRegistry};
 use concerto_mcp::{
     AppMcpExt, McpTool, Needs, PendingCall, Reply, ToolCalls, ToolError, ToolRegistry,
 };
@@ -134,9 +137,11 @@ pub struct GraphSetParam {
     pub r#type: Option<String>,
 }
 
-/// Sends a message to the characters the front animation graph tab's preview plays, as the game's code does with `SendAnimationMessage`, and answers after the next frame with the states the graphs are in and what each slot plays. A type that is not registered with `register_animation_message` is refused with the registered ones. Never saved.
+/// Sends a message to a character of the playing game, or without `entity` to the characters the front animation graph tab's preview plays, as the game's code does with `SendAnimationMessage`, and answers after the next frame with the states the graphs are in and what each slot plays. A type that is not registered with `register_animation_message` is refused with the registered ones. Never saved.
 #[derive(Deserialize, JsonSchema)]
 pub struct SendAnimationMessage {
+    /// The character of the playing game to send to, by id as scene_tree shows it, such as 42v3; it carries the `AnimationPlayer`. Without it the message goes to the characters the front graph tab's preview plays.
+    pub entity: Option<String>,
     /// The message: `type` is its full type path as the refusal lists them, `value` its fields as the inspector shows them, such as { "strength": 1.0 }.
     pub message: MessageArguments,
 }
@@ -147,6 +152,13 @@ pub struct MessageArguments {
     pub r#type: String,
     #[serde(default)]
     pub value: serde_json::Value,
+}
+
+#[derive(Component)]
+struct SendingToCharacter {
+    character: Entity,
+    type_path: String,
+    runs: usize,
 }
 
 #[derive(Component)]
@@ -222,7 +234,9 @@ pub(super) fn build(app: &mut App) {
     )
     .add_system(LateUpdate, answer_graph_edits)
     .add_system(LateUpdate, answer_param_sets)
-    .add_system(LateUpdate, answer_message_sends);
+    .add_system(LateUpdate, answer_message_sends)
+    .add_system(LateUpdate, send_to_character)
+    .add_system(LateUpdate, answer_character_sends);
 }
 
 fn refused(reason: impl Into<String>) -> ToolError {
@@ -862,14 +876,14 @@ fn live_block(state: &GraphDocument, live: LiveView) -> Option<String> {
     (!lines.is_empty()).then(|| format!("live:\n{}", lines.join("\n")))
 }
 
-fn message_answer(type_path: &str, nodes: &[PreviewNode]) -> String {
+fn message_answer(type_path: &str, target: &str, nodes: &[PreviewNode]) -> String {
     let states: Vec<String> = nodes
         .iter()
         .filter_map(|node| node.report.state_machine?.current)
         .map(|state| state.to_string())
         .collect();
     let mut lines = vec![format!(
-        "Sent {} to the preview. States: {}.",
+        "Sent {} to {target}. States: {}.",
         short_type(type_path),
         if states.is_empty() {
             "none".to_owned()
@@ -903,6 +917,9 @@ fn send_animation_message(
     mut cmd: CommandQueue,
 ) {
     for (arguments, reply) in calls.read() {
+        if arguments.entity.is_some() {
+            continue;
+        }
         let front = active
             .0
             .and_then(|document| Some((document, documents.get_entity(document)?)));
@@ -954,6 +971,113 @@ fn send_animation_message(
     }
 }
 
+type Characters = (
+    Query<'static, 'static, &'static AnimationPlayer>,
+    Option<Res<'static, AppTypeRegistry>>,
+);
+
+fn send_to_character(
+    mut calls: ToolCalls<SendAnimationMessage>,
+    targets: Query<&PlayState, With<EditTarget>>,
+    scene: EditWorld<Characters>,
+    mut signals: EditWorldSignals,
+    mut cmd: CommandQueue,
+) {
+    let (players, types) = &*scene;
+    for (arguments, reply) in calls.read() {
+        let Some(id) = arguments.entity else {
+            continue;
+        };
+        let Some(character) = Entity::parse_id(&id) else {
+            reply.err(ToolError::new(
+                "unknown_entity",
+                format!("`{id}` is not an entity id; ids look like 42v3, as scene_tree shows them while the game plays."),
+            ));
+            continue;
+        };
+        if !targets.iter().any(|state| *state == PlayState::Playing) {
+            reply.err(ToolError::new(
+                "not_playing",
+                "The game is not playing; start it with play, or leave out entity to send to the graph tab's preview.",
+            ));
+            continue;
+        }
+        if players.get_entity(character).is_none() {
+            reply.err(ToolError::new(
+                "no_player",
+                format!("{id} has no AnimationPlayer, or no entity {id} is in the playing game; send to the entity that carries the AnimationPlayer, which scene_tree shows."),
+            ));
+            continue;
+        }
+        let Some(types) = types else {
+            reply.err(refused("The playing game has no type registry."));
+            continue;
+        };
+        let types = types.read();
+        let message = arguments.message;
+        let value = match decode_animation_message(&types, &message.r#type, &message.value) {
+            Ok(value) => value,
+            Err(reason) => {
+                reply.err(refused(format!(
+                    "{reason}; {}.",
+                    registered_messages(&types)
+                )));
+                continue;
+            }
+        };
+        signals.trigger(SendReflectedMessage {
+            character,
+            type_path: message.r#type.clone(),
+            value,
+        });
+        cmd.spawn((
+            PendingCall::new(reply, "the game to run a frame after the message")
+                .timeout(MESSAGE_PATIENCE),
+            SendingToCharacter {
+                character,
+                type_path: message.r#type,
+                runs: 0,
+            },
+        ));
+    }
+}
+
+fn answer_character_sends(
+    mut waiting: Query<(Entity, &PendingCall, &mut SendingToCharacter)>,
+    scene: EditWorld<(
+        Query<'static, 'static, &'static AnimationPlayer>,
+        Option<Res<'static, AssetStore<AnimationGraph>>>,
+    )>,
+    mut cmd: CommandQueue,
+) {
+    let (players, graphs) = &*scene;
+    for (call, pending, mut sending) in waiting.iter_mut() {
+        let (Some(player), Some(graphs)) = (players.get_entity(sending.character), graphs) else {
+            pending.reply.err(refused(
+                "The character left the game before the message was answered; call scene_tree for current ids.",
+            ));
+            cmd.despawn(call);
+            continue;
+        };
+        sending.runs += 1;
+        if sending.runs < 2 {
+            continue;
+        }
+        let mut nodes = Vec::new();
+        player.for_each_node(graphs, |visit| {
+            nodes.push(PreviewNode {
+                path: visit.path.to_vec(),
+                weight: visit.weight,
+                report: visit.report.clone(),
+            });
+        });
+        pending
+            .reply
+            .ok(message_answer(&sending.type_path, "the character", &nodes));
+        cmd.despawn(call);
+    }
+}
+
 fn answer_message_sends(
     mut reported: EventReader<Hosted<GraphPreviewState>>,
     mut waiting: Query<(Entity, &mut PendingCall, &mut SendingMessage)>,
@@ -967,9 +1091,11 @@ fn answer_message_sends(
             if sending.reports < 2 {
                 continue;
             }
-            pending
-                .reply
-                .ok(message_answer(&sending.type_path, &played.event.nodes));
+            pending.reply.ok(message_answer(
+                &sending.type_path,
+                "the preview",
+                &played.event.nodes,
+            ));
             cmd.despawn(call);
             break;
         }

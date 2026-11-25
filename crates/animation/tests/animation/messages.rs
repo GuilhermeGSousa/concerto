@@ -4,7 +4,7 @@ use concerto_animation::{
     clip::AnimationClip,
     evaluation::{AnimationGraphContext, DriveContext},
     graph::AnimationGraph,
-    message::{AnimationMessage, MessageType, SendAnimationMessage},
+    message::{AnimationMessage, MessageType, SendAnimationMessage, SendReflectedMessage},
     node::{
         AnimationClipNode, AnimationNode, InputSlots, NodeOutcome, PlayInSlot,
         ReflectAnimationNode, SlotEntry, SlotNode,
@@ -32,7 +32,7 @@ use concerto_foundation::{
 };
 use concerto_mesh::skeleton::{JointPose, Skeleton, SkeletonComponent};
 use concerto_name::{Name, name};
-use concerto_reflect::{Reflect, ReflectDefault, apply_value, json_to_value, to_json};
+use concerto_reflect::{Reflect, ReflectDefault, apply_value, json_to_value, to_json, to_value};
 use glam::Mat4;
 use uuid::Uuid;
 
@@ -41,6 +41,7 @@ use crate::attributes::{Amount, drive_players};
 const LONGEST_FRAME: Duration = Duration::from_millis(250);
 
 #[derive(Clone, Default, Reflect)]
+#[reflect(Default)]
 struct Poke {
     strength: f32,
 }
@@ -604,5 +605,31 @@ fn messages_move_the_graph_and_nodes_answer_with_outcomes_and_signals() {
         stage.slot_amount(),
         1.0,
         "an entry with no fade in is at full weight at once"
+    );
+
+    stage.advance(0.3);
+    let slotted = stage.slotted;
+    let heard = stage.heard_by(slotted).len();
+    let value = to_value(&Poke { strength: 1.0 }).unwrap();
+    stage.world().trigger(SendReflectedMessage {
+        character: slotted,
+        type_path: "nope".to_owned(),
+        value: value.clone(),
+    });
+    stage.advance(0.1);
+    assert_eq!(
+        stage.heard_by(slotted).len(),
+        heard,
+        "a type that is not registered is dropped"
+    );
+    stage.world().trigger(SendReflectedMessage {
+        character: slotted,
+        type_path: std::any::type_name::<Poke>().to_owned(),
+        value,
+    });
+    stage.advance(0.1);
+    assert!(
+        stage.heard_by(slotted).len() > heard,
+        "a reflected message of a registered type reaches the player"
     );
 }
