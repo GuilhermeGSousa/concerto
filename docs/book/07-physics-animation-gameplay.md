@@ -1153,13 +1153,15 @@ A graph is a tree of nodes under a result node:
   space. A `TwoBoneChain` may also carry a `hinge`, a chain-space axis the
   lower bone turns about, positively by the right-hand rule, relative to the
   upper bone as the mid joint bends. It is `unit(upper × lower)` of a bent
-  chain. With a hinge, a chain that comes in straight, or bent backward or
-  sideways, bends about the hinge instead of an arbitrary plane. A chain bent
-  more than 5° about its hinge solves as without one, and a pole still decides
-  the final side. In a graph, the node's `Hinge` is `Off`, `Rest`, which takes
+  chain. With no hinge (`None`) the solve is as before. With a hinge, a chain
+  that comes in straight, or bent backward or sideways, bends about the hinge
+  instead of an arbitrary plane. A chain bent more than 5° keeps its own bend
+  plane where it agrees with the hinge, and turns toward the hinge where they
+  disagree, so a hinged knee never folds backward. A pole still decides the
+  final side. In a graph, the node's `Hinge` is `Off`, `Rest`, which takes
   the hinge from the skeleton's rest pose when that pose bends the joint at
   least 5°, or `Axis { axis }`, which names it in the mid bone's own frame.
-  The solve also lands the tip exactly on its goal for any bend plane.
+  The solve also lands the tip on a reachable goal for any bend plane.
 - **Aim offset** (`AimOffsetNode`) lays captured aim poses over its first
   input, chosen by where a target is. Each `AimPoint` is an additive clip and
   the yaw and pitch, in radians, it aims at. The target is a world-space
@@ -1308,7 +1310,7 @@ A graph is a tree of nodes under a result node:
   within `max_foot_angle`, and lowers the pelvis by the lowest foot, at most
   `max_pelvis_drop`. Each leg is then bent to its foot with the two-bone
   solve, with `softness` and `hinge` as in two-bone IK, the hinge `Off` by
-  default and set with `with_hinge`; the toe keeps its local rotation.
+  default and set with `FootPlacementLeg::with_hinge`; the toe keeps its local rotation.
   The pelvis, the foot heights and the foot tilts ease toward their targets
   with `pelvis_halflife`, `foot_halflife` and `rotation_halflife`, and snap
   on the first evaluate. `weight`, times the float under `weight_param`,
@@ -1344,7 +1346,7 @@ A graph is a tree of nodes under a result node:
   to the animated one over `release_halflife`; after the radius releases a
   lock, the foot waits for its next plant. Each leg is bent to its held foot
   with the two-bone solve, with `softness` and `hinge` as in two-bone IK, the
-  hinge `Off` by default and set with `with_hinge`, and the foot
+  hinge `Off` by default and set with `FootLockLeg::with_hinge`, and the foot
   keeps its input rotation. `weight`, times the float under `weight_param`,
   eases in and out with `weight_halflife`, and a weight of 0 plants nothing.
   Wire it before `FootPlacementNode`, which then adds the ground's height.
