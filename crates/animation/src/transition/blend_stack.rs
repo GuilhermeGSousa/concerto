@@ -2,8 +2,8 @@ use concerto_foundation::assets::asset_store::AssetStore;
 use uuid::Uuid;
 
 use crate::{
-    evaluation::AnimationGraphContext,
-    graph::{AnimationGraph, AnimationGraphStates, GraphId},
+    evaluation::{AnimationGraphContext, DriveContext},
+    graph::{AnimationGraph, AnimationGraphState, AnimationGraphStates, GraphId},
     pose::{AnimationFrame, FramePool, RootMotion},
     transition::{AnimationTransitionBlender, BlendInFlight},
 };
@@ -37,6 +37,34 @@ impl BlendStack {
         }
         let last = self.entries.len().saturating_sub(1);
         self.entries.drain(..last);
+    }
+
+    fn mix(
+        &self,
+        graph_states: &mut AnimationGraphStates,
+        pool: &mut FramePool,
+        output: &mut AnimationFrame,
+        mut play: impl FnMut(&mut AnimationGraphState, &mut FramePool, &mut AnimationFrame),
+        blend: impl Fn(&mut AnimationFrame, &AnimationFrame, f32),
+    ) {
+        let Some((base, fading_in)) = self.entries.split_first() else {
+            return;
+        };
+
+        if let Some(graph_state) = graph_states.get_mut(base.graph_id) {
+            play(graph_state, pool, output);
+        }
+
+        for entry in fading_in {
+            let mut layer = pool.acquire();
+
+            if let Some(graph_state) = graph_states.get_mut(entry.graph_id) {
+                play(graph_state, pool, &mut layer);
+            }
+
+            blend(output, &layer, entry.weight);
+            pool.release(layer);
+        }
     }
 }
 
@@ -75,26 +103,37 @@ impl AnimationTransitionBlender for BlendStack {
         pool: &mut FramePool,
         output: &mut AnimationFrame,
     ) {
-        let Some((base, fading_in)) = self.entries.split_first() else {
-            return;
-        };
+        self.mix(
+            graph_states,
+            pool,
+            output,
+            |graph_state, pool, frame| {
+                graph_state.evaluate(graphs, context, bone_ids, pool, frame);
+            },
+            |output, layer, weight| output.blend(layer, weight),
+        );
+    }
 
-        // The settled base pose goes straight into the output...
-        if let Some(graph_state) = graph_states.get_mut(base.graph_id) {
-            graph_state.evaluate(graphs, context, bone_ids, pool, output);
-        }
-
-        // ...then each newer graph is cross-faded on top by its current weight.
-        for entry in fading_in {
-            let mut layer = pool.acquire();
-
-            if let Some(graph_state) = graph_states.get_mut(entry.graph_id) {
-                graph_state.evaluate(graphs, context, bone_ids, pool, &mut layer);
-            }
-
-            output.blend(&layer, entry.weight);
-            pool.release(layer);
-        }
+    fn drive(
+        &self,
+        bone_ids: &[Uuid],
+        graph_states: &mut AnimationGraphStates,
+        graphs: &AssetStore<AnimationGraph>,
+        context: &DriveContext<'_>,
+        pool: &mut FramePool,
+        output: &mut AnimationFrame,
+    ) {
+        self.mix(
+            graph_states,
+            pool,
+            output,
+            |graph_state, pool, frame| {
+                graph_state.drive(graphs, context, bone_ids, pool, frame);
+            },
+            |output, layer, weight| {
+                output.attributes_mut().blend(layer.attributes(), weight);
+            },
+        );
     }
 
     fn root_motion(

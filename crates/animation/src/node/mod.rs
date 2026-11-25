@@ -7,7 +7,7 @@ use uuid::Uuid;
 use crate::{
     blackboard::AnimationBlackboard,
     clip::{AnimationChannel, AnimationClip, KeyCursor},
-    evaluation::{AnimationGraphContext, RootBone},
+    evaluation::{AnimationGraphContext, DriveContext, RootBone},
     param::Param,
     pose::{
         AnimationFrame, EvaluatedFrame, FiredEvent, FramePool, JointPose, RootMotion,
@@ -27,9 +27,9 @@ pub mod two_bone_ik;
 pub use additive::{AdditiveNode, AdditiveNodeState};
 pub use aim_offset::{AimOffsetNode, AimOffsetState, AimPoint};
 pub use definition::{
-    AnimationNode, CreateNodeInputs, ErasedAnimationNode, EvaluateNodeInputs, InputSlots,
-    NodeOutcome, NodeReport, NodeState, PlaceholderNode, ReflectAnimationNode, StateMachineReport,
-    TransitionReport, UpdateNodeInputs, register_node_inputs,
+    AnimationNode, CreateNodeInputs, DriveNodeInputs, ErasedAnimationNode, EvaluateNodeInputs,
+    InputSlots, NodeOutcome, NodeReport, NodeState, PlaceholderNode, ReflectAnimationNode,
+    StateMachineReport, TransitionReport, UpdateNodeInputs, register_node_inputs,
 };
 pub use layer::{LayerNode, LayerSpace};
 pub use two_bone_ik::{IkGoal, IkTarget, TipRotation, TwoBoneIkNode, TwoBoneIkState};
@@ -92,6 +92,7 @@ impl AnimationNode for ResultNode {
     type CreateInput = ();
     type UpdateInput = ();
     type EvaluateInput = ();
+    type DriveInput = ();
 
     fn input_slots(&self) -> InputSlots {
         InputSlots::Fixed(vec![name!("pose")])
@@ -122,6 +123,7 @@ impl AnimationNode for BlendNode {
     type CreateInput = ();
     type UpdateInput = ();
     type EvaluateInput = ();
+    type DriveInput = ();
 
     fn input_slots(&self) -> InputSlots {
         InputSlots::Variable
@@ -150,6 +152,29 @@ impl AnimationNode for BlendNode {
         for input in weighted {
             total_weight += input.weight;
             output.blend(&input.frame, input.weight / total_weight);
+        }
+    }
+
+    fn drive(
+        &self,
+        _: &mut (),
+        _: &(),
+        _: &DriveContext<'_>,
+        _: &[Uuid],
+        inputs: &[EvaluatedFrame],
+        _: &mut FramePool,
+        output: &mut AnimationFrame,
+    ) {
+        let mut weighted = inputs.iter().filter(|input| input.weight > 0.0);
+        let Some(first) = weighted.next() else {
+            return;
+        };
+        let attributes = output.attributes_mut();
+        attributes.copy_from(first.frame.attributes());
+        let mut total_weight = first.weight;
+        for input in weighted {
+            total_weight += input.weight;
+            attributes.blend(input.frame.attributes(), input.weight / total_weight);
         }
     }
 
@@ -338,6 +363,7 @@ impl AnimationNode for AnimationClipNode {
     type CreateInput = ();
     type UpdateInput = Res<'static, AssetStore<AnimationClip>>;
     type EvaluateInput = Res<'static, AssetStore<AnimationClip>>;
+    type DriveInput = ();
 
     fn input_slots(&self) -> InputSlots {
         InputSlots::None

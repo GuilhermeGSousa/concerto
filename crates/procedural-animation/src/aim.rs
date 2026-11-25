@@ -415,6 +415,7 @@ impl AnimationNode for AimNode {
     type CreateInput = ();
     type UpdateInput = ();
     type EvaluateInput = ();
+    type DriveInput = ();
 
     fn input_slots(&self) -> InputSlots {
         InputSlots::Fixed(vec![name!("pose")])
@@ -614,6 +615,7 @@ mod tests {
         type CreateInput = ();
         type UpdateInput = ();
         type EvaluateInput = ();
+        type DriveInput = ();
 
         fn input_slots(&self) -> InputSlots {
             InputSlots::None

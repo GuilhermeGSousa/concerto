@@ -10,7 +10,7 @@ use crate::transition::{
     inertialization_blender::InertializationBlender,
 };
 use crate::{
-    evaluation::AnimationGraphContext,
+    evaluation::{AnimationGraphContext, DriveContext},
     node::{
         AnimationNode, InputSlots, NodeOutcome, NodeReport, ReflectAnimationNode,
         StateMachineReport, TransitionReport,
@@ -498,6 +498,7 @@ impl AnimationNode for AnimationStateMachine {
     type CreateInput = Res<'static, AssetStore<AnimationGraph>>;
     type UpdateInput = Res<'static, AssetStore<AnimationGraph>>;
     type EvaluateInput = Res<'static, AssetStore<AnimationGraph>>;
+    type DriveInput = Res<'static, AssetStore<AnimationGraph>>;
 
     fn input_slots(&self) -> InputSlots {
         InputSlots::None
@@ -579,6 +580,26 @@ impl AnimationNode for AnimationStateMachine {
         output: &mut AnimationFrame,
     ) {
         state.blender.sample(
+            bone_ids,
+            &mut state.state_graphs,
+            graphs,
+            context,
+            pool,
+            output,
+        );
+    }
+
+    fn drive(
+        &self,
+        state: &mut AnimationStateMachineState,
+        graphs: &Res<AssetStore<AnimationGraph>>,
+        context: &DriveContext<'_>,
+        bone_ids: &[Uuid],
+        _inputs: &[EvaluatedFrame],
+        pool: &mut FramePool,
+        output: &mut AnimationFrame,
+    ) {
+        state.blender.drive(
             bone_ids,
             &mut state.state_graphs,
             graphs,
@@ -842,6 +863,7 @@ mod tests {
         type CreateInput = ();
         type UpdateInput = ();
         type EvaluateInput = ();
+        type DriveInput = ();
 
         fn input_slots(&self) -> InputSlots {
             InputSlots::None

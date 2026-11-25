@@ -1,28 +1,31 @@
 use std::{thread, time::Duration};
 
 use concerto_animation::{
-    attribute::PoseAttribute,
+    attribute::{PoseAttribute, PoseAttributes},
     clip::{AnimationChanelOutput, AnimationChannel, AnimationClip},
-    evaluation::AnimationGraphContext,
+    evaluation::{AnimationGraphContext, DriveContext},
     graph::{AnimationGraph, AnimationNodeIndex},
     mask::{BoneMask, BoneMaskBranch},
     node::{
-        AdditiveNode, AnimationClipNode, AnimationNode, BlendNode, InputSlots, LayerNode,
-        ReflectAnimationNode,
+        AdditiveNode, AnimationClipNode, AnimationNode, BlendNode, DriveNodeInputs, InputSlots,
+        LayerNode, ReflectAnimationNode,
         state_machine::{AnimationFSMTrigger, AnimationStateMachine},
     },
     player::{AnimationHandleComponent, AnimationPlayer},
     plugin::{AnimationAppExt, AnimationPlugin},
     pose::{AnimationFrame, EvaluatedFrame, FramePool},
-    retarget::{RetargetChain, RetargetNode, RetargetRig},
     transition::TransitionBlender,
 };
 use concerto_app::{App, plugins::AssetManagerPlugin, schedule_groups::LateUpdate};
 use concerto_ecs::{
-    Entity,
+    Entity, IntoSystem, System,
     component::scene::SceneEntityRef,
+    query::Query,
     reflect::AppTypeRegistry,
-    system::{executor::single_thread::SingleThreadedExecutor, schedule::Schedules},
+    resource::Res,
+    system::{
+        executor::single_thread::SingleThreadedExecutor, input::InputSet, schedule::Schedules,
+    },
     world::World,
 };
 use concerto_foundation::{
@@ -39,6 +42,7 @@ use uuid::Uuid;
 const BONES: usize = 3;
 const ALL_BONES: [usize; BONES] = [0, 1, 2];
 const LONGEST_FRAME: Duration = Duration::from_millis(250);
+const PHYSICS_STEP: f32 = 1.0 / 60.0;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Amount(f32);
@@ -60,6 +64,7 @@ impl PoseAttribute for Amount {
 #[reflect(AnimationNode)]
 struct SetAmount {
     value: f32,
+    rate: f32,
     bones: Vec<usize>,
 }
 
@@ -67,28 +72,47 @@ impl SetAmount {
     fn on(value: f32, bones: &[usize]) -> Self {
         Self {
             value,
+            rate: 0.0,
             bones: bones.to_vec(),
+        }
+    }
+
+    fn rising(mut self, rate: f32) -> Self {
+        self.rate = rate;
+        self
+    }
+
+    fn write(&self, elapsed: f32, output: &mut AnimationFrame) {
+        let bone_count = output.len();
+        let amounts = output.attributes_mut().channel_mut::<Amount>(bone_count);
+        for bone in &self.bones {
+            amounts[*bone] = Amount(self.value + self.rate * elapsed);
         }
     }
 }
 
 impl AnimationNode for SetAmount {
-    type State = ();
+    type State = f32;
     type CreateInput = ();
     type UpdateInput = ();
     type EvaluateInput = ();
+    type DriveInput = ();
 
     fn input_slots(&self) -> InputSlots {
         InputSlots::Fixed(vec![name!("pose")])
     }
 
-    fn create_state(&self, _: &(), _: &AnimationGraphContext<'_>) {}
+    fn create_state(&self, _: &(), _: &AnimationGraphContext<'_>) -> f32 {
+        0.0
+    }
 
-    fn update(&self, _: &mut (), _: f32, _: &(), _: &AnimationGraphContext<'_>) {}
+    fn update(&self, elapsed: &mut f32, delta_time: f32, _: &(), _: &AnimationGraphContext<'_>) {
+        *elapsed += delta_time;
+    }
 
     fn evaluate(
         &self,
-        _: &mut (),
+        elapsed: &mut f32,
         _: &(),
         _: &AnimationGraphContext<'_>,
         _: &[Uuid],
@@ -99,14 +123,38 @@ impl AnimationNode for SetAmount {
         if let Some(input) = evaluated_inputs.first() {
             output.copy_from(&input.frame);
         }
-        let bone_count = output.len();
-        let amounts = output.attributes_mut().channel_mut::<Amount>(bone_count);
-        for bone in &self.bones {
-            amounts[*bone] = Amount(self.value);
-        }
+        self.write(*elapsed, output);
     }
 
-    fn reset(&self, _: &mut ()) {}
+    fn drive(
+        &self,
+        elapsed: &mut f32,
+        _: &(),
+        _: &DriveContext<'_>,
+        _: &[Uuid],
+        inputs: &[EvaluatedFrame],
+        _: &mut FramePool,
+        output: &mut AnimationFrame,
+    ) {
+        if let Some(input) = inputs.first() {
+            output.attributes_mut().copy_from(input.frame.attributes());
+        }
+        self.write(*elapsed, output);
+    }
+
+    fn reset(&self, elapsed: &mut f32) {
+        *elapsed = 0.0;
+    }
+}
+
+fn drive_players(
+    mut players: Query<&mut AnimationPlayer>,
+    graphs: Res<AssetStore<AnimationGraph>>,
+    inputs: InputSet<DriveNodeInputs>,
+) {
+    for mut player in players.iter_mut() {
+        player.drive(&graphs, &inputs, PHYSICS_STEP);
+    }
 }
 
 fn standing(height: f32) -> JointPose {
@@ -267,11 +315,27 @@ impl Stage {
             .get_component_for_entity::<AnimationPlayer>(player)
             .unwrap()
             .attributes();
-        ALL_BONES
-            .iter()
-            .map(|bone| attributes.get::<Amount>(*bone).0)
-            .collect()
+        per_bone(attributes)
     }
+
+    fn driven(&mut self, player: Entity) -> Vec<f32> {
+        let world = self.world();
+        let mut system = drive_players.into_system();
+        system.initialize(world);
+        system.run_and_apply((), world);
+        let attributes = world
+            .get_component_for_entity::<AnimationPlayer>(player)
+            .unwrap()
+            .drive_attributes();
+        per_bone(attributes)
+    }
+}
+
+fn per_bone(attributes: &PoseAttributes) -> Vec<f32> {
+    ALL_BONES
+        .iter()
+        .map(|bone| attributes.get::<Amount>(*bone).0)
+        .collect()
 }
 
 fn single(node: impl AnimationNode) -> AnimationGraph {
@@ -320,14 +384,12 @@ fn attributes_travel_with_the_pose_through_every_blend() {
         .add_input(SetAmount::on(1.0, &ALL_BONES));
     let additive_player = stage.player(additive);
 
-    let rig = RetargetRig::new()
-        .with_skeleton(stage.skeleton.clone())
-        .with_root("root")
-        .with_chain(RetargetChain::new("spine", "spine", "arm"));
-    let source = stage.insert(rig.clone());
-    let target = stage.insert(rig);
-    let inner = stage.graph(single(SetAmount::on(1.0, &ALL_BONES)));
-    let retarget_player = stage.player(single(RetargetNode::new(inner, source, target)));
+    let rising = stage.machine(
+        single(SetAmount::on(0.0, &ALL_BONES)),
+        single(SetAmount::on(0.0, &ALL_BONES).rising(1.0)),
+        TransitionBlender::Inertialization,
+        0.2,
+    );
 
     stage.start();
     stage.set_weight(blend_player, set, 0.25);
@@ -337,10 +399,12 @@ fn attributes_travel_with_the_pose_through_every_blend() {
     assert_eq!(stage.amounts(blend_player), [0.0, 0.25, 0.0]);
     assert_eq!(stage.amounts(layer_player), [0.0, 0.0, 0.5]);
     assert_eq!(stage.amounts(additive_player), [1.0; BONES]);
-    assert_eq!(stage.amounts(retarget_player), [0.0; BONES]);
+    assert_eq!(stage.driven(blend_player), [0.0, 0.25, 0.0]);
+    assert_eq!(stage.driven(layer_player), [0.0, 0.0, 0.5]);
 
     stage.set_param(cross_fade, name!("go"), true);
     stage.set_param(inertialized, name!("go"), true);
+    stage.set_param(rising, name!("go"), true);
     stage.advance(0.0);
     assert_eq!(stage.amounts(inertialized), [1.0; BONES]);
 
@@ -350,6 +414,7 @@ fn attributes_travel_with_the_pose_through_every_blend() {
         right_after > 0.9 && right_after < 1.0,
         "right after the transition the source's amount is {right_after}"
     );
+    assert_eq!(stage.driven(inertialized), [0.0; BONES]);
 
     stage.advance(0.49);
     let halfway = stage.amounts(cross_fade)[0];
@@ -357,11 +422,17 @@ fn attributes_travel_with_the_pose_through_every_blend() {
         (halfway - 0.5).abs() < 0.02,
         "halfway through the cross-fade the amount is {halfway}"
     );
+    assert_eq!(stage.driven(cross_fade), stage.amounts(cross_fade));
 
     stage.advance(0.5);
     let settled = stage.amounts(inertialized)[0];
     assert!(
         settled < 0.01,
         "a second after the transition the amount is {settled}"
+    );
+    let following = stage.amounts(rising)[0];
+    assert!(
+        (following - 0.96875).abs() < 0.01,
+        "a second into a transition to an amount rising by 1 a second, with the source's share down to 1/32, the amount is {following}"
     );
 }

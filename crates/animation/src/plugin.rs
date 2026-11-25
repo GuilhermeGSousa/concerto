@@ -202,6 +202,7 @@ mod tests {
         type CreateInput = ();
         type UpdateInput = ();
         type EvaluateInput = ();
+        type DriveInput = ();
 
         fn input_slots(&self) -> InputSlots {
             InputSlots::None
@@ -315,6 +316,7 @@ mod tests {
         type CreateInput = ();
         type UpdateInput = Res<'static, Speed>;
         type EvaluateInput = ();
+        type DriveInput = ();
 
         fn input_slots(&self) -> InputSlots {
             InputSlots::None

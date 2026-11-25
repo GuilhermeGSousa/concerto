@@ -473,6 +473,7 @@ impl AnimationNode for FootPlacementNode {
     type CreateInput = ();
     type UpdateInput = ();
     type EvaluateInput = Option<Res<'static, PhysicsState>>;
+    type DriveInput = ();
 
     fn input_slots(&self) -> InputSlots {
         InputSlots::Fixed(vec![name!("pose")])
@@ -672,6 +673,7 @@ mod tests {
         type CreateInput = ();
         type UpdateInput = ();
         type EvaluateInput = ();
+        type DriveInput = ();
 
         fn input_slots(&self) -> InputSlots {
             InputSlots::None

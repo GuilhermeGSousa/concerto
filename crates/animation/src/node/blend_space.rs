@@ -8,7 +8,7 @@ use log::warn;
 
 use crate::{
     clip::AnimationClip,
-    evaluation::AnimationGraphContext,
+    evaluation::{AnimationGraphContext, DriveContext},
     graph::{AnimationGraph, AnimationNodeContext, AnimationNodeData, AnimationNodeIndex},
     node::{AnimationClipNode, AnimationNode, InputSlots, ReflectAnimationNode},
     param::Param,
@@ -59,11 +59,33 @@ impl BlendSpace2DInstanceNode {
     }
 }
 
+struct Corners {
+    a: usize,
+    b: usize,
+    b_share: Option<f32>,
+    c: usize,
+    c_share: f32,
+}
+
+fn corners(state: &BlendSpace2DInstanceNode) -> Option<Corners> {
+    let point = state.current_triangulated_point?;
+    let triangle = &state.triangulation.triangles()[point.triangle];
+    let ab_sum = point.lambda_a + point.lambda_b;
+    Some(Corners {
+        a: triangle.a,
+        b: triangle.b,
+        b_share: (ab_sum > 1e-6).then(|| point.lambda_b / ab_sum),
+        c: triangle.c,
+        c_share: point.lambda_c,
+    })
+}
+
 impl AnimationNode for BlendSpace2DNode {
     type State = BlendSpace2DInstanceNode;
     type CreateInput = ();
     type UpdateInput = ();
     type EvaluateInput = ();
+    type DriveInput = ();
 
     fn input_slots(&self) -> InputSlots {
         InputSlots::Variable
@@ -113,23 +135,39 @@ impl AnimationNode for BlendSpace2DNode {
             return;
         }
 
-        let Some(triangulated_point) = state.current_triangulated_point else {
+        let Some(corners) = corners(state) else {
             return;
         };
 
-        let triangle = &state.triangulation.triangles()[triangulated_point.triangle];
-        let lambda_a = triangulated_point.lambda_a;
-        let lambda_b = triangulated_point.lambda_b;
-        let lambda_c = triangulated_point.lambda_c;
-
-        output.copy_from(&evaluated_inputs[triangle.a].frame);
-
-        let ab_sum = lambda_a + lambda_b;
-        if ab_sum > 1e-6 {
-            output.blend(&evaluated_inputs[triangle.b].frame, lambda_b / ab_sum);
+        output.copy_from(&evaluated_inputs[corners.a].frame);
+        if let Some(share) = corners.b_share {
+            output.blend(&evaluated_inputs[corners.b].frame, share);
         }
+        output.blend(&evaluated_inputs[corners.c].frame, corners.c_share);
+    }
 
-        output.blend(&evaluated_inputs[triangle.c].frame, lambda_c);
+    fn drive(
+        &self,
+        state: &mut BlendSpace2DInstanceNode,
+        _: &(),
+        _: &DriveContext<'_>,
+        _: &[uuid::Uuid],
+        inputs: &[EvaluatedFrame],
+        _: &mut FramePool,
+        output: &mut AnimationFrame,
+    ) {
+        if inputs.is_empty() || inputs.len() != self.points().len() {
+            return;
+        }
+        let Some(corners) = corners(state) else {
+            return;
+        };
+        let attributes = output.attributes_mut();
+        attributes.copy_from(inputs[corners.a].frame.attributes());
+        if let Some(share) = corners.b_share {
+            attributes.blend(inputs[corners.b].frame.attributes(), share);
+        }
+        attributes.blend(inputs[corners.c].frame.attributes(), corners.c_share);
     }
 
     fn root_motion(

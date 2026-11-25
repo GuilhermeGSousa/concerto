@@ -1417,7 +1417,8 @@ impl AnimationNode for Gain {
     type CreateInput = ();
     type UpdateInput = Res<'static, Tuning>;
     type EvaluateInput = ();
-    // input_slots, create_state, update, evaluate, reset; is_finished defaults to true
+    type DriveInput = ();
+    // input_slots, create_state, update, evaluate, reset; is_finished and drive have defaults
 }
 ```
 
@@ -1442,9 +1443,9 @@ takes. A node that keeps data for each input, as the blend space keeps a point,
 also implements `input_added(index)` and `input_removed(index)`, which an
 editor calls when it gives the node an input or takes one away.
 
-The three input types say what the node reads in each walk of the graph:
-`create_state` gets `CreateInput`, `update` gets `UpdateInput` and
-`evaluate` gets `EvaluateInput`, already fetched, as their typed data (`&Res<Tuning>`
+The four input types say what the node reads in each walk of the graph:
+`create_state` gets `CreateInput`, `update` gets `UpdateInput`,
+`evaluate` gets `EvaluateInput` and `drive` gets `DriveInput`, already fetched, as their typed data (`&Res<Tuning>`
 above). Each is a read-only system input: `Res`, `Option<Res>`, a read-only
 `Query`, or a tuple of them; `()` reads nothing. The systems that walk graphs,
 `initialize_animation_players`, `update_animation_players` and
@@ -1485,10 +1486,26 @@ blends them with the joints: `copy_from` and `blend` carry them, so the blend
 node, blend spaces and the cross-fade blend them by weight; a layer blends them
 per bone by its mask weight times its layer weight, in either space; additive
 and aim offset nodes keep their base's; the inertialization blender keeps the
-source's attributes and decays them into the destination's, halving their
-difference every halflife; a retarget node drops them, since they belong to the
+source's attributes and blends them over the destination's as the destination
+changes, the source's share halving every halflife; a retarget node drops them, since they belong to the
 skeleton that set them. The player keeps the last evaluated frame's, read with
 `AnimationPlayer::attributes`.
+
+Physics reads attributes once per fixed step, through a second walk of the
+graph. `AnimationPlayer::drive(graphs, inputs, delta_time)`, called by the
+system that runs the step with its `InputSet<DriveNodeInputs>`, calls each
+node's `drive(state, input, context, bone_ids, inputs, pool, output)` from the
+leaves up and keeps the attributes of the result, returned and read again with
+`AnimationPlayer::drive_attributes`. Only attributes are read and written. The
+default copies the first input's, so only a node that asks something of physics
+or combines inputs overrides it: the blend node, blend spaces and the cross-fade
+blend by weight, a layer by the mask it resolved in its last `evaluate`, and a
+state machine drives the states it plays without advancing. Under
+inertialization the drive frame is the destination's alone. A node advances its
+physics-side state in `drive` at the step's `DriveContext::delta_time`; the
+context also gives the player's graph context, through `graph()`, with its
+blackboard, root, extras and outbox, but no skeleton, `model_to_world` or bone
+ids.
 
 A node gives root motion with `root_motion(state, input, context, bone_ids,
 inputs)`, which returns a `RootMotion`. `update_animation_players` calls it for
@@ -1598,7 +1615,7 @@ alone.
 
 A node tells the game what happened with `context.emit(signal)`, for any
 `EntitySignal`, from any pass: `create_state`, `update`,
-`receive`, `root_motion` or `evaluate`. The signals go to a per-player outbox,
+`receive`, `root_motion`, `evaluate` or, through `context.graph()`, `drive`. The signals go to a per-player outbox,
 not into the frame, so one emitted by a state the machine leaves at once still
 arrives, and `animate_targets` triggers every signal in it on the player's
 entity each frame, in the order they were emitted, after the clip events. It

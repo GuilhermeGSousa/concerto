@@ -262,6 +262,7 @@ impl AnimationNode for TwoBoneIkNode {
     type CreateInput = ();
     type UpdateInput = ();
     type EvaluateInput = ();
+    type DriveInput = ();
 
     fn input_slots(&self) -> InputSlots {
         InputSlots::Fixed(vec![name!("pose")])

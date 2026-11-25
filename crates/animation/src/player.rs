@@ -18,7 +18,7 @@ use glam::{Affine3A, Vec2, Vec3};
 use crate::{
     attribute::PoseAttributes,
     blackboard::AnimationBlackboard,
-    evaluation::{AnimationGraphContext, EmittedSignal, Extras, Outbox, RootBone},
+    evaluation::{AnimationGraphContext, DriveContext, EmittedSignal, Extras, Outbox, RootBone},
     graph::{AnimationGraph, AnimationGraphState, AnimationNodeIndex, NodeVisit},
     message::AnimationMessage,
     node::{AnimationNode, ErasedAnimationNode, NodeState},
@@ -53,6 +53,7 @@ pub struct AnimationPlayer {
     pub(crate) fired: Vec<FiredEvent>,
     pub(crate) emitted: Vec<Box<dyn EmittedSignal>>,
     attributes: PoseAttributes,
+    drive_attributes: PoseAttributes,
     extras: Extras,
     messages: Vec<Box<dyn Reflect>>,
 }
@@ -69,6 +70,7 @@ impl AnimationPlayer {
             fired: Vec::new(),
             emitted: Vec::new(),
             attributes: PoseAttributes::default(),
+            drive_attributes: PoseAttributes::default(),
             extras: Extras::default(),
             messages: Vec::new(),
         }
@@ -97,6 +99,44 @@ impl AnimationPlayer {
     /// The per-bone attributes of the frame the player last evaluated.
     pub fn attributes(&self) -> &PoseAttributes {
         &self.attributes
+    }
+
+    /// Walks the graph once for a physics step of `delta_time` seconds, each node saying through `AnimationNode::drive` what it asks of physics, and keeps the attributes it gives; the graph does not advance.
+    pub fn drive(
+        &mut self,
+        graphs: &AssetStore<AnimationGraph>,
+        inputs: &Inputs<'_, '_>,
+        delta_time: f32,
+    ) -> &PoseAttributes {
+        let outbox = Outbox::default();
+        let graph = AnimationGraphContext {
+            blackboard: &self.blackboard,
+            root: self.root.clone(),
+            skeleton: None,
+            model_to_world: None,
+            inputs,
+            extras: &self.extras,
+            outbox: &outbox,
+        };
+        let context = DriveContext {
+            delta_time,
+            graph: &graph,
+        };
+        let mut output = self.frame_pool.acquire();
+        if self
+            .graph_state
+            .drive(graphs, &context, &[], &mut self.frame_pool, &mut output)
+        {
+            std::mem::swap(&mut self.drive_attributes, output.attributes_mut());
+        }
+        self.frame_pool.release(output);
+        self.emitted.extend(outbox.into_signals());
+        &self.drive_attributes
+    }
+
+    /// The per-bone attributes of the last physics step's drive.
+    pub fn drive_attributes(&self) -> &PoseAttributes {
+        &self.drive_attributes
     }
 
     /// Drops clip events whose source weighs no more than `threshold` in the final frame; 0 by default.
@@ -431,6 +471,7 @@ mod tests {
         type CreateInput = ();
         type UpdateInput = ();
         type EvaluateInput = ();
+        type DriveInput = ();
 
         fn input_slots(&self) -> InputSlots {
             InputSlots::None

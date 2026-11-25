@@ -2,7 +2,7 @@ use concerto_foundation::assets::asset_store::AssetStore;
 use uuid::Uuid;
 
 use crate::{
-    evaluation::AnimationGraphContext,
+    evaluation::{AnimationGraphContext, DriveContext},
     graph::{AnimationGraph, AnimationGraphStates, GraphId},
     pose::{AnimationFrame, FramePool, RootMotion},
 };
@@ -47,6 +47,16 @@ pub(crate) trait AnimationTransitionBlender: Send + Sync {
         graph_states: &mut AnimationGraphStates,
         graphs: &AssetStore<AnimationGraph>,
         context: &AnimationGraphContext<'_>,
+        pool: &mut FramePool,
+        output: &mut AnimationFrame,
+    );
+
+    fn drive(
+        &self,
+        bone_ids: &[Uuid],
+        graph_states: &mut AnimationGraphStates,
+        graphs: &AssetStore<AnimationGraph>,
+        context: &DriveContext<'_>,
         pool: &mut FramePool,
         output: &mut AnimationFrame,
     );

@@ -161,6 +161,7 @@ impl AnimationNode for MotionMatchingNode {
         Res<'static, AssetStore<AnimationClip>>,
     );
     type EvaluateInput = ();
+    type DriveInput = ();
 
     fn input_slots(&self) -> InputSlots {
         InputSlots::None

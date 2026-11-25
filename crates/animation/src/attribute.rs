@@ -178,11 +178,6 @@ impl PoseAttributes {
         }
     }
 
-    /// Moves these attributes toward `destination`, keeping `decay` of their difference on every bone.
-    pub fn decay_into(&mut self, destination: &PoseAttributes, decay: f32) {
-        self.mix(decay, destination, 1.0 - decay);
-    }
-
     fn mix(&mut self, self_weight: f32, other: &PoseAttributes, other_weight: f32) {
         for own in &mut self.channels {
             own.blend(self_weight, other.find(own.key()), other_weight);

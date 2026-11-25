@@ -132,3 +132,26 @@ impl<'a> AnimationGraphContext<'a> {
         self.model_to_world
     }
 }
+
+/// What every node of one player's graph is driven with in one physics step: the step's length and the player's graph context.
+pub struct DriveContext<'a> {
+    pub(crate) delta_time: f32,
+    pub(crate) graph: &'a AnimationGraphContext<'a>,
+}
+
+impl<'a> DriveContext<'a> {
+    /// The length of the physics step, in seconds.
+    pub fn delta_time(&self) -> f32 {
+        self.delta_time
+    }
+
+    /// The player's blackboard, root, extras and outbox; the skeleton and model-to-world are not set in a drive step.
+    pub fn graph(&self) -> &'a AnimationGraphContext<'a> {
+        self.graph
+    }
+
+    /// The value of type `T` the player was handed with `AnimationPlayer::set_extra`.
+    pub fn extra<T: Send + Sync + 'static>(&self) -> Option<&'a T> {
+        self.graph.extra::<T>()
+    }
+}

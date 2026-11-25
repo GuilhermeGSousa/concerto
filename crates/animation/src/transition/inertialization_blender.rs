@@ -3,7 +3,7 @@ use uuid::Uuid;
 
 use crate::{
     attribute::PoseAttributes,
-    evaluation::AnimationGraphContext,
+    evaluation::{AnimationGraphContext, DriveContext},
     graph::{AnimationGraph, AnimationGraphStates, GraphId},
     inertialization::{Inertializer, PoseVelocity},
     pose::{AnimationFrame, FramePool, Pose, RootMotion},
@@ -23,6 +23,7 @@ pub(crate) struct InertializationBlender {
     elapsed: f32,
     last_attributes: PoseAttributes,
     source_attributes: Option<PoseAttributes>,
+    source_share: f32,
 }
 
 const SETTLED_ATTRIBUTE_SHARE: f32 = 1.0e-4;
@@ -50,16 +51,17 @@ impl InertializationBlender {
             elapsed: 0.0,
             last_attributes: PoseAttributes::default(),
             source_attributes: None,
+            source_share: 0.0,
         }
     }
 
     fn decay_attributes(&mut self, step: f32, output: &mut AnimationFrame) {
-        let Some(source) = self.source_attributes.as_mut() else {
+        let Some(source) = self.source_attributes.as_ref() else {
             return;
         };
-        source.decay_into(output.attributes(), share_left(self.halflife, step));
-        output.attributes_mut().copy_from(source);
-        if share_left(self.halflife, self.elapsed) < SETTLED_ATTRIBUTE_SHARE {
+        self.source_share *= share_left(self.halflife, step);
+        output.attributes_mut().blend(source, self.source_share);
+        if self.source_share < SETTLED_ATTRIBUTE_SHARE {
             self.source_attributes = None;
         }
     }
@@ -156,6 +158,7 @@ impl AnimationTransitionBlender for InertializationBlender {
                     .transition(source, &source_velocity, output.pose(), &zero_velocity);
                 self.halflife = halflife;
                 self.source_attributes = Some(std::mem::take(&mut self.last_attributes));
+                self.source_share = 1.0;
                 true
             }
             _ => false,
@@ -182,6 +185,19 @@ impl AnimationTransitionBlender for InertializationBlender {
 
         self.store_output(output.pose(), delta_time);
         self.last_attributes.copy_from(output.attributes());
+    }
+
+    fn drive(
+        &self,
+        bone_ids: &[Uuid],
+        graph_states: &mut AnimationGraphStates,
+        graphs: &AssetStore<AnimationGraph>,
+        context: &DriveContext<'_>,
+        pool: &mut FramePool,
+        output: &mut AnimationFrame,
+    ) {
+        self.stack
+            .drive(bone_ids, graph_states, graphs, context, pool, output);
     }
 
     fn root_motion(
