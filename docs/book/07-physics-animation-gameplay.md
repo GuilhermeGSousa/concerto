@@ -1146,10 +1146,20 @@ A graph is a tree of nodes under a result node:
   hand or foot rotation (`KeepInput`) or takes the goal's (`FromTarget`), and
   `weight`, times the float under `weight_param`, blends the solve over the
   input. Wire it after the nodes whose pose it corrects. A target param the
-  game has not set yet leaves the pose as it is. The same solve is
+  game has not set yet leaves the pose as it is. Its `hinge` setting is `Off`
+  by default. The same solve is
   `concerto_animation::ik::solve_two_bone` for code outside a graph: it takes
   the three joint positions in any one space and returns rotations in that
-  space.
+  space. A `TwoBoneChain` may also carry a `hinge`, a chain-space axis the
+  lower bone turns about, positively by the right-hand rule, relative to the
+  upper bone as the mid joint bends. It is `unit(upper × lower)` of a bent
+  chain. With a hinge, a chain that comes in straight, or bent backward or
+  sideways, bends about the hinge instead of an arbitrary plane. A chain bent
+  more than 5° about its hinge solves as without one, and a pole still decides
+  the final side. In a graph, the node's `Hinge` is `Off`, `Rest`, which takes
+  the hinge from the skeleton's rest pose when that pose bends the joint at
+  least 5°, or `Axis { axis }`, which names it in the mid bone's own frame.
+  The solve also lands the tip exactly on its goal for any bend plane.
 - **Aim offset** (`AimOffsetNode`) lays captured aim poses over its first
   input, chosen by where a target is. Each `AimPoint` is an additive clip and
   the yaw and pitch, in radians, it aims at. The target is a world-space
@@ -1297,7 +1307,8 @@ A graph is a tree of nodes under a result node:
   the line from ankle to toe hit and rolls it to the ankle hit's normal,
   within `max_foot_angle`, and lowers the pelvis by the lowest foot, at most
   `max_pelvis_drop`. Each leg is then bent to its foot with the two-bone
-  solve, with `softness` as in two-bone IK; the toe keeps its local rotation.
+  solve, with `softness` and `hinge` as in two-bone IK, the hinge `Off` by
+  default and set with `with_hinge`; the toe keeps its local rotation.
   The pelvis, the foot heights and the foot tilts ease toward their targets
   with `pelvis_halflife`, `foot_halflife` and `rotation_halflife`, and snap
   on the first evaluate. `weight`, times the float under `weight_param`,
@@ -1332,7 +1343,8 @@ A graph is a tree of nodes under a result node:
   foot moves more than `unlock_radius` from it, and the foot then eases back
   to the animated one over `release_halflife`; after the radius releases a
   lock, the foot waits for its next plant. Each leg is bent to its held foot
-  with the two-bone solve, with `softness` as in two-bone IK, and the foot
+  with the two-bone solve, with `softness` and `hinge` as in two-bone IK, the
+  hinge `Off` by default and set with `with_hinge`, and the foot
   keeps its input rotation. `weight`, times the float under `weight_param`,
   eases in and out with `weight_halflife`, and a weight of 0 plants nothing.
   Wire it before `FootPlacementNode`, which then adds the ground's height.
@@ -1921,8 +1933,10 @@ the FK pass bent it to, a goal out of reach straightens the limb toward it, and
 no bone changes length. Each pair sees the pose the pairs before it left.
 
 Every pair starts at weight 1 and softness 0. `set_goal(&settings)` replaces
-one pair's, from a `RetargetGoalSettings { goal, weight, softness }` built with
-`RetargetGoalSettings::new(goal)`, `with_weight` and `with_softness`. The
+one pair's, from a `RetargetGoalSettings { goal, weight, softness, hinge }`
+built with `RetargetGoalSettings::new(goal)`, `with_weight`, `with_softness` and
+`with_hinge`. The `hinge` is `Off` by default and, as in two-bone IK, bends the
+target limb about an axis in the target mid bone's frame. The
 weight is clamped to [0, 1], and a weight of 0, or NaN, leaves the FK result
 exactly. A name the two rigs do not both
 have fails with `RetargetError::UnknownGoal { goal }` and changes nothing.
