@@ -602,7 +602,7 @@ tab opens another graph.
 
 ### MCP
 
-All nine tools act on what the front graph tab has in view and answer
+All ten tools act on what the front graph tab has in view and answer
 `refused`, saying to open a graph, on any other tab. A state is named by its
 name, and a transition by `from`, `to` and `index`, its place among the
 transitions between that pair, 0 without one.
@@ -618,6 +618,7 @@ transitions between that pair, 0 without one.
 | `graph_open` | `node`, a state machine or a node that plays a graph, or `state`, a state of the machine in view. Answers `Showing Locomotion › States › Run (state).` |
 | `graph_up` | Goes up one level and answers the same way; refused on the tab's own graph |
 | `graph_set_param` | `name` and `value`, JSON of the parameter's type, and `type` when the graph reads the name as several types. Sets the parameter on the preview's players, as an edit of the `Parameters` value does, runs frames until the preview next reports what it plays, and answers `Set moving to true.` with the `live:` block of `graph_inspect` under it, so the reply shows the state the parameter led to; a transition that takes several frames to start shows on a later `graph_inspect`. While the preview is paused it answers at once, `Set moving to true. The preview is paused, so no live state follows; …`, and when no player plays the graph, as with no skeleton in the preview's scene, `Set moving to true. No preview is playing the graph, so no live state follows; …`. A preview that reports nothing within 30 s answers `timeout`. A name the graph does not read answers `refused` with `There is no parameter speed; the parameters are direction (Vec2), moving (bool).`, a name read as several types with no `type` answers `refused` with `moving is read as several types, bool and f32; give type.`, and a value that does not fit the type answers `refused` with the reason |
+| `send_animation_message` | `message`, `{ "type": "<full type path>", "value": { ...fields } }`. Sends the message to every character the preview plays, as the game's `SendAnimationMessage` does, and after the preview's second frame report answers `Sent Poke to the preview. States: Poked.` with one `behaviour: <text> (<outcome>)` line for each node that reports one, a slot's `playing count 0.50, …` among them. `graph_inspect`'s `live:` block prints the same line under such a node, indented. `type` is the type path as the refusal lists it, and the type must be registered with `register_animation_message` and reflect its `Default` (`#[reflect(Default)]`); an unknown or other type answers `refused` with the registered message types, a value that does not fit answers `refused` with the reason, and a paused preview answers `refused`. A trigger's `MessageType` path edited with `set_property` takes effect at once: every edit rebuilds the graph the preview plays, which resolves the type again |
 
 The preview is driven through the value `Preview`: `set_property` with target
 `Preview` and path `scene`, `skeleton`, `playing`, `speed` or `from`, the last

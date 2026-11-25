@@ -12,7 +12,7 @@ use concerto_foundation::{
 };
 use concerto_mesh::skeleton::Skeleton;
 use concerto_name::Name;
-use concerto_reflect::Reflect;
+use concerto_reflect::{Reflect, TypeRegistry};
 use glam::{Affine3A, Vec2, Vec3};
 
 use crate::{
@@ -20,7 +20,7 @@ use crate::{
     blackboard::AnimationBlackboard,
     evaluation::{AnimationGraphContext, DriveContext, EmittedSignal, Extras, Outbox, RootBone},
     graph::{AnimationGraph, AnimationGraphState, AnimationNodeIndex, NodeVisit},
-    message::AnimationMessage,
+    message::{AnimationMessage, is_animation_message},
     node::{AnimationNode, ErasedAnimationNode, NodeState},
     pose::{FiredEvent, FramePool, RootMotion},
     root::AnimationRootBone,
@@ -89,6 +89,15 @@ impl AnimationPlayer {
     /// Queues `message` for the next update, where every state machine checks its transitions against the whole queue before every playing node receives each message in order; a paused player keeps its queue until it resumes, and one whose graph is not initialized yet drops it.
     pub fn send(&mut self, message: impl AnimationMessage) {
         self.messages.push(Box::new(message));
+    }
+
+    /// Queues `message` as `send` does when its type is registered with `register_animation_message` in `registry`; returns false and queues nothing otherwise.
+    pub fn send_reflected(&mut self, message: Box<dyn Reflect>, registry: &TypeRegistry) -> bool {
+        let registered = is_animation_message(registry, message.as_ref());
+        if registered {
+            self.messages.push(message);
+        }
+        registered
     }
 
     /// Whether a state machine playing in the player's graph is in the state named `name`.

@@ -12,7 +12,8 @@ use crate::{
     mask::{BoneMask, MaskResolution, resolve_mask},
     message::{AnimationMessage, MessageType},
     node::{
-        AnimationNode, InputSlots, NodeState, PlaceholderNode, ReflectAnimationNode,
+        AnimationNode, BehaviourReport, InputSlots, NodeReport, NodeState, PlaceholderNode,
+        ReflectAnimationNode,
         layer::{blend_attributes, blend_joint},
     },
     pose::{AnimationFrame, EvaluatedFrame, FiredEvent, FramePool, RootMotion, WeightedMotion},
@@ -455,6 +456,37 @@ impl AnimationNode for SlotNode {
             );
             blend_attributes(&entry_state.mask.resolution.weights, fade, &layer, output);
             pool.release(layer);
+        }
+    }
+
+    fn report(&self, state: &SlotState) -> NodeReport {
+        let playing: Vec<String> = state
+            .playing
+            .iter()
+            .filter_map(|&index| {
+                let entry = self.entries.get(index)?;
+                let entry_state = state.entries.get(index)?;
+                let mut line = format!("{} {:.2}", entry.name.as_str(), entry_state.weight);
+                let behaviour = entry
+                    .node
+                    .live()
+                    .zip(entry_state.node.as_ref())
+                    .and_then(|(live, node_state)| live.report(node_state).behaviour);
+                if let Some(behaviour) = behaviour {
+                    line.push_str(" · ");
+                    line.push_str(&behaviour.describe());
+                }
+                Some(line)
+            })
+            .collect();
+        let text = if playing.is_empty() {
+            "no entry playing".to_owned()
+        } else {
+            format!("playing {}", playing.join(", "))
+        };
+        NodeReport {
+            behaviour: Some(BehaviourReport::running(text)),
+            ..NodeReport::default()
         }
     }
 

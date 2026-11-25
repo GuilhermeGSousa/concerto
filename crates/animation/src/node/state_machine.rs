@@ -688,6 +688,7 @@ impl AnimationNode for AnimationStateMachine {
                 current: state.current_state_name(),
                 transition,
             }),
+            behaviour: None,
         }
     }
 

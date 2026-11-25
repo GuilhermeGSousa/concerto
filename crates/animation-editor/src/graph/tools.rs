@@ -1,4 +1,9 @@
-use concerto_animation::node::{StateMachineReport, state_machine::AnimationStateMachine};
+use std::time::Duration;
+
+use concerto_animation::{
+    message::{animation_message_types, decode_animation_message},
+    node::{StateMachineReport, state_machine::AnimationStateMachine},
+};
 use concerto_app::{App, schedule_groups::LateUpdate};
 use concerto_ecs::{
     Component, Entity, Query, Res, command::CommandQueue, events::event_reader::EventReader,
@@ -7,6 +12,7 @@ use concerto_editor::{
     asset_editor::{ActiveEditor, EditorDocument},
     hosted::{Hosted, HostedApp},
     inspector::WriteValue,
+    preview::PreviewSignals,
     project::ProjectState,
     tools::edits::PropertyCommitted,
 };
@@ -15,7 +21,7 @@ use concerto_mcp::{
     AppMcpExt, McpTool, Needs, PendingCall, Reply, ToolCalls, ToolError, ToolRegistry,
 };
 use concerto_name::Name;
-use concerto_reflect::{Reflect, TypeRegistry, to_json};
+use concerto_reflect::{Reflect, ReflectedValue, TypeRegistry, to_json};
 use schemars::JsonSchema;
 use serde::Deserialize;
 
@@ -27,11 +33,11 @@ use super::{
     },
     panels::{subtitle, time_text, weight_text},
     params::{FoundParam, short_type},
-    preview::GraphPreviewState,
+    preview::{GraphPreviewState, PreviewNode, SendGraphMessage},
     stage::{GraphLive, LiveView, SentPreview},
 };
 
-/// Reads what the front animation graph tab shows: the breadcrumb, then for a pose graph one line per node, `id · type · parent#slot · subtitle`, with the result node and loose nodes marked, and for a state machine one line per state, `name · initial · graph`, then one per transition, `from → to #index · trigger · blend`. When the graph names parameters, a `parameters:` line follows, then one line per parameter, `name · type · value`. Once the preview has reported what it plays, a `live:` line follows: for a pose graph one line per playing node, `id · weight · time` for a clip and `in state · from → to progress` for a state machine, and for a state machine that one part alone.
+/// Reads what the front animation graph tab shows: the breadcrumb, then for a pose graph one line per node, `id · type · parent#slot · subtitle`, with the result node and loose nodes marked, and for a state machine one line per state, `name · initial · graph`, then one per transition, `from → to #index · trigger · blend`. When the graph names parameters, a `parameters:` line follows, then one line per parameter, `name · type · value`. Once the preview has reported what it plays, a `live:` line follows: for a pose graph one line per playing node, `id · weight · time` for a clip and `in state · from → to progress` for a state machine, and for a state machine that one part alone. A node that reports behaviour, such as a slot with its playing entries, has an indented `behaviour: text (outcome)` line under its own.
 #[derive(Deserialize, JsonSchema)]
 pub struct GraphInspect {}
 
@@ -128,6 +134,30 @@ pub struct GraphSetParam {
     pub r#type: Option<String>,
 }
 
+/// Sends a message to the characters the front animation graph tab's preview plays, as the game's code does with `SendAnimationMessage`, and answers after the next frame with the states the graphs are in and what each slot plays. A type that is not registered with `register_animation_message` is refused with the registered ones. Never saved.
+#[derive(Deserialize, JsonSchema)]
+pub struct SendAnimationMessage {
+    /// The message: `type` is its full type path as the refusal lists them, `value` its fields as the inspector shows them, such as { "strength": 1.0 }.
+    pub message: MessageArguments,
+}
+
+/// A message by its type and value.
+#[derive(Deserialize, JsonSchema)]
+pub struct MessageArguments {
+    pub r#type: String,
+    #[serde(default)]
+    pub value: serde_json::Value,
+}
+
+#[derive(Component)]
+struct SendingMessage {
+    document: Entity,
+    type_path: String,
+    reports: usize,
+}
+
+const MESSAGE_PATIENCE: Duration = Duration::from_secs(5);
+
 #[derive(Clone, Copy, PartialEq)]
 enum ParamStep {
     Committing { waited: bool },
@@ -186,8 +216,13 @@ pub(super) fn build(app: &mut App) {
         McpTool::new("graph_set_param").needs(Needs::Project),
         graph_set_param,
     )
+    .add_tool::<SendAnimationMessage, _>(
+        McpTool::new("send_animation_message").needs(Needs::Project),
+        send_animation_message,
+    )
     .add_system(LateUpdate, answer_graph_edits)
-    .add_system(LateUpdate, answer_param_sets);
+    .add_system(LateUpdate, answer_param_sets)
+    .add_system(LateUpdate, answer_message_sends);
 }
 
 fn refused(reason: impl Into<String>) -> ToolError {
@@ -811,6 +846,7 @@ fn live_block(state: &GraphDocument, live: LiveView) -> Option<String> {
                 continue;
             };
             let mut line = format!("{} · weight {}", node.id, weight_text(playing.weight));
+            let behaviour = playing.report.behaviour.as_ref();
             if let Some(time) = playing.report.clip_time {
                 line.push_str(&format!(" · time {}", time_text(time)));
             }
@@ -818,9 +854,132 @@ fn live_block(state: &GraphDocument, live: LiveView) -> Option<String> {
                 line.push_str(&format!(" · {}", machine_part(machine)));
             }
             lines.push(line);
+            lines.extend(
+                behaviour.map(|behaviour| format!("  behaviour: {}", behaviour.describe())),
+            );
         }
     }
     (!lines.is_empty()).then(|| format!("live:\n{}", lines.join("\n")))
+}
+
+fn message_answer(type_path: &str, nodes: &[PreviewNode]) -> String {
+    let states: Vec<String> = nodes
+        .iter()
+        .filter_map(|node| node.report.state_machine?.current)
+        .map(|state| state.to_string())
+        .collect();
+    let mut lines = vec![format!(
+        "Sent {} to the preview. States: {}.",
+        short_type(type_path),
+        if states.is_empty() {
+            "none".to_owned()
+        } else {
+            states.join(", ")
+        }
+    )];
+    lines.extend(
+        nodes
+            .iter()
+            .filter_map(|node| node.report.behaviour.as_ref())
+            .map(|behaviour| format!("behaviour: {}", behaviour.describe())),
+    );
+    lines.join("\n")
+}
+
+fn registered_messages(types: &TypeRegistry) -> String {
+    let registered = animation_message_types(types);
+    if registered.is_empty() {
+        "no type is registered with register_animation_message".to_owned()
+    } else {
+        format!("the registered message types are {}", registered.join(", "))
+    }
+}
+
+fn send_animation_message(
+    mut calls: ToolCalls<SendAnimationMessage>,
+    active: Res<ActiveEditor>,
+    documents: Query<(&GraphDocument, Option<&HostedApp>)>,
+    mut previews: PreviewSignals,
+    mut cmd: CommandQueue,
+) {
+    for (arguments, reply) in calls.read() {
+        let front = active
+            .0
+            .and_then(|document| Some((document, documents.get_entity(document)?)));
+        let Some((document, (state, hosted))) = front else {
+            reply.err(no_graph_tab());
+            continue;
+        };
+        let Some(types) = hosted.and_then(HostedApp::type_registry) else {
+            reply.err(refused(
+                "The preview is not running; call status until it says busy: no.",
+            ));
+            continue;
+        };
+        if !state.preview.playing {
+            reply.err(refused(format!(
+                "{PAUSED} A paused preview keeps no message."
+            )));
+            continue;
+        }
+        let types = types.read();
+        let message = arguments.message;
+        let value: ReflectedValue =
+            match decode_animation_message(&types, &message.r#type, &message.value) {
+                Ok(value) => value,
+                Err(reason) => {
+                    reply.err(refused(format!(
+                        "{reason}; {}.",
+                        registered_messages(&types)
+                    )));
+                    continue;
+                }
+            };
+        previews.trigger(
+            document,
+            SendGraphMessage {
+                type_path: message.r#type.clone(),
+                value,
+            },
+        );
+        cmd.spawn((
+            PendingCall::new(reply, "the preview to report after the message")
+                .timeout(MESSAGE_PATIENCE),
+            SendingMessage {
+                document,
+                type_path: message.r#type,
+                reports: 0,
+            },
+        ));
+    }
+}
+
+fn answer_message_sends(
+    mut reported: EventReader<Hosted<GraphPreviewState>>,
+    mut waiting: Query<(Entity, &mut PendingCall, &mut SendingMessage)>,
+    mut cmd: CommandQueue,
+) {
+    let reported: Vec<&Hosted<GraphPreviewState>> = reported.read().collect();
+    for (call, mut pending, mut sending) in waiting.iter_mut() {
+        let document = sending.document;
+        for played in reported.iter().filter(|hosted| hosted.document == document) {
+            sending.reports += 1;
+            if sending.reports < 2 {
+                continue;
+            }
+            pending
+                .reply
+                .ok(message_answer(&sending.type_path, &played.event.nodes));
+            cmd.despawn(call);
+            break;
+        }
+        if pending.at_deadline.is_none() {
+            pending.at_deadline = Some(format!(
+                "Sent {}, but the preview reported no state after it; {NOT_PLAYING}",
+                short_type(&sending.type_path)
+            ));
+        }
+    }
 }
 
 fn answer_param_sets(

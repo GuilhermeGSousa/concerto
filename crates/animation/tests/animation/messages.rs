@@ -412,6 +412,22 @@ impl Stage {
             .0
     }
 
+    fn slot_behaviour(&mut self) -> String {
+        let slotted = self.slotted;
+        let world = self.world();
+        let graphs = world.get_resource::<AssetStore<AnimationGraph>>().unwrap();
+        let mut reported = String::new();
+        world
+            .get_component_for_entity::<AnimationPlayer>(slotted)
+            .unwrap()
+            .for_each_node(graphs, |visit| {
+                if let Some(behaviour) = &visit.report.behaviour {
+                    reported = behaviour.describe();
+                }
+            });
+        reported
+    }
+
     fn slot_lift(&mut self) -> f32 {
         let bone = self.slot_bone;
         self.world()
@@ -532,6 +548,11 @@ fn messages_move_the_graph_and_nodes_answer_with_outcomes_and_signals() {
         "half way through a 0.2 s fade in the amount is {fading_in}"
     );
     assert_eq!(stage.heard_by(slotted), [1]);
+    assert!(
+        stage.slot_behaviour().starts_with("playing count 0.5"),
+        "the slot reports its playing entry with its fade: {}",
+        stage.slot_behaviour()
+    );
 
     stage.slot_player().send(Poke { strength: 1.0 });
     stage.advance(0.1);
@@ -558,6 +579,11 @@ fn messages_move_the_graph_and_nodes_answer_with_outcomes_and_signals() {
 
     stage.advance(0.1);
     assert_eq!(stage.slot_amount(), 0.0);
+    assert_eq!(
+        stage.slot_behaviour(),
+        "no entry playing (running)",
+        "a faded out entry leaves the report"
+    );
     stage.advance(0.1);
     assert_eq!(stage.slot_amount(), 0.0);
     assert_eq!(stage.heard_by(slotted), [1, 1, 1, 2]);

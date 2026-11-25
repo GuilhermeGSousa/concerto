@@ -177,6 +177,35 @@ pub struct NodeReport {
     pub clip_time: Option<f32>,
     /// A state machine's current state and transition.
     pub state_machine: Option<StateMachineReport>,
+    /// What a node that acts over time says about it, such as a slot's playing entries.
+    pub behaviour: Option<BehaviourReport>,
+}
+
+/// What a behaviour node reports: how it ended, if it did, and a line saying what it does now.
+#[derive(Clone, Debug, PartialEq)]
+pub struct BehaviourReport {
+    pub outcome: Option<NodeOutcome>,
+    pub text: String,
+}
+
+impl BehaviourReport {
+    /// A report with no outcome yet.
+    pub fn running(text: impl Into<String>) -> Self {
+        Self {
+            outcome: None,
+            text: text.into(),
+        }
+    }
+
+    /// The report as one line, `text (outcome)`, where the outcome is running, succeeded or failed.
+    pub fn describe(&self) -> String {
+        let outcome = match self.outcome {
+            None => "running",
+            Some(NodeOutcome::Succeeded) => "succeeded",
+            Some(NodeOutcome::Failed) => "failed",
+        };
+        format!("{} ({outcome})", self.text)
+    }
 }
 
 /// The state a playing state machine is in and the transition it is blending through.

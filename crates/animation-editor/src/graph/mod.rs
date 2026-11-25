@@ -28,13 +28,13 @@ pub use document::{
 pub use param_editor::{ParamEditorAppExt, ParamNameEditor};
 pub use params::{FoundParam, GraphParam, GraphParameters, find_params};
 pub use preview::{
-    GraphBytes, GraphPreviewState, PreviewNode, SetGraphParam, SetGraphPlayback, ShowGraphs,
-    graph_preview,
+    GraphBytes, GraphPreviewState, PreviewNode, SendGraphMessage, SetGraphParam, SetGraphPlayback,
+    ShowGraphs, graph_preview,
 };
 pub use stage::{GraphLive, GraphPreview, LiveView, ParametersValue, PreviewValue, SentPreview};
 pub use tools::{
     GraphAddNode, GraphAddState, GraphConnect, GraphInspect, GraphOpen, GraphRemove, GraphSelect,
-    GraphSetParam, GraphUp,
+    GraphSetParam, GraphUp, SendAnimationMessage,
 };
 
 use document::{

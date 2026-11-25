@@ -28,9 +28,10 @@ pub mod two_bone_ik;
 pub use additive::{AdditiveNode, AdditiveNodeState};
 pub use aim_offset::{AimOffsetNode, AimOffsetState, AimPoint};
 pub use definition::{
-    AnimationNode, CreateNodeInputs, DriveNodeInputs, ErasedAnimationNode, EvaluateNodeInputs,
-    InputSlots, NodeOutcome, NodeReport, NodeState, PlaceholderNode, ReflectAnimationNode,
-    StateMachineReport, TransitionReport, UpdateNodeInputs, register_node_inputs,
+    AnimationNode, BehaviourReport, CreateNodeInputs, DriveNodeInputs, ErasedAnimationNode,
+    EvaluateNodeInputs, InputSlots, NodeOutcome, NodeReport, NodeState, PlaceholderNode,
+    ReflectAnimationNode, StateMachineReport, TransitionReport, UpdateNodeInputs,
+    register_node_inputs,
 };
 pub use layer::{LayerNode, LayerSpace};
 pub use slot::{PlayInSlot, SlotEntry, SlotNode, SlotState};
@@ -469,6 +470,7 @@ impl AnimationNode for AnimationClipNode {
         NodeReport {
             clip_time: Some(state.current_time()),
             state_machine: None,
+            behaviour: None,
         }
     }
 

@@ -5,7 +5,8 @@ use concerto_ecs::{
     signal::{On, Signal},
 };
 use concerto_reflect::{
-    PropertyVisitorMut, Reflect, TypeData, TypeRegistration, TypeRegistry, ValueWarning,
+    PropertyVisitorMut, Reflect, ReflectDefault, ReflectedValue, TypeData, TypeRegistration,
+    TypeRegistry, ValueWarning, apply_value, json_to_value,
 };
 
 use crate::player::AnimationPlayer;
@@ -17,6 +18,59 @@ pub trait AnimationMessage: Reflect + Clone + Send + Sync + 'static {}
 pub(crate) struct ReflectAnimationMessage;
 
 impl TypeData for ReflectAnimationMessage {}
+
+/// The type paths of the message types registered with `register_animation_message`, in order.
+pub fn animation_message_types(registry: &TypeRegistry) -> Vec<String> {
+    let mut paths: Vec<String> = registry
+        .iter()
+        .filter(|registration| registration.data::<ReflectAnimationMessage>().is_some())
+        .map(|registration| registration.type_path().to_owned())
+        .collect();
+    paths.sort();
+    paths
+}
+
+/// Whether `message` is of a type registered with `register_animation_message`.
+pub fn is_animation_message(registry: &TypeRegistry, message: &dyn Reflect) -> bool {
+    registry
+        .get((message as &dyn Any).type_id())
+        .is_some_and(|registration| registration.data::<ReflectAnimationMessage>().is_some())
+}
+
+/// Reads JSON shaped as the inspector shows it as a message of the registered type `type_path`, or says why not; the type must be registered with `register_animation_message` and have a `Default`.
+pub fn decode_animation_message(
+    registry: &TypeRegistry,
+    type_path: &str,
+    json: &serde_json::Value,
+) -> Result<ReflectedValue, String> {
+    let registration = registry
+        .get_by_name(type_path)
+        .filter(|registration| registration.type_path() == type_path)
+        .filter(|registration| registration.data::<ReflectAnimationMessage>().is_some())
+        .ok_or_else(|| format!("{type_path} is not a registered animation message type"))?;
+    if registration.data::<ReflectDefault>().is_none() {
+        return Err(format!(
+            "{type_path} has no Default, so a message cannot be built from JSON"
+        ));
+    }
+    json_to_value(json, TypeRegistration::type_id(&registration), registry)
+}
+
+/// Builds the message of the registered type `type_path` from `stored`, as `decode_animation_message` read it; none when the type is not a registered message or the value does not fit.
+pub fn build_animation_message(
+    registry: &TypeRegistry,
+    type_path: &str,
+    stored: &ReflectedValue,
+) -> Option<Box<dyn Reflect>> {
+    let registration = registry
+        .get_by_name(type_path)
+        .filter(|registration| registration.type_path() == type_path)
+        .filter(|registration| registration.data::<ReflectAnimationMessage>().is_some())?;
+    let mut message = registration.data::<ReflectDefault>()?.default();
+    apply_value(message.as_mut(), stored)
+        .is_empty()
+        .then_some(message)
+}
 
 /// Queues `message` on the `AnimationPlayer` of `character`, which does nothing without one; the message type must be registered with `register_animation_message`.
 pub struct SendAnimationMessage<M: AnimationMessage> {

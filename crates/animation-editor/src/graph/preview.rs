@@ -1,5 +1,6 @@
 use concerto_animation::{
     graph::{AnimationGraph, NodePathStep},
+    message::build_animation_message,
     node::{NodeReport, state_machine::AnimationFSMTrigger},
     param::ReflectParam,
     player::{AnimationHandleComponent, AnimationPlayer},
@@ -66,6 +67,13 @@ pub struct SetGraphParam {
     pub value: ReflectedValue,
 }
 impl Signal for SetGraphParam {}
+
+/// Queues the message of the type `type_path` with the stored value `value` on every player of the preview, which drops it unless the type is registered with `register_animation_message`.
+pub struct SendGraphMessage {
+    pub type_path: String,
+    pub value: ReflectedValue,
+}
+impl Signal for SendGraphMessage {}
 
 /// Sets whether the players advance and how fast time passes for them.
 pub struct SetGraphPlayback {
@@ -187,6 +195,20 @@ fn set_graph_param(
         .params
         .retain(|held| held.name != param.name || held.type_name != param.type_name);
     stage.params.push(param.clone());
+}
+
+fn send_graph_message(
+    on: On<SendGraphMessage>,
+    types: Res<AppTypeRegistry>,
+    mut players: Query<&mut AnimationPlayer>,
+) {
+    let types = types.read();
+    let sent = on.signal();
+    for mut player in players.iter_mut() {
+        if let Some(message) = build_animation_message(&types, &sent.type_path, &sent.value) {
+            player.send_reflected(message, &types);
+        }
+    }
 }
 
 fn set_graph_playback(
@@ -332,7 +354,8 @@ pub fn graph_preview(app: &mut App) {
         )
         .add_listener(show_graphs.at_preview_time())
         .add_listener(set_graph_param.at_preview_time())
-        .add_listener(set_graph_playback.at_preview_time());
+        .add_listener(set_graph_playback.at_preview_time())
+        .add_listener(send_graph_message.at_preview_time());
 }
 
 #[cfg(test)]
