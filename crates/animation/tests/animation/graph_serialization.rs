@@ -362,7 +362,10 @@ fn a_retarget_node_keeps_every_field_through_a_round_trip_and_its_handles_come_b
     .with_goal(
         RetargetGoalSettings::new("foot_l")
             .with_weight(0.25)
-            .with_softness(0.05),
+            .with_softness(0.05)
+            .with_hinge(Hinge::Axis {
+                axis: glam::Vec3::Y,
+            }),
     );
     let mut graph = AnimationGraph::from_node(node.clone());
     graph.make_live(&registry(false), None).unwrap();

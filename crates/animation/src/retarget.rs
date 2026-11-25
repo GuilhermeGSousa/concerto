@@ -62,7 +62,7 @@ impl RetargetGoal {
     }
 }
 
-/// How a retarget pairing solves one goal that both rigs name: `weight` 0 leaves the FK result and 1 reaches the goal; `softness` eases reach near full extension.
+/// How a retarget pairing solves one goal that both rigs name: `weight` 0 leaves the FK result and 1 reaches the goal; `softness` eases reach near full extension; `hinge` is the target leg's hinge axis.
 #[derive(Clone, Debug, PartialEq, Reflect, Serialize, Deserialize)]
 pub struct RetargetGoalSettings {
     pub goal: Name,
@@ -641,7 +641,7 @@ struct GoalPair {
     offset: Vec3,
     weight: f32,
     softness: f32,
-    hinge: Hinge,
+    hinge: Option<Vec3>,
     rest_hinge: Option<Vec3>,
 }
 
@@ -711,7 +711,7 @@ impl PoseRetarget {
                         - (target_root_reference + source_offset * scale),
                     weight: 1.0,
                     softness: 0.0,
-                    hinge: Hinge::Off,
+                    hinge: None,
                     rest_hinge: Hinge::Rest.local(target_skeleton, goal.root, goal.mid, goal.tip),
                 })
             })
@@ -848,7 +848,11 @@ impl PoseRetarget {
             })?;
         pair.weight = settings.weight;
         pair.softness = settings.softness;
-        pair.hinge = settings.hinge;
+        pair.hinge = match settings.hinge {
+            Hinge::Off => None,
+            Hinge::Rest => pair.rest_hinge,
+            axis @ Hinge::Axis { .. } => axis.axis(),
+        };
         Ok(())
     }
 
@@ -871,15 +875,11 @@ impl PoseRetarget {
                 * self.scale
             + twist_about(self.source_delta(self.source_root), Vec3::Y) * pair.offset;
         let tip = self.target_position(pair.tip);
-        let local = match pair.hinge {
-            Hinge::Rest => pair.rest_hinge,
-            other => other.axis(),
-        };
         let chain = TwoBoneChain {
             root: self.target_position(pair.root),
             mid: self.target_position(pair.mid),
             tip,
-            hinge: local.map(|axis| self.target_rotation[pair.mid] * axis),
+            hinge: pair.hinge.map(|axis| self.target_rotation[pair.mid] * axis),
         };
         let solution = solve_two_bone(&chain, tip.lerp(full, weight), None, pair.softness);
         let root_rotation = (solution.root * self.target_rotation[pair.root]).normalize();

@@ -20,7 +20,7 @@ pub enum Hinge {
 
 impl Hinge {
     /// The normalized axis of an `Axis` hinge, or `None` for `Off`, `Rest` and an axis too short or not finite.
-    pub fn axis(&self) -> Option<Vec3> {
+    pub(crate) fn axis(&self) -> Option<Vec3> {
         match self {
             Hinge::Axis { axis } => (axis.is_finite()
                 && axis.length_squared() > MIN_LENGTH_SQUARED)
