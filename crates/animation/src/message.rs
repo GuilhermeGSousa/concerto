@@ -1,8 +1,8 @@
 use std::any::{Any, TypeId};
 
 use concerto_ecs::{
-    Query,
-    signal::{EntitySignal, On, Signal},
+    Entity, Query,
+    signal::{On, Signal},
 };
 use concerto_reflect::{PropertyVisitorMut, Reflect, TypeRegistration, TypeRegistry, ValueWarning};
 
@@ -11,19 +11,21 @@ use crate::player::AnimationPlayer;
 /// A value an animation graph can receive, queued with `AnimationPlayer::send`.
 pub trait AnimationMessage: Reflect + Clone + Send + Sync + 'static {}
 
-/// Triggered on a character, queues its message on the character's `AnimationPlayer`; the message type must be registered with `register_animation_message`.
-pub struct SendAnimationMessage<M: AnimationMessage>(pub M);
+/// Queues `message` on the `AnimationPlayer` of `character`, which does nothing without one; the message type must be registered with `register_animation_message`.
+pub struct SendAnimationMessage<M: AnimationMessage> {
+    pub character: Entity,
+    pub message: M,
+}
 
 impl<M: AnimationMessage> Signal for SendAnimationMessage<M> {}
-
-impl<M: AnimationMessage> EntitySignal for SendAnimationMessage<M> {}
 
 pub(crate) fn queue_message<M: AnimationMessage>(
     on: On<SendAnimationMessage<M>>,
     mut players: Query<&mut AnimationPlayer>,
 ) {
-    if let Some(mut player) = players.get_entity_mut(on.entity()) {
-        player.send(on.signal().0.clone());
+    let sent = on.signal();
+    if let Some(mut player) = players.get_entity_mut(sent.character) {
+        player.send(sent.message.clone());
     }
 }
 

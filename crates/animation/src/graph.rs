@@ -26,8 +26,9 @@ use crate::{
     message::resolve_message_types,
     node::{
         AnimationNode, ErasedAnimationNode, LayerNode, NodeOutcome, NodeReport, PlaceholderNode,
-        ReflectAnimationNode, ResultNode, blend_space::BlendSpace2DBuilderContext,
-        state_machine::AnimationStateMachineState,
+        ReflectAnimationNode, ResultNode,
+        blend_space::BlendSpace2DBuilderContext,
+        state_machine::{AnimationStateMachine, AnimationStateMachineState},
     },
     param::Param,
     player::ActiveNodeState,
@@ -836,6 +837,31 @@ impl AnimationGraphState {
 
                 node_state.update(node, delta_time, context);
             });
+    }
+
+    pub(crate) fn route(
+        &mut self,
+        graphs: &AssetStore<AnimationGraph>,
+        messages: &[Box<dyn Reflect>],
+        context: &AnimationGraphContext<'_>,
+    ) {
+        let Some(graph) = self.get_animation_graph(graphs) else {
+            return;
+        };
+        for (node_index, node_state) in self.graph_state.iter_mut() {
+            let Some(node) = graph.live_node(*node_index) else {
+                continue;
+            };
+            let Some(machine) = node.as_reflect().downcast_ref::<AnimationStateMachine>() else {
+                continue;
+            };
+            if let Some(state) = node
+                .state_as_any_mut(&mut node_state.node_state)
+                .downcast_mut::<AnimationStateMachineState>()
+            {
+                machine.route(state, graphs, messages, context);
+            }
+        }
     }
 
     pub(crate) fn receive(

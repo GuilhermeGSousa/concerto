@@ -38,6 +38,11 @@ struct Poke {
 
 impl AnimationMessage for Poke {}
 
+#[derive(Clone, Default, Reflect)]
+struct Other {}
+
+impl AnimationMessage for Other {}
+
 struct Marker(u32);
 
 #[derive(Clone)]
@@ -177,9 +182,11 @@ impl Stage {
         app.register_plugin(AnimationPlugin);
         app.register_animation_node::<Counter>();
         app.register_animation_message::<Poke>();
+        app.register_animation_message::<Other>();
         app.main_mut().world_mut().register_component::<Transform>();
         let idle = graph(&mut app, AnimationGraph::new());
         let poked = graph(&mut app, AnimationGraph::from_node(Counter {}));
+        let elsewhere = graph(&mut app, AnimationGraph::new());
         let machine =
             AnimationStateMachine::from_initial_state(name!("Idle"), idle, |transition| {
                 transition.to(
@@ -190,7 +197,13 @@ impl Stage {
             })
             .state(name!("Poked"), poked, |transition| {
                 transition.to(name!("Idle"), AnimationFSMTrigger::OnSucceeded, 0.1);
+                transition.to(
+                    name!("Elsewhere"),
+                    AnimationFSMTrigger::on_message::<Other>(),
+                    0.1,
+                );
             })
+            .state(name!("Elsewhere"), elsewhere, |_| {})
             .build();
         let machine = graph(&mut app, AnimationGraph::from_node(machine));
         let skeleton = insert(
@@ -288,8 +301,10 @@ fn messages_move_the_graph_and_nodes_answer_with_outcomes_and_signals() {
     assert!(stage.in_state(name!("Idle")));
 
     stage.player().send(Poke { strength: 1.0 });
+    stage.player().send(Other {});
     stage.frame();
     assert!(stage.in_state(name!("Poked")));
+    assert!(!stage.in_state(name!("Elsewhere")));
     assert_eq!(stage.counters(), [saw(1)]);
 
     stage.player().send(Poke { strength: 1.0 });
@@ -299,9 +314,10 @@ fn messages_move_the_graph_and_nodes_answer_with_outcomes_and_signals() {
     assert_eq!(stage.heard(), [1, 2]);
 
     let character = stage.character;
-    stage
-        .world()
-        .trigger_on(character, SendAnimationMessage(Poke { strength: 1.0 }));
+    stage.world().trigger(SendAnimationMessage {
+        character,
+        message: Poke { strength: 1.0 },
+    });
     stage.frame();
     assert!(stage.in_state(name!("Poked")));
     assert_eq!(stage.counters(), [saw(1)]);

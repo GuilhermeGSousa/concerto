@@ -1551,12 +1551,16 @@ until `assets.add(graph)` has run.
 A message is a value a graph reacts to: a type that derives `Reflect` and
 `Clone` and implements the marker trait `AnimationMessage`, registered with
 `app.register_animation_message::<M>()`. `AnimationPlayer::send(message)`
-queues it, and so does the entity signal `SendAnimationMessage(message)`
-triggered on the character, for code that holds no player. The player's next
-update takes each queued message in order: every state machine in the playing
-graphs first takes the first `OnMessage` transition out of its current state
-whose type the message has, then every node of the graphs that play, the
-states a cross-fade still blends included, gets it through
+queues it, and so does the signal `SendAnimationMessage { character, message }`,
+for code that holds no player: a listener the registration adds queues it on
+the character's player, and does nothing when the character has none. In the
+player's next update, every state machine in the playing graphs first checks
+its current state's transitions in order against the whole queue: an
+`OnMessage` transition fires when any queued message has its type, and a
+machine takes at most one transition a frame, so a machine that moved on a
+message does not check its other triggers again that frame. Only then does
+every node of the graphs that play, the states entered this frame and those a
+cross-fade still blends included, get each message in queue order through
 `AnimationNode::receive(state, message, context)`, which does nothing unless
 the node overrides it. The queue then empties, and the nodes advance. An
 `OnMessage` trigger stores the message's type path and finds the type when its

@@ -84,7 +84,7 @@ impl AnimationPlayer {
         self.extras.get::<T>()
     }
 
-    /// Queues `message` for the next update, where state machines react to it and then every playing node receives it.
+    /// Queues `message` for the next update, where every state machine checks its transitions against the whole queue before every playing node receives each message in order.
     pub fn send(&mut self, message: impl AnimationMessage) {
         self.messages.push(Box::new(message));
     }
@@ -234,6 +234,7 @@ impl AnimationPlayer {
             inputs,
             extras: &self.extras,
         };
+        self.graph_state.route(graphs, &self.messages, &context);
         for message in &self.messages {
             self.graph_state.receive(graphs, message.as_ref(), &context);
         }
