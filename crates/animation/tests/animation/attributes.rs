@@ -4,6 +4,7 @@ use concerto_animation::{
     attribute::{PoseAttribute, PoseAttributes},
     clip::{AnimationChanelOutput, AnimationChannel, AnimationClip},
     evaluation::{AnimationGraphContext, DriveContext},
+    event::{AnimationEvent, AnimationSignal},
     graph::{AnimationGraph, AnimationNodeIndex},
     mask::{BoneMask, BoneMaskBranch},
     node::{
@@ -22,7 +23,11 @@ use concerto_ecs::{
     component::scene::SceneEntityRef,
     query::Query,
     reflect::AppTypeRegistry,
-    resource::Res,
+    resource::{Res, ResMut, Resource},
+    signal::{
+        On,
+        listener::{IntoListener, Listener},
+    },
     system::{
         executor::single_thread::SingleThreadedExecutor, input::InputSet, schedule::Schedules,
     },
@@ -36,8 +41,11 @@ use concerto_foundation::{
 use concerto_mesh::skeleton::{JointPose, Skeleton, SkeletonComponent};
 use concerto_name::{Name, name};
 use concerto_reflect::Reflect;
-use glam::{Mat4, Vec3};
+use glam::{Mat4, Quat, Vec3};
 use uuid::Uuid;
+
+#[derive(Resource, Default)]
+struct Heard(usize);
 
 const BONES: usize = 3;
 const ALL_BONES: [usize; BONES] = [0, 1, 2];
@@ -337,6 +345,82 @@ impl Stage {
             .set_node_weight(&node, weight);
     }
 
+    fn there_and_back(
+        &mut self,
+        there: AnimationGraph,
+        back: AnimationGraph,
+        blend_time: f32,
+    ) -> Entity {
+        let there = self.graph(there);
+        let back = self.graph(back);
+        let machine = AnimationStateMachine::from_initial_state(name!("a"), there, |transition| {
+            transition.to(
+                name!("b"),
+                AnimationFSMTrigger::on_bool(name!("go"), true),
+                blend_time,
+            );
+        })
+        .state(name!("b"), back, |transition| {
+            transition.to(
+                name!("a"),
+                AnimationFSMTrigger::on_bool(name!("go"), false),
+                blend_time,
+            );
+        })
+        .build();
+        self.player(AnimationGraph::from_node(machine))
+    }
+
+    fn turned_clip(&mut self, angle: f32, event_at: Option<f32>) -> AssetHandle<AnimationClip> {
+        let turn = Quat::from_rotation_z(angle).to_array();
+        let mut clip = AnimationClip::default();
+        clip.add_channel(
+            Uuid::from_u128(2),
+            AnimationChannel::new(
+                vec![0.0, 1.0],
+                AnimationChanelOutput::from_rotation([turn, turn].into_iter()),
+            ),
+        );
+        if let Some(time) = event_at {
+            clip.add_event(
+                time,
+                AnimationEvent {
+                    name: name!("step"),
+                },
+            );
+        }
+        self.insert(clip)
+    }
+
+    fn hear_events(&mut self, player: Entity) {
+        let world = self.world();
+        world.insert_resource(Heard::default());
+        world.register_component::<Listener<AnimationSignal<AnimationEvent>>>();
+        let hear = (|_: On<AnimationSignal<AnimationEvent>>, mut heard: ResMut<Heard>| {
+            heard.0 += 1;
+        })
+        .into_listener();
+        world.insert(hear, player);
+    }
+
+    fn heard(&mut self) -> usize {
+        self.world().get_resource::<Heard>().unwrap().0
+    }
+
+    fn rotation(&mut self, player: Entity, bone: usize) -> Quat {
+        let world = self.world();
+        let entity = world
+            .get_component_for_entity::<SkeletonComponent>(player)
+            .unwrap()
+            .bones()[bone]
+            .entity()
+            .unwrap();
+        world
+            .get_component_for_entity::<Transform>(entity)
+            .unwrap()
+            .rotation
+    }
+
     fn swap_to_unloaded(&mut self, player: Entity) {
         let unloaded = AnimationHandleComponent::new(AssetHandle::weak(AssetId::new()));
         self.world().insert(unloaded, player);
@@ -504,5 +588,38 @@ fn attributes_travel_with_the_pose_through_every_blend() {
         stage.amounts(layer_player),
         [0.0, 0.0, 0.5],
         "a paused player keeps the attributes it last evaluated"
+    );
+
+    let blend_time = 2.0;
+    let there = stage.turned_clip(0.8, Some(0.45));
+    let back = stage.turned_clip(-0.8, None);
+    let interrupted = stage.there_and_back(
+        single(AnimationClipNode::new(there)),
+        single(AnimationClipNode::new(back)),
+        blend_time,
+    );
+    stage.hear_events(interrupted);
+    stage.advance(0.0);
+    stage.set_param(interrupted, name!("go"), true);
+    stage.advance(0.0);
+    for _ in 0..5 {
+        stage.advance(0.1);
+    }
+    stage.set_param(interrupted, name!("go"), false);
+    let mut before = stage.rotation(interrupted, 2);
+    for _ in 0..3 {
+        stage.advance(0.1);
+        let now = stage.rotation(interrupted, 2);
+        assert!(
+            now.angle_between(before) <= 0.1 / blend_time * 1.6 + 0.01,
+            "a cross-fade sent back to the state it left fades from where it was, the joint turned {} rad in a frame",
+            now.angle_between(before)
+        );
+        before = now;
+    }
+    assert_eq!(
+        stage.heard(),
+        1,
+        "the clip event of the state left and re-entered fires once"
     );
 }

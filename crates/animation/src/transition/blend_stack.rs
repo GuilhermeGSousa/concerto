@@ -41,6 +41,7 @@ impl Source {
 pub(crate) struct BlendStack {
     entries: Vec<BlendStackEntry>,
     last_pose: AnimationFrame,
+    last_pose_blended: bool,
     last_drive: PoseAttributes,
     snapshot_pose: AnimationFrame,
     snapshot_drive: PoseAttributes,
@@ -55,6 +56,7 @@ impl BlendStack {
                 weight: 1.0,
             }],
             last_pose: AnimationFrame::identity(0),
+            last_pose_blended: false,
             last_drive: PoseAttributes::default(),
             snapshot_pose: AnimationFrame::identity(0),
             snapshot_drive: PoseAttributes::default(),
@@ -98,9 +100,12 @@ impl BlendStack {
 
     fn freeze(&mut self) {
         let from = self.current();
-        std::mem::swap(&mut self.snapshot_pose, &mut self.last_pose);
+        if self.snapshot_pose.len() != self.last_pose.len() {
+            self.snapshot_pose = AnimationFrame::identity(self.last_pose.len());
+        }
+        self.snapshot_pose.copy_from(&self.last_pose);
         self.snapshot_pose.events.clear();
-        std::mem::swap(&mut self.snapshot_drive, &mut self.last_drive);
+        self.snapshot_drive.copy_from(&self.last_drive);
         self.entries.clear();
         self.entries.push(BlendStackEntry {
             source: Source::Snapshot(from),
@@ -162,6 +167,10 @@ impl AnimationTransitionBlender for BlendStack {
             },
             |output, layer, weight| output.blend(layer, weight),
         );
+        self.last_pose_blended = self.entries.len() > 1;
+        if !self.last_pose_blended {
+            return;
+        }
         if self.last_pose.len() != output.len() {
             self.last_pose = AnimationFrame::identity(output.len());
         }
@@ -261,7 +270,7 @@ impl AnimationTransitionBlender for BlendStack {
         }
 
         if self.holds(next_graph) {
-            if !self.last_pose.is_empty() {
+            if self.last_pose_blended {
                 self.freeze();
             } else {
                 self.entries.retain(|entry| {
