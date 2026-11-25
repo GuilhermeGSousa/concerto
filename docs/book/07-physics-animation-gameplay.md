@@ -1492,8 +1492,9 @@ skeleton that set them. The player keeps the last evaluated frame's, read with
 `AnimationPlayer::attributes`.
 
 Physics reads attributes once per fixed step, through a second walk of the
-graph. `AnimationPlayer::drive(graphs, inputs, delta_time)`, called by the
-system that runs the step with its `InputSet<DriveNodeInputs>`, calls each
+graph. `AnimationPlayer::drive(graphs, skeleton, inputs, delta_time)`, called
+by the system that runs the step with the player's skeleton and its
+`InputSet<DriveNodeInputs>`, calls each
 node's `drive(state, input, context, bone_ids, inputs, pool, output)` from the
 leaves up and keeps the attributes of the result, returned and read again with
 `AnimationPlayer::drive_attributes`. Only attributes are read and written. The
@@ -1504,8 +1505,8 @@ state machine drives the states it plays without advancing. Under
 inertialization the drive frame is the destination's alone. A node advances its
 physics-side state in `drive` at the step's `DriveContext::delta_time`; the
 context also gives the player's graph context, through `graph()`, with its
-blackboard, root, extras and outbox, but no skeleton, `model_to_world` or bone
-ids.
+blackboard, root, skeleton, extras and outbox, and `bone_ids` are the
+skeleton's, as in `evaluate`; `model_to_world` is `None` in a drive step.
 
 A node gives root motion with `root_motion(state, input, context, bone_ids,
 inputs)`, which returns a `RootMotion`. `update_animation_players` calls it for

@@ -145,7 +145,7 @@ impl<'a> DriveContext<'a> {
         self.delta_time
     }
 
-    /// The player's blackboard, root, extras and outbox; the skeleton and model-to-world are not set in a drive step.
+    /// The player's blackboard, root, skeleton, extras and outbox; `model_to_world` is `None` in a drive step.
     pub fn graph(&self) -> &'a AnimationGraphContext<'a> {
         self.graph
     }

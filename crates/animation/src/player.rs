@@ -101,10 +101,11 @@ impl AnimationPlayer {
         &self.attributes
     }
 
-    /// Walks the graph once for a physics step of `delta_time` seconds, each node saying through `AnimationNode::drive` what it asks of physics, and keeps the attributes it gives; the graph does not advance.
+    /// Walks the graph once for a physics step of `delta_time` seconds, each node saying through `AnimationNode::drive` what it asks of physics with `skeleton`'s bone ids, and keeps the attributes it gives; the graph does not advance.
     pub fn drive(
         &mut self,
         graphs: &AssetStore<AnimationGraph>,
+        skeleton: Option<&Skeleton>,
         inputs: &Inputs<'_, '_>,
         delta_time: f32,
     ) -> &PoseAttributes {
@@ -112,21 +113,25 @@ impl AnimationPlayer {
         let graph = AnimationGraphContext {
             blackboard: &self.blackboard,
             root: self.root.clone(),
-            skeleton: None,
+            skeleton,
             model_to_world: None,
             inputs,
             extras: &self.extras,
             outbox: &outbox,
         };
+        let bone_ids = skeleton.map_or(&[][..], |skeleton| &skeleton.bone_ids);
         let context = DriveContext {
             delta_time,
             graph: &graph,
         };
         let mut output = self.frame_pool.acquire();
-        if self
-            .graph_state
-            .drive(graphs, &context, &[], &mut self.frame_pool, &mut output)
-        {
+        if self.graph_state.drive(
+            graphs,
+            &context,
+            bone_ids,
+            &mut self.frame_pool,
+            &mut output,
+        ) {
             std::mem::swap(&mut self.drive_attributes, output.attributes_mut());
         }
         self.frame_pool.release(output);

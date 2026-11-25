@@ -60,6 +60,22 @@ impl PoseAttribute for Amount {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct SeenBones(f32);
+
+impl PoseAttribute for SeenBones {
+    fn neutral() -> Self {
+        SeenBones(0.0)
+    }
+
+    fn blend(&mut self, self_weight: f32, other: &Self, other_weight: f32) {
+        let total = self_weight + other_weight;
+        if total > 0.0 {
+            self.0 = (self.0 * self_weight + other.0 * other_weight) / total;
+        }
+    }
+}
+
 #[derive(Default, Reflect)]
 #[reflect(AnimationNode)]
 struct SetAmount {
@@ -130,8 +146,8 @@ impl AnimationNode for SetAmount {
         &self,
         elapsed: &mut f32,
         _: &(),
-        _: &DriveContext<'_>,
-        _: &[Uuid],
+        context: &DriveContext<'_>,
+        bone_ids: &[Uuid],
         inputs: &[EvaluatedFrame],
         _: &mut FramePool,
         output: &mut AnimationFrame,
@@ -140,6 +156,16 @@ impl AnimationNode for SetAmount {
             output.attributes_mut().copy_from(input.frame.attributes());
         }
         self.write(*elapsed, output);
+        let seen = context
+            .graph()
+            .skeleton()
+            .filter(|skeleton| *skeleton.bone_ids == *bone_ids)
+            .map_or(0.0, |_| bone_ids.len() as f32);
+        let bone_count = output.len();
+        output
+            .attributes_mut()
+            .channel_mut::<SeenBones>(bone_count)
+            .fill(SeenBones(seen));
     }
 
     fn reset(&self, elapsed: &mut f32) {
@@ -148,12 +174,14 @@ impl AnimationNode for SetAmount {
 }
 
 fn drive_players(
-    mut players: Query<&mut AnimationPlayer>,
+    mut players: Query<(&mut AnimationPlayer, &SkeletonComponent)>,
     graphs: Res<AssetStore<AnimationGraph>>,
+    skeletons: Res<AssetStore<Skeleton>>,
     inputs: InputSet<DriveNodeInputs>,
 ) {
-    for mut player in players.iter_mut() {
-        player.drive(&graphs, &inputs, PHYSICS_STEP);
+    for (mut player, component) in players.iter_mut() {
+        let skeleton = skeletons.get(component.skeleton());
+        player.drive(&graphs, skeleton, &inputs, PHYSICS_STEP);
     }
 }
 
@@ -319,15 +347,18 @@ impl Stage {
     }
 
     fn driven(&mut self, player: Entity) -> Vec<f32> {
+        per_bone(self.drive(player))
+    }
+
+    fn drive(&mut self, player: Entity) -> &PoseAttributes {
         let world = self.world();
         let mut system = drive_players.into_system();
         system.initialize(world);
         system.run_and_apply((), world);
-        let attributes = world
+        world
             .get_component_for_entity::<AnimationPlayer>(player)
             .unwrap()
-            .drive_attributes();
-        per_bone(attributes)
+            .drive_attributes()
     }
 }
 
@@ -401,6 +432,11 @@ fn attributes_travel_with_the_pose_through_every_blend() {
     assert_eq!(stage.amounts(additive_player), [1.0; BONES]);
     assert_eq!(stage.driven(blend_player), [0.0, 0.25, 0.0]);
     assert_eq!(stage.driven(layer_player), [0.0, 0.0, 0.5]);
+    assert_eq!(
+        stage.drive(additive_player).get::<SeenBones>(0),
+        SeenBones(BONES as f32),
+        "a node's drive sees the player's skeleton and its bone ids"
+    );
 
     stage.set_param(cross_fade, name!("go"), true);
     stage.set_param(inertialized, name!("go"), true);
