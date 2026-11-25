@@ -19,13 +19,20 @@ pub enum Hinge {
 }
 
 impl Hinge {
-    /// The hinge in the mid bone's own frame, or `None` when this setting gives none.
-    pub fn local(&self, skeleton: &Skeleton, root: usize, mid: usize, tip: usize) -> Option<Vec3> {
+    /// The normalized axis of an `Axis` hinge, or `None` for `Off`, `Rest` and an axis too short or not finite.
+    pub fn axis(&self) -> Option<Vec3> {
         match self {
-            Hinge::Off => None,
             Hinge::Axis { axis } => (axis.is_finite()
                 && axis.length_squared() > MIN_LENGTH_SQUARED)
                 .then(|| axis.normalize()),
+            Hinge::Off | Hinge::Rest => None,
+        }
+    }
+
+    /// The hinge in the mid bone's own frame, or `None` when this setting gives none.
+    pub fn local(&self, skeleton: &Skeleton, root: usize, mid: usize, tip: usize) -> Option<Vec3> {
+        match self {
+            Hinge::Off | Hinge::Axis { .. } => self.axis(),
             Hinge::Rest => {
                 let root_position = rest_model(skeleton, root).position;
                 let mid_model = rest_model(skeleton, mid);

@@ -872,9 +872,8 @@ impl PoseRetarget {
             + twist_about(self.source_delta(self.source_root), Vec3::Y) * pair.offset;
         let tip = self.target_position(pair.tip);
         let local = match pair.hinge {
-            Hinge::Off => None,
             Hinge::Rest => pair.rest_hinge,
-            Hinge::Axis { axis } => axis.try_normalize(),
+            other => other.axis(),
         };
         let chain = TwoBoneChain {
             root: self.target_position(pair.root),
@@ -1551,7 +1550,6 @@ mod tests {
     use concerto_mesh::{JointName, JointPose, Skeleton};
     use concerto_name::Name;
 
-    use crate::ik::Hinge;
     use glam::{Mat4, Quat, Vec3};
     use proptest::prelude::*;
     use uuid::Uuid;
@@ -1565,7 +1563,7 @@ mod tests {
         evaluation::{AnimationGraphContext, RootBone},
         event::AnimationEvent,
         graph::AnimationGraph,
-        ik::{TwoBoneChain, solve_two_bone},
+        ik::{Hinge, TwoBoneChain, solve_two_bone},
         node::{AnimationClipNode, AnimationNode, AnimationPlayMode},
         player::AnimationPlayer,
         pose::{AnimationFrame, FiredEvent, FramePool, RootMotion},
