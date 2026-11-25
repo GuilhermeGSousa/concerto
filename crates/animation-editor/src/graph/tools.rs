@@ -8,8 +8,8 @@ use concerto_animation::{
 };
 use concerto_app::{App, schedule_groups::LateUpdate};
 use concerto_ecs::{
-    Component, Entity, Query, Res, With, command::CommandQueue, events::event_reader::EventReader,
-    reflect::AppTypeRegistry,
+    Component, Entity, IntoSystemConfig, Query, Res, With, command::CommandQueue,
+    events::event_reader::EventReader, reflect::AppTypeRegistry,
 };
 use concerto_editor::{
     asset_editor::{ActiveEditor, EditorDocument},
@@ -21,7 +21,8 @@ use concerto_editor::{
 };
 use concerto_foundation::assets::{AssetId, asset_store::AssetStore, registry::AssetRegistry};
 use concerto_mcp::{
-    AppMcpExt, McpTool, Needs, PendingCall, Reply, ToolCalls, ToolError, ToolRegistry,
+    AppMcpExt, McpServe, McpTool, Needs, PendingCall, Reply, ToolCalls, ToolError, ToolRegistry,
+    answer_unanswered,
 };
 use concerto_name::Name;
 use concerto_reflect::{Reflect, ReflectedValue, TypeRegistry, to_json};
@@ -139,7 +140,7 @@ pub struct GraphSetParam {
 
 /// Sends a message to a character of the playing game, or without `entity` to the characters the front animation graph tab's preview plays, as the game's code does with `SendAnimationMessage`, and answers after the next frame with the states the graphs are in and what each slot plays. A type that is not registered with `register_animation_message` is refused with the registered ones. Never saved.
 #[derive(Deserialize, JsonSchema)]
-pub struct SendAnimationMessage {
+pub struct SendCharacterMessage {
     /// The character of the playing game to send to, by id as scene_tree shows it, such as 42v3; it carries the `AnimationPlayer`. Without it the message goes to the characters the front graph tab's preview plays.
     pub entity: Option<String>,
     /// The message: `type` is its full type path as the refusal lists them, `value` its fields as the inspector shows them, such as { "strength": 1.0 }.
@@ -150,8 +151,12 @@ pub struct SendAnimationMessage {
 #[derive(Deserialize, JsonSchema)]
 pub struct MessageArguments {
     pub r#type: String,
-    #[serde(default)]
+    #[serde(default = "no_fields")]
     pub value: serde_json::Value,
+}
+
+fn no_fields() -> serde_json::Value {
+    serde_json::json!({})
 }
 
 #[derive(Component)]
@@ -228,14 +233,15 @@ pub(super) fn build(app: &mut App) {
         McpTool::new("graph_set_param").needs(Needs::Project),
         graph_set_param,
     )
-    .add_tool::<SendAnimationMessage, _>(
+    .add_tool::<SendCharacterMessage, _>(
         McpTool::new("send_animation_message").needs(Needs::Project),
         send_animation_message,
     )
     .add_system(LateUpdate, answer_graph_edits)
     .add_system(LateUpdate, answer_param_sets)
     .add_system(LateUpdate, answer_message_sends)
-    .add_system(LateUpdate, send_to_character)
+    .add_system(McpServe, send_to_character.before(answer_unanswered))
+    .add_system(McpServe, refuse_without_game.before(answer_unanswered))
     .add_system(LateUpdate, answer_character_sends);
 }
 
@@ -910,7 +916,7 @@ fn registered_messages(types: &TypeRegistry) -> String {
 }
 
 fn send_animation_message(
-    mut calls: ToolCalls<SendAnimationMessage>,
+    mut calls: ToolCalls<SendCharacterMessage>,
     active: Res<ActiveEditor>,
     documents: Query<(&GraphDocument, Option<&HostedApp>)>,
     mut previews: PreviewSignals,
@@ -959,9 +965,14 @@ fn send_animation_message(
                 value,
             },
         );
+        let mut pending = PendingCall::new(reply, "the preview to report after the message")
+            .timeout(MESSAGE_PATIENCE);
+        pending.at_deadline = Some(format!(
+            "Sent {}, but the preview reported no state after it; {NOT_PLAYING}",
+            short_type(&message.r#type)
+        ));
         cmd.spawn((
-            PendingCall::new(reply, "the preview to report after the message")
-                .timeout(MESSAGE_PATIENCE),
+            pending,
             SendingMessage {
                 document,
                 type_path: message.r#type,
@@ -976,8 +987,45 @@ type Characters = (
     Option<Res<'static, AppTypeRegistry>>,
 );
 
+type Played = (
+    Query<'static, 'static, &'static AnimationPlayer>,
+    Option<Res<'static, AssetStore<AnimationGraph>>>,
+);
+
+fn character_id(id: &str) -> Result<Entity, ToolError> {
+    Entity::parse_id(id).ok_or_else(|| {
+        ToolError::new(
+            "unknown_entity",
+            format!("`{id}` is not an entity id; ids look like 42v3, as scene_tree shows them while the game plays."),
+        )
+    })
+}
+
+fn game_not_playing() -> ToolError {
+    ToolError::new(
+        "not_playing",
+        "The game is not playing or its scene is not in front; start it with play and bring its scene to the front, or leave out entity to send to the graph tab's preview.",
+    )
+}
+
+fn refuse_without_game(
+    mut calls: ToolCalls<SendCharacterMessage>,
+    targets: Query<&PlayState, With<EditTarget>>,
+) {
+    for (arguments, reply) in calls.read() {
+        let Some(id) = arguments.entity else {
+            continue;
+        };
+        if let Err(error) = character_id(&id) {
+            reply.err(error);
+        } else if !targets.iter().any(|state| *state == PlayState::Playing) {
+            reply.err(game_not_playing());
+        }
+    }
+}
+
 fn send_to_character(
-    mut calls: ToolCalls<SendAnimationMessage>,
+    mut calls: ToolCalls<SendCharacterMessage>,
     targets: Query<&PlayState, With<EditTarget>>,
     scene: EditWorld<Characters>,
     mut signals: EditWorldSignals,
@@ -988,18 +1036,15 @@ fn send_to_character(
         let Some(id) = arguments.entity else {
             continue;
         };
-        let Some(character) = Entity::parse_id(&id) else {
-            reply.err(ToolError::new(
-                "unknown_entity",
-                format!("`{id}` is not an entity id; ids look like 42v3, as scene_tree shows them while the game plays."),
-            ));
-            continue;
+        let character = match character_id(&id) {
+            Ok(character) => character,
+            Err(error) => {
+                reply.err(error);
+                continue;
+            }
         };
         if !targets.iter().any(|state| *state == PlayState::Playing) {
-            reply.err(ToolError::new(
-                "not_playing",
-                "The game is not playing; start it with play, or leave out entity to send to the graph tab's preview.",
-            ));
+            reply.err(game_not_playing());
             continue;
         }
         if players.get_entity(character).is_none() {
@@ -1030,9 +1075,14 @@ fn send_to_character(
             type_path: message.r#type.clone(),
             value,
         });
+        let mut pending = PendingCall::new(reply, "the game to run a frame after the message")
+            .timeout(MESSAGE_PATIENCE);
+        pending.at_deadline = Some(format!(
+            "Sent {} to the character, but the game ran no frame after the message; is it still playing?",
+            short_type(&message.r#type)
+        ));
         cmd.spawn((
-            PendingCall::new(reply, "the game to run a frame after the message")
-                .timeout(MESSAGE_PATIENCE),
+            pending,
             SendingToCharacter {
                 character,
                 type_path: message.r#type,
@@ -1044,10 +1094,7 @@ fn send_to_character(
 
 fn answer_character_sends(
     mut waiting: Query<(Entity, &PendingCall, &mut SendingToCharacter)>,
-    scene: EditWorld<(
-        Query<'static, 'static, &'static AnimationPlayer>,
-        Option<Res<'static, AssetStore<AnimationGraph>>>,
-    )>,
+    scene: EditWorld<Played>,
     mut cmd: CommandQueue,
 ) {
     let (players, graphs) = &*scene;
@@ -1080,11 +1127,11 @@ fn answer_character_sends(
 
 fn answer_message_sends(
     mut reported: EventReader<Hosted<GraphPreviewState>>,
-    mut waiting: Query<(Entity, &mut PendingCall, &mut SendingMessage)>,
+    mut waiting: Query<(Entity, &PendingCall, &mut SendingMessage)>,
     mut cmd: CommandQueue,
 ) {
     let reported: Vec<&Hosted<GraphPreviewState>> = reported.read().collect();
-    for (call, mut pending, mut sending) in waiting.iter_mut() {
+    for (call, pending, mut sending) in waiting.iter_mut() {
         let document = sending.document;
         for played in reported.iter().filter(|hosted| hosted.document == document) {
             sending.reports += 1;
@@ -1098,12 +1145,6 @@ fn answer_message_sends(
             ));
             cmd.despawn(call);
             break;
-        }
-        if pending.at_deadline.is_none() {
-            pending.at_deadline = Some(format!(
-                "Sent {}, but the preview reported no state after it; {NOT_PLAYING}",
-                short_type(&sending.type_path)
-            ));
         }
     }
 }

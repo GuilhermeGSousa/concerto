@@ -1261,12 +1261,20 @@ fn poking_game(app: &mut App) {
     app.register_animation_message::<Poke>();
 }
 
+struct Told {
+    sent: String,
+    refused: Value,
+    bad_id: Value,
+    idle: Value,
+    inspected: String,
+}
+
 #[test]
 fn send_animation_message_moves_a_playing_graph_and_says_where_it_is() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().to_path_buf();
     write_stage(&root);
-    let Some((sent, refused)) = serve_with(poking_game, &root, move |client| async move {
+    let Some(told) = serve_with(poking_game, &root, move |client| async move {
         until_idle(&client).await;
         ok(
             &client,
@@ -1278,10 +1286,16 @@ fn send_animation_message_moves_a_playing_graph_and_says_where_it_is() {
         ok(
             &client,
             "graph_add_node",
-            json!({ "type": "AnimationStateMachine", "parent": 0 }),
+            json!({ "type": "SlotNode", "parent": 0 }),
         )
         .await;
-        ok(&client, "graph_open", json!({ "node": 1 })).await;
+        ok(
+            &client,
+            "graph_add_node",
+            json!({ "type": "AnimationStateMachine", "parent": 1 }),
+        )
+        .await;
+        ok(&client, "graph_open", json!({ "node": 2 })).await;
         ok(&client, "graph_add_state", json!({ "name": "Idle" })).await;
         ok(&client, "graph_add_state", json!({ "name": "Poked" })).await;
         ok(
@@ -1307,6 +1321,18 @@ fn send_animation_message_moves_a_playing_graph_and_says_where_it_is() {
             json!({ "message": { "type": "nope", "value": {} } }),
         )
         .await;
+        let bad_id = error(
+            &client,
+            "send_animation_message",
+            json!({ "entity": "character", "message": { "type": "nope" } }),
+        )
+        .await;
+        let idle = error(
+            &client,
+            "send_animation_message",
+            json!({ "entity": "1v1", "message": { "type": "nope" } }),
+        )
+        .await;
         let mut sent = String::new();
         for _ in 0..10 {
             sent = ok(
@@ -1319,15 +1345,30 @@ fn send_animation_message_moves_a_playing_graph_and_says_where_it_is() {
                 break;
             }
         }
+        let inspected = ok(&client, "graph_inspect", json!({})).await;
         client.cancel().await.unwrap();
-        (sent, refused)
+        Told {
+            sent,
+            refused,
+            bad_id,
+            idle,
+            inspected,
+        }
     }) else {
         return;
     };
 
-    assert!(sent.contains("Poked"), "{sent}");
-    assert_eq!(refused["code"], "refused", "{refused}");
-    let listed = refused["message"].as_str().unwrap();
+    assert!(told.sent.contains("Poked"), "{}", told.sent);
+    assert_eq!(told.bad_id["code"], "unknown_entity", "{}", told.bad_id);
+    assert_eq!(told.idle["code"], "not_playing", "{}", told.idle);
+    assert!(
+        told.inspected
+            .contains("\n  behaviour: no entry playing (running)"),
+        "{}",
+        told.inspected
+    );
+    assert_eq!(told.refused["code"], "refused", "{}", told.refused);
+    let listed = told.refused["message"].as_str().unwrap();
     assert!(listed.contains(std::any::type_name::<Poke>()), "{listed}");
     assert!(listed.contains("PlayInSlot"), "{listed}");
 }

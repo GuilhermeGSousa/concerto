@@ -34,7 +34,7 @@ pub use preview::{
 pub use stage::{GraphLive, GraphPreview, LiveView, ParametersValue, PreviewValue, SentPreview};
 pub use tools::{
     GraphAddNode, GraphAddState, GraphConnect, GraphInspect, GraphOpen, GraphRemove, GraphSelect,
-    GraphSetParam, GraphUp, SendAnimationMessage,
+    GraphSetParam, GraphUp, SendCharacterMessage,
 };
 
 use document::{
