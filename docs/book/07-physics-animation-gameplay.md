@@ -1153,14 +1153,14 @@ A graph is a tree of nodes under a result node:
   space. A `TwoBoneChain` may also carry a `hinge`, a chain-space axis the
   lower bone turns about, positively by the right-hand rule, relative to the
   upper bone as the mid joint bends. It is `unit(upper × lower)` of a bent
-  chain. With no hinge (`None`) the solve is as before. With a hinge, a chain
+  chain. With no hinge (`None`) the bend plane comes from the chain's own bend. With a hinge, a chain
   that comes in straight, or bent backward or sideways, bends about the hinge
   instead of an arbitrary plane. A chain bent more than 5° keeps its own bend
   plane where it agrees with the hinge, and turns toward the hinge where they
   disagree, so a hinged knee never folds backward. A pole still decides the
   final side. In a graph, the node's `Hinge` is `Off`, `Rest`, which takes
   the hinge from the skeleton's rest pose when that pose bends the joint at
-  least 5°, or `Axis { axis }`, which names it in the mid bone's own frame.
+  least 5° (a rest pose bent less gives no hinge, so `Rest` acts as `Off`), or `Axis { axis }`, which names it in the mid bone's own frame.
   The solve also lands the tip on a reachable goal for any bend plane.
 - **Aim offset** (`AimOffsetNode`) lays captured aim poses over its first
   input, chosen by where a target is. Each `AimPoint` is an additive clip and
@@ -1930,8 +1930,8 @@ a fixed target goal, and a stride scales as root motion does. The goal is the
 FK tip position moved toward the full goal by the pair's `weight`, and
 `softness` eases the reach near full extension. The solve turns the limb's root
 and mid; the tip keeps the model rotation the FK pass gave it, and the bones
-below it, such as toes and fingers, follow. The knee or elbow stays on the side
-the FK pass bent it to, a goal out of reach straightens the limb toward it, and
+below it, such as toes and fingers, follow. With `Hinge::Off` the knee or elbow stays on the side
+the FK pass bent it to, and with a hinge it bends about the hinge; a goal out of reach straightens the limb toward it, and
 no bone changes length. Each pair sees the pose the pairs before it left.
 
 Every pair starts at weight 1 and softness 0. `set_goal(&settings)` replaces
