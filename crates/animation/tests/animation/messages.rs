@@ -1,8 +1,8 @@
-use std::{thread, time::Duration};
+use std::{any::TypeId, thread, time::Duration};
 
 use concerto_animation::{
     clip::AnimationClip,
-    evaluation::AnimationGraphContext,
+    evaluation::{AnimationGraphContext, DriveContext},
     graph::AnimationGraph,
     message::{AnimationMessage, MessageType, SendAnimationMessage},
     node::{
@@ -13,10 +13,11 @@ use concerto_animation::{
     player::{AnimationHandleComponent, AnimationPlayer},
     plugin::{AnimationAppExt, AnimationPlugin},
     pose::{AnimationFrame, EvaluatedFrame, FramePool},
+    root::AnimationRootBone,
 };
 use concerto_app::{App, plugins::AssetManagerPlugin, schedule_groups::LateUpdate};
 use concerto_ecs::{
-    Entity, ResMut,
+    Entity, IntoSystem, ResMut, System,
     component::scene::SceneEntityRef,
     reflect::AppTypeRegistry,
     resource::Resource,
@@ -31,11 +32,11 @@ use concerto_foundation::{
 };
 use concerto_mesh::skeleton::{JointPose, Skeleton, SkeletonComponent};
 use concerto_name::{Name, name};
-use concerto_reflect::Reflect;
+use concerto_reflect::{Reflect, ReflectDefault, apply_value, json_to_value, to_json};
 use glam::Mat4;
 use uuid::Uuid;
 
-use crate::attributes::Amount;
+use crate::attributes::{Amount, drive_players};
 
 const LONGEST_FRAME: Duration = Duration::from_millis(250);
 
@@ -63,7 +64,7 @@ impl Signal for Counted {}
 impl EntitySignal for Counted {}
 
 #[derive(Default, Reflect)]
-#[reflect(AnimationNode)]
+#[reflect(AnimationNode, Default)]
 struct Counter {}
 
 #[derive(Default)]
@@ -81,6 +82,26 @@ impl AnimationNode for Counter {
 
     fn input_slots(&self) -> InputSlots {
         InputSlots::None
+    }
+
+    fn drive(
+        &self,
+        _: &mut Count,
+        _: &(),
+        _: &DriveContext<'_>,
+        _: &[Uuid],
+        inputs: &[EvaluatedFrame],
+        _: &mut FramePool,
+        output: &mut AnimationFrame,
+    ) {
+        if let Some(input) = inputs.first() {
+            output.attributes_mut().copy_from(input.frame.attributes());
+        }
+        let bone_count = output.len();
+        output
+            .attributes_mut()
+            .channel_mut::<Amount>(bone_count)
+            .fill(Amount(1.0));
     }
 
     fn create_state(&self, _: &(), _: &AnimationGraphContext<'_>) -> Count {
@@ -101,6 +122,9 @@ impl AnimationNode for Counter {
     ) {
         if let Some(input) = evaluated_inputs.first() {
             output.copy_from(&input.frame);
+        }
+        if let Some(joint) = output.joint_mut(0) {
+            joint.translation.y = 2.0;
         }
         let bone_count = output.len();
         output
@@ -190,10 +214,12 @@ struct Stage {
     character: Entity,
     bodiless: Entity,
     slotted: Entity,
+    slot_bone: Entity,
+    jsoned: Entity,
 }
 
-fn slot_graph(clip: AssetHandle<AnimationClip>) -> AnimationGraph {
-    let slot = SlotNode::new()
+fn slot_node() -> SlotNode {
+    SlotNode::new()
         .with_entry(
             SlotEntry::new(name!("count"), Counter {})
                 .with_fade_in(0.2)
@@ -205,7 +231,10 @@ fn slot_graph(clip: AssetHandle<AnimationClip>) -> AnimationGraph {
                 .with_fade_in(0.0)
                 .with_fade_out(0.0)
                 .with_on(MessageType::of::<Other>()),
-        );
+        )
+}
+
+fn slot_graph(clip: AssetHandle<AnimationClip>, slot: SlotNode) -> AnimationGraph {
     let mut graph = AnimationGraph::new();
     graph
         .result_node()
@@ -249,7 +278,20 @@ impl Stage {
             .build();
         let machine = graph(&mut app, stored(AnimationGraph::from_node(machine)));
         let clip = insert(&mut app, AnimationClip::default());
-        let slotted = graph(&mut app, slot_graph(clip));
+        let json = {
+            let registry = app.get_resource::<AppTypeRegistry>().unwrap().read();
+            let json = to_json(&slot_node(), &registry);
+            assert_eq!(
+                json["entries"][0]["node"],
+                serde_json::json!({ "type": std::any::type_name::<Counter>(), "value": {} })
+            );
+            let stored = json_to_value(&json, TypeId::of::<SlotNode>(), &registry).unwrap();
+            let mut rebuilt = SlotNode::new();
+            assert!(apply_value(&mut rebuilt, &stored).is_empty());
+            rebuilt
+        };
+        let jsoned = graph(&mut app, slot_graph(clip.clone(), json));
+        let slotted = graph(&mut app, slot_graph(clip, slot_node()));
         let skeleton = insert(
             &mut app,
             Skeleton::new(
@@ -274,10 +316,22 @@ impl Stage {
             AnimationHandleComponent::new(poked),
             hear_counted.into_listener(),
         ));
+        let slot_bone = world.spawn((Transform::IDENTITY, AnimationRootBone::default()));
         let slotted = world.spawn((
             AnimationPlayer::new(1),
             AnimationHandleComponent::new(slotted),
-            SkeletonComponent::new(skeleton, vec![SceneEntityRef::Entity(bone)], None),
+            SkeletonComponent::new(
+                skeleton.clone(),
+                vec![SceneEntityRef::Entity(slot_bone)],
+                None,
+            ),
+            hear_counted.into_listener(),
+        ));
+        let json_bone = world.spawn((Transform::IDENTITY, AnimationRootBone::default()));
+        let jsoned = world.spawn((
+            AnimationPlayer::new(1),
+            AnimationHandleComponent::new(jsoned),
+            SkeletonComponent::new(skeleton, vec![SceneEntityRef::Entity(json_bone)], None),
             hear_counted.into_listener(),
         ));
         Self {
@@ -285,6 +339,8 @@ impl Stage {
             character,
             bodiless,
             slotted,
+            slot_bone,
+            jsoned,
         }
     }
 
@@ -331,6 +387,38 @@ impl Stage {
 
     fn slot_amount(&mut self) -> f32 {
         self.slot_player().attributes().get::<Amount>(0).0
+    }
+
+    fn amount_of(&mut self, entity: Entity) -> f32 {
+        self.world()
+            .get_component_for_entity::<AnimationPlayer>(entity)
+            .unwrap()
+            .attributes()
+            .get::<Amount>(0)
+            .0
+    }
+
+    fn driven_amount(&mut self) -> f32 {
+        let slotted = self.slotted;
+        let world = self.world();
+        let mut system = drive_players.into_system();
+        system.initialize(world);
+        system.run_and_apply((), world);
+        world
+            .get_component_for_entity::<AnimationPlayer>(slotted)
+            .unwrap()
+            .drive_attributes()
+            .get::<Amount>(0)
+            .0
+    }
+
+    fn slot_lift(&mut self) -> f32 {
+        let bone = self.slot_bone;
+        self.world()
+            .get_component_for_entity::<Transform>(bone)
+            .unwrap()
+            .translation
+            .y
     }
 
     fn player(&mut self) -> &mut AnimationPlayer {
@@ -419,9 +507,26 @@ fn messages_move_the_graph_and_nodes_answer_with_outcomes_and_signals() {
     stage.advance(0.0);
     assert_eq!(stage.slot_amount(), 0.0);
 
+    let jsoned = stage.jsoned;
     stage.slot_player().send(Poke { strength: 1.0 });
+    stage
+        .world()
+        .get_component_for_entity_mut::<AnimationPlayer>(jsoned)
+        .unwrap()
+        .send(Poke { strength: 1.0 });
     stage.advance(0.1);
     let fading_in = stage.slot_amount();
+    assert_eq!(
+        stage.amount_of(jsoned),
+        fading_in,
+        "an entry made from its JSON form plays like one built in code"
+    );
+    assert_eq!(stage.heard_by(jsoned), [1]);
+    assert_eq!(
+        stage.driven_amount(),
+        fading_in,
+        "the drive pass fades an entry's attributes like the pose"
+    );
     assert!(
         (fading_in - 0.5).abs() < 0.05,
         "half way through a 0.2 s fade in the amount is {fading_in}"
@@ -436,6 +541,10 @@ fn messages_move_the_graph_and_nodes_answer_with_outcomes_and_signals() {
         "a repeat poke restarts the entry"
     );
     assert!((stage.slot_amount() - 1.0).abs() < 0.05);
+    assert!(
+        (stage.slot_lift() - 2.0).abs() < 0.05,
+        "an entry's root joint shows through the slot"
+    );
 
     stage.slot_player().send(Poke { strength: 1.0 });
     stage.slot_player().send(Poke { strength: 1.0 });

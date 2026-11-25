@@ -173,7 +173,7 @@ impl AnimationNode for SetAmount {
     }
 }
 
-fn drive_players(
+pub(crate) fn drive_players(
     mut players: Query<(&mut AnimationPlayer, &SkeletonComponent)>,
     graphs: Res<AssetStore<AnimationGraph>>,
     skeletons: Res<AssetStore<Skeleton>>,

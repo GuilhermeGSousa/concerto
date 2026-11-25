@@ -14,12 +14,12 @@ use log::warn;
 use crate::{
     clip::AnimationClip,
     event::{AnimationEvent, ClipEvent},
-    graph::AnimationGraph,
+    graph::{AnimationGraph, AnimationNodeData},
     mask::BoneMask,
     message::{AnimationMessage, ReflectAnimationMessage, queue_message},
     node::{
         AdditiveNode, AimOffsetNode, AnimationClipNode, AnimationNode, BlendNode, IkTarget,
-        LayerNode, PlaceholderNode, PlayInSlot, ResultNode, SlotNode, TwoBoneIkNode,
+        LayerNode, PlaceholderNode, PlayInSlot, ResultNode, SlotEntry, SlotNode, TwoBoneIkNode,
         blend_space::BlendSpace2DNode, register_node_inputs, state_machine::AnimationStateMachine,
     },
     param::Param,
@@ -45,6 +45,8 @@ pub fn register_animation_types(registry: &mut TypeRegistry) {
     registry.register::<RetargetNode>();
     registry.register::<PlaceholderNode>();
     registry.register::<AnimationEvent>();
+    registry.register::<AnimationNodeData>();
+    registry.register::<SlotEntry>();
     registry.register::<AssetHandle<AnimationClip>>();
     registry.register::<AssetHandle<AnimationGraph>>();
     registry.register::<AssetHandle<BoneMask>>();

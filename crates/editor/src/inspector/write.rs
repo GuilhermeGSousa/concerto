@@ -91,7 +91,7 @@ fn decoded(
     let type_id = (field as &dyn Any).type_id();
     let invalid = |reason: String| WriteRefusal::new("invalid_value", reason);
     let mut built = if let Some(codec) = types.get_type_data::<ReflectJson>(type_id) {
-        (codec.from_json)(value).map_err(invalid)?
+        (codec.from_json_with)(value, types).map_err(invalid)?
     } else {
         let Some(default) = types.get_type_data::<ReflectDefault>(type_id) else {
             return Err(WriteRefusal::new(

@@ -3,6 +3,7 @@ use concerto_foundation::assets::handle::LiveLeaves;
 use concerto_foundation::assets::{asset_store::AssetStore, handle::AssetHandle};
 use concerto_name::{Name, name};
 use concerto_reflect::{Reflect, ReflectDefault, TypeRegistry, ValueWarning};
+use log::warn;
 use uuid::Uuid;
 
 use crate::{
@@ -130,7 +131,14 @@ struct EntryState {
     node: Option<NodeState>,
     weight: f32,
     fading_out: bool,
-    mask: MaskResolution,
+    mask: EntryMask,
+}
+
+#[derive(Default)]
+struct EntryMask {
+    resolution: MaskResolution,
+    warned_missing: bool,
+    warned_root: bool,
 }
 
 fn fade_step(delta_time: f32, fade: f32) -> f32 {
@@ -139,20 +147,48 @@ fn fade_step(delta_time: f32, fade: f32) -> f32 {
 
 fn resolve_weights(
     entry: &SlotEntry,
-    mask: &mut MaskResolution,
-    masks: &AssetStore<BoneMask>,
+    state: &mut EntryMask,
     context: &AnimationGraphContext<'_>,
+    masks: &AssetStore<BoneMask>,
     bones: usize,
 ) -> bool {
     let Some(handle) = &entry.mask else {
-        mask.weights.clear();
-        mask.weights.resize(bones, 1.0);
+        state.resolution.weights.clear();
+        state.resolution.weights.resize(bones, 1.0);
         return true;
     };
     let (Some(asset), Some(skeleton)) = (masks.get(handle), context.skeleton()) else {
         return false;
     };
-    resolve_mask(asset, skeleton, context.root().map(|root| root.index), mask);
+    resolve_mask(
+        asset,
+        skeleton,
+        context.root().map(|root| root.index),
+        &mut state.resolution,
+    );
+    if !state.resolution.missing.is_empty() && !state.warned_missing {
+        let names: Vec<&str> = state
+            .resolution
+            .missing
+            .iter()
+            .map(|name| &**name)
+            .collect();
+        warn!(
+            "slot entry {} mask {:?} names bones the skeleton lacks: {}",
+            entry.name.as_str(),
+            handle.id(),
+            names.join(", ")
+        );
+        state.warned_missing = true;
+    }
+    if state.resolution.names_root && !state.warned_root {
+        warn!(
+            "slot entry {} mask {:?} names the root bone, which keeps the base's joint",
+            entry.name.as_str(),
+            handle.id()
+        );
+        state.warned_root = true;
+    }
     true
 }
 
@@ -197,7 +233,7 @@ impl AnimationNode for SlotNode {
         &self,
         state: &mut SlotState,
         messages: &[Box<dyn Reflect>],
-        _: &AnimationGraphContext<'_>,
+        context: &AnimationGraphContext<'_>,
     ) {
         for (index, entry) in self.entries.iter().enumerate() {
             let called = messages.iter().any(|message| {
@@ -208,6 +244,15 @@ impl AnimationNode for SlotNode {
             });
             if called {
                 self.start(state, index);
+            }
+        }
+        for &index in &state.playing {
+            if let (Some(entry), Some(entry_state)) =
+                (self.entries.get(index), state.entries.get_mut(index))
+                && let (Some(live), Some(node_state)) =
+                    (entry.node.live(), entry_state.node.as_mut())
+            {
+                live.route(node_state, messages, context);
             }
         }
     }
@@ -279,7 +324,6 @@ impl AnimationNode for SlotNode {
             return;
         };
         output.copy_from(&base.frame);
-        let root = context.root().map(|root| root.index);
         let SlotState { entries, playing } = state;
         for &index in playing.iter() {
             let (Some(entry), Some(entry_state)) =
@@ -293,7 +337,7 @@ impl AnimationNode for SlotNode {
             };
             let fade = entry_state.weight;
             if fade <= 0.0
-                || !resolve_weights(entry, &mut entry_state.mask, masks, context, output.len())
+                || !resolve_weights(entry, &mut entry_state.mask, context, masks, output.len())
             {
                 continue;
             }
@@ -312,16 +356,15 @@ impl AnimationNode for SlotNode {
                     ..*event
                 });
             }
-            for (bone, mask_weight) in entry_state.mask.weights.iter().enumerate() {
+            for (bone, mask_weight) in entry_state.mask.resolution.weights.iter().enumerate() {
                 let weight = mask_weight * fade;
                 if weight > 0.0
-                    && Some(bone) != root
                     && let (Some(joint), Some(target)) = (output.joint_mut(bone), layer.joint(bone))
                 {
                     blend_joint(joint, target, weight);
                 }
             }
-            blend_attributes(&entry_state.mask.weights, fade, &layer, output);
+            blend_attributes(&entry_state.mask.resolution.weights, fade, &layer, output);
             pool.release(layer);
         }
     }
@@ -394,8 +437,8 @@ impl AnimationNode for SlotNode {
                 || !resolve_weights(
                     entry,
                     &mut entry_state.mask,
-                    masks,
                     context.graph(),
+                    masks,
                     output.len(),
                 )
             {
@@ -410,7 +453,7 @@ impl AnimationNode for SlotNode {
                 pool,
                 &mut layer,
             );
-            blend_attributes(&entry_state.mask.weights, fade, &layer, output);
+            blend_attributes(&entry_state.mask.resolution.weights, fade, &layer, output);
             pool.release(layer);
         }
     }

@@ -8,7 +8,8 @@ use concerto_foundation::assets::{
 };
 use concerto_name::Name;
 use concerto_reflect::{
-    EncodeError, Reflect, ReflectedValue, TypeRegistry, ValueWarning, to_value,
+    EncodeError, JsonLeaf, Reflect, ReflectJson, ReflectedValue, TypeRegistration, TypeRegistry,
+    ValueWarning, json_to_value, to_json, to_value,
 };
 use glam::Vec2;
 use log::warn;
@@ -40,7 +41,7 @@ static PLACEHOLDER: PlaceholderNode = PlaceholderNode {};
 
 /// One node as a graph holds it: `Stored` until built, `Live` once built, or a `Placeholder` that plays as [`PlaceholderNode`] and keeps the value it could not build.
 #[derive(Reflect)]
-#[reflect(opaque)]
+#[reflect(opaque, Json)]
 pub enum AnimationNodeData {
     Stored {
         type_name: String,
@@ -93,7 +94,7 @@ impl AnimationNodeData {
     }
 
     /// Builds the node from its stored value, or from a placeholder's kept value, loading handles through `leaves`; a node that cannot be built becomes a placeholder, and `label` names it in the warnings returned.
-    pub(crate) fn make_live(
+    pub fn make_live(
         &mut self,
         registry: &TypeRegistry,
         leaves: &mut LiveLeaves,
@@ -167,6 +168,52 @@ impl AnimationNodeData {
             Self::Live { node, .. } => Some(node.as_mut()),
             Self::Stored { .. } | Self::Placeholder { .. } => None,
         }
+    }
+}
+
+impl JsonLeaf for AnimationNodeData {
+    fn to_json(&self) -> serde_json::Value {
+        serde_json::Value::Null
+    }
+
+    fn from_json(_: &serde_json::Value) -> Result<Self, String> {
+        Err("a node's JSON form needs the type registry".to_owned())
+    }
+
+    fn to_json_with(&self, registry: &TypeRegistry) -> serde_json::Value {
+        let value = match self {
+            Self::Live { node, .. } => to_json(node.as_reflect(), registry),
+            Self::Stored { type_name, value } => {
+                let built = registry
+                    .get_by_name(type_name)
+                    .and_then(|registration| registration.data::<ReflectAnimationNode>().copied())
+                    .map(|data| {
+                        (data.from_value)(value, &mut LiveLeaves::from_parts(registry, None)).0
+                    });
+                built.map_or(serde_json::Value::Null, |built| {
+                    to_json(built.as_reflect(), registry)
+                })
+            }
+            Self::Placeholder { .. } => serde_json::Value::Null,
+        };
+        serde_json::json!({ "type": self.type_name(), "value": value })
+    }
+
+    fn from_json_with(value: &serde_json::Value, registry: &TypeRegistry) -> Result<Self, String> {
+        let type_name = value
+            .get("type")
+            .and_then(serde_json::Value::as_str)
+            .ok_or("expected an object with the node's type path under \"type\" and its fields under \"value\"")?;
+        let registration = registry
+            .get_by_name(type_name)
+            .filter(|registration| registration.data::<ReflectAnimationNode>().is_some())
+            .ok_or_else(|| format!("{type_name} is not registered as an animation node"))?;
+        let fields = value.get("value").cloned().unwrap_or_default();
+        let value = json_to_value(&fields, TypeRegistration::type_id(&registration), registry)?;
+        Ok(Self::Stored {
+            type_name: registration.type_path().to_owned(),
+            value,
+        })
     }
 }
 
