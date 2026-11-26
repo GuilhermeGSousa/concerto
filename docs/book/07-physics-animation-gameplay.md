@@ -1715,11 +1715,12 @@ initialized yet drops what it was sent. An `OnMessage` trigger stores the
 message's full type path and finds the type by that exact path when its graph
 is made live, with no fallback to a short name; a path that names no type
 registered as a message leaves a load warning, and that trigger never fires.
-A stored graph that names a trigger the engine no longer has, such as
-`OnAnimationEnd`, `OnSucceeded` or `OnFailed`, still loads, with a warning
-about the unknown variant, and each such transition becomes `Instant`, firing
-every frame, until it is re-authored, usually as `OnMessage` of `ClipEnded` or
-of the message the node now raises.
+A stored state machine that names a trigger the engine no longer has, such as
+`OnAnimationEnd`, `OnSucceeded` or `OnFailed`, does not apply: it loads as a
+`Placeholder` with a warning naming the unknown variant, and plays as a
+`PlaceholderNode`, so none of its states play. Re-author each such
+transition's trigger, usually as `OnMessage` of `ClipEnded` or of the message
+the node now raises, and save the graph again.
 
 A node tells the containers above it what happened with
 `context.raise(message)`, for any `AnimationMessage`, in `update`; a raise
