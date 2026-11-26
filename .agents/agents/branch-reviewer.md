@@ -34,7 +34,9 @@ Check:
    cloud pipeline session, build and run nothing: read the CI results on the
    PR's head commit and report each gate command as CI reported it, and list
    the visual checks left for the owner.
-4. **Repository rules.** New comments beyond a one-line `///` on public items;
+4. **Repository rules.** New comments other than doc comments on public API
+   and `// SAFETY:` lines, or public docs that miss the `# Errors`,
+   `# Panics` or `# Safety` section the item needs;
    a system that takes `&World` or `&mut World`; a game crate that depends on
    the editor; a render-world system added with `add_system`; changes under
    `examples/*/content` that the spec does not call for; an editor feature an
