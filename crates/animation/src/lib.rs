@@ -125,6 +125,7 @@ mod tests {
         looping.reset(&mut node_state);
         assert_eq!(current_time(&node_state), 0.4);
         assert!(!ended(looping.as_ref(), &mut node_state, 0.1));
+        assert!(ended(looping.as_ref(), &mut node_state, 0.6));
 
         let once = erased(
             AnimationClipNode::new(handle)
@@ -142,6 +143,7 @@ mod tests {
         once.reset(&mut node_state);
         assert_eq!(current_time(&node_state), 0.4);
         assert!(!ended(once.as_ref(), &mut node_state, 0.1));
+        assert!(ended(once.as_ref(), &mut node_state, 0.6));
     }
 
     fn clip_with_duration(duration: f32) -> AnimationClip {

@@ -71,7 +71,7 @@ struct Rang {}
 impl AnimationMessage for Rang {}
 
 #[derive(Clone, Default, Reflect)]
-struct Twice {}
+struct Twice;
 
 impl AnimationMessage for Twice {}
 
@@ -135,7 +135,7 @@ impl AnimationNode for Counter {
                 count: state.received,
             });
             if state.received == 2 {
-                context.raise(Twice {});
+                context.raise(Twice);
             }
         }
         if context.message::<Ring>().next().is_some() {

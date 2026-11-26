@@ -747,14 +747,15 @@ its neighbours' to `neighbour_dip`, brings them back over `recover` seconds,
 draws the powered parts in full for `hold` seconds after the last hit, then
 lets their amount fall to 0 over `settle` and raises `Recovered`. A second
 `Hit` restarts it. Play it from a `SlotNode` entry started `on` the `Hit`
-message type and ended on `Recovered`, its `out`, so the walk plays underneath
+message type and ended on `Recovered`, one of its `out` types, so the walk plays underneath
 and the flinch is there only while it lasts:
 
 ```rust
-let slot = SlotNode::new().with_entry(SlotEntry {
-    out: vec![MessageType::of::<Recovered>()],
-    ..SlotEntry::new(name!("flinch"), FlinchNode::default()).with_on(MessageType::of::<Hit>())
-});
+let slot = SlotNode::new().with_entry(
+    SlotEntry::new(name!("flinch"), FlinchNode::default())
+        .with_on(MessageType::of::<Hit>())
+        .with_out(MessageType::of::<Recovered>()),
+);
 graph.result_node().input(slot).input(AnimationClipNode::new(walk));
 ```
 
@@ -1714,6 +1715,11 @@ initialized yet drops what it was sent. An `OnMessage` trigger stores the
 message's full type path and finds the type by that exact path when its graph
 is made live, with no fallback to a short name; a path that names no type
 registered as a message leaves a load warning, and that trigger never fires.
+A stored graph that names a trigger the engine no longer has, such as
+`OnAnimationEnd`, `OnSucceeded` or `OnFailed`, still loads, with a warning
+about the unknown variant, and each such transition becomes `Instant`, firing
+every frame, until it is re-authored, usually as `OnMessage` of `ClipEnded` or
+of the message the node now raises.
 
 A node tells the containers above it what happened with
 `context.raise(message)`, for any `AnimationMessage`, in `update`; a raise

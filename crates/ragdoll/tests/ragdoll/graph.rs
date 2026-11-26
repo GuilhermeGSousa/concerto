@@ -19,7 +19,9 @@ use concerto_app::{
     schedule_groups::{FixedUpdate, LateFixedUpdate, LateUpdate, Update},
 };
 use concerto_ecs::entity::Entity;
-use concerto_foundation::assets::{asset_server::AssetServer, handle::AssetHandle};
+use concerto_foundation::assets::{
+    asset_server::AssetServer, asset_store::AssetStore, handle::AssetHandle,
+};
 use concerto_foundation::time::Time;
 use concerto_foundation::transform::{GlobalTransform, Transform};
 use concerto_mesh::Skeleton;
@@ -162,11 +164,11 @@ impl Stage {
         let ragdoll = server.add(ragdoll);
         let left_leg = server.add(BoneMask::new().with_branch(BoneMaskBranch::new("thigh_l")));
         let walk = server.add(over_clip(
-            SlotNode::new().with_entry(SlotEntry {
-                out: vec![MessageType::of::<Recovered>()],
-                ..SlotEntry::new(name!("flinch"), FlinchNode::default())
+            SlotNode::new().with_entry(
+                SlotEntry::new(name!("flinch"), FlinchNode::default())
                     .with_on(MessageType::of::<Hit>())
-            }),
+                    .with_out(MessageType::of::<Recovered>()),
+            ),
             &clip,
         ));
         let hold = server.add(over_clip(
@@ -309,6 +311,27 @@ impl Stage {
             .attributes()
             .get::<PhysicsAmount>(self.bone(name))
             .0
+    }
+
+    fn slot_line(&self) -> String {
+        let graphs = self
+            .app
+            .get_resource::<AssetStore<AnimationGraph>>()
+            .unwrap();
+        let mut line = String::new();
+        self.app
+            .main()
+            .world()
+            .get_component_for_entity::<AnimationPlayer>(self.humanoid.skeleton)
+            .unwrap()
+            .for_each_node(graphs, |visit| {
+                if visit.node.as_reflect().downcast_ref::<SlotNode>().is_some()
+                    && let Some(described) = visit.node.describe(visit.state)
+                {
+                    line = described;
+                }
+            });
+        line
     }
 
     fn drawn(&self, entity: Entity) -> Vec3 {
@@ -697,6 +720,11 @@ fn a_hit_flinches_from_a_slot_throws_the_part_back_and_the_body_returns_to_its_a
     );
     stage.walk(3);
     stage.assert_animated("after the flinch settled");
+    assert_eq!(
+        stage.slot_line(),
+        "no entry playing",
+        "the flinch raises Recovered once it settles, and its slot entry ends on it"
+    );
 
     stage.player_mut().set_bool_param(name!("limp"), true);
     stage.fade_until(|amounts| amounts.iter().all(|amount| *amount >= 1.0));

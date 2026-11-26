@@ -3301,6 +3301,7 @@ mod tests {
 
         played.reset();
         assert!(!played.ends_after(0.1));
+        assert!(played.ends_after(1.0));
     }
 
     #[test]

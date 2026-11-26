@@ -137,11 +137,11 @@ fn spawn_character(
 fn spawn_characters(server: Res<AssetServer>, mut cmd: CommandQueue) {
     let casting = Casting {
         reacting: server.add(over_clip(
-            SlotNode::new().with_entry(SlotEntry {
-                out: vec![MessageType::of::<Recovered>()],
-                ..SlotEntry::new(name!("flinch"), FlinchNode::default())
+            SlotNode::new().with_entry(
+                SlotEntry::new(name!("flinch"), FlinchNode::default())
                     .with_on(MessageType::of::<Hit>())
-            }),
+                    .with_out(MessageType::of::<Recovered>()),
+            ),
             &server,
         )),
         inert: server.add({
