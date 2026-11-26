@@ -45,7 +45,9 @@ const NO_SCENE: &str = "stop the game and open a scene to place assets";
 const LOAD_FAILED: &str = "the asset failed to load; see the log";
 const LOAD_CANCELLED: &str = "the asset's load was cancelled; place it again";
 
-/// Places `asset` in the open scene as a new entity under `parent`, or under the scene root. Trigger it; `AssetPlaced` says how it ended, once the asset has loaded.
+/// Places `asset` in the open scene as a new entity under `parent`, or under the scene root.
+///
+/// Trigger it; [`AssetPlaced`] says how it ended, once the asset has loaded.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PlaceAsset {
     pub asset: AssetId,

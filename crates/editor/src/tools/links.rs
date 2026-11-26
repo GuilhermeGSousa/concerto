@@ -28,7 +28,9 @@ use crate::tools::{
     scene::{SceneRoot, SceneStatus, report_edit, write},
 };
 
-/// Removes the change at `index` from a link's own changes, and spawns the link again without it. Trigger it in the edit `App`.
+/// Removes the change at `index` from a link's own changes, and spawns the link again without it.
+///
+/// Trigger it in the edit `App`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RemoveLinkChange {
     pub link: Entity,

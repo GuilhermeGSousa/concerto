@@ -24,6 +24,12 @@ use concerto_reflect::{Reflect, TypeRegistry, to_json};
 use crate::project::{AssetsWritten, ProjectState};
 
 /// Imports a source into the project at `destination` with `settings`, bringing the files it refers to along.
+///
+/// # Errors
+///
+/// Fails when the project's content config cannot be read or is invalid, when `destination` is not a
+/// file inside the project with the source's extension, or when reading, converting or writing the
+/// source fails.
 pub fn import_source_into(
     source: &Path,
     destination: &str,
@@ -35,6 +41,11 @@ pub fn import_source_into(
 }
 
 /// Scans the content of the project at `project_root` once, for staging a batch of rows against it.
+///
+/// # Errors
+///
+/// Fails when the project's content config cannot be read, or the content tree holds a malformed
+/// header or a duplicate id.
 pub fn scan_content(project_root: &Path) -> anyhow::Result<ContentScan> {
     let config = ContentConfig::load_or_default(project_root)?;
     ContentScan::new(project_root, &config)

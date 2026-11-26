@@ -23,7 +23,9 @@ use crate::tools::{
     selection::Select,
 };
 
-/// A structural change to an open scene, or to a game's world, which has no scene root. Trigger it; one listener applies it.
+/// A structural change to an open scene, or to a game's world, which has no scene root.
+///
+/// Trigger it; one listener applies it.
 #[derive(Clone, Debug, PartialEq)]
 pub enum EntityEdit {
     /// Adds an empty entity as the last child of `parent`, or at the top level of a world without a scene root.
