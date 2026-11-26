@@ -183,14 +183,14 @@ impl EditorAnimationNode for SetAmount {
 }
 
 pub(crate) fn drive_players(
-    mut players: Query<(&mut AnimationPlayer, &SkeletonComponent)>,
+    mut players: Query<(Entity, &mut AnimationPlayer, &SkeletonComponent)>,
     graphs: Res<AssetStore<AnimationGraph>>,
     skeletons: Res<AssetStore<Skeleton>>,
     inputs: InputSet<DriveNodeInputs>,
 ) {
-    for (mut player, component) in players.iter_mut() {
+    for (entity, mut player, component) in players.iter_mut() {
         let skeleton = skeletons.get(component.skeleton());
-        player.drive(&graphs, skeleton, &inputs, PHYSICS_STEP);
+        player.drive(entity, &graphs, skeleton, &inputs, PHYSICS_STEP);
     }
 }
 

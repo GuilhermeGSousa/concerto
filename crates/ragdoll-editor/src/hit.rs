@@ -8,7 +8,7 @@ use concerto_editor::hosted::{EditWorld, EditWorldSignals};
 use concerto_foundation::time::Time;
 use concerto_mcp::{McpTool, Needs, PendingCall, ToolCalls, ToolError};
 use concerto_physics::{physics_state::PhysicsState, ragdoll::RagdollId};
-use concerto_ragdoll::{BodyHit, BodyView, CharacterRagdoll, RagdollBody, active_states};
+use concerto_ragdoll::{BodyHit, CharacterRagdoll, RagdollBody, active_states};
 use glam::Vec3;
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -202,11 +202,14 @@ pub(crate) fn hit_character(
     }
 }
 
-fn displacement(view: Option<&BodyView>, part: usize) -> f32 {
-    view.and_then(|view| Some((view.pose().get(part)?, view.animated().get(part)?)))
-        .map_or(0.0, |(simulated, animated)| {
-            simulated.translation.distance(animated.translation)
-        })
+fn displacement(body: &RagdollBody, part: usize) -> f32 {
+    match (
+        body.simulated_pose().get(part),
+        body.animated_pose().get(part),
+    ) {
+        (Some(simulated), Some(animated)) => simulated.translation.distance(animated.translation),
+        _ => 0.0,
+    }
 }
 
 pub(crate) fn answer_hits(
@@ -230,9 +233,7 @@ pub(crate) fn answer_hits(
             continue;
         };
         let animated = body.is_animated(player);
-        wait.peak = wait
-            .peak
-            .max(displacement(player.extra::<BodyView>(), wait.part));
+        wait.peak = wait.peak.max(displacement(body, wait.part));
         if !animated {
             wait.reacted = true;
         }

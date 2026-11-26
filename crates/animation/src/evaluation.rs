@@ -1,9 +1,4 @@
-use std::{
-    any::{Any, TypeId},
-    cell::RefCell,
-    collections::HashMap,
-    sync::Arc,
-};
+use std::{cell::RefCell, sync::Arc};
 
 use concerto_ecs::{CommandQueue, Entity, signal::EntitySignal, system::input::Inputs};
 use concerto_mesh::Skeleton;
@@ -58,21 +53,6 @@ pub struct RootBone {
     pub up: Vec3,
 }
 
-#[derive(Default)]
-pub(crate) struct Extras {
-    values: HashMap<TypeId, Box<dyn Any + Send + Sync>>,
-}
-
-impl Extras {
-    pub(crate) fn set<T: Send + Sync + 'static>(&mut self, value: T) {
-        self.values.insert(TypeId::of::<T>(), Box::new(value));
-    }
-
-    pub(crate) fn get<T: Send + Sync + 'static>(&self) -> Option<&T> {
-        self.values.get(&TypeId::of::<T>())?.downcast_ref::<T>()
-    }
-}
-
 pub(crate) trait EmittedSignal: Send + Sync {
     fn trigger(self: Box<Self>, entity: Entity, cmd: &mut CommandQueue);
 }
@@ -112,7 +92,7 @@ pub struct AnimationGraphContext<'a> {
     pub(crate) skeleton: Option<&'a Skeleton>,
     pub(crate) model_to_world: Option<Affine3A>,
     pub(crate) inputs: &'a Inputs<'a, 'a>,
-    pub(crate) extras: &'a Extras,
+    pub(crate) entity: Entity,
     pub(crate) outbox: &'a Outbox,
     pub(crate) messages: &'a [Box<dyn Reflect>],
     pub(crate) raised: Option<&'a Raised>,
@@ -128,9 +108,9 @@ impl<'a> AnimationGraphContext<'a> {
         self.outbox.signals.borrow_mut().push(Box::new(signal));
     }
 
-    /// The value of type `T` the player was handed with `AnimationPlayer::set_extra`.
-    pub fn extra<T: Send + Sync + 'static>(&self) -> Option<&'a T> {
-        self.extras.get::<T>()
+    /// The entity of the player being walked.
+    pub fn entity(&self) -> Entity {
+        self.entity
     }
 
     /// In `update`, the messages the game sent the player since its last update, in the order sent; empty in every other walk.
@@ -166,7 +146,7 @@ impl<'a> AnimationGraphContext<'a> {
             skeleton: self.skeleton,
             model_to_world: self.model_to_world,
             inputs: self.inputs,
-            extras: self.extras,
+            entity: self.entity,
             outbox: self.outbox,
             messages: self.messages,
             raised: Some(raised),
@@ -189,7 +169,7 @@ impl<'a> AnimationGraphContext<'a> {
     }
 }
 
-/// What every node of one player's graph is driven with in one physics step: the step's length and the player's blackboard, root, skeleton, extras and outbox.
+/// What every node of one player's graph is driven with in one physics step: the step's length and the player's blackboard, root, skeleton, entity and outbox.
 pub struct DriveContext<'a> {
     pub(crate) delta_time: f32,
     pub(crate) graph: &'a AnimationGraphContext<'a>,
@@ -216,9 +196,9 @@ impl<'a> DriveContext<'a> {
         self.graph.skeleton
     }
 
-    /// The value of type `T` the player was handed with `AnimationPlayer::set_extra`.
-    pub fn extra<T: Send + Sync + 'static>(&self) -> Option<&'a T> {
-        self.graph.extra::<T>()
+    /// The entity of the player being driven.
+    pub fn entity(&self) -> Entity {
+        self.graph.entity
     }
 
     /// Queues `signal`, triggered on the player's entity when `animate_targets` next runs.

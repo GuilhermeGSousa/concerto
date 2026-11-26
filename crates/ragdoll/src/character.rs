@@ -215,19 +215,20 @@ impl RagdollBody {
                 .all(|bone| physics_amount(Some(player), *bone) <= 0.0)
     }
 
-    pub(crate) fn shared_resolved(&self) -> Arc<ResolvedRagdoll> {
-        Arc::clone(&self.resolved)
+    pub(crate) fn shared_resolved(&self) -> &Arc<ResolvedRagdoll> {
+        &self.resolved
     }
 
-    pub(crate) fn shared_part_of_bone(&self) -> Arc<[Option<usize>]> {
-        Arc::clone(&self.part_of_bone)
+    pub(crate) fn shared_part_of_bone(&self) -> &Arc<[Option<usize>]> {
+        &self.part_of_bone
     }
 
-    pub(crate) fn shared_profiles(&self) -> Arc<[StrengthProfile]> {
-        Arc::clone(&self.profiles)
+    pub(crate) fn shared_profiles(&self) -> &[StrengthProfile] {
+        &self.profiles
     }
 
-    pub(crate) fn simulated_pose(&self) -> &[BodyPose] {
+    /// The world pose of every part after the last physics step, in part order.
+    pub fn simulated_pose(&self) -> &[BodyPose] {
         &self.current
     }
 
@@ -667,7 +668,7 @@ pub fn write_ragdoll_poses(
             .map(|part| drawn_amount(player, &body, part))
             .collect();
         let simulated = body.interpolated_pose(alpha);
-        let part_of_bone = body.shared_part_of_bone();
+        let part_of_bone = Arc::clone(body.shared_part_of_bone());
         let root_parts: Vec<bool> = body
             .resolved
             .settings()

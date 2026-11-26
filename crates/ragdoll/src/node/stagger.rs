@@ -4,6 +4,7 @@ use concerto_animation::{
     pose::{AnimationFrame, EvaluatedFrame, FramePool},
 };
 use concerto_ecs::Res;
+use concerto_ecs::system::input::SystemInputData;
 use concerto_name::{Name, name};
 use concerto_physics::physics_state::PhysicsState;
 use concerto_reflect::{Reflect, ReflectDefault};
@@ -23,7 +24,7 @@ use crate::{
         },
     },
     stagger::{StaggerController, StaggerRun, StaggerSettings},
-    view::BodyView,
+    view::{BodyInput, BodyView},
 };
 
 /// Makes a body stumble from the moment it receives a `Stagger` message: it balances as a `BalanceNode` does, but its steps fall short and late, its legs are weaker and its knees give on each landing, its trunk bends the way it was sent and its arms windmill. It raises `Steadied` when balance settles and `Toppled` when balance gives up.
@@ -67,7 +68,7 @@ impl StaggerNode {
     fn motor(
         &self,
         state: &StaggerState,
-        body: &BodyView,
+        body: BodyView<'_>,
         profile: Option<&StrengthProfile>,
         part: usize,
     ) -> Option<MotorCommand> {
@@ -102,8 +103,8 @@ impl AnimationNode for StaggerNode {
     type State = StaggerState;
     type CreateInput = ();
     type UpdateInput = ();
-    type EvaluateInput = ();
-    type DriveInput = Res<'static, PhysicsState>;
+    type EvaluateInput = BodyInput;
+    type DriveInput = (BodyInput, Res<'static, PhysicsState>);
 
     fn create_state(&self, _: &(), _: &AnimationGraphContext<'_>) -> StaggerState {
         StaggerState::default()
@@ -131,7 +132,7 @@ impl AnimationNode for StaggerNode {
     fn evaluate(
         &self,
         state: &mut StaggerState,
-        _: &(),
+        bodies: &SystemInputData<'_, '_, BodyInput>,
         context: &AnimationGraphContext<'_>,
         _: &[Uuid],
         inputs: &[EvaluatedFrame],
@@ -142,7 +143,7 @@ impl AnimationNode for StaggerNode {
             output.copy_from(&input.frame);
         }
         let (Some(body), Some(skeleton), true) = (
-            context.extra::<BodyView>(),
+            BodyView::read(context.entity(), bodies),
             context.skeleton(),
             state.started,
         ) else {
@@ -163,18 +164,19 @@ impl AnimationNode for StaggerNode {
     fn drive(
         &self,
         state: &mut StaggerState,
-        physics: &Res<PhysicsState>,
+        input: &SystemInputData<'_, '_, Self::DriveInput>,
         context: &DriveContext<'_>,
         _: &[Uuid],
         inputs: &[EvaluatedFrame],
         _: &mut FramePool,
         output: &mut AnimationFrame,
     ) {
+        let (bodies, physics) = input;
         if let Some(input) = inputs.first() {
             output.attributes_mut().copy_from(input.frame.attributes());
         }
         let (Some(body), Some(skeleton), true) = (
-            context.extra::<BodyView>(),
+            BodyView::read(context.entity(), bodies),
             context.skeleton(),
             state.started,
         ) else {

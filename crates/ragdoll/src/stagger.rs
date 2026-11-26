@@ -155,7 +155,7 @@ struct SidedArm {
 impl StaggerController<'_> {
     pub(crate) fn step(
         &mut self,
-        view: &BodyView,
+        view: BodyView<'_>,
         physics: &PhysicsState,
         dt: f32,
         out: &mut ClaimsOut,

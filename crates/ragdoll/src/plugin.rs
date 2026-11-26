@@ -1,7 +1,4 @@
-use concerto_animation::{
-    plugin::AnimationAppExt,
-    target::{animate_targets, update_animation_players},
-};
+use concerto_animation::{plugin::AnimationAppExt, target::animate_targets};
 use concerto_app::{
     App,
     edit_time::AtPreviewTime,
@@ -21,7 +18,7 @@ use crate::{
         CharacterRagdoll, carry_capsules, create_character_ragdolls, drop_removed_ragdoll,
         drop_replaced_ragdoll, record_animated_poses, record_ragdoll_poses, write_ragdoll_poses,
     },
-    drive::{drive_from_graph, drive_graphs, view_bodies},
+    drive::{drive_from_graph, drive_graphs},
     dying::{Settled, forward_death, settle_dead_bodies, wake_when_hit},
     messages::{self, Death, Hit, Shot, apply_impulses, route_hits},
     node::{
@@ -88,12 +85,6 @@ impl Plugin for RagdollPlugin {
                 record_animated_poses
                     .after(propagate_global_transforms)
                     .after(create_character_ragdolls)
-                    .at_preview_time(),
-            )
-            .add_system(
-                LateUpdate,
-                view_bodies
-                    .before(update_animation_players)
                     .at_preview_time(),
             )
             .add_system(

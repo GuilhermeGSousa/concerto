@@ -6,6 +6,7 @@ use concerto_animation::{
     pose::{AnimationFrame, EvaluatedFrame, FramePool},
 };
 use concerto_ecs::Res;
+use concerto_ecs::system::input::SystemInputData;
 use concerto_name::{Name, name};
 use concerto_physics::physics_state::PhysicsState;
 use concerto_reflect::{Reflect, ReflectDefault};
@@ -22,7 +23,7 @@ use crate::{
         Decided,
         balance::{ClaimsOut, CommandsOut, layered, wanted},
     },
-    view::BodyView,
+    view::{BodyInput, BodyView},
 };
 
 /// Makes a body fall as a person does, from the moment it is active: braced, the hands go to where it will land, with bent elbows that buckle on contact, the head is held away from the ground, the spine curls and the knees fold. It emits `BodyDown` when it has landed, drains its strength and goes limp, and raises `Landed` once it has landed and relaxed. A strength of 0 is the limp fall: the body is limp at once.
@@ -66,7 +67,7 @@ impl FallNode {
     fn motor(
         &self,
         state: &FallState,
-        body: &BodyView,
+        body: BodyView<'_>,
         profile: Option<&StrengthProfile>,
         part: usize,
     ) -> Option<MotorCommand> {
@@ -81,7 +82,7 @@ impl FallNode {
     }
 }
 
-fn limp(base: Option<MotorCommand>, body: &BodyView, part: usize) -> MotorCommand {
+fn limp(base: Option<MotorCommand>, body: BodyView<'_>, part: usize) -> MotorCommand {
     let neutral = MotorCommand::neutral();
     let held = base.unwrap_or(neutral);
     MotorCommand {
@@ -109,8 +110,8 @@ impl AnimationNode for FallNode {
     type State = FallState;
     type CreateInput = ();
     type UpdateInput = ();
-    type EvaluateInput = ();
-    type DriveInput = Res<'static, PhysicsState>;
+    type EvaluateInput = BodyInput;
+    type DriveInput = (BodyInput, Res<'static, PhysicsState>);
 
     fn create_state(&self, _: &(), _: &AnimationGraphContext<'_>) -> FallState {
         FallState::default()
@@ -125,7 +126,7 @@ impl AnimationNode for FallNode {
     fn evaluate(
         &self,
         state: &mut FallState,
-        _: &(),
+        bodies: &SystemInputData<'_, '_, BodyInput>,
         context: &AnimationGraphContext<'_>,
         _: &[Uuid],
         inputs: &[EvaluatedFrame],
@@ -135,7 +136,9 @@ impl AnimationNode for FallNode {
         if let Some(input) = inputs.first() {
             output.copy_from(&input.frame);
         }
-        let (Some(body), Some(skeleton)) = (context.extra::<BodyView>(), context.skeleton()) else {
+        let (Some(body), Some(skeleton)) =
+            (BodyView::read(context.entity(), bodies), context.skeleton())
+        else {
             return;
         };
         let amounts = output
@@ -153,17 +156,20 @@ impl AnimationNode for FallNode {
     fn drive(
         &self,
         state: &mut FallState,
-        physics: &Res<PhysicsState>,
+        input: &SystemInputData<'_, '_, Self::DriveInput>,
         context: &DriveContext<'_>,
         _: &[Uuid],
         inputs: &[EvaluatedFrame],
         _: &mut FramePool,
         output: &mut AnimationFrame,
     ) {
+        let (bodies, physics) = input;
         if let Some(input) = inputs.first() {
             output.attributes_mut().copy_from(input.frame.attributes());
         }
-        let (Some(body), Some(skeleton)) = (context.extra::<BodyView>(), context.skeleton()) else {
+        let (Some(body), Some(skeleton)) =
+            (BodyView::read(context.entity(), bodies), context.skeleton())
+        else {
             return;
         };
         let strength = context

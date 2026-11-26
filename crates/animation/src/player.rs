@@ -1,6 +1,7 @@
 use std::ops::Deref;
 
 use concerto_ecs::{
+    Entity,
     component::{Component, scene::SceneEntityRef},
     entity::hierarchy::ChildOf,
     query::Query,
@@ -18,7 +19,7 @@ use glam::{Affine3A, Vec2, Vec3};
 use crate::{
     attribute::PoseAttributes,
     blackboard::AnimationBlackboard,
-    evaluation::{AnimationGraphContext, DriveContext, EmittedSignal, Extras, Outbox, RootBone},
+    evaluation::{AnimationGraphContext, DriveContext, EmittedSignal, Outbox, RootBone},
     graph::{AnimationGraph, AnimationGraphState, AnimationNodeIndex, NodeVisit},
     message::{AnimationMessage, is_animation_message},
     node::{AnimationNode, ErasedAnimationNode, NodeState},
@@ -54,7 +55,6 @@ pub struct AnimationPlayer {
     pub(crate) emitted: Vec<Box<dyn EmittedSignal>>,
     attributes: PoseAttributes,
     drive_attributes: PoseAttributes,
-    extras: Extras,
     messages: Vec<Box<dyn Reflect>>,
 }
 
@@ -71,19 +71,8 @@ impl AnimationPlayer {
             emitted: Vec::new(),
             attributes: PoseAttributes::default(),
             drive_attributes: PoseAttributes::default(),
-            extras: Extras::default(),
             messages: Vec::new(),
         }
-    }
-
-    /// Hands every node of the graph `value`, read with `AnimationGraphContext::extra`; replaces the value of the same type.
-    pub fn set_extra<T: Send + Sync + 'static>(&mut self, value: T) {
-        self.extras.set(value);
-    }
-
-    /// The value of type `T` handed to the player with `set_extra`.
-    pub fn extra<T: Send + Sync + 'static>(&self) -> Option<&T> {
-        self.extras.get::<T>()
     }
 
     /// Queues `message` for the next update, where every node reads the queue from its context with `AnimationGraphContext::messages`; a paused player keeps its queue until it resumes, and one whose graph is not initialized yet drops it.
@@ -113,6 +102,7 @@ impl AnimationPlayer {
     /// Walks the graph once for a physics step of `delta_time` seconds, each node saying through `AnimationNode::drive` what it asks of physics with `skeleton`'s bone ids, and keeps the attributes it gives; the graph does not advance. A paused player, or one whose graph gives no frame, keeps no attributes, so every bone reads neutral.
     pub fn drive(
         &mut self,
+        entity: Entity,
         graphs: &AssetStore<AnimationGraph>,
         skeleton: Option<&Skeleton>,
         inputs: &Inputs<'_, '_>,
@@ -129,7 +119,7 @@ impl AnimationPlayer {
             skeleton,
             model_to_world: None,
             inputs,
-            extras: &self.extras,
+            entity,
             outbox: &outbox,
             messages: &[],
             raised: None,
@@ -263,6 +253,7 @@ impl AnimationPlayer {
 
     pub(crate) fn initialize_graph(
         &mut self,
+        entity: Entity,
         animation_graph: AssetHandle<AnimationGraph>,
         graphs: &AssetStore<AnimationGraph>,
         inputs: &Inputs<'_, '_>,
@@ -274,7 +265,7 @@ impl AnimationPlayer {
             skeleton: None,
             model_to_world: None,
             inputs,
-            extras: &self.extras,
+            entity,
             outbox: &outbox,
             messages: &[],
             raised: None,
@@ -286,6 +277,7 @@ impl AnimationPlayer {
 
     pub(crate) fn update(
         &mut self,
+        entity: Entity,
         delta_time: f32,
         graphs: &AssetStore<AnimationGraph>,
         skeleton: Option<&Skeleton>,
@@ -300,7 +292,7 @@ impl AnimationPlayer {
             skeleton,
             model_to_world: None,
             inputs,
-            extras: &self.extras,
+            entity,
             outbox: &outbox,
             messages: &self.messages,
             raised: None,
@@ -312,6 +304,7 @@ impl AnimationPlayer {
 
     pub(crate) fn root_motion(
         &mut self,
+        entity: Entity,
         graphs: &AssetStore<AnimationGraph>,
         skeleton: &Skeleton,
         inputs: &Inputs<'_, '_>,
@@ -323,7 +316,7 @@ impl AnimationPlayer {
             skeleton: Some(skeleton),
             model_to_world: None,
             inputs,
-            extras: &self.extras,
+            entity,
             outbox: &outbox,
             messages: &[],
             raised: None,
@@ -337,6 +330,7 @@ impl AnimationPlayer {
 
     pub(crate) fn evaluate(
         &mut self,
+        entity: Entity,
         graphs: &AssetStore<AnimationGraph>,
         inputs: &Inputs<'_, '_>,
         skeleton: &Skeleton,
@@ -366,7 +360,7 @@ impl AnimationPlayer {
             skeleton: Some(skeleton),
             model_to_world: Some(model_to_world),
             inputs,
-            extras: &self.extras,
+            entity,
             outbox: &outbox,
             messages: &[],
             raised: None,

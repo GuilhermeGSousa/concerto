@@ -48,4 +48,4 @@ pub use sandbox::{Trial, TrialReport, run_trial};
 pub use sensing::{BodySense, Impact, MassPoint, describe_body};
 pub use shot::{ShotSettings, Wound, Wounds};
 pub use stagger::StaggerSettings;
-pub use view::BodyView;
+pub use view::{BodyInput, BodyView};

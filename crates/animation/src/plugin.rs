@@ -289,12 +289,13 @@ mod tests {
             .unwrap()
             .insert(graph_handle.id(), graph);
 
+        let stand_in = world.spawn(());
         let mut player = AnimationPlayer::new(1);
         {
             let mut create = InputState::<InputSet<CreateNodeInputs>>::new(world);
             let inputs = create.get(world).unwrap();
             let graphs = world.get_resource::<AssetStore<AnimationGraph>>().unwrap();
-            player.initialize_graph(graph_handle, graphs, &inputs);
+            player.initialize_graph(stand_in, graph_handle, graphs, &inputs);
         }
         let bone = world.spawn(Transform::IDENTITY);
         world.spawn((

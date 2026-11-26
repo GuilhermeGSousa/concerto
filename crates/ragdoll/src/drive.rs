@@ -1,7 +1,9 @@
 use concerto_animation::{
     attribute::PoseAttribute, graph::AnimationGraph, node::DriveNodeInputs, player::AnimationPlayer,
 };
-use concerto_ecs::{CommandQueue, Entity, Query, Res, ResMut, Without, system::input::InputSet};
+use concerto_ecs::{
+    CommandQueue, Entity, Query, Res, ResMut, With, Without, system::input::InputSet,
+};
 use concerto_foundation::{assets::asset_store::AssetStore, time::Time};
 use concerto_mesh::{Skeleton, SkeletonComponent};
 use concerto_physics::{physics_state::PhysicsState, ragdoll::RagdollId};
@@ -12,9 +14,6 @@ use crate::{
     attributes::{MotorCommand, PhysicsAmount},
     character::{Asked, CharacterRagdoll, Driven, Held, PoseLost, RagdollBody, drive_part},
     dying::Settled,
-    sensing::BodySense,
-    shot::Wounds,
-    view::BodyView,
 };
 
 pub(crate) fn physics_amount(player: Option<&AnimationPlayer>, bone: usize) -> f32 {
@@ -106,35 +105,11 @@ pub(crate) fn part_drive(
     }
 }
 
-/// Each frame, before the animation players update, hands every physical character's player a `BodyView` of its body.
-pub fn view_bodies(
-    mut characters: Query<(
-        Entity,
-        &RagdollId,
-        &RagdollBody,
-        &mut AnimationPlayer,
-        Option<&BodySense>,
-        Option<&Wounds>,
-    )>,
-) {
-    for (entity, id, body, mut player, sense, wounds) in characters.iter_mut() {
-        player.set_extra(BodyView::of(entity, *id, body, sense, wounds));
-    }
-}
-
-/// Each fixed step, before the ragdolls are driven, hands every physical character's player a `BodyView` of its body and walks its graph's drive pass for the step.
+/// Each fixed step, before the ragdolls are driven, walks its graph's drive pass for the step.
 pub fn drive_graphs(
     mut characters: Query<
-        (
-            Entity,
-            &RagdollId,
-            &RagdollBody,
-            &mut AnimationPlayer,
-            &SkeletonComponent,
-            Option<&BodySense>,
-            Option<&Wounds>,
-        ),
-        Without<Settled>,
+        (Entity, &mut AnimationPlayer, &SkeletonComponent),
+        (With<RagdollBody>, Without<Settled>),
     >,
     graphs: Option<Res<AssetStore<AnimationGraph>>>,
     skeletons: Res<AssetStore<Skeleton>>,
@@ -144,9 +119,14 @@ pub fn drive_graphs(
         return;
     };
     let dt = Time::fixed_delta_time().as_secs_f32();
-    for (entity, id, body, mut player, skeleton, sense, wounds) in characters.iter_mut() {
-        player.set_extra(BodyView::of(entity, *id, body, sense, wounds));
-        player.drive(&graphs, skeletons.get(skeleton.skeleton()), &inputs, dt);
+    for (entity, mut player, skeleton) in characters.iter_mut() {
+        player.drive(
+            entity,
+            &graphs,
+            skeletons.get(skeleton.skeleton()),
+            &inputs,
+            dt,
+        );
     }
 }
 

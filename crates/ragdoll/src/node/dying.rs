@@ -4,6 +4,7 @@ use concerto_animation::{
     node::{AnimationNode, EditorAnimationNode, InputSlots, ReflectAnimationNode},
     pose::{AnimationFrame, EvaluatedFrame, FramePool},
 };
+use concerto_ecs::system::input::SystemInputData;
 use concerto_name::{Name, name};
 use concerto_reflect::{Reflect, ReflectDefault};
 use serde::{Deserialize, Serialize};
@@ -16,7 +17,7 @@ use crate::{
     generate::BRACED,
     messages::{BodyDead, Death, Drained},
     node::Decided,
-    view::BodyView,
+    view::{BodyInput, BodyView},
 };
 
 const DYING_STIFFNESS: f32 = 400.0;
@@ -88,7 +89,7 @@ impl DyingNode {
         }
     }
 
-    fn motor(&self, state: &DyingState, body: &BodyView, part: usize) -> Option<MotorCommand> {
+    fn motor(&self, state: &DyingState, body: BodyView<'_>, part: usize) -> Option<MotorCommand> {
         let dying = state.dying.as_ref()?;
         let profile = body.profile(&self.profile);
         let strength = profile
@@ -119,8 +120,8 @@ impl AnimationNode for DyingNode {
     type State = DyingState;
     type CreateInput = ();
     type UpdateInput = ();
-    type EvaluateInput = ();
-    type DriveInput = ();
+    type EvaluateInput = BodyInput;
+    type DriveInput = BodyInput;
 
     fn create_state(&self, _: &(), _: &AnimationGraphContext<'_>) -> DyingState {
         DyingState::default()
@@ -141,7 +142,7 @@ impl AnimationNode for DyingNode {
     fn evaluate(
         &self,
         state: &mut DyingState,
-        _: &(),
+        bodies: &SystemInputData<'_, '_, BodyInput>,
         context: &AnimationGraphContext<'_>,
         _: &[Uuid],
         inputs: &[EvaluatedFrame],
@@ -151,7 +152,9 @@ impl AnimationNode for DyingNode {
         if let Some(input) = inputs.first() {
             output.copy_from(&input.frame);
         }
-        let (Some(body), Some(skeleton)) = (context.extra::<BodyView>(), context.skeleton()) else {
+        let (Some(body), Some(skeleton)) =
+            (BodyView::read(context.entity(), bodies), context.skeleton())
+        else {
             return;
         };
         if state.dying.is_none() {
@@ -170,7 +173,7 @@ impl AnimationNode for DyingNode {
     fn drive(
         &self,
         state: &mut DyingState,
-        _: &(),
+        bodies: &SystemInputData<'_, '_, BodyInput>,
         context: &DriveContext<'_>,
         _: &[Uuid],
         inputs: &[EvaluatedFrame],
@@ -180,7 +183,9 @@ impl AnimationNode for DyingNode {
         if let Some(input) = inputs.first() {
             output.attributes_mut().copy_from(input.frame.attributes());
         }
-        let (Some(body), Some(skeleton)) = (context.extra::<BodyView>(), context.skeleton()) else {
+        let (Some(body), Some(skeleton)) =
+            (BodyView::read(context.entity(), bodies), context.skeleton())
+        else {
             return;
         };
         if !state.drained.is_decided()

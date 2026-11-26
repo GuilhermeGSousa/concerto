@@ -22,8 +22,8 @@ use concerto_animation::{
 };
 use concerto_app::{App, plugins::AssetManagerPlugin, schedule_groups::LateUpdate};
 use concerto_ecs::{
-    Entity, IntoSystem, ResMut, System,
-    component::scene::SceneEntityRef,
+    Entity, IntoSystem, Query, ResMut, System,
+    component::{Component, scene::SceneEntityRef},
     reflect::AppTypeRegistry,
     resource::Resource,
     signal::{EntitySignal, On, Signal, listener::IntoListener},
@@ -75,6 +75,7 @@ struct Twice;
 
 impl AnimationMessage for Twice {}
 
+#[derive(Component)]
 struct Marker(u32);
 
 #[derive(Clone)]
@@ -99,7 +100,7 @@ struct Count {
 impl AnimationNode for Counter {
     type State = Count;
     type CreateInput = ();
-    type UpdateInput = ();
+    type UpdateInput = Query<'static, 'static, &'static Marker>;
     type EvaluateInput = ();
     type DriveInput = ();
 
@@ -127,10 +128,16 @@ impl AnimationNode for Counter {
         Count::default()
     }
 
-    fn update(&self, state: &mut Count, _: f32, _: &(), context: &AnimationGraphContext<'_>) {
+    fn update(
+        &self,
+        state: &mut Count,
+        _: f32,
+        markers: &Query<'_, '_, &Marker>,
+        context: &AnimationGraphContext<'_>,
+    ) {
         for _ in context.message::<Poke>().filter(|poke| poke.strength > 0.0) {
             state.received += 1;
-            state.marker = context.extra::<Marker>().map(|marker| marker.0);
+            state.marker = markers.get_entity(context.entity()).map(|marker| marker.0);
             context.emit(Counted {
                 count: state.received,
             });
@@ -510,6 +517,7 @@ impl Stage {
         let character = world.spawn((
             AnimationPlayer::new(1),
             AnimationHandleComponent::new(machine),
+            Marker(7),
             SkeletonComponent::new(skeleton.clone(), vec![SceneEntityRef::Entity(bone)], None),
             hear_counted.into_listener(),
         ));
@@ -544,6 +552,7 @@ impl Stage {
         let retargeted = world.spawn((
             AnimationPlayer::new(1),
             AnimationHandleComponent::new(retarget),
+            Marker(7),
             SkeletonComponent::new(standing, vec![SceneEntityRef::Entity(standing_bone)], None),
             hear_counted.into_listener(),
         ));
@@ -697,6 +706,10 @@ impl Stage {
 
     fn counters(&mut self) -> Vec<CounterSaw> {
         let character = self.character;
+        self.counters_of(character)
+    }
+
+    fn counters_of(&mut self, character: Entity) -> Vec<CounterSaw> {
         let world = self.world();
         let graphs = world.get_resource::<AssetStore<AnimationGraph>>().unwrap();
         let mut counts = Vec::new();
@@ -726,7 +739,6 @@ impl Stage {
 fn messages_move_the_graph_and_nodes_answer_with_raised_messages_and_signals() {
     let mut stage = Stage::new();
     stage.start();
-    stage.player().set_extra(Marker(7));
     assert!(stage.in_state(name!("Idle")));
 
     stage.player().send(Poke { strength: 1.0 });
@@ -781,6 +793,11 @@ fn messages_move_the_graph_and_nodes_answer_with_raised_messages_and_signals() {
         stage.heard_by(retargeted),
         [1],
         "a message reaches a node inside a retarget"
+    );
+    assert_eq!(
+        stage.counters_of(retargeted),
+        [saw(1)],
+        "a node inside a retarget reads its player's entity"
     );
 
     let nested = stage.nested;

@@ -4,6 +4,7 @@ use concerto_animation::{
     pose::{AnimationFrame, EvaluatedFrame, FramePool},
 };
 use concerto_ecs::Res;
+use concerto_ecs::system::input::SystemInputData;
 use concerto_name::{Name, name};
 use concerto_physics::physics_state::PhysicsState;
 use concerto_reflect::{Reflect, ReflectDefault};
@@ -22,7 +23,7 @@ use crate::{
         },
     },
     shot::{ShotController, ShotOut, ShotSettings, Wound},
-    view::BodyView,
+    view::{BodyInput, BodyView},
 };
 
 /// Makes a body answer a gunshot from the moment it receives a `Shot` message, by where it struck: the muscles at the wound snap tight and then give, a hand goes to the wound, the head turns to it and then to where the shot came from, and it balances as a `BalanceNode` does, a shot leg hindering it. Each further `Shot` adds a wound. It emits `Wounded` for each part it weakens, raises `Steadied` when balance settles and `Toppled` when balance gives up; the impulses are applied by the character's hit routing, not by the node.
@@ -66,7 +67,7 @@ impl ShotNode {
     fn motor(
         &self,
         state: &ShotState,
-        body: &BodyView,
+        body: BodyView<'_>,
         profile: Option<&StrengthProfile>,
         part: usize,
     ) -> Option<MotorCommand> {
@@ -101,19 +102,25 @@ impl ShotState {
 impl AnimationNode for ShotNode {
     type State = ShotState;
     type CreateInput = ();
-    type UpdateInput = ();
-    type EvaluateInput = ();
-    type DriveInput = Res<'static, PhysicsState>;
+    type UpdateInput = BodyInput;
+    type EvaluateInput = BodyInput;
+    type DriveInput = (BodyInput, Res<'static, PhysicsState>);
 
     fn create_state(&self, _: &(), _: &AnimationGraphContext<'_>) -> ShotState {
         ShotState::default()
     }
 
-    fn update(&self, state: &mut ShotState, _: f32, _: &(), context: &AnimationGraphContext<'_>) {
+    fn update(
+        &self,
+        state: &mut ShotState,
+        _: f32,
+        bodies: &SystemInputData<'_, '_, BodyInput>,
+        context: &AnimationGraphContext<'_>,
+    ) {
         if let Some(end) = state.ended.unraised() {
             end.raise(context);
         }
-        let Some(body) = context.extra::<BodyView>() else {
+        let Some(body) = BodyView::read(context.entity(), bodies) else {
             return;
         };
         for shot in context.message::<messages::Shot>() {
@@ -132,7 +139,7 @@ impl AnimationNode for ShotNode {
     fn evaluate(
         &self,
         state: &mut ShotState,
-        _: &(),
+        bodies: &SystemInputData<'_, '_, BodyInput>,
         context: &AnimationGraphContext<'_>,
         _: &[Uuid],
         inputs: &[EvaluatedFrame],
@@ -143,7 +150,7 @@ impl AnimationNode for ShotNode {
             output.copy_from(&input.frame);
         }
         let (Some(body), Some(skeleton), true) = (
-            context.extra::<BodyView>(),
+            BodyView::read(context.entity(), bodies),
             context.skeleton(),
             state.started,
         ) else {
@@ -164,18 +171,19 @@ impl AnimationNode for ShotNode {
     fn drive(
         &self,
         state: &mut ShotState,
-        physics: &Res<PhysicsState>,
+        input: &SystemInputData<'_, '_, Self::DriveInput>,
         context: &DriveContext<'_>,
         _: &[Uuid],
         inputs: &[EvaluatedFrame],
         _: &mut FramePool,
         output: &mut AnimationFrame,
     ) {
+        let (bodies, physics) = input;
         if let Some(input) = inputs.first() {
             output.attributes_mut().copy_from(input.frame.attributes());
         }
         let (Some(body), Some(skeleton), true) = (
-            context.extra::<BodyView>(),
+            BodyView::read(context.entity(), bodies),
             context.skeleton(),
             state.started,
         ) else {

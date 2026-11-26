@@ -5,6 +5,7 @@ use concerto_animation::{
     pose::{AnimationFrame, EvaluatedFrame, FramePool},
 };
 use concerto_ecs::Res;
+use concerto_ecs::system::input::SystemInputData;
 use concerto_name::{Name, name};
 use concerto_physics::{physics_state::PhysicsState, query::QueryFilter, ragdoll::BodyPose};
 use concerto_reflect::{Reflect, ReflectDefault};
@@ -21,7 +22,7 @@ use crate::{
     node::{Decided, hold::command},
     resolve::Limbs,
     sensing::BodySense,
-    view::BodyView,
+    view::{BodyInput, BodyView},
 };
 
 /// How a body keeps on its own feet: the leg muscles, the assists on the pelvis, how it steps, and when it has recovered or given up.
@@ -469,7 +470,7 @@ impl BalanceEnd {
 impl BalanceController<'_> {
     pub(crate) fn step(
         &mut self,
-        view: &BodyView,
+        view: BodyView<'_>,
         physics: &PhysicsState,
         dt: f32,
         hindrance: &Hindrance,
@@ -742,7 +743,7 @@ impl BalanceController<'_> {
     }
 }
 
-fn footing(view: &BodyView) -> Option<Footing<'_>> {
+fn footing<'a>(view: BodyView<'a>) -> Option<Footing<'a>> {
     let landmarks = view.resolved().landmarks();
     let count = view.resolved().settings().parts.len();
     let footing = Footing {
@@ -872,7 +873,7 @@ pub(crate) fn motor_of(ordered: PartCommand, animated: Quat) -> MotorCommand {
 
 pub(crate) fn wanted(
     commands: &CommandsOut,
-    body: &BodyView,
+    body: BodyView<'_>,
     profile: Option<&StrengthProfile>,
     part: usize,
 ) -> Option<MotorCommand> {
@@ -887,7 +888,7 @@ pub(crate) fn wanted(
 pub(crate) fn layered(
     commands: &CommandsOut,
     claim: Option<(f32, PartCommand)>,
-    body: &BodyView,
+    body: BodyView<'_>,
     profile: Option<&StrengthProfile>,
     part: usize,
 ) -> Option<MotorCommand> {
@@ -932,8 +933,8 @@ impl AnimationNode for BalanceNode {
     type State = BalanceState;
     type CreateInput = ();
     type UpdateInput = ();
-    type EvaluateInput = ();
-    type DriveInput = Res<'static, PhysicsState>;
+    type EvaluateInput = BodyInput;
+    type DriveInput = (BodyInput, Res<'static, PhysicsState>);
 
     fn create_state(&self, _: &(), _: &AnimationGraphContext<'_>) -> BalanceState {
         BalanceState::default()
@@ -954,7 +955,7 @@ impl AnimationNode for BalanceNode {
     fn evaluate(
         &self,
         state: &mut BalanceState,
-        _: &(),
+        bodies: &SystemInputData<'_, '_, BodyInput>,
         context: &AnimationGraphContext<'_>,
         _: &[Uuid],
         inputs: &[EvaluatedFrame],
@@ -964,7 +965,9 @@ impl AnimationNode for BalanceNode {
         if let Some(input) = inputs.first() {
             output.copy_from(&input.frame);
         }
-        let (Some(body), Some(skeleton)) = (context.extra::<BodyView>(), context.skeleton()) else {
+        let (Some(body), Some(skeleton)) =
+            (BodyView::read(context.entity(), bodies), context.skeleton())
+        else {
             return;
         };
         let amounts = output
@@ -982,17 +985,20 @@ impl AnimationNode for BalanceNode {
     fn drive(
         &self,
         state: &mut BalanceState,
-        physics: &Res<PhysicsState>,
+        input: &SystemInputData<'_, '_, Self::DriveInput>,
         context: &DriveContext<'_>,
         _: &[Uuid],
         inputs: &[EvaluatedFrame],
         _: &mut FramePool,
         output: &mut AnimationFrame,
     ) {
+        let (bodies, physics) = input;
         if let Some(input) = inputs.first() {
             output.attributes_mut().copy_from(input.frame.attributes());
         }
-        let (Some(body), Some(skeleton)) = (context.extra::<BodyView>(), context.skeleton()) else {
+        let (Some(body), Some(skeleton)) =
+            (BodyView::read(context.entity(), bodies), context.skeleton())
+        else {
             return;
         };
         if !state.ended.is_decided() {

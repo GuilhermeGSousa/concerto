@@ -10,6 +10,7 @@ use concerto_animation::{
     pose::{AnimationFrame, EvaluatedFrame, FramePool},
 };
 use concerto_ecs::Res;
+use concerto_ecs::system::input::SystemInputData;
 use concerto_foundation::assets::{AssetId, asset_store::AssetStore, handle::AssetHandle};
 use concerto_mesh::Skeleton;
 use concerto_name::{Name, name};
@@ -23,7 +24,7 @@ use crate::{
     attributes::{MotorCommand, PhysicsAmount},
     generate::BRACED,
     resolve::ResolvedRagdoll,
-    view::BodyView,
+    view::{BodyInput, BodyView},
 };
 
 /// Holds the parts on a mask's bones with the muscles of a strength profile, drawn from physics by its weight: a hurt leg trailing the walk.
@@ -114,7 +115,7 @@ impl HoldNode {
         masks: &AssetStore<BoneMask>,
         skeleton: &Skeleton,
         root: Option<usize>,
-        body: &BodyView,
+        body: BodyView<'_>,
     ) -> Option<Vec<HeldPart>> {
         let weights = match &self.mask {
             Some(handle) => {
@@ -153,7 +154,7 @@ impl HoldNode {
         masks: &AssetStore<BoneMask>,
         skeleton: &Skeleton,
         root: Option<usize>,
-        body: &BodyView,
+        body: BodyView<'_>,
     ) -> &'a [HeldPart] {
         let mask = self.mask.as_ref().map(|handle| handle.id());
         let current = state.held.as_ref().is_some_and(|held| {
@@ -221,8 +222,8 @@ impl AnimationNode for HoldNode {
     type State = HoldState;
     type CreateInput = ();
     type UpdateInput = ();
-    type EvaluateInput = Res<'static, AssetStore<BoneMask>>;
-    type DriveInput = Res<'static, AssetStore<BoneMask>>;
+    type EvaluateInput = (BodyInput, Res<'static, AssetStore<BoneMask>>);
+    type DriveInput = (BodyInput, Res<'static, AssetStore<BoneMask>>);
 
     fn create_state(&self, _: &(), _: &AnimationGraphContext<'_>) -> HoldState {
         HoldState::default()
@@ -245,17 +246,20 @@ impl AnimationNode for HoldNode {
     fn evaluate(
         &self,
         state: &mut HoldState,
-        masks: &Res<AssetStore<BoneMask>>,
+        input: &SystemInputData<'_, '_, Self::EvaluateInput>,
         context: &AnimationGraphContext<'_>,
         _: &[Uuid],
         inputs: &[EvaluatedFrame],
         _: &mut FramePool,
         output: &mut AnimationFrame,
     ) {
+        let (bodies, masks) = input;
         if let Some(input) = inputs.first() {
             output.copy_from(&input.frame);
         }
-        let (Some(body), Some(skeleton)) = (context.extra::<BodyView>(), context.skeleton()) else {
+        let (Some(body), Some(skeleton)) =
+            (BodyView::read(context.entity(), bodies), context.skeleton())
+        else {
             return;
         };
         let root = context.root().map(|root| root.index);
@@ -277,17 +281,20 @@ impl AnimationNode for HoldNode {
     fn drive(
         &self,
         state: &mut HoldState,
-        masks: &Res<AssetStore<BoneMask>>,
+        input: &SystemInputData<'_, '_, Self::DriveInput>,
         context: &DriveContext<'_>,
         _: &[Uuid],
         inputs: &[EvaluatedFrame],
         _: &mut FramePool,
         output: &mut AnimationFrame,
     ) {
+        let (bodies, masks) = input;
         if let Some(input) = inputs.first() {
             output.attributes_mut().copy_from(input.frame.attributes());
         }
-        let (Some(body), Some(skeleton)) = (context.extra::<BodyView>(), context.skeleton()) else {
+        let (Some(body), Some(skeleton)) =
+            (BodyView::read(context.entity(), bodies), context.skeleton())
+        else {
             return;
         };
         let root = context.root().map(|root| root.index);

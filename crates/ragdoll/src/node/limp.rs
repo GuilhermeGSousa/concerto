@@ -3,6 +3,7 @@ use concerto_animation::{
     node::{AnimationNode, EditorAnimationNode, InputSlots, ReflectAnimationNode},
     pose::{AnimationFrame, EvaluatedFrame, FramePool},
 };
+use concerto_ecs::system::input::SystemInputData;
 use concerto_name::name;
 use concerto_reflect::{Reflect, ReflectDefault};
 use glam::Vec3;
@@ -11,7 +12,7 @@ use uuid::Uuid;
 
 use crate::{
     attributes::{MotorCommand, PhysicsAmount},
-    view::BodyView,
+    view::{BodyInput, BodyView},
 };
 
 /// Lets the whole body go: every part drawn from physics, its motors off, their stiffness kept so a motor taking hold again does not jump.
@@ -23,8 +24,8 @@ impl AnimationNode for LimpNode {
     type State = ();
     type CreateInput = ();
     type UpdateInput = ();
-    type EvaluateInput = ();
-    type DriveInput = ();
+    type EvaluateInput = BodyInput;
+    type DriveInput = BodyInput;
 
     fn create_state(&self, _: &(), _: &AnimationGraphContext<'_>) {}
 
@@ -33,7 +34,7 @@ impl AnimationNode for LimpNode {
     fn evaluate(
         &self,
         _: &mut (),
-        _: &(),
+        bodies: &SystemInputData<'_, '_, BodyInput>,
         context: &AnimationGraphContext<'_>,
         _: &[Uuid],
         inputs: &[EvaluatedFrame],
@@ -43,7 +44,9 @@ impl AnimationNode for LimpNode {
         if let Some(input) = inputs.first() {
             output.copy_from(&input.frame);
         }
-        let (Some(body), Some(skeleton)) = (context.extra::<BodyView>(), context.skeleton()) else {
+        let (Some(body), Some(skeleton)) =
+            (BodyView::read(context.entity(), bodies), context.skeleton())
+        else {
             return;
         };
         let amounts = output
@@ -59,7 +62,7 @@ impl AnimationNode for LimpNode {
     fn drive(
         &self,
         _: &mut (),
-        _: &(),
+        bodies: &SystemInputData<'_, '_, BodyInput>,
         context: &DriveContext<'_>,
         _: &[Uuid],
         inputs: &[EvaluatedFrame],
@@ -69,7 +72,9 @@ impl AnimationNode for LimpNode {
         if let Some(input) = inputs.first() {
             output.attributes_mut().copy_from(input.frame.attributes());
         }
-        let (Some(body), Some(skeleton)) = (context.extra::<BodyView>(), context.skeleton()) else {
+        let (Some(body), Some(skeleton)) =
+            (BodyView::read(context.entity(), bodies), context.skeleton())
+        else {
             return;
         };
         let commands = output

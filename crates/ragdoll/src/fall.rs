@@ -127,7 +127,7 @@ pub(crate) struct FallController<'a> {
 impl FallController<'_> {
     pub(crate) fn step(
         &mut self,
-        view: &BodyView,
+        view: BodyView<'_>,
         physics: &PhysicsState,
         dt: f32,
         lying: bool,

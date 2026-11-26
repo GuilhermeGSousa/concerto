@@ -4,6 +4,7 @@ use concerto_animation::{
     node::{AnimationNode, EditorAnimationNode, InputSlots, ReflectAnimationNode},
     pose::{AnimationFrame, EvaluatedFrame, FramePool},
 };
+use concerto_ecs::system::input::SystemInputData;
 use concerto_name::{Name, name};
 use concerto_reflect::{Reflect, ReflectDefault};
 use serde::{Deserialize, Serialize};
@@ -15,7 +16,7 @@ use crate::{
     generate::FLINCH,
     messages::{Hit, Recovered},
     node::hold::command,
-    view::BodyView,
+    view::{BodyInput, BodyView},
 };
 
 /// Makes a character flinch when it is hit while its ragdoll follows its animation: the parts of `profile` are powered and take the impulse, the muscles at the hit give and recover, and the body settles back on the animation, when it raises `Recovered`. Play it from a slot entry that starts on `Hit` and ends on `Recovered`.
@@ -91,7 +92,7 @@ impl FlinchNode {
         }
     }
 
-    fn dip_around(&self, scales: &mut [f32], body: &BodyView, part: usize) {
+    fn dip_around(&self, scales: &mut [f32], body: BodyView<'_>, part: usize) {
         let parts = &body.resolved().settings().parts;
         for (index, scale) in scales.iter_mut().enumerate() {
             let joined = parts[index].parent == Some(part) || parts[part].parent == Some(index);
@@ -106,7 +107,7 @@ impl FlinchNode {
         }
     }
 
-    fn take(&self, state: &mut FlinchState, body: &BodyView, hit: &Hit) {
+    fn take(&self, state: &mut FlinchState, body: BodyView<'_>, hit: &Hit) {
         let count = body.resolved().part_count();
         if hit.part >= count {
             return;
@@ -145,9 +146,9 @@ pub struct FlinchState {
 impl AnimationNode for FlinchNode {
     type State = FlinchState;
     type CreateInput = ();
-    type UpdateInput = ();
-    type EvaluateInput = ();
-    type DriveInput = ();
+    type UpdateInput = BodyInput;
+    type EvaluateInput = BodyInput;
+    type DriveInput = BodyInput;
 
     fn create_state(&self, _: &(), _: &AnimationGraphContext<'_>) -> FlinchState {
         FlinchState::default()
@@ -157,10 +158,10 @@ impl AnimationNode for FlinchNode {
         &self,
         state: &mut FlinchState,
         delta_time: f32,
-        _: &(),
+        bodies: &SystemInputData<'_, '_, BodyInput>,
         context: &AnimationGraphContext<'_>,
     ) {
-        if let Some(body) = context.extra::<BodyView>() {
+        if let Some(body) = BodyView::read(context.entity(), bodies) {
             for hit in context.message::<Hit>() {
                 self.take(state, body, hit);
             }
@@ -186,7 +187,7 @@ impl AnimationNode for FlinchNode {
     fn evaluate(
         &self,
         state: &mut FlinchState,
-        _: &(),
+        bodies: &SystemInputData<'_, '_, BodyInput>,
         context: &AnimationGraphContext<'_>,
         _: &[Uuid],
         inputs: &[EvaluatedFrame],
@@ -197,7 +198,7 @@ impl AnimationNode for FlinchNode {
             output.copy_from(&input.frame);
         }
         let (Some(body), Some(skeleton), Some(weight)) = (
-            context.extra::<BodyView>(),
+            BodyView::read(context.entity(), bodies),
             context.skeleton(),
             self.acting_weight(state),
         ) else {
@@ -223,7 +224,7 @@ impl AnimationNode for FlinchNode {
     fn drive(
         &self,
         state: &mut FlinchState,
-        _: &(),
+        bodies: &SystemInputData<'_, '_, BodyInput>,
         context: &DriveContext<'_>,
         _: &[Uuid],
         inputs: &[EvaluatedFrame],
@@ -234,7 +235,7 @@ impl AnimationNode for FlinchNode {
             output.attributes_mut().copy_from(input.frame.attributes());
         }
         let (Some(body), Some(skeleton), Some(weight)) = (
-            context.extra::<BodyView>(),
+            BodyView::read(context.entity(), bodies),
             context.skeleton(),
             self.acting_weight(state),
         ) else {

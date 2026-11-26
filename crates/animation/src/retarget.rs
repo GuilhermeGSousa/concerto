@@ -1179,7 +1179,7 @@ impl Running {
             skeleton: Some(skeleton),
             model_to_world: context.model_to_world,
             inputs: context.inputs,
-            extras: context.extras,
+            entity: context.entity,
             outbox: context.outbox,
             messages: context.messages,
             raised: context.raised,
