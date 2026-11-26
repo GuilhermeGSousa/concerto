@@ -20,7 +20,10 @@ pub struct PackedSource {
     pub embedded: usize,
 }
 
-/// What [`pack_imports`] did: an entry per source with a scene file, and a line per source it left alone, with the reason.
+/// What [`pack_imports`] did.
+///
+/// It holds an entry per source with a scene file, and a line per source it left
+/// alone, with the reason.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PackReport {
     pub sources: Vec<PackedSource>,
@@ -39,6 +42,12 @@ enum Plan {
 }
 
 /// Embeds each import's loose meshes, materials and skeletons into its scene file, keeping ids and payload bytes.
+///
+/// # Errors
+///
+/// Fails when the project does not resolve, when `content.toml`, the content
+/// tree or a sidecar cannot be read, when two sources claim one output, and when
+/// a file cannot be read or written.
 pub fn pack_imports(project_root: &Path) -> anyhow::Result<PackReport> {
     let root = project_root
         .canonicalize()

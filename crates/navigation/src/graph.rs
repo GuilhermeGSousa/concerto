@@ -283,7 +283,9 @@ impl NavGraph {
         })
     }
 
-    /// The route from the enabled point nearest `position` to `to`, its length counting the leg to that point.
+    /// The route from the enabled point nearest `position` to `to`.
+    ///
+    /// Its length counts the leg from `position` to that point.
     pub fn path_from(&self, position: Vec3, to: Entity) -> Option<NavPath> {
         let start = self.nearest(position)?;
         let mut path = self.path(start, to)?;

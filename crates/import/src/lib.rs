@@ -51,7 +51,9 @@ pub fn importer_for(extension: &str) -> Option<&'static dyn ErasedImporter> {
     })
 }
 
-/// The settings given to one import; each one left `None` keeps what the project holds.
+/// The settings given to one import.
+///
+/// Each one left `None` keeps what the project holds.
 #[derive(Default)]
 pub struct ImportSettings {
     /// The importer's settings, written whole to the sidecar's `[settings]`; `None` imports with the sidecar's.
@@ -75,7 +77,12 @@ pub struct ContentScan {
 }
 
 impl ContentScan {
-    /// Scans the content tree of the existing project at `project_root`; fails on a malformed header or a duplicate id.
+    /// Scans the content tree of the existing project at `project_root`.
+    ///
+    /// # Errors
+    ///
+    /// Fails when `config` is invalid, when `project_root` does not resolve, and
+    /// on a malformed header or a duplicate id in the tree.
     pub fn new(project_root: &Path, config: &ContentConfig) -> anyhow::Result<Self> {
         config.validate()?;
         let project_root = project_root
@@ -89,7 +96,16 @@ impl ContentScan {
         })
     }
 
-    /// The settings importing `source` as `destination` would use if given none: the sidecar's, or the defaults, and the main asset's current ones; fails when the sidecar's settings do not parse.
+    /// The settings importing `source` as `destination` would use if given none.
+    ///
+    /// These are the sidecar's importer settings, or the defaults, and the main
+    /// asset's current settings.
+    ///
+    /// # Errors
+    ///
+    /// Fails when `source` does not resolve, when `destination` is not a file
+    /// inside the project with the source's extension, when no importer reads the
+    /// extension, and when the sidecar cannot be read or its settings do not parse.
     pub fn staged_settings(
         &self,
         source: &Path,
@@ -184,16 +200,23 @@ fn loose_address(
         .unwrap_or_else(|| content_address(config, relative_source, name))
 }
 
-/// Import a source and return an entry, with provenance, for every content asset
-/// written; no registry file is written. The source's committed `.import.toml`
-/// sidecar owns output UUIDs; scanning content headers finds their current
-/// locations, including files moved since the previous import. An output that has
-/// lost its import provenance belongs to the editor, is not rewritten, and is not
+/// Imports a source in place and returns an entry, with provenance, for every content asset written.
+///
+/// No registry file is written. The source's committed `.import.toml` sidecar
+/// owns output UUIDs; scanning content headers finds their current locations,
+/// including files moved since the previous import. An output that has lost its
+/// import provenance belongs to the editor, is not rewritten, and is not
 /// returned. A source that emits a scene stores its meshes, materials and
 /// skeletons inside the scene's file unless the sidecar says `file = true`.
 ///
 /// The complete plan is validated before writing. Files are staged and replaced
 /// individually; this is not a multi-file transaction or a concurrent writer API.
+///
+/// # Errors
+///
+/// Fails when `config` is invalid, when `source` or `project_root` does not
+/// resolve, when the content tree or the sidecar cannot be read, when the
+/// importer fails, and when an output cannot be written.
 pub fn import_source(
     source: &Path,
     project_root: &Path,
@@ -215,7 +238,17 @@ pub fn import_source(
     .assets)
 }
 
-/// Imports `source` into the project as `destination`, copying it and every file it refers to; nothing is copied unless the import succeeds. Given `settings` are written to the sidecar, and given asset settings to the source's main asset.
+/// Imports `source` into the project as `destination`, copying it and every file it refers to.
+///
+/// Nothing is copied unless the import succeeds. Given `settings` are written to
+/// the sidecar, and given asset settings to the source's main asset.
+///
+/// # Errors
+///
+/// Fails when `config` is invalid, when `source` does not resolve, when
+/// `destination` is not a file inside the project with the source's extension,
+/// when the content tree or the sidecar cannot be read, when the importer fails,
+/// and when a file cannot be copied or written.
 pub fn import_source_into(
     source: &Path,
     destination: &str,

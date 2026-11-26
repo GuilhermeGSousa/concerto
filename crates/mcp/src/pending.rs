@@ -4,7 +4,9 @@ use concerto_ecs::{CommandQueue, Component, Entity, Query, Res, ResMut, Resource
 
 use crate::{McpInbox, Reply, ToolError};
 
-/// A call answered on a later frame by the system that waits for `waiting_for`; changing calls queue behind it.
+/// A call answered on a later frame by the system that waits for `waiting_for`.
+///
+/// Changing calls queue behind it.
 #[derive(Component)]
 pub struct PendingCall {
     pub reply: Reply,
@@ -36,7 +38,9 @@ impl PendingCall {
     }
 }
 
-/// Answers each pending call past its deadline with its `at_deadline` text or `timeout`, and despawns it and every answered one.
+/// Answers each pending call past its deadline with its `at_deadline` text or `timeout`.
+///
+/// It despawns those calls and every answered one.
 pub fn expire_pending_calls(pending: Query<(Entity, &PendingCall)>, mut cmd: CommandQueue) {
     let now = Instant::now();
     for (entity, call) in pending.iter() {
@@ -55,7 +59,10 @@ pub fn expire_pending_calls(pending: Query<(Entity, &PendingCall)>, mut cmd: Com
     }
 }
 
-/// Whether the app needs the next frame; cleared at the start of each frame, so a system requests it on every frame it does.
+/// Whether the app needs the next frame.
+///
+/// It is cleared at the start of each frame, so a system requests it on every
+/// frame it needs the next.
 #[derive(Resource, Default)]
 pub struct FrameDemand {
     requested: bool,

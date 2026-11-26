@@ -101,7 +101,10 @@ impl CameraFraming {
         self
     }
 
-    /// This framing after `dt` seconds of closing half its gap to `target` every `halflife`, settling on fields within 1e-4.
+    /// This framing after `dt` seconds of closing half its gap to `target` every `halflife`.
+    ///
+    /// A field within 1e-4 of its target settles on it, and a `halflife` of 0 or
+    /// less snaps to `target`.
     pub fn eased_toward(&self, target: &CameraFraming, dt: f32, halflife: f32) -> CameraFraming {
         if halflife <= 0.0 {
             return *target;

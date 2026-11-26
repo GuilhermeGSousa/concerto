@@ -1,9 +1,8 @@
-//! Offline importer that relocates the parsing half of the old runtime
-//! `GLTFLoader` into the import pipeline. A single `.gltf`/`.glb` is
-//! split into independently-imported `mesh/*`, `material/*`, `texture/*`,
-//! `skeleton/*`, `animation/*` and `scene` sub-assets, cross-referenced by
-//! stable `AssetId`.
+//! The offline importer of `.gltf` and `.glb` sources.
 //!
+//! A single source is split into independently imported `mesh/*`,
+//! `material/*`, `texture/*`, `skeleton/*`, `animation/*` and `scene`
+//! sub-assets, cross-referenced by stable `AssetId`.
 
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};

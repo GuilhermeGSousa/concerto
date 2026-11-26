@@ -147,7 +147,15 @@ impl fmt::Display for Report {
     }
 }
 
-/// Parses the arguments after the program name, skipping the `concerto` Cargo passes first; `default_engine` is the checkout `new` and `editor` use without `--engine`.
+/// Parses the arguments after the program name, skipping the `concerto` Cargo passes first.
+///
+/// `default_engine` is the checkout `new` and `editor` use without `--engine`.
+///
+/// # Errors
+///
+/// Fails on a missing or unknown command, an unknown option, an option missing
+/// its value or given to a command it does not apply to, an extra argument, and
+/// a `new` or `editor` without a directory.
 pub fn parse<I, S>(args: I, default_engine: Option<PathBuf>) -> Result<Command>
 where
     I: IntoIterator<Item = S>,
@@ -196,6 +204,11 @@ where
 }
 
 /// Runs a parsed command.
+///
+/// # Errors
+///
+/// Fails as the function the command runs does: [`new_project`], [`add_editor`],
+/// [`update_editor`], [`build`] or [`run_game`].
 pub fn run(command: Command) -> Result<Report> {
     match command {
         Command::New(dir, engine) => new_project(dir, engine),
@@ -346,11 +359,21 @@ pub fn plan_run(
 }
 
 /// Builds the game in `options.dir`, cooking and staging its derived data when asked.
+///
+/// # Errors
+///
+/// Fails when the directory holds no readable package, when a wasm build finds
+/// no `trunk`, when Cargo, the cook or `trunk` fails, and when the cooked files
+/// cannot be copied.
 pub fn build(options: BuildOptions) -> Result<Report> {
     execute(options, plan_build)
 }
 
 /// Builds the game as [`build`] does, then runs it with `options.args` and waits for it to exit.
+///
+/// # Errors
+///
+/// Fails as [`build`] does, and when the game cannot start or exits with a failure.
 pub fn run_game(options: RunOptions) -> Result<Report> {
     execute(options.build, |build, package, target_dir| {
         plan_run(build, &options.args, package, target_dir)
@@ -598,6 +621,14 @@ fn overlay(from: &Path, onto: &Path, report: &mut Report) -> Result<()> {
 }
 
 /// Creates a game project in `dir`, with its editor crate, and makes both workspace members.
+///
+/// On failure it removes what it wrote.
+///
+/// # Errors
+///
+/// Fails when `dir` has no usable name, is not a valid package name, or exists
+/// and is not empty; when the engine checkout cannot be resolved; and when a file
+/// or the enclosing workspace's manifest cannot be written.
 pub fn new_project(dir: impl AsRef<Path>, engine: Engine) -> Result<Report> {
     let dir = absolute(dir.as_ref())?;
     let name = dir
@@ -686,6 +717,14 @@ fn remove_project(dir: &Path, created: bool) -> std::io::Result<()> {
 }
 
 /// Adds the generated `editor/` crate to the game in `dir` and makes it a workspace member.
+///
+/// On failure it removes the `editor/` directory.
+///
+/// # Errors
+///
+/// Fails when `dir` holds no game with a readable `Cargo.toml` and a
+/// `src/lib.rs`, when `editor/` already exists, when the engine checkout cannot
+/// be resolved, and when a file or a workspace manifest cannot be written.
 pub fn add_editor(dir: impl AsRef<Path>, engine: Engine) -> Result<Report> {
     let dir = absolute(dir.as_ref())?;
     let game = read_game(&dir)?;
@@ -720,7 +759,15 @@ pub fn add_editor(dir: impl AsRef<Path>, engine: Engine) -> Result<Report> {
     Ok(report)
 }
 
-/// Rewrites `editor/Cargo.toml` and `editor/src/main.rs` from the game in `dir`; `editor/Cargo.toml` names the engine unless `engine` does.
+/// Rewrites `editor/Cargo.toml` and `editor/src/main.rs` from the game in `dir`.
+///
+/// The engine is `engine`, or else the one the existing `editor/Cargo.toml` names.
+///
+/// # Errors
+///
+/// Fails when `dir` holds no game with a readable `Cargo.toml` and a
+/// `src/lib.rs`, when `editor/` does not exist, when its engine cannot be read
+/// or resolved, and when a file cannot be written.
 pub fn update_editor(dir: impl AsRef<Path>, engine: Option<Engine>) -> Result<Report> {
     let dir = absolute(dir.as_ref())?;
     let game = read_game(&dir)?;

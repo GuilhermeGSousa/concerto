@@ -7,7 +7,7 @@ use concerto_asset_format::{scan_content, write_registry, ContentConfig};
 
 const REGISTRY_FILE: &str = "concerto_registry.toml";
 
-/// Register the package's content directory from its `build.rs`:
+/// Registers the package's content directory from its `build.rs`.
 ///
 /// ```no_run
 /// fn main() -> std::io::Result<()> {
@@ -19,12 +19,19 @@ const REGISTRY_FILE: &str = "concerto_registry.toml";
 /// Re-running this build script recompiles the package and re-expands its asset
 /// macros. This reads no asset payloads and works on stable Rust. Register one
 /// common directory containing all assets referenced by the package's macros.
+///
 /// It also writes the registry of the content tree `content.toml` names through
 /// [`write_registry_into`], which `concerto::content_registry!()` embeds with
-/// the package directory, `CONCERTO_PROJECT_ROOT`; a duplicate id or an
-/// unreadable header fails the build. Cargo also watches that
+/// the package directory, `CONCERTO_PROJECT_ROOT`. Cargo also watches that
 /// tree and `content.toml` when they exist; one created later is read the next
 /// time the build script runs.
+///
+/// # Errors
+///
+/// Fails when called outside a Cargo build script, when `directory` is not a
+/// directory, when a watched path is not valid UTF-8 or holds a newline, and
+/// when [`write_registry_into`] fails, as it does on a duplicate id or an
+/// unreadable header; the build then fails with the message as a warning.
 pub fn track_assets(directory: impl AsRef<Path>) -> io::Result<()> {
     let manifest = std::env::var_os("CARGO_MANIFEST_DIR")
         .ok_or_else(|| io::Error::other("track_assets must be called from a Cargo build script"))?;
@@ -54,7 +61,12 @@ pub fn track_assets(directory: impl AsRef<Path>) -> io::Result<()> {
     Ok(())
 }
 
-/// Writes the registry of the `content` tree under `<manifest>`, validating `content.toml`, to `<out_dir>/concerto_registry.toml`.
+/// Writes the registry of the `content` tree under `<manifest>` to `<out_dir>/concerto_registry.toml`.
+///
+/// # Errors
+///
+/// Fails when `content.toml` is malformed or invalid, when a header in the tree
+/// cannot be read or two assets share an id, and when the file cannot be written.
 pub fn write_registry_into(manifest: &Path, out_dir: &Path) -> anyhow::Result<()> {
     let config = ContentConfig::load_or_default(manifest)?;
     let entries = scan_content(manifest, &manifest.join(&config.root), &config.extension)?;
@@ -63,7 +75,10 @@ pub fn write_registry_into(manifest: &Path, out_dir: &Path) -> anyhow::Result<()
         .with_context(|| format!("failed to write '{}'", path.display()))
 }
 
-/// The profile directory a build script's `out_dir` sits under, where Cargo puts the package's executable: the parent of the nearest `build` directory above it, in Cargo's flat and nested `build/` layouts alike.
+/// The profile directory a build script's `out_dir` sits under, where Cargo puts the package's executable.
+///
+/// It is the parent of the nearest `build` directory above `out_dir`, in Cargo's
+/// flat and nested `build/` layouts alike.
 pub fn profile_dir(out_dir: &Path) -> Option<PathBuf> {
     out_dir
         .ancestors()

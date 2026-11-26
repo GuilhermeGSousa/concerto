@@ -80,7 +80,9 @@ impl McpInbox {
     }
 }
 
-/// Writes the calls the server sent as [`McpCall`]s, then runs [`McpServe`](crate::McpServe); a changing call waits while another is pending.
+/// Writes the calls the server sent as [`McpCall`]s, then runs [`McpServe`](crate::McpServe).
+///
+/// A changing call waits while another is pending.
 pub fn receive_calls(
     mut inbox: ResMut<McpInbox>,
     registry: Res<ToolRegistry>,
@@ -126,7 +128,9 @@ type Inputs = (
     Res<'static, ToolRegistry>,
 );
 
-/// The open calls of the tool whose arguments are `A`; calls with malformed arguments are answered `invalid_arguments`.
+/// The open calls of the tool whose arguments are `A`.
+///
+/// Calls with malformed arguments are answered `invalid_arguments`.
 pub struct ToolCalls<'w, 's, A> {
     calls: EventReader<'w, 's, McpCall>,
     tool: &'static str,

@@ -31,10 +31,14 @@ pub struct VirtualCamera {
     /// Omitted from a stored scene means "eligible", the default: a camera
     /// that never mentions `enabled` still works.
     enabled: bool,
-    /// `None` keeps whatever lens the main camera currently has. Free to edit —
-    /// the director reads it every frame. Absent from a stored scene is `None`.
+    /// The lens the main camera takes while this one is live; `None` keeps the one it has.
+    ///
+    /// Free to edit: the director reads it every frame. Absent from a stored
+    /// scene, it is `None`.
     pub lens: Option<Lens>,
-    /// `None` keeps whatever focus the main camera currently has, or none. A camera that takes over from one without a focus opens its blur over the blend.
+    /// The focus the main camera takes while this one is live; `None` keeps the one it has, or none.
+    ///
+    /// A camera that takes over from one without a focus opens its blur over the blend.
     pub focus: Option<DepthOfField>,
 }
 
@@ -72,6 +76,8 @@ impl Default for VirtualCamera {
 }
 
 impl VirtualCamera {
+    /// An enabled camera at `priority`, with no lens or focus of its own.
+    ///
     /// Higher priority stacks above lower; equal priorities run in the order
     /// they were added.
     pub fn new(priority: i32) -> Self {
@@ -94,8 +100,10 @@ impl VirtualCamera {
         self
     }
 
-    /// Joins the stack in its slot but passed over for control until
-    /// [`set_enabled`](Self::set_enabled) turns it on — how a scene ships cutscene cameras that must not hijack the view
+    /// Joins the stack in its slot but is passed over for control until
+    /// [`set_enabled`](Self::set_enabled) turns it on.
+    ///
+    /// This is how a scene ships cutscene cameras that must not take the view
     /// the moment they load.
     pub fn disabled(mut self) -> Self {
         self.enabled = false;
@@ -142,8 +150,10 @@ impl Lens {
         }
     }
 
-    /// Writes the lens onto a camera, leaving `aspect` alone — that belongs to
-    /// the render crate, which syncs it from the surface.
+    /// Writes the lens onto a camera.
+    ///
+    /// It leaves `aspect` alone: that belongs to the render crate, which syncs it
+    /// from the surface.
     pub fn apply_to(&self, camera: &mut Camera) {
         camera.fovy = self.fovy;
         camera.znear = self.znear;
@@ -216,9 +226,10 @@ impl Ease {
     }
 }
 
-/// A resolved camera position in world space, ready to be written to the main
-/// camera. Decoupled from any entity so a blend can outlive the virtual camera
-/// it started from.
+/// A resolved camera position in world space, ready to be written to the main camera.
+///
+/// It is decoupled from any entity, so a blend can outlive the virtual camera it
+/// started from.
 #[derive(Clone, Copy)]
 pub struct CameraPose {
     pub translation: Vec3,

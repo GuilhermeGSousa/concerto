@@ -11,7 +11,10 @@ use crate::{
     Audio, AudioBackend, AudioBus, AudioClip, AudioMixer, AudioPlayer, PlaybackEnd, SoundFinished,
 };
 
-/// Plays `AudioPlayer`s through the `Audio` it opens on `finish`, or on the web at the first key or click, except in an edit `App`; needs an `AssetServer`.
+/// Plays [`AudioPlayer`](crate::AudioPlayer)s through the [`Audio`](crate::Audio) it opens.
+///
+/// It opens the output on `finish`, or on the web at the first key or click, and
+/// never in an edit `App`. It needs an `AssetServer`.
 pub struct AudioPlugin;
 
 impl Plugin for AudioPlugin {

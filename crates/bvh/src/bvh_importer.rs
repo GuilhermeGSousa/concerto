@@ -32,7 +32,9 @@ fn default_scale() -> f32 {
 #[serde(deny_unknown_fields)]
 #[reflect(Default)]
 pub struct BvhSettings {
-    /// Multiplier applied to every offset and translation; defaults to 0.01 (centimetres to metres).
+    /// The multiplier applied to every offset and translation.
+    ///
+    /// It defaults to 0.01, from centimetres to metres.
     #[serde(default = "default_scale")]
     pub scale: f32,
     /// Frames to keep as `[start, end)`; the whole file when absent.
