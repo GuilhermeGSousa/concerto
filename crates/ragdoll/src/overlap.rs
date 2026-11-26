@@ -98,8 +98,8 @@ fn segment_distance(a: &Rounded, b: &Rounded) -> f32 {
 
 impl ResolvedRagdoll {
     /// The pairs of parts that overlap in the rest pose and are not joined to each other, deepest first.
-///
-/// A box is judged as a capsule along its longest side.
+    ///
+    /// A box is judged as a capsule along its longest side.
     pub fn overlapping_parts(&self) -> Vec<PartOverlap> {
         let parts = &self.settings().parts;
         let shapes: Vec<Rounded> = parts.iter().map(rounded).collect();

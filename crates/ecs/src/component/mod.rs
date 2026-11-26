@@ -36,7 +36,7 @@ pub struct ComponentLifecycleContext {
     pub entity: Entity,
 }
 
-/// Marker trait for data that can be attached to an [`Entity`](crate::entity::Entity).
+/// Marker trait for data that can be attached to an [`Entity`].
 ///
 /// Implement this trait (or derive it with `#[derive(Component)]`) for any type that
 /// should live in the ECS storage.

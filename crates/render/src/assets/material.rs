@@ -39,7 +39,7 @@ pub enum ShaderRef {
 ///
 /// # Example (manual implementation)
 ///
-/// ```rust,ignore
+/// ```text
 /// use concerto_render::assets::material::{AsBindGroup, ShaderRef};
 ///
 /// pub struct MyMaterial {

@@ -28,7 +28,7 @@ use crate::{
     world::UnsafeWorldCell,
 };
 
-/// A type-safe view over all entities in a [`World`](crate::world::World) that
+/// A type-safe view over all entities in a [`World`] that
 /// match a given set of components.
 ///
 /// `T` is a [`QueryData`] that describes which components to fetch.  `F` is an

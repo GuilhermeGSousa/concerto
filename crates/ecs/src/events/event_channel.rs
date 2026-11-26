@@ -36,7 +36,7 @@ impl<T: Event + 'static> EventSequence<T> {
 /// [`update`](EventChannel::update) swaps the two and clears the older one. An event
 /// therefore survives two `update` calls, so a reader that runs before the writer in
 /// one frame still sees the event in the next. Readers track their own position with
-/// an [`EventCursor`](super::event_cursor::EventCursor), so an event is never read twice.
+/// an [`EventCursor`], so an event is never read twice.
 ///
 /// Prefer the higher-level [`EventWriter`](super::event_writer::EventWriter) and
 /// [`EventReader`](super::event_reader::EventReader) in system code.

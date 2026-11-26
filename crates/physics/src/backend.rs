@@ -142,7 +142,7 @@ pub trait PhysicsBackend: Send + Sync + Sized {
     /// Creates a body from the shared descriptors and adds it to the simulation.
     ///
     /// The body is static when `rigid_body` is `None`, otherwise dynamic or
-    /// kinematic per its [`MotionType`](crate::rigid_body::MotionType), with
+    /// kinematic per its [`MotionType`], with
     /// its density and allowed degrees of freedom. `gravity_scale` multiplies
     /// gravity for a dynamic body.
     ///

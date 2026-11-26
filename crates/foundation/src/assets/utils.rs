@@ -5,7 +5,7 @@ use cfg_if::cfg_if;
 use super::content::read_content_without_uncooked;
 use super::{content::decode_content_asset, Asset, ContentAssetRoot};
 
-/// Loads the content asset at `<root>/<address>` as `A`, through [`decode_content_asset`](crate::assets::content::decode_content_asset).
+/// Loads the content asset at `<root>/<address>` as `A`, through [`decode_content_asset`].
 ///
 /// # Errors
 ///

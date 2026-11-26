@@ -25,7 +25,7 @@ impl MainWorld {
     }
 }
 
-/// Moves `main` into `render` as the [`MainWorld`] resource, runs the
+/// Moves `main` into `render` as the `MainWorld` resource, runs the
 /// [`Extract`] schedule, then swaps it back out.
 pub fn extract(main: &mut World, render: &mut World) {
     let scratch = main

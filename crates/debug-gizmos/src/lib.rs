@@ -1,7 +1,7 @@
 //! Immediate-mode debug gizmos.
 //!
-//! Register [`DebugGizmosPlugin`](plugin::DebugGizmosPlugin), then request a
-//! [`DebugGizmos`](gizmos::DebugGizmos) parameter in any system to draw debug
+//! Register [`DebugGizmosPlugin`], then request a
+//! [`DebugGizmos`] parameter in any system to draw debug
 //! shapes for the current frame:
 //!
 //! ```ignore

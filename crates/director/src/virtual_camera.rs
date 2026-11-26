@@ -13,7 +13,7 @@ use crate::director::CameraDirector;
 /// driven by anything that moves a transform: a follow rig, an animation clip,
 /// parenting, or a camera authored in Blender.
 ///
-/// Having the component *is* being in the [`CameraDirector`](crate::CameraDirector)'s
+/// Having the component *is* being in the [`CameraDirector`]'s
 /// stack, sorted by [`priority`](Self::priority); the top of that stack is live.
 /// Leave the stack by removing the component or despawning the entity.
 ///

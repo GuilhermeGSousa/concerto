@@ -104,7 +104,7 @@ impl PhysicsState {
         &mut self.backend
     }
 
-    /// The entity whose [`Collider`](crate::collider::Collider) owns `body`,
+    /// The entity whose [`Collider`] owns `body`,
     /// if any.
     pub fn get_entity(&self, body: BodyId) -> Option<Entity> {
         self.body_to_entity.get(&body).map(|owner| owner.entity)

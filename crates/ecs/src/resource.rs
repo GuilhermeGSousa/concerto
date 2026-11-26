@@ -19,7 +19,7 @@ use crate::{
 /// A unique identifier for a resource type, based on its Rust [`TypeId`].
 pub type ResourceId = TypeId;
 
-/// Marker trait for globally-shared data stored in a [`World`](crate::world::World).
+/// Marker trait for globally-shared data stored in a [`World`].
 ///
 /// Derive with `#[derive(Resource)]`.  Each type may have at most one instance per world.
 ///
@@ -84,7 +84,7 @@ const STORED_UNDER_ITS_TYPE: &str = "a resource is stored under its own type id"
 
 /// Read-only system parameter that borrows a [`Resource`] from the world.
 ///
-/// Derefs to `&T`.  Implements [`DetectChanges`](crate::query::change_detection::DetectChanges)
+/// Derefs to `&T`.  Implements [`DetectChanges`]
 /// so systems can react when the resource value changes.
 ///
 /// A system taking it is skipped with a warning while the resource is missing; take
