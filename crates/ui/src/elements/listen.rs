@@ -30,9 +30,13 @@ impl<E, S: Signal> Listening<E, S> {
     }
 }
 
-/// Signal listeners for interactive elements; attach them after the element's own modifiers.
+/// Signal listeners for interactive elements.
+///
+/// Attach them after the element's own modifiers.
 pub trait Listen: IntoBundle {
-    /// Runs `listener` when this element receives its signal; one listener per signal type.
+    /// Runs `listener` when this element receives its signal.
+    ///
+    /// An element holds one listener per signal type.
     fn on<S: Signal, M>(self, listener: impl IntoListener<S, M>) -> Listening<Self, S> {
         Listening::new(self, listener)
     }

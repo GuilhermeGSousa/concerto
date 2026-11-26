@@ -22,7 +22,9 @@ pub enum ClipboardRead {
     Text(String),
     /// The clipboard held nothing that reads as text.
     NoText,
-    /// The clipboard could not be read, or the platform refused; the reason is logged.
+    /// The clipboard could not be read, or the platform refused.
+    ///
+    /// The reason is logged.
     Unavailable(String),
 }
 
@@ -34,7 +36,9 @@ fn text_read(result: Result<String, String>) -> ClipboardRead {
     }
 }
 
-/// Where [`WindowClipboard`] sends copies and asks for reads; a read may be answered on any later frame.
+/// Where [`WindowClipboard`] sends copies and asks for reads.
+///
+/// A read may be answered on any later frame.
 pub trait ClipboardBackend: Send + 'static {
     /// Puts `text` on the clipboard.
     fn write(&mut self, text: &str);
@@ -69,7 +73,11 @@ impl ClipboardBackend for InProcessClipboard {
 #[derive(Event, Debug, Clone, PartialEq, Eq)]
 pub struct ClipboardPasted(pub String);
 
-/// The clipboard UI controls copy to and paste from: an in-process copy in front of a backend, in-process only by default.
+/// The clipboard UI controls copy to and paste from.
+///
+/// It keeps an in-process copy in front of a [`ClipboardBackend`]. The default
+/// backend is [`InProcessClipboard`], so nothing reaches the platform until a
+/// host calls [`WindowClipboard::use_os_clipboard`].
 #[derive(Resource)]
 pub struct WindowClipboard {
     copy: String,
@@ -98,7 +106,10 @@ impl WindowClipboard {
         self.backend = Mutex::new(Box::new(backend));
     }
 
-    /// Copies to and pastes from the platform's clipboard, keeping the current backend with a warning when it cannot be opened.
+    /// Copies to and pastes from the platform's clipboard.
+    ///
+    /// When the platform's clipboard cannot be opened, keeps the current backend
+    /// and logs a warning.
     pub fn use_os_clipboard(&mut self) {
         match OsClipboard::open() {
             Ok(os) => self.set_backend(os),
@@ -114,7 +125,9 @@ impl WindowClipboard {
         unlock(&mut self.backend).write(&self.copy);
     }
 
-    /// Asks the backend for its text; the answer arrives as a [`ClipboardPasted`] on a later frame.
+    /// Asks the backend for its text.
+    ///
+    /// The answer arrives as a [`ClipboardPasted`] on a later frame.
     pub fn request_paste(&mut self) {
         unlock(&mut self.backend).request_read();
     }

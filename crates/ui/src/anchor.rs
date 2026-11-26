@@ -35,9 +35,9 @@ pub const UI_PANEL_LAYER: i32 = 200;
 /// What a panel anchors to.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum UIAnchorTarget {
-    /// Another UI entity; the panel tracks its rect as it moves or resizes.
+    /// Another UI entity, whose rect the panel tracks as it moves or resizes.
     Node { entity: Entity },
-    /// A fixed screen point in logical pixels — a context menu at the cursor.
+    /// A fixed screen point in logical pixels, such as the cursor for a context menu.
     Point { position: Vec2 },
 }
 
@@ -94,7 +94,9 @@ pub enum UIAnchorAlign {
     End,
 }
 
-/// A floating panel, anchored to another node or to a point. Must be a UI root and carry [`UINode`].
+/// A floating panel, anchored to another node or to a point.
+///
+/// It must be a UI root and carry [`UINode`].
 #[derive(Component)]
 pub struct UIAnchoredPanel {
     /// Where the panel sits.
@@ -105,7 +107,9 @@ pub struct UIAnchoredPanel {
     pub align: UIAnchorAlign,
     /// Gap between the anchor edge and the panel, in logical pixels.
     pub gap: f32,
-    /// Authoritative open state. The caller sets this; the crate projects it onto `UINode::visible`.
+    /// Whether the panel is open.
+    ///
+    /// The caller sets it, and the crate projects it onto `UINode::visible`.
     pub open: bool,
     /// Left-clicking `owner` toggles `open`.
     pub toggled_by_owner: bool,
@@ -151,7 +155,9 @@ impl UIAnchoredPanel {
         self
     }
 
-    /// Sets the preferred side; `resolved_side` follows until the next layout pass.
+    /// Sets the preferred side.
+    ///
+    /// [`Self::resolved_side`] reports it until the next layout pass places the panel.
     pub fn with_side(mut self, side: UIAnchorSide) -> Self {
         self.side = side;
         self.resolved_side = side;

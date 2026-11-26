@@ -33,13 +33,18 @@ use crate::{
     tree::{TreeNode, UITree, UITreeElement, flatten_tree},
 };
 
-/// On a `UITextInput`: narrows the `UIList` or `UITree` `target` to the items whose `UISearchText` holds its text, and drives that list from the keyboard while focused.
+/// Makes a `UITextInput` a search over the `UIList` or `UITree` `target`.
+///
+/// It narrows the list to the items whose [`UISearchText`] holds its text, and
+/// drives that list from the keyboard while focused.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct UISearchField {
     pub target: Entity,
 }
 
-/// The text a `UISearchField` matches an item against; an item without it is never hidden by a search.
+/// The text a [`UISearchField`] matches an item against.
+///
+/// An item without it is never hidden by a search.
 #[derive(Component, Clone, Debug, Default, PartialEq, Eq)]
 pub struct UISearchText(pub String);
 

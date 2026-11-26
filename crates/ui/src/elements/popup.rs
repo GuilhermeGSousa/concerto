@@ -29,7 +29,9 @@ impl UITheme {
         }
     }
 
-    /// A menu at a point; the caller sets its target and opens it.
+    /// A menu at a point.
+    ///
+    /// The caller sets its target and opens it.
     pub fn context_menu(&self) -> Popup {
         Popup {
             surface: self.popup(),

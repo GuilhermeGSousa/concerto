@@ -34,15 +34,24 @@ pub struct UIMaterial {
     #[uniform(0)]
     pub color: LinearRgba,
 
-    /// Border outline colour (RGBA). Only visible when `border_width > 0`.
+    /// Border outline colour (RGBA).
+    ///
+    /// Only visible when [`border_width`](Self::border_width) is above 0.
     #[uniform(1)]
     pub border_color: LinearRgba,
 
-    /// GPU-side shape parameters — **do not set manually**.
+    /// GPU-side shape parameters, managed by the engine.
+    ///
+    /// Do not set it; set [`border_width`](Self::border_width) and
+    /// [`corner_radius`](Self::corner_radius) instead. It also carries the node's
+    /// laid-out size.
     #[uniform(2)]
     pub border_params: [f32; 4],
 
-    /// GPU-side shape flags — **do not set manually**.
+    /// GPU-side shape flags, managed by the engine.
+    ///
+    /// Do not set it; set [`rotation`](Self::rotation), [`texture`](Self::texture)
+    /// and [`gradient`](Self::gradient) instead.
     #[uniform(3)]
     pub flags: [f32; 4],
 
@@ -51,15 +60,21 @@ pub struct UIMaterial {
     #[sampler(5)]
     pub texture: Option<AssetHandle<Texture>>,
 
-    /// GPU-side gradient parameters — **do not set manually**.
+    /// GPU-side gradient parameters, managed by the engine.
+    ///
+    /// Do not set it; set [`gradient`](Self::gradient) instead.
     #[uniform(6)]
     pub gradient_params: [f32; 4],
 
-    /// GPU-side gradient colour — **do not set manually**.
+    /// GPU-side gradient colour, managed by the engine.
+    ///
+    /// Do not set it; set [`gradient`](Self::gradient) instead.
     #[uniform(7)]
     pub gradient_color: [f32; 4],
 
-    /// Border width in logical pixels. Set this; the engine manages `border_params` automatically.
+    /// Border width in logical pixels.
+    ///
+    /// The engine derives [`border_params`](Self::border_params) from it.
     pub border_width: f32,
 
     /// Corner radius in logical pixels, clamped to half the node's shorter side.
@@ -68,7 +83,9 @@ pub struct UIMaterial {
     /// Rotation of the drawn shape within its node, in radians.
     pub rotation: f32,
 
-    /// A computed fill drawn in place of [`color`](Self::color)'s RGB; its alpha still comes from `color`.
+    /// A computed fill drawn in place of [`color`](Self::color)'s RGB.
+    ///
+    /// Its alpha still comes from `color`.
     pub gradient: UIGradient,
 }
 

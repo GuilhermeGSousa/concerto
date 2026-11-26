@@ -91,7 +91,11 @@ impl UITheme {
         Color::srgba(accent.r, accent.g, accent.b, 0.2)
     }
 
-    /// The variant's colours, raised to its selected fill when `selected`; ignores per-element overrides, so use `InteractionSpec::resolve` for elements built with them.
+    /// The variant's colours, raised to its selected fill when `selected`.
+    ///
+    /// It ignores per-element overrides, so use
+    /// [`InteractionSpec::resolve`](crate::elements::InteractionSpec::resolve) for
+    /// elements built with them.
     pub fn interaction(&self, variant: ButtonVariant, selected: bool) -> UIInteractionStyle {
         match variant {
             ButtonVariant::Solid => UIInteractionStyle {

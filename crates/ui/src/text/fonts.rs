@@ -27,7 +27,10 @@ impl UIFonts {
     }
 }
 
-/// Registers fonts with the UI. Call from a plugin's `build`.
+/// Registers fonts with the UI.
+///
+/// Call it from a plugin's `build`. The UI's font systems are built when plugin
+/// building finishes, and a face added later is in neither of them.
 pub trait UIFontsApp {
     /// Adds one face.
     fn add_ui_font(&mut self, data: impl Into<Cow<'static, [u8]>>) -> &mut Self;

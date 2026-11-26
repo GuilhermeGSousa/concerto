@@ -14,7 +14,10 @@ use crate::{
     transform::UIValue,
 };
 
-/// An editable, focusable, one-line text field whose text is drawn by a label in a viewport child that clips it to the field's content box.
+/// An editable, focusable, one-line text field.
+///
+/// Its text is drawn by a label in a viewport child that clips it to the
+/// field's content box.
 pub struct TextField {
     theme: UITheme,
     node: UINode,
@@ -46,7 +49,10 @@ impl UITheme {
     }
 }
 
-/// A [`TextField`] that narrows a `UIList` or `UITree` to the items whose `UISearchText` holds its text, and drives that list's highlight from the keyboard.
+/// A [`TextField`] that searches a `UIList` or `UITree`.
+///
+/// It narrows the list to the items whose `UISearchText` holds its text, and
+/// drives that list's highlight from the keyboard.
 pub struct SearchField {
     field: TextField,
     search: UISearchField,

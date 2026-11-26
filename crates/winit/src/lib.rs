@@ -16,6 +16,11 @@ mod handler;
 mod translate;
 
 /// Opens a window, builds an `App` with `build`, and drives it until the window closes.
+///
+/// # Panics
+///
+/// Panics if the event loop or the window cannot be created, if the window
+/// gives no drawing surface, or if no GPU adapter is available.
 pub fn run(build: impl FnOnce(&mut App) + 'static) {
     profiling::register_thread!("main");
 

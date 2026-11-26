@@ -77,11 +77,17 @@ pub enum GamepadConnection {
     Disconnected { id: GamepadId },
 }
 
-/// The set that folds window events into `Input`; a system ordered before it decides this frame's [`InputGate`].
+/// The set that folds window events into `Input`.
+///
+/// A system ordered before it decides this frame's [`InputGate`].
 #[derive(SystemSet, Clone, PartialEq, Eq, Hash, Debug)]
 pub struct FoldInput;
 
-/// While closed, an `App` folds no key, mouse button, wheel, or raw-motion events into its `Input`; pad events always fold.
+/// Whether an `App` folds key and mouse events into its `Input` this frame.
+///
+/// While closed, no key, mouse button, wheel, or raw-motion events are folded,
+/// and closing it releases every held key and mouse button. Pad events and the
+/// cursor position always fold.
 #[derive(Resource, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct InputGate {
     pub open: bool,

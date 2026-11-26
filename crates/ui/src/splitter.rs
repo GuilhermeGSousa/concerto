@@ -23,7 +23,10 @@ use crate::{
 /// The width of a [`UISplitter`]'s hit area across its axis, in logical pixels.
 pub const SPLITTER_HIT_SIZE: f32 = 8.0;
 
-/// A draggable gap between two siblings that reports drags along its axis and moves nothing itself.
+/// A draggable gap between two siblings that reports drags along its axis.
+///
+/// It moves nothing itself: its owner listens for [`UISplitterDragged`] and decides
+/// what a drag means.
 #[derive(Component)]
 pub struct UISplitter {
     pub axis: UISplitAxis,
@@ -47,7 +50,10 @@ impl UISplitter {
 #[derive(Component)]
 pub(crate) struct UISplitterLine;
 
-/// Sent to a [`UISplitter`] while it is dragged, with the pointer's movement along its axis since the last one, in logical pixels.
+/// Sent to a [`UISplitter`] while it is dragged.
+///
+/// `delta` is the pointer's movement along the splitter's axis since the last
+/// one, in logical pixels.
 pub struct UISplitterDragged {
     pub delta: f32,
 }
