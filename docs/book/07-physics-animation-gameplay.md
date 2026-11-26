@@ -1803,20 +1803,23 @@ graph is not loaded or not yet initialized visits nothing. Order the system afte
 
 `for_each_node` visits every playing node whatever its type, in node order,
 with the nodes of the graphs a node plays inside itself right after it. Each
-`NodeVisit` holds the node's `weight`, its `report` (`clip_time` for a clip
-node; for a state machine, `state_machine` with the `current` state and the
-`transition` in flight as `from`, `to` and a `progress` from 0 to 1, which
-under the inertialization blender is the share of the offset decayed so far)
-and its `path` from the player's graph: one `NodePathStep` per graph on the
-way, each the `node` index in that graph and, when the next step is inside a
-state machine's state, that `state`. The last step is the node itself. An
+`NodeVisit` holds the node's `weight`, the live `node` as a
+`&dyn ErasedAnimationNode`, its erased `state`, and its `path` from the
+player's graph: one `NodePathStep` per graph on the way, each the `node` index
+in that graph and, when the next step is inside a state machine's state, that
+`state`. The last step is the node itself. `visit.node.describe(visit.state)`
+gives the node's one line, and `visit.state.downcast_ref::<S>()` its typed
+state: `AnimationClipNodeState::time()` for a clip, and for a state machine
+`AnimationStateMachineState::current_state_name()` and `transition()`, the
+transition in flight as `from`, `to` and a `progress` from 0 to 1, which under
+the inertialization blender is the share of the offset decayed so far. An
 editor shows a playing graph from it; `AnimationGraphState::for_each_node` is
 the same walk from a graph state.
 
 ```rust
 player.for_each_node(&graphs, |visit| {
-    if let Some(machine) = &visit.report.state_machine {
-        log::info!("{:?} is in {:?}", visit.path, machine.current);
+    if let Some(machine) = visit.state.downcast_ref::<AnimationStateMachineState>() {
+        log::info!("{:?} is in {:?}", visit.path, machine.current_state_name());
     }
 });
 ```
@@ -1908,6 +1911,14 @@ impl ClipEvent for Footstep {}
 
 A clip that loads an event whose type is not registered logs a warning naming
 the clip and the type, and drops it.
+
+The clip node also raises each event its clock crosses as a message to the
+state machines and slots above it, whatever its weight, so a transition can
+wait for one with `on_message_value` (see [Messages and
+signals](#messages-and-signals)). A game's event type that a transition
+waits for, or that `send_animation_message` sends, also implements
+`AnimationMessage` and is registered with `register_animation_message`, as
+`AnimationEvent` is.
 
 `AnimationSignal<S>` holds the event as `signal`, the clip time it sits at as
 `time`, the `weight` of its source in the final frame, and `mirrored`, set when
