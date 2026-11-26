@@ -41,7 +41,7 @@ impl Default for ShotNode {
 }
 
 impl ShotNode {
-    /// A shot reaction powering `profile`, with the settings of the old `ShotReaction` and `Balance`.
+    /// A shot reaction powering `profile`, with the default settings.
     pub fn new(profile: impl Into<Name>) -> Self {
         Self {
             profile: profile.into(),
@@ -130,7 +130,6 @@ impl AnimationNode for ShotNode {
             shot.part,
             struck.inverse().transform_point(shot.point),
             shot.impulse,
-            None,
         ));
     }
 

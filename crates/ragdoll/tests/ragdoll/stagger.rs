@@ -8,7 +8,7 @@ use concerto_animation::{
 use concerto_foundation::assets::asset_server::AssetServer;
 use concerto_name::name;
 use concerto_ragdoll::{
-    BalanceNode, BalanceSettings, BodyState, LimpNode, StaggerNode, messages::Stagger,
+    BalanceNode, BalanceSettings, LimpNode, StaggerNode, messages::Stagger,
     testing::humanoid_skeleton,
 };
 use glam::Vec3;
@@ -20,7 +20,7 @@ struct Stumbled {
     outcome: Option<NodeOutcome>,
     steps: u32,
     reach: f32,
-    state: BodyState,
+    animated: bool,
     pelvis: f32,
 }
 
@@ -89,7 +89,7 @@ fn stumbled(stagger: Option<Stagger>, impulse: Vec3) -> Stumbled {
         outcome: stage.outcome(),
         steps,
         reach,
-        state: stage.state(),
+        animated: stage.animated(),
         pelvis: stage.part("pelvis").y,
     }
 }
@@ -115,10 +115,9 @@ fn a_stagger_stumbles_further_than_balance_with_arms_out_and_a_severe_one_falls(
             Some(NodeOutcome::Succeeded),
             "a mild stagger towards {direction} ends with balance's outcome: {mild:?}"
         );
-        assert_eq!(
-            mild.state,
-            BodyState::Animated,
-            "a mild stagger towards {direction} ends standing: {mild:?}"
+        assert!(
+            mild.animated,
+            "a mild stagger towards {direction} ends drawn from its animation: {mild:?}"
         );
         assert!(
             mild.reach > alone.reach + 0.05,

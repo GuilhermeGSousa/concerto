@@ -1,27 +1,20 @@
 use concerto_animation::player::AnimationPlayer;
 use concerto_ecs::{
-    CommandQueue, Component, Entity, Query, ResMut, Without,
+    CommandQueue, Component, Entity, Query, ResMut, With, Without,
     reflect::{ReflectComponent, ReflectSceneComponent},
     signal::{
         On, Signal,
         listener::{IntoListener, Listener},
     },
 };
-use concerto_foundation::time::Time;
 use concerto_physics::{physics_state::PhysicsState, ragdoll::RagdollId};
 use concerto_reflect::{Reflect, ReflectDefault};
 
 use crate::{
-    asset::{PartStrength, Segment},
-    balance::Balance,
-    behaviour::{BodyState, PhysicalState},
-    character::{CharacterRagdoll, Held, RagdollBody, RagdollMode},
-    fall::Fall,
-    hit::{BodyHit, Flinch},
+    character::RagdollBody,
+    hit::BodyHit,
     messages::{BodyDead, Death},
     sensing::BodySense,
-    shot::Shot,
-    stagger::Stagger,
 };
 
 /// The game says a character is dying: its strength drains over `seconds`, from the hands and feet inwards, and it is `Dead` when none is left. Zero seconds is an instant kill. The engine has no health; the game decides when.
@@ -41,66 +34,7 @@ pub struct BodySettled {
 
 impl Signal for BodySettled {}
 
-/// A character whose strength is draining. Adding it is the same as triggering `Die`; it leaves when the character is `Dead`.
-#[derive(Component, Reflect, Clone, Copy, Debug, PartialEq)]
-#[reflect(Component, Default, SceneComponent)]
-#[require(BodySense, PhysicalState)]
-pub struct Dying {
-    /// The seconds over which the strength drains; zero kills at once.
-    pub seconds: f32,
-    #[reflect(skip)]
-    elapsed: f32,
-}
-
-impl Default for Dying {
-    fn default() -> Self {
-        Self::new(1.0)
-    }
-}
-
-impl Dying {
-    pub fn new(seconds: f32) -> Self {
-        Self {
-            seconds,
-            elapsed: 0.0,
-        }
-    }
-
-    pub(crate) fn advance(&mut self, dt: f32) -> bool {
-        self.elapsed += dt;
-        self.elapsed >= self.seconds
-    }
-
-    pub(crate) fn drain(&self, segment: Segment, mut held: Held) -> (Held, f32) {
-        let left = self.left(segment);
-        if held.kinematic {
-            held = Held::of(PartStrength::powered(DYING_STIFFNESS, DYING_TORQUE));
-        }
-        held.stiffness *= left;
-        held.damping *= left;
-        held.torque_limit *= left;
-        (held, left)
-    }
-
-    /// The share of its strength a part of `segment` has left, from 1 to 0: hands and feet are spent first, the trunk last.
-    pub fn left(&self, segment: Segment) -> f32 {
-        if self.seconds <= 0.0 {
-            return 0.0;
-        }
-        let spent_at = match segment {
-            Segment::Hand | Segment::Foot => 0.4,
-            Segment::LowerArm | Segment::Shin => 0.6,
-            Segment::UpperArm | Segment::Thigh | Segment::Head => 0.8,
-            Segment::Pelvis | Segment::Spine | Segment::Other => 1.0,
-        };
-        (1.0 - self.elapsed / self.seconds / spent_at).clamp(0.0, 1.0)
-    }
-}
-
-const DYING_STIFFNESS: f32 = 400.0;
-const DYING_TORQUE: f32 = 120.0;
-
-/// A character whose strength a behaviour drained to nothing; inserted when `BodyDead` triggers on it, and read by the settling of its body.
+/// A character whose strength a behaviour drained to nothing; inserted when `BodyDead` triggers on it, and read by the settling of its body. It is never removed: death is final.
 #[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Dead;
 
@@ -126,51 +60,6 @@ impl Default for Settled {
     }
 }
 
-type Behaviours<'w, 's> = Query<
-    'w,
-    's,
-    (
-        Option<&'static Balance>,
-        Option<&'static Stagger>,
-        Option<&'static Shot>,
-        Option<&'static Fall>,
-        Option<&'static Flinch>,
-    ),
->;
-
-fn kill(
-    entity: Entity,
-    character: &mut CharacterRagdoll,
-    physical: Option<&mut PhysicalState>,
-    behaviours: &Behaviours,
-    cmd: &mut CommandQueue,
-) {
-    character.go_limp();
-    if let Some(physical) = physical
-        && physical.state != BodyState::Dead
-    {
-        physical.state = BodyState::Dead;
-    }
-    let Some((balance, stagger, shot, fall, flinch)) = behaviours.get_entity(entity) else {
-        return;
-    };
-    if balance.is_some() {
-        cmd.remove::<Balance>(entity);
-    }
-    if stagger.is_some() {
-        cmd.remove::<Stagger>(entity);
-    }
-    if shot.is_some() {
-        cmd.remove::<Shot>(entity);
-    }
-    if fall.is_some() {
-        cmd.remove::<Fall>(entity);
-    }
-    if flinch.is_some() {
-        cmd.remove::<Flinch>(entity);
-    }
-}
-
 /// Sends a dying character's animation graph a `Death` message.
 pub fn forward_death(on: On<Die>, mut players: Query<&mut AnimationPlayer>) {
     let die = *on.signal();
@@ -181,93 +70,14 @@ pub fn forward_death(on: On<Die>, mut players: Query<&mut AnimationPlayer>) {
     }
 }
 
-/// Starts a character dying when the game says so; with zero seconds it is limp and `Dead` at once. A character that is already dying dies no slower.
-pub fn die_when_told(
-    on: On<Die>,
-    mut characters: Query<(
-        &mut CharacterRagdoll,
-        Option<&mut PhysicalState>,
-        Option<&mut Dying>,
-    )>,
-    behaviours: Behaviours,
-    mut cmd: CommandQueue,
-) {
-    let die = *on.signal();
-    let Some((mut character, mut physical, dying)) = characters.get_entity_mut(die.character)
-    else {
-        return;
-    };
-    if physical
-        .as_ref()
-        .is_some_and(|physical| physical.state == BodyState::Dead)
-    {
-        return;
-    }
-    if die.seconds <= 0.0 {
-        if let Some(physical) = physical.as_mut() {
-            physical.state = BodyState::Dead;
-        }
-        kill(die.character, &mut character, None, &behaviours, &mut cmd);
-    }
-    match dying {
-        Some(mut dying) => {
-            let remaining = (dying.seconds - dying.elapsed).max(0.0);
-            if die.seconds < remaining {
-                dying.seconds = die.seconds;
-                dying.elapsed = 0.0;
-            }
-        }
-        None => cmd.insert(Dying::new(die.seconds), die.character),
-    }
-}
-
-/// Each fixed step, in `BehaviourSet`: drains every dying character, whose parts the drive weakens by `Dying::left`, and when nothing is left makes it limp and `Dead` and ends the behaviours still on it.
-pub fn drain_dying(
-    mut characters: Query<(
-        Entity,
-        &mut Dying,
-        &mut CharacterRagdoll,
-        &mut PhysicalState,
-    )>,
-    behaviours: Behaviours,
-    mut cmd: CommandQueue,
-) {
-    let dt = Time::fixed_delta_time().as_secs_f32();
-    for (entity, mut dying, mut character, mut physical) in characters.iter_mut() {
-        if character.mode == RagdollMode::FollowsAnimation {
-            character.mode = RagdollMode::Powered;
-            character.weight = 1.0;
-        }
-        if dying.advance(dt) {
-            kill(
-                entity,
-                &mut character,
-                Some(&mut physical),
-                &behaviours,
-                &mut cmd,
-            );
-            cmd.remove::<Dying>(entity);
-        }
-    }
-}
-
 /// Each fixed step, after the body is sensed: freezes every dead body that lies at rest, marks it `Settled` and triggers `BodySettled`.
 pub fn settle_dead_bodies(
-    characters: Query<
-        (
-            Entity,
-            &PhysicalState,
-            Option<&Dead>,
-            &BodySense,
-            &RagdollId,
-        ),
-        Without<Settled>,
-    >,
+    characters: Query<(Entity, &BodySense, &RagdollId), (With<Dead>, Without<Settled>)>,
     mut state: ResMut<PhysicsState>,
     mut cmd: CommandQueue,
 ) {
-    for (entity, physical, dead, sense, id) in characters.iter() {
-        if (physical.state != BodyState::Dead && dead.is_none()) || !sense.at_rest {
+    for (entity, sense, id) in characters.iter() {
+        if !sense.at_rest {
             continue;
         }
         state.set_ragdoll_frozen(*id, true);

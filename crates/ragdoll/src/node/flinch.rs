@@ -45,7 +45,7 @@ impl Default for FlinchNode {
 }
 
 impl FlinchNode {
-    /// A flinch powering `profile`, with the settings of the old `HitReaction`.
+    /// A flinch powering `profile`, with the default settings.
     pub fn new(profile: impl Into<Name>) -> Self {
         Self {
             profile: profile.into(),

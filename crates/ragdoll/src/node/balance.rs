@@ -17,7 +17,6 @@ use uuid::Uuid;
 use crate::{
     asset::{PartStrength, Side, StrengthProfile},
     attributes::{MotorCommand, PhysicsAmount},
-    behaviour::PartCommand,
     generate::BRACED,
     ik::{Chain, reach},
     node::hold::command,
@@ -298,6 +297,40 @@ impl BalanceRun {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct PartCommand {
+    pub(crate) target: Option<Quat>,
+    pub(crate) strength: PartStrength,
+    pub(crate) force: Vec3,
+    pub(crate) torque: Vec3,
+}
+
+impl PartCommand {
+    pub(crate) fn held(strength: PartStrength) -> Self {
+        Self {
+            target: None,
+            strength,
+            force: Vec3::ZERO,
+            torque: Vec3::ZERO,
+        }
+    }
+
+    pub(crate) fn with_target(mut self, target: Quat) -> Self {
+        self.target = Some(target);
+        self
+    }
+
+    pub(crate) fn with_force(mut self, force: Vec3) -> Self {
+        self.force = force;
+        self
+    }
+
+    pub(crate) fn with_torque(mut self, torque: Vec3) -> Self {
+        self.torque = torque;
+        self
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub(crate) struct CommandsOut {
     parts: Vec<Option<PartCommand>>,
@@ -317,10 +350,6 @@ impl CommandsOut {
 
     pub(crate) fn clear(&mut self) {
         self.parts.clear();
-    }
-
-    pub(crate) fn len(&self) -> usize {
-        self.parts.len()
     }
 
     pub(crate) fn get(&self, part: usize) -> Option<PartCommand> {
@@ -356,10 +385,6 @@ impl ClaimsOut {
 
     pub(crate) fn clear(&mut self) {
         self.claims.clear();
-    }
-
-    pub(crate) fn len(&self) -> usize {
-        self.claims.len()
     }
 
     pub(crate) fn get(&self, part: usize) -> Option<(f32, PartCommand)> {
@@ -791,7 +816,7 @@ fn hold_leg(
     }
 }
 
-/// Keeps a body on its own feet, as the `Balance` behaviour did: every part held with `profile`, the legs with balance's muscles, the pelvis pushed upright, to its animated height and back over the feet, and a step taken to catch the body when its capture point leaves its feet. It succeeds once the body has stood balanced and slow for `settle_seconds`, and fails when it gives up; a state machine moves on with `OnSucceeded` and `OnFailed`.
+/// Keeps a body on its own feet: every part held with `profile`, the legs with balance's muscles, the pelvis pushed upright, to its animated height and back over the feet, and a step taken to catch the body when its capture point leaves its feet. It succeeds once the body has stood balanced and slow for `settle_seconds`, and fails when it gives up; a state machine moves on with `OnSucceeded` and `OnFailed`.
 #[derive(Clone, Debug, PartialEq, Reflect, Serialize, Deserialize)]
 #[reflect(AnimationNode, Default)]
 pub struct BalanceNode {
@@ -808,7 +833,7 @@ impl Default for BalanceNode {
 }
 
 impl BalanceNode {
-    /// Balances a body held with `profile`, with the settings of the old `Balance`.
+    /// Balances a body held with `profile`, with the default settings.
     pub fn new(profile: impl Into<Name>) -> Self {
         Self {
             profile: profile.into(),

@@ -17,8 +17,7 @@ use uuid::Uuid;
 use crate::{
     asset::StrengthProfile,
     attributes::{MotorCommand, PhysicsAmount},
-    behaviour::LYING,
-    fall::{FallController, FallReaction, FallRun, FallSettings},
+    fall::{FallController, FallRun, FallSettings, LYING},
     generate::BRACED,
     messages::BodyDown,
     node::balance::{ClaimsOut, CommandsOut, layered, wanted},
@@ -44,7 +43,7 @@ impl Default for FallNode {
 }
 
 impl FallNode {
-    /// A fall powering `profile`, with the settings of the old `Fall`.
+    /// A fall powering `profile`, with the default settings.
     pub fn new(profile: impl Into<Name>) -> Self {
         Self {
             profile: profile.into(),
@@ -171,7 +170,7 @@ impl AnimationNode for FallNode {
             .blackboard()
             .read(&self.strength)
             .copied()
-            .unwrap_or(FallReaction::default().strength);
+            .unwrap_or(1.0);
         if state.outcome.is_none() {
             let lying = body
                 .sense()

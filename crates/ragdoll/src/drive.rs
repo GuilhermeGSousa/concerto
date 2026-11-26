@@ -10,19 +10,12 @@ use glam::{Quat, Vec3};
 use crate::{
     asset::{PartStrength, Ragdoll, StrengthProfile},
     attributes::{MotorCommand, PhysicsAmount},
-    behaviour::BodyDrive,
-    character::{
-        Asked, CharacterRagdoll, Driven, Held, PoseLost, RagdollBody, RagdollMode, drive_part,
-    },
+    character::{Asked, CharacterRagdoll, Driven, Held, PoseLost, RagdollBody, drive_part},
     dying::Settled,
     sensing::BodySense,
     shot::Wounds,
     view::BodyView,
 };
-
-pub(crate) fn old_path_owns(character: &CharacterRagdoll, claimed: bool) -> bool {
-    character.mode != RagdollMode::FollowsAnimation || claimed
-}
 
 pub(crate) fn physics_amount(player: Option<&AnimationPlayer>, bone: usize) -> f32 {
     player.map_or(0.0, |player| {
@@ -35,20 +28,14 @@ pub(crate) fn physics_amount(player: Option<&AnimationPlayer>, bone: usize) -> f
 }
 
 pub(crate) fn drawn_amount(
-    character: &CharacterRagdoll,
     player: Option<&AnimationPlayer>,
     body: &RagdollBody,
     part: usize,
 ) -> f32 {
-    let graph = body
-        .resolved()
+    body.resolved()
         .bones()
         .get(part)
-        .map_or(0.0, |bone| physics_amount(player, *bone));
-    let old = body
-        .bone_name(part)
-        .map_or(0.0, |bone| character.weight_of(&bone));
-    graph.max(old)
+        .map_or(0.0, |bone| physics_amount(player, *bone))
 }
 
 fn command_of(player: Option<&AnimationPlayer>, bone: usize) -> MotorCommand {
@@ -163,7 +150,7 @@ pub fn drive_graphs(
     }
 }
 
-/// Each fixed step, before physics steps, drives every ragdoll from its graph's physics attributes: a part whose bone has no `MotorCommand` cover is kinematic and moved to its bone while it has no `PhysicsAmount` either, and the root part whatever its amount; any other part is dynamic, its motor aimed by the behaviours' command and, for the cover they leave, by the animation at the strength of the character's `follow` profile (never for the root part, nor a part that profile leaves kinematic or limp), leading the target by its speed, with the command's force and torque scaled by its cover. A paused player is not driven, so its parts hold no command but keep their drawn amount. A character the old modes or behaviour claims hold is left to `drive_character_ragdolls`.
+/// Each fixed step, before physics steps, drives every ragdoll from its graph's physics attributes: a part whose bone has no `MotorCommand` cover is kinematic and moved to its bone while it has no `PhysicsAmount` either, and the root part whatever its amount; any other part is dynamic, its motor aimed by the behaviours' command and, for the cover they leave, by the animation at the strength of the character's `follow` profile (never for the root part, nor a part that profile leaves kinematic or limp), leading the target by its speed, with the command's force and torque scaled by its cover. A paused player is not driven, so its parts hold no command but keep their drawn amount.
 pub fn drive_from_graph(
     mut characters: Query<
         (
@@ -172,7 +159,6 @@ pub fn drive_from_graph(
             &RagdollId,
             &mut RagdollBody,
             Option<&AnimationPlayer>,
-            Option<&BodyDrive>,
         ),
         Without<Settled>,
     >,
@@ -182,11 +168,7 @@ pub fn drive_from_graph(
 ) {
     let dt = Time::fixed_delta_time().as_secs_f32();
     let mut simulated = Vec::new();
-    for (entity, character, id, mut body, player, drive) in characters.iter_mut() {
-        let claimed = drive.is_some_and(|drive| !drive.running().is_empty());
-        if old_path_owns(character, claimed) {
-            continue;
-        }
+    for (entity, character, id, mut body, player) in characters.iter_mut() {
         let profile = ragdolls
             .get(&character.ragdoll)
             .and_then(|ragdoll| ragdoll.profile(&character.follow));
@@ -211,9 +193,7 @@ pub fn drive_from_graph(
             targets: drives.iter().map(|drive| drive.target).collect(),
             forces: drives.iter().map(|drive| drive.force).collect(),
             torques: drives.iter().map(|drive| drive.torque).collect(),
-            claimed: vec![true; drives.len()],
         };
-        body.note_changes(&wanted);
         let animated = body.animated_pose().to_vec();
         let body = &mut *body;
         let driven = Driven {
@@ -221,7 +201,6 @@ pub fn drive_from_graph(
             animated: &animated,
             wanted: &wanted,
             asked: &asked,
-            step: 1.0,
             dt,
         };
         for part in 0..drives.len() {

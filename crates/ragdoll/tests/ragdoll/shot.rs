@@ -10,8 +10,8 @@ use concerto_name::name;
 use concerto_physics::physics_state::PhysicsState;
 use concerto_physics::ragdoll::RagdollId;
 use concerto_ragdoll::{
-    BalanceNode, BalanceSettings, BodyHit, BodyState, LimpNode, RagdollBody, ShotNode, Wounds,
-    messages::Shot, testing::humanoid_skeleton,
+    BalanceNode, BalanceSettings, BodyHit, LimpNode, RagdollBody, ShotNode, Wounds, messages::Shot,
+    testing::humanoid_skeleton,
 };
 use glam::Vec3;
 
@@ -27,7 +27,7 @@ struct Bullet {
 #[derive(Debug)]
 struct Answered {
     outcome: Option<NodeOutcome>,
-    state: BodyState,
+    animated: bool,
     chest: Vec3,
     hand_gap: f32,
     early: Vec3,
@@ -140,7 +140,7 @@ fn shot(bullets: &[Bullet]) -> Answered {
     stage.run(2);
     Answered {
         outcome: stage.outcome(),
-        state: stage.state(),
+        animated: stage.animated(),
         chest,
         hand_gap,
         early,
@@ -170,9 +170,13 @@ fn a_shot_body_answers_by_where_it_was_struck() {
         "a shot to the chest from the front throws it back and brings a hand to the wound: {chest:?}"
     );
     assert_eq!(
-        (chest.outcome, chest.state),
-        (Some(NodeOutcome::Succeeded), BodyState::Animated),
-        "a body that keeps its feet ends the reaction standing: {chest:?}"
+        chest.outcome,
+        Some(NodeOutcome::Succeeded),
+        "a body that keeps its feet ends the reaction: {chest:?}"
+    );
+    assert!(
+        chest.animated,
+        "a body that keeps its feet ends the reaction drawn from its animation: {chest:?}"
     );
     assert_eq!(
         chest.wounded, 0.6,

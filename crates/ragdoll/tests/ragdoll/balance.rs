@@ -35,9 +35,8 @@ use concerto_ragdoll::testing::{
     SpawnedHumanoid, humanoid_skeleton, reference_humanoid, spawn_humanoid,
 };
 use concerto_ragdoll::{
-    BalanceNode, BalanceSettings, BalanceState, BodyDown, BodyDrive, BodySense, BodySettled,
-    BodyState, CharacterRagdoll, LimpNode, MotorCommand, PhysicalState, RagdollBody, RagdollPlugin,
-    StaggerNode, StaggerState,
+    BalanceNode, BalanceSettings, BalanceState, BodyDown, BodySense, BodySettled, CharacterRagdoll,
+    LimpNode, MotorCommand, RagdollBody, RagdollPlugin, StaggerNode, StaggerState,
 };
 use concerto_reflect::Reflect;
 use glam::{Quat, Vec3};
@@ -121,9 +120,7 @@ impl Stage {
         world.insert(
             (
                 CharacterRagdoll::new(asset),
-                BodyDrive::default(),
                 BodySense::default(),
-                PhysicalState::default(),
                 count_downs(),
             ),
             character,
@@ -193,13 +190,13 @@ impl Stage {
         pose[part].translation
     }
 
-    pub fn state(&self) -> BodyState {
+    pub fn animated(&self) -> bool {
         self.app
             .main()
             .world()
-            .get_component_for_entity::<PhysicalState>(self.character)
+            .get_component_for_entity::<RagdollBody>(self.character)
             .unwrap()
-            .state
+            .is_animated(self.player())
     }
 
     pub fn settles(&self) -> usize {
@@ -371,9 +368,13 @@ fn a_balancing_body_stands_absorbs_a_push_steps_to_catch_itself_or_gives_up() {
     for direction in [Vec3::Z, Vec3::NEG_Z, Vec3::X, Vec3::NEG_X] {
         let light = pushed(BalanceNode::default(), direction * 12.0, 10.0);
         assert_eq!(
-            (light.outcome, light.steps),
-            (Some(NodeOutcome::Succeeded), 0),
-            "a light push towards {direction} is absorbed without a step and the graph moves on to its steady state: {light:?}"
+            light.outcome,
+            Some(NodeOutcome::Succeeded),
+            "a light push towards {direction} is absorbed and the graph moves on to its steady state: {light:?}"
+        );
+        assert_eq!(
+            light.steps, 0,
+            "a light push towards {direction} is absorbed without a step: {light:?}"
         );
 
         let medium = pushed(BalanceNode::default(), direction * 70.0, 10.0);

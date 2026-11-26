@@ -75,16 +75,35 @@ fn falling_graph(server: &AssetServer) -> AnimationGraph {
     )
 }
 
+struct Spread {
+    bone: &'static str,
+    angle: f32,
+}
+
+const SPREADS: [Spread; 4] = [
+    Spread {
+        bone: "upperarm_l",
+        angle: -0.9,
+    },
+    Spread {
+        bone: "upperarm_r",
+        angle: 0.9,
+    },
+    Spread {
+        bone: "thigh_l",
+        angle: 0.35,
+    },
+    Spread {
+        bone: "thigh_r",
+        angle: -0.35,
+    },
+];
+
 fn spread_clip(skeleton: &Skeleton) -> AnimationClip {
     let mut clip = standing_clip(skeleton);
-    for (bone, angle) in [
-        ("upperarm_l", -0.9),
-        ("upperarm_r", 0.9),
-        ("thigh_l", 0.35),
-        ("thigh_r", -0.35),
-    ] {
-        let index = skeleton.bone_index(bone.into()).unwrap();
-        let turn = Quat::from_rotation_z(angle).to_array();
+    for spread in SPREADS {
+        let index = skeleton.bone_index(spread.bone.into()).unwrap();
+        let turn = Quat::from_rotation_z(spread.angle).to_array();
         clip.add_channel(
             skeleton.bone_ids[index],
             AnimationChannel::new(

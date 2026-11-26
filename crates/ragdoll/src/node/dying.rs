@@ -12,14 +12,63 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{
+    asset::{PartStrength, Segment},
     attributes::{MotorCommand, PhysicsAmount},
     character::Held,
-    dying::Dying,
     generate::BRACED,
     messages::{BodyDead, Death},
-    node::balance::{CommandsOut, wanted},
     view::BodyView,
 };
+
+const DYING_STIFFNESS: f32 = 400.0;
+const DYING_TORQUE: f32 = 120.0;
+
+/// A strength that drains over `seconds`, from the hands and feet inwards; zero seconds drains it at once.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Dying {
+    /// The seconds over which the strength drains; zero kills at once.
+    pub seconds: f32,
+    elapsed: f32,
+}
+
+impl Dying {
+    pub fn new(seconds: f32) -> Self {
+        Self {
+            seconds,
+            elapsed: 0.0,
+        }
+    }
+
+    pub(crate) fn advance(&mut self, dt: f32) -> bool {
+        self.elapsed += dt;
+        self.elapsed >= self.seconds
+    }
+
+    pub(crate) fn drain(&self, segment: Segment, mut held: Held) -> Held {
+        let left = self.left(segment);
+        if held.kinematic {
+            held = Held::of(PartStrength::powered(DYING_STIFFNESS, DYING_TORQUE));
+        }
+        held.stiffness *= left;
+        held.damping *= left;
+        held.torque_limit *= left;
+        held
+    }
+
+    /// The share of its strength a part of `segment` has left, from 1 to 0: hands and feet are spent first, the trunk last.
+    pub fn left(&self, segment: Segment) -> f32 {
+        if self.seconds <= 0.0 {
+            return 0.0;
+        }
+        let spent_at = match segment {
+            Segment::Hand | Segment::Foot => 0.4,
+            Segment::LowerArm | Segment::Shin => 0.6,
+            Segment::UpperArm | Segment::Thigh | Segment::Head => 0.8,
+            Segment::Pelvis | Segment::Spine | Segment::Other => 1.0,
+        };
+        (1.0 - self.elapsed / self.seconds / spent_at).clamp(0.0, 1.0)
+    }
+}
 
 /// Drains a body's strength from the moment it receives a `Death` message, over its seconds, from the hands and feet inwards: every part is powered, a part that would be kinematic starting at a fixed strength, and each loses its muscles by how far its segment is from the trunk. It emits `BodyDead` once nothing is left and succeeds. Zero seconds drains it at once.
 #[derive(Clone, Debug, PartialEq, Reflect, Serialize, Deserialize)]
@@ -46,17 +95,12 @@ impl DyingNode {
     fn motor(&self, state: &DyingState, body: &BodyView, part: usize) -> Option<MotorCommand> {
         let dying = state.dying.as_ref()?;
         let profile = body.profile(&self.profile);
-        let base = wanted(&CommandsOut::default(), body, profile, part);
-        let held = match base {
-            Some(base) => Held {
-                kinematic: false,
-                stiffness: base.stiffness,
-                damping: base.damping,
-                torque_limit: base.torque_limit,
-            },
-            None => Held::KINEMATIC,
-        };
-        let (held, _) = dying.drain(body.resolved().segment(part), held);
+        let strength = profile
+            .zip(body.resolved().bone_name(part))
+            .map_or(PartStrength::Kinematic, |(profile, bone)| {
+                profile.strength_of(&bone)
+            });
+        let held = dying.drain(body.resolved().segment(part), Held::of(strength));
         Some(MotorCommand {
             cover: 1.0,
             target: body.animated_target(part),

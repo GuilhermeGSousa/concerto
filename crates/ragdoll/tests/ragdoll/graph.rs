@@ -37,7 +37,7 @@ use concerto_ragdoll::testing::{
 };
 use concerto_ragdoll::{
     BRACED, BodyHit, CharacterRagdoll, FlinchNode, HoldNode, LimpNode, MotorCommand, PartStrength,
-    PhysicsAmount, RagdollBody, RagdollMode, RagdollPlugin,
+    PhysicsAmount, RagdollBody, RagdollPlugin,
 };
 use glam::{Quat, Vec3};
 
@@ -138,7 +138,6 @@ struct Stage {
     capsule: Entity,
     skeleton: Skeleton,
     walk: AssetHandle<AnimationGraph>,
-    plain: AssetHandle<AnimationGraph>,
     root: Vec3,
 }
 
@@ -162,9 +161,6 @@ impl Stage {
         ragdoll.skeleton = skeleton_handle.clone();
         let ragdoll = server.add(ragdoll);
         let left_leg = server.add(BoneMask::new().with_branch(BoneMaskBranch::new("thigh_l")));
-        let plain = server.add(AnimationGraph::from_node(AnimationClipNode::new(
-            clip.clone(),
-        )));
         let walk = server.add(over_clip(
             SlotNode::new().with_entry(
                 SlotEntry::new(name!("flinch"), FlinchNode::default())
@@ -241,7 +237,6 @@ impl Stage {
             capsule,
             skeleton,
             walk,
-            plain,
             root,
         }
     }
@@ -702,33 +697,12 @@ fn a_hit_flinches_from_a_slot_throws_the_part_back_and_the_body_returns_to_its_a
     stage.walk(3);
     stage.assert_animated("after the flinch settled");
 
-    let character = stage.humanoid.skeleton;
-    {
-        let world = stage.app.main_mut().world_mut();
-        let ragdoll = world
-            .get_component_for_entity_mut::<CharacterRagdoll>(character)
-            .unwrap();
-        ragdoll.mode = RagdollMode::Limp;
-        ragdoll.weight = 1.0;
-    }
-    stage.walk(5);
+    stage.player_mut().set_bool_param(name!("limp"), true);
+    stage.fade_until(|amounts| amounts.iter().all(|amount| *amount >= 1.0));
     let calf = stage.part("calf_l");
     let impulse = Vec3::new(0.0, 0.0, -100.0);
-    let plain = AnimationHandleComponent::new(stage.plain.clone());
-    stage.app.main_mut().world_mut().insert(plain, character);
-    stage.walk(5);
     assert!(
         stage.struck_speed(calf, impulse) > 1.0,
         "a hit on a graph that reacts to nothing still takes its impulse"
-    );
-    stage
-        .app
-        .main_mut()
-        .world_mut()
-        .remove_component::<AnimationPlayer>(character);
-    stage.walk(5);
-    assert!(
-        stage.struck_speed(calf, impulse) > 1.0,
-        "a hit on a character with no player still takes its impulse"
     );
 }

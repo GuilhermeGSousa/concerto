@@ -43,7 +43,7 @@ impl Default for StaggerNode {
 }
 
 impl StaggerNode {
-    /// A stagger powering `profile`, with the settings of the old `Stagger` and `Balance`.
+    /// A stagger powering `profile`, with the default settings.
     pub fn new(profile: impl Into<Name>) -> Self {
         Self {
             profile: profile.into(),

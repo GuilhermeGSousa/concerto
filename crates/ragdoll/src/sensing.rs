@@ -1,3 +1,5 @@
+use std::fmt::Write;
+
 use concerto_ecs::{Component, Entity, Query, ResMut, Without};
 use concerto_foundation::time::Time;
 use concerto_physics::{
@@ -341,6 +343,58 @@ pub fn sense_bodies(
         sense.still = if slow { sense.still + dt } else { 0.0 };
         sense.at_rest = sense.still >= REST_SECONDS;
     }
+}
+
+/// What a character's body senses, as text an agent can read.
+pub fn describe_body(sense: Option<&BodySense>, body: &RagdollBody) -> String {
+    let mut text = String::new();
+    match sense {
+        None => text.push_str("sensing: the character has no BodySense\n"),
+        Some(sense) => {
+            let centre = sense.centre.position;
+            let velocity = sense.centre.velocity;
+            let _ = writeln!(
+                text,
+                "centre of mass: [{:.2}, {:.2}, {:.2}] moving [{:.2}, {:.2}, {:.2}] m/s",
+                centre.x, centre.y, centre.z, velocity.x, velocity.y, velocity.z
+            );
+            let feet: Vec<String> = sense
+                .supporting
+                .iter()
+                .filter_map(|part| body.bone_name(*part))
+                .map(|bone| bone.to_string())
+                .collect();
+            let _ = writeln!(
+                text,
+                "support: {}",
+                if feet.is_empty() {
+                    "none".to_string()
+                } else {
+                    feet.join(", ")
+                }
+            );
+            let _ = writeln!(
+                text,
+                "balance: {}",
+                if sense.balanced() {
+                    "capture point inside the support".to_string()
+                } else {
+                    format!(
+                        "capture point {:.2} m outside the support",
+                        sense.off_balance.length()
+                    )
+                }
+            );
+            let _ = writeln!(
+                text,
+                "lean {:.2} rad · airborne {:.2} s · {}",
+                sense.lean,
+                sense.airborne,
+                if sense.at_rest { "at rest" } else { "moving" }
+            );
+        }
+    }
+    text
 }
 
 #[cfg(test)]

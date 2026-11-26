@@ -13,8 +13,8 @@ use glam::Vec3;
 use crate::{
     character::RagdollBody,
     dying::Settled,
-    hit::{BodyHit, HitKind, HitReaction},
-    shot::{ShotReaction, Wounds},
+    hit::{BodyHit, HitKind},
+    shot::Wounds,
 };
 
 /// A blow on `part` of a character's ragdoll at the world `point`, with `impulse` in N·s, sent to its animation graph.
@@ -101,7 +101,7 @@ pub struct PendingImpulses {
     waiting: Vec<PendingImpulse>,
 }
 
-/// Forwards a `BodyHit` to the character's animation graph as a `Hit` or a `Shot`. It takes the impulse itself, pending until the part is dynamic, unless the character has a `HitReaction` or a `ShotReaction`, which take it.
+/// Forwards a `BodyHit` to the character's animation graph as a `Hit` or a `Shot`, and takes its impulse, pending until the part is dynamic.
 pub fn route_hits(
     on: On<BodyHit>,
     mut characters: Query<
@@ -109,29 +109,23 @@ pub fn route_hits(
             &RagdollBody,
             &mut PendingImpulses,
             Option<&mut AnimationPlayer>,
-            Option<&HitReaction>,
-            Option<&ShotReaction>,
         ),
         Without<Settled>,
     >,
 ) {
     let hit = *on.signal();
-    let Some((body, mut pending, player, reaction, shot)) =
-        characters.get_entity_mut(hit.character)
-    else {
+    let Some((body, mut pending, player)) = characters.get_entity_mut(hit.character) else {
         return;
     };
     if hit.part >= body.resolved().part_count() {
         return;
     }
-    if reaction.is_none() && shot.is_none() {
-        pending.waiting.push(PendingImpulse {
-            part: hit.part,
-            point: hit.point,
-            impulse: hit.impulse,
-            waited: 0,
-        });
-    }
+    pending.waiting.push(PendingImpulse {
+        part: hit.part,
+        point: hit.point,
+        impulse: hit.impulse,
+        waited: 0,
+    });
     let Some(mut player) = player else {
         return;
     };

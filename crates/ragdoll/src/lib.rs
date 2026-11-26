@@ -2,8 +2,6 @@
 
 pub mod asset;
 pub mod attributes;
-pub mod balance;
-pub mod behaviour;
 pub mod character;
 pub mod drive;
 pub mod dying;
@@ -29,30 +27,23 @@ pub use asset::{
     Segment, Side, StrengthProfile,
 };
 pub use attributes::{MotorCommand, PhysicsAmount};
-pub use balance::{BALANCE, BALANCE_PRIORITY, Balance, Hindrance};
-pub use behaviour::{
-    BehaviourEnded, BehaviourSet, BodyDrive, BodyState, BodyStateChanged, Claim, Outcome,
-    PartCommand, PhysicalState, RunningBehaviour, describe_body,
-};
-pub use character::{
-    CharacterRagdoll, PartWeight, PoseLost, RagdollBody, RagdollMode, RagdollRefused,
-};
-pub use dying::{BodySettled, Dead, Die, Dying, Settled};
-pub use fall::{FALL, FALL_PRIORITY, Fall, FallReaction, FallSettings};
+pub use character::{CharacterRagdoll, PoseLost, RagdollBody, RagdollRefused};
+pub use dying::{BodySettled, Dead, Die, Settled};
+pub use fall::FallSettings;
 pub use generate::{
     BRACED, FLINCH, GenerateError, HumanoidChains, HumanoidSettings, LIMP, generate_humanoid,
 };
-pub use hit::{BodyHit, Flinch, FlinchRecord, HitKind, HitReaction};
+pub use hit::{BodyHit, HitKind};
 pub use messages::{BodyDead, BodyDown, Death, Hit, PendingImpulses, Wounded};
 pub use node::{
-    BalanceNode, BalanceSettings, BalanceState, DyingNode, DyingState, FallNode, FallState,
-    FlinchNode, HoldNode, LimpNode, ShotNode, ShotState, StaggerNode, StaggerState,
+    BalanceNode, BalanceSettings, BalanceState, Dying, DyingNode, DyingState, FallNode, FallState,
+    FlinchNode, Hindrance, HoldNode, LimpNode, ShotNode, ShotState, StaggerNode, StaggerState,
 };
 pub use overlap::PartOverlap;
 pub use plugin::RagdollPlugin;
 pub use resolve::{Landmarks, Limbs, RagdollError, ResolvedRagdoll};
 pub use sandbox::{Trial, TrialReport, run_trial};
-pub use sensing::{BodySense, Impact, MassPoint};
-pub use shot::{SHOT, SHOT_PRIORITY, Shot, ShotReaction, ShotSettings, Wound, Wounds};
-pub use stagger::{STAGGER, STAGGER_PRIORITY, Stagger, StaggerSettings};
+pub use sensing::{BodySense, Impact, MassPoint, describe_body};
+pub use shot::{ShotSettings, Wound, Wounds};
+pub use stagger::StaggerSettings;
 pub use view::BodyView;
