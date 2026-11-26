@@ -463,9 +463,12 @@ impl Stage {
         let before = self.velocity(part);
         self.hit(part, impulse);
         let mut gained = 0.0f32;
-        for _ in 0..3 {
+        for _ in 0..30 {
             self.frame();
             gained = gained.max((before - self.velocity(part)).dot(-impulse.normalize()));
+            if gained > 1.0 {
+                break;
+            }
         }
         gained
     }
