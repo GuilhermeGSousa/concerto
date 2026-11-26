@@ -1701,7 +1701,11 @@ never sees a raised message in `context.messages()`. A state machine's
 previous frame's update, so a raise moves its machine one frame later; a
 state that is fading out still raises to the machine's container, but not to
 the machine's own triggers. A state's collection empties when the machine
-enters it or is reset. `AnimationClipNode` raises `ClipEnded` on each frame
+enters it or is reset. Resetting a state machine, which entering the state
+that holds it does, puts it back in its entry state and resets every one of
+its states, nested machines included, so a machine inside a state starts from
+its entry state, with its clips from the start, each time that state is
+entered. `AnimationClipNode` raises `ClipEnded` on each frame
 its clip wraps, or, played once, stops, so `OnMessage(ClipEnded)` leaves a
 state when its clip ends.
 

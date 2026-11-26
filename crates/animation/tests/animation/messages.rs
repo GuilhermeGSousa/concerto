@@ -1,6 +1,7 @@
 use std::{any::TypeId, thread, time::Duration};
 
 use concerto_animation::{
+    TransitionBlender,
     clip::{AnimationChanelOutput, AnimationChannel, AnimationClip},
     evaluation::{AnimationGraphContext, DriveContext},
     event::AnimationEvent,
@@ -279,6 +280,7 @@ struct Stage {
     retargeted: Entity,
     nested: Entity,
     fading: Entity,
+    restarted: Entity,
 }
 
 fn slot_node() -> SlotNode {
@@ -366,7 +368,7 @@ impl Stage {
             AnimationStateMachine::from_initial_state(name!("Inside"), deep, |transition| {
                 transition.to(name!("Out"), AnimationFSMTrigger::on_message::<Rang>(), 0.0);
             })
-            .state(name!("Out"), ending, |transition| {
+            .state(name!("Out"), ending.clone(), |transition| {
                 transition.to(
                     name!("Done"),
                     AnimationFSMTrigger::on_message::<ClipEnded>(),
@@ -410,6 +412,35 @@ impl Stage {
         .state(name!("Stale"), idle.clone(), |_| {})
         .build();
         let fading = graph(&mut app, stored(AnimationGraph::from_node(fading)));
+        let attack =
+            AnimationStateMachine::from_initial_state(name!("Attack"), ending, |transition| {
+                transition.to(
+                    name!("Recovered"),
+                    AnimationFSMTrigger::on_message::<ClipEnded>(),
+                    0.0,
+                );
+            })
+            .state(name!("Recovered"), idle.clone(), |_| {})
+            .build();
+        let attack = graph(&mut app, stored(AnimationGraph::from_node(attack)));
+        let restarted =
+            AnimationStateMachine::from_initial_state(name!("Holding"), attack, |transition| {
+                transition.to(
+                    name!("Elsewhere"),
+                    AnimationFSMTrigger::on_message::<Poke>(),
+                    0.1,
+                );
+            })
+            .state(name!("Elsewhere"), idle.clone(), |transition| {
+                transition.to(
+                    name!("Holding"),
+                    AnimationFSMTrigger::on_message::<Other>(),
+                    0.1,
+                );
+            })
+            .blender(TransitionBlender::Inertialization)
+            .build();
+        let restarted = graph(&mut app, stored(AnimationGraph::from_node(restarted)));
         let clip = insert(&mut app, AnimationClip::default());
         let json = {
             let registry = app.get_resource::<AppTypeRegistry>().unwrap().read();
@@ -512,6 +543,10 @@ impl Stage {
             AnimationPlayer::new(1),
             AnimationHandleComponent::new(nested),
         ));
+        let restarted = world.spawn((
+            AnimationPlayer::new(1),
+            AnimationHandleComponent::new(restarted),
+        ));
         let fading_bone = world.spawn(Transform::IDENTITY);
         let fading = world.spawn((
             AnimationPlayer::new(1),
@@ -528,6 +563,7 @@ impl Stage {
             retargeted,
             nested,
             fading,
+            restarted,
         }
     }
 
@@ -779,6 +815,30 @@ fn messages_move_the_graph_and_nodes_answer_with_outcomes_and_signals() {
         "OnMessage(ClipEnded) leaves a state once its clip, played once, stops"
     );
 
+    let restarted = stage.restarted;
+    assert!(stage.in_state_of(restarted, name!("Recovered")));
+    stage.player_of(restarted).send(Poke { strength: 1.0 });
+    stage.advance(0.0);
+    stage.player_of(restarted).send(Other {});
+    stage.advance(0.0);
+    assert!(
+        stage.in_state_of(restarted, name!("Attack")),
+        "re-entering a state starts the machine inside it from its entry state"
+    );
+    stage.advance(0.1);
+    stage.advance(0.15);
+    stage.player_of(restarted).send(Poke { strength: 1.0 });
+    stage.advance(0.0);
+    stage.player_of(restarted).send(Other {});
+    stage.advance(0.0);
+    stage.advance(0.1);
+    stage.advance(0.15);
+    stage.advance(0.0);
+    assert!(
+        stage.in_state_of(restarted, name!("Recovered")),
+        "a machine left on the frame after its clip ended plays that clip again when re-entered and moves on"
+    );
+
     let slotted = stage.slotted;
     stage.advance(0.0);
     assert_eq!(stage.slot_amount(), 0.0);
@@ -881,7 +941,7 @@ fn messages_move_the_graph_and_nodes_answer_with_outcomes_and_signals() {
     assert_eq!(
         stage.slot_amount(),
         1.0,
-        "a restarted entry does not fade out at once"
+        "an entry that faded out on its out type starts again on its next message"
     );
 
     stage.advance(0.3);

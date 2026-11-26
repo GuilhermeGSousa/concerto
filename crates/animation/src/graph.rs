@@ -916,10 +916,6 @@ impl AnimationGraphState {
         self.raised.iter().map(|message| message.as_ref())
     }
 
-    pub(crate) fn forget_raised(&mut self) {
-        self.raised.clear();
-    }
-
     pub(crate) fn outcome(&self, graphs: &AssetStore<AnimationGraph>) -> Option<NodeOutcome> {
         let graph = self.get_animation_graph(graphs)?;
         graph.iter_post_order().find_map(|node_index| {

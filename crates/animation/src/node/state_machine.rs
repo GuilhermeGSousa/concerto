@@ -443,6 +443,18 @@ pub struct AnimationStateMachineState {
     state_names: Vec<Name>,
     blender: Box<dyn AnimationTransitionBlender>,
     outcome: Option<NodeOutcome>,
+    reset_pending: bool,
+}
+
+fn blender_from(
+    blender: TransitionBlender,
+    initial_state: StateId,
+) -> Box<dyn AnimationTransitionBlender> {
+    let initial_graph = initial_state.as_graph_id();
+    match blender {
+        TransitionBlender::CrossFade => Box::new(BlendStack::new(initial_graph)),
+        TransitionBlender::Inertialization => Box::new(InertializationBlender::new(initial_graph)),
+    }
 }
 
 impl AnimationStateMachineState {
@@ -452,20 +464,21 @@ impl AnimationStateMachineState {
         state_names: Vec<Name>,
         blender: TransitionBlender,
     ) -> Self {
-        let initial_graph = initial_state.as_graph_id();
-        let blender: Box<dyn AnimationTransitionBlender> = match blender {
-            TransitionBlender::CrossFade => Box::new(BlendStack::new(initial_graph)),
-            TransitionBlender::Inertialization => {
-                Box::new(InertializationBlender::new(initial_graph))
-            }
-        };
         Self {
             state_graphs: AnimationGraphStates::new(state_graphs),
             current_state: initial_state,
             state_names,
-            blender,
+            blender: blender_from(blender, initial_state),
             outcome: None,
+            reset_pending: false,
         }
+    }
+
+    fn restart(&mut self, initial_state: StateId, blender: TransitionBlender) {
+        self.current_state = initial_state;
+        self.blender = blender_from(blender, initial_state);
+        self.outcome = None;
+        self.reset_pending = true;
     }
 
     pub fn current_state_name(&self) -> Option<Name> {
@@ -572,6 +585,12 @@ impl AnimationNode for AnimationStateMachine {
         graphs: &Res<AssetStore<AnimationGraph>>,
         context: &AnimationGraphContext<'_>,
     ) {
+        if std::mem::take(&mut state.reset_pending) {
+            state
+                .state_graphs
+                .iter_mut()
+                .for_each(|state_graph| state_graph.reset(graphs));
+        }
         let transitions = self
             .get_state_transitions(state.current_state)
             .map_or(&[][..], Vec::as_slice);
@@ -659,10 +678,7 @@ impl AnimationNode for AnimationStateMachine {
     }
 
     fn reset(&self, state: &mut AnimationStateMachineState) {
-        state
-            .state_graphs
-            .iter_mut()
-            .for_each(AnimationGraphState::forget_raised);
+        state.restart(self.initial_state, self.blender);
     }
 
     fn inner_graphs(&self, visit: &mut dyn FnMut(&AssetHandle<AnimationGraph>)) {
