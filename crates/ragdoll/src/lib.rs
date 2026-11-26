@@ -13,6 +13,7 @@ pub mod messages;
 pub mod node;
 pub mod overlap;
 pub mod plugin;
+pub mod report;
 pub mod resolve;
 pub mod sandbox;
 pub mod sensing;
@@ -41,6 +42,7 @@ pub use node::{
 };
 pub use overlap::PartOverlap;
 pub use plugin::RagdollPlugin;
+pub use report::{active_states, report_body};
 pub use resolve::{Landmarks, Limbs, RagdollError, ResolvedRagdoll};
 pub use sandbox::{Trial, TrialReport, run_trial};
 pub use sensing::{BodySense, Impact, MassPoint, describe_body};

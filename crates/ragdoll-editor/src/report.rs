@@ -1,13 +1,9 @@
-use std::fmt::Write;
-
 use concerto_animation::{graph::AnimationGraph, player::AnimationPlayer};
 use concerto_ecs::{Entity, Query, Res};
 use concerto_editor::hosted::EditWorld;
 use concerto_foundation::assets::asset_store::AssetStore;
 use concerto_mcp::{McpTool, Needs, ToolCalls, ToolError};
-use concerto_ragdoll::{
-    BodySense, CharacterRagdoll, MotorCommand, PhysicsAmount, RagdollBody, describe_body,
-};
+use concerto_ragdoll::{BodySense, CharacterRagdoll, RagdollBody, report_body};
 use schemars::JsonSchema;
 use serde::Deserialize;
 
@@ -38,54 +34,12 @@ type Characters = (
     Graphs,
 );
 
-pub(crate) struct GraphLines {
-    pub(crate) states: Vec<String>,
-    pub(crate) behaviours: Vec<String>,
-}
-
-pub(crate) fn graph_lines(
-    player: &AnimationPlayer,
-    graphs: &AssetStore<AnimationGraph>,
-) -> GraphLines {
-    let mut lines = GraphLines {
-        states: Vec::new(),
-        behaviours: Vec::new(),
-    };
-    player.for_each_node(graphs, |visit| {
-        if let Some(current) = visit
-            .report
-            .state_machine
-            .as_ref()
-            .and_then(|machine| machine.current)
-        {
-            lines.states.push(current.to_string());
-        }
-        if let Some(behaviour) = &visit.report.behaviour {
-            lines.behaviours.push(behaviour.describe());
-        }
-    });
-    lines
-}
-
 pub(crate) fn states_text(states: &[String]) -> String {
     if states.is_empty() {
         "none".to_owned()
     } else {
         states.join(", ")
     }
-}
-
-fn limb_lines(body: &RagdollBody, player: &AnimationPlayer) -> String {
-    let mut text = String::new();
-    for (part, bone) in body.resolved().bones().iter().enumerate() {
-        let name = body
-            .bone_name(part)
-            .map_or_else(|| format!("part {part}"), |name| name.to_string());
-        let amount = player.attributes().get::<PhysicsAmount>(*bone).0;
-        let cover = player.drive_attributes().get::<MotorCommand>(*bone).cover;
-        let _ = writeln!(text, "{name} · physics {amount:.2} · cover {cover:.2}");
-    }
-    text
 }
 
 pub(crate) fn body_report(mut calls: ToolCalls<BodyReport>, scene: EditWorld<Characters>) {
@@ -141,15 +95,7 @@ pub(crate) fn body_report(mut calls: ToolCalls<BodyReport>, scene: EditWorld<Cha
             ));
             continue;
         };
-        let mut text = limb_lines(body, player);
-        if let Some(graphs) = graphs {
-            let lines = graph_lines(player, graphs);
-            let _ = writeln!(text, "graph states: {}", states_text(&lines.states));
-            for behaviour in &lines.behaviours {
-                let _ = writeln!(text, "behaviour: {behaviour}");
-            }
-        }
-        text.push_str(&describe_body(sense, body));
+        let text = report_body(body, player, graphs.as_deref(), sense);
         reply.ok(text);
     }
 }

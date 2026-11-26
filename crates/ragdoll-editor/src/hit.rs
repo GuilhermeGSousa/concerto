@@ -8,12 +8,12 @@ use concerto_editor::hosted::{EditWorld, EditWorldSignals};
 use concerto_foundation::time::Time;
 use concerto_mcp::{McpTool, Needs, PendingCall, ToolCalls, ToolError};
 use concerto_physics::{physics_state::PhysicsState, ragdoll::RagdollId};
-use concerto_ragdoll::{BodyHit, BodyView, CharacterRagdoll, RagdollBody};
+use concerto_ragdoll::{BodyHit, BodyView, CharacterRagdoll, RagdollBody, active_states};
 use glam::Vec3;
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-use crate::report::{Graphs, graph_lines, states_text};
+use crate::report::{Graphs, states_text};
 
 const DEFAULT_IMPULSE: Vec3 = Vec3::new(0.0, 0.0, -30.0);
 const PATIENCE: f32 = 8.0;
@@ -259,7 +259,7 @@ pub(crate) fn answer_hits(
         } else if elapsed >= PATIENCE {
             let states = graphs
                 .as_ref()
-                .map_or_else(Vec::new, |graphs| graph_lines(player, graphs).states);
+                .map_or_else(Vec::new, |graphs| active_states(player, graphs));
             pending.reply.ok(format!(
                 "Hit {} of {id}, but the body did not return to its animation within {PATIENCE} s; the graph is in {}; call body_report for each limb.",
                 wait.bone,
