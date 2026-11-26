@@ -4,12 +4,13 @@ use concerto_animation::{
         AnimationClipNode,
         state_machine::{AnimationFSMTrigger, AnimationStateMachine},
     },
+    player::AnimationPlayer,
 };
-use concerto_foundation::assets::asset_server::AssetServer;
+use concerto_foundation::assets::{asset_server::AssetServer, asset_store::AssetStore};
 use concerto_foundation::transform::GlobalTransform;
 use concerto_name::name;
 use concerto_ragdoll::{
-    BodyHit, Dead, DyingNode, LimpNode, RagdollBody, Settled, messages::Death,
+    BodyHit, Dead, Die, DyingNode, LimpNode, RagdollBody, Settled, messages::Death, report_body,
     testing::humanoid_skeleton,
 };
 use glam::Vec3;
@@ -46,6 +47,29 @@ fn has<C: concerto_ecs::Component>(stage: &Stage) -> bool {
         .world()
         .get_component_for_entity::<C>(stage.character)
         .is_some()
+}
+
+fn die(stage: &mut Stage, seconds: f32) {
+    let character = stage.character;
+    stage
+        .app
+        .main_mut()
+        .world_mut()
+        .trigger(Die { character, seconds });
+}
+
+fn report(stage: &Stage) -> String {
+    let world = stage.app.main().world();
+    report_body(
+        world
+            .get_component_for_entity::<RagdollBody>(stage.character)
+            .unwrap(),
+        world
+            .get_component_for_entity::<AnimationPlayer>(stage.character)
+            .unwrap(),
+        stage.app.get_resource::<AssetStore<AnimationGraph>>(),
+        None,
+    )
 }
 
 fn bones(stage: &Stage) -> Vec<Vec3> {
@@ -85,7 +109,7 @@ fn hit(stage: &mut Stage, bone: &str, impulse: Vec3) {
 fn a_dying_body_drains_settles_into_a_static_pose_and_wakes_only_when_hit_hard() {
     let mut stage = Stage::graphed(dying_graph);
     stage.run(5);
-    stage.send(Death { seconds: 1.0 });
+    die(&mut stage, 1.0);
     stage.run(15);
     assert!(
         stage.in_state(name!("dying")) && !has::<Dead>(&stage),
@@ -93,6 +117,11 @@ fn a_dying_body_drains_settles_into_a_static_pose_and_wakes_only_when_hit_hard()
     );
     stage.run(285);
     assert!(has::<Dead>(&stage) && stage.in_state(name!("dead")));
+    let report = report(&stage);
+    assert!(
+        report.contains("graph states: dead") && !report.contains("drained"),
+        "a state the machine has left is not reported: {report}"
+    );
     assert!(
         stage.settles() == 1 && has::<Settled>(&stage),
         "a dead body at rest settles once"
@@ -129,7 +158,7 @@ fn a_dying_body_drains_settles_into_a_static_pose_and_wakes_only_when_hit_hard()
 
     let mut stage = Stage::graphed(dying_graph);
     stage.run(5);
-    stage.send(Death { seconds: 0.0 });
+    die(&mut stage, 0.0);
     stage.run(3);
     assert!(
         has::<Dead>(&stage) && stage.in_state(name!("dead")),

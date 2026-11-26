@@ -44,7 +44,7 @@ use concerto::{
 use concerto_physics_gizmos::{PhysicsGizmos, PhysicsGizmosPlugin};
 use concerto_ragdoll::{
     BalanceNode, BalanceSettings, BodyHit, BodySense, CharacterRagdoll, Death, Die, DyingNode,
-    FallNode, LimpNode, RagdollBody, Settled, ShotNode, StaggerNode, describe_body,
+    FallNode, LimpNode, RagdollBody, Settled, ShotNode, StaggerNode, active_states, describe_body,
     messages::{Shot, Stagger},
     testing::reference_humanoid,
 };
@@ -487,17 +487,7 @@ fn report(
     let described = bodies.get_entity(stage.character).map_or_else(
         || "the body is being built".to_string(),
         |(body, player, sense, settled)| {
-            let mut states = Vec::new();
-            player.for_each_node(&graphs, |visit| {
-                if let Some(current) = visit
-                    .report
-                    .state_machine
-                    .as_ref()
-                    .and_then(|machine| machine.current)
-                {
-                    states.push(current.to_string());
-                }
-            });
+            let states = active_states(player, &graphs);
             format!(
                 "graph: {}{}\n{}",
                 states.join(", "),

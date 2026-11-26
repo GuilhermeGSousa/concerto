@@ -1,7 +1,11 @@
 use std::fmt::Write;
 
-use concerto_animation::{graph::AnimationGraph, player::AnimationPlayer};
+use concerto_animation::{
+    graph::{AnimationGraph, NodeVisit},
+    player::AnimationPlayer,
+};
 use concerto_foundation::assets::asset_store::AssetStore;
+use concerto_name::Name;
 
 use crate::{
     attributes::{MotorCommand, PhysicsAmount},
@@ -9,10 +13,49 @@ use crate::{
     sensing::{BodySense, describe_body},
 };
 
+struct Machine {
+    depth: usize,
+    playing: Vec<Name>,
+}
+
+fn for_each_playing_node(
+    player: &AnimationPlayer,
+    graphs: &AssetStore<AnimationGraph>,
+    mut f: impl FnMut(&NodeVisit<'_>),
+) {
+    let mut machines: Vec<Machine> = Vec::new();
+    player.for_each_node(graphs, |visit| {
+        let depth = visit.path.len();
+        machines.retain(|machine| machine.depth < depth);
+        let playing = visit.path[..depth - 1]
+            .iter()
+            .enumerate()
+            .all(|(index, step)| {
+                step.state.is_none_or(|state| {
+                    machines
+                        .iter()
+                        .find(|machine| machine.depth == index + 1)
+                        .is_none_or(|machine| machine.playing.contains(&state))
+                })
+            });
+        if let Some(machine) = &visit.report.state_machine {
+            let mut names: Vec<Name> = machine.current.into_iter().collect();
+            names.extend(machine.transition.map(|transition| transition.from));
+            machines.push(Machine {
+                depth,
+                playing: names,
+            });
+        }
+        if playing {
+            f(visit);
+        }
+    });
+}
+
 /// The names of the states active in `player`'s graphs, outermost first.
 pub fn active_states(player: &AnimationPlayer, graphs: &AssetStore<AnimationGraph>) -> Vec<String> {
     let mut states = Vec::new();
-    player.for_each_node(graphs, |visit| {
+    for_each_playing_node(player, graphs, |visit| {
         if let Some(current) = visit
             .report
             .state_machine
@@ -27,7 +70,7 @@ pub fn active_states(player: &AnimationPlayer, graphs: &AssetStore<AnimationGrap
 
 fn behaviours(player: &AnimationPlayer, graphs: &AssetStore<AnimationGraph>) -> Vec<String> {
     let mut behaviours = Vec::new();
-    player.for_each_node(graphs, |visit| {
+    for_each_playing_node(player, graphs, |visit| {
         if let Some(behaviour) = &visit.report.behaviour {
             behaviours.push(behaviour.describe());
         }

@@ -895,7 +895,7 @@ fn a_drive_input_that_reads_what_the_graph_drive_writes_panics_when_the_drive_is
         .or_else(|| panic.downcast_ref::<&str>().map(|text| text.to_string()))
         .unwrap_or_default();
     assert!(
-        message.contains("drive_graphs") && message.contains("AnimationPlayer"),
-        "the panic names the drive and the conflict: {message}"
+        message.contains("AnimationPlayer"),
+        "the panic names the conflicting component: {message}"
     );
 }

@@ -75,6 +75,17 @@ const SHOT: f32 = 40.0;
 const STAGGER_SEVERITY: f32 = 0.5;
 const ARM_SWING: f32 = 0.8;
 
+struct PostureKey {
+    key: KeyCode,
+    name: &'static str,
+}
+
+impl PostureKey {
+    const fn new(key: KeyCode, name: &'static str) -> Self {
+        Self { key, name }
+    }
+}
+
 #[derive(Resource)]
 struct Humanoid {
     skeleton: Entity,
@@ -507,15 +518,15 @@ fn control_humanoid(
         .limp_after
         .is_some_and(|after| humanoid.elapsed >= after && humanoid.elapsed - after < 1.0);
     let posture = [
-        (KeyCode::KeyH, "limp"),
-        (KeyCode::KeyJ, "walk"),
-        (KeyCode::KeyB, "half"),
-        (KeyCode::KeyP, "flinch"),
-        (KeyCode::KeyO, "braced"),
-        (KeyCode::KeyK, "balance"),
+        PostureKey::new(KeyCode::KeyH, "limp"),
+        PostureKey::new(KeyCode::KeyJ, "walk"),
+        PostureKey::new(KeyCode::KeyB, "half"),
+        PostureKey::new(KeyCode::KeyP, "flinch"),
+        PostureKey::new(KeyCode::KeyO, "braced"),
+        PostureKey::new(KeyCode::KeyK, "balance"),
     ]
     .into_iter()
-    .find_map(|(key, posture)| pressed(key).then_some(posture))
+    .find_map(|posture| pressed(posture.key).then_some(posture.name))
     .or(timed.then_some("limp"));
     if let Some(posture) = posture {
         if posture == "half" {
