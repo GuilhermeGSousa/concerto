@@ -18,9 +18,12 @@ use crate::{
 };
 
 use concerto_ecs::Res;
+use concerto_foundation::assets::handle::LiveLeaves;
 use concerto_foundation::assets::{asset_store::AssetStore, handle::AssetHandle};
 use concerto_name::Name;
-use concerto_reflect::Reflect;
+use concerto_reflect::{
+    Reflect, ReflectDefault, ReflectedValue, TypeRegistry, ValueWarning, apply_value, to_value,
+};
 use derive_more::Deref;
 use glam::Vec2;
 use uuid::Uuid;
@@ -48,9 +51,10 @@ pub enum AnimationFSMTrigger {
     Vec2NonZero {
         param: Param<Vec2>,
     },
-    /// Fires when a message of this type was sent to the player this frame, or the current state raised one in the previous frame's update; tried before the state's other transitions.
+    /// Fires when a message of this type was sent to the player this frame, or the current state raised one in the previous frame's update, and, with a value, when the message holds every field the value names; tried before the state's other transitions.
     OnMessage {
         message: MessageType,
+        value: Option<ReflectedValue>,
     },
     /// Fires when the current state's graph reports that it succeeded.
     OnSucceeded,
@@ -76,6 +80,15 @@ impl AnimationFSMTrigger {
     pub fn on_message<M: AnimationMessage>() -> Self {
         Self::OnMessage {
             message: MessageType::of::<M>(),
+            value: None,
+        }
+    }
+
+    /// Fires on a message of type `M` that holds every field of `message`, whatever its other fields.
+    pub fn on_message_value<M: AnimationMessage>(message: &M) -> Self {
+        Self::OnMessage {
+            message: MessageType::of::<M>(),
+            value: to_value(message).ok(),
         }
     }
 }
@@ -502,6 +515,39 @@ impl AnimationNode for AnimationStateMachine {
         InputSlots::None
     }
 
+    fn make_live(&mut self, registry: &TypeRegistry, _: &mut LiveLeaves) -> Vec<ValueWarning> {
+        let mut warnings = Vec::new();
+        for transition in self.transitions.iter().flatten() {
+            let AnimationFSMTrigger::OnMessage {
+                message,
+                value: Some(wanted),
+            } = &transition.trigger
+            else {
+                continue;
+            };
+            let Some(mut probe) = registry
+                .get_by_name(message.path())
+                .filter(|registration| registration.type_path() == message.path())
+                .and_then(|registration| {
+                    registration
+                        .data::<ReflectDefault>()
+                        .map(ReflectDefault::default)
+                })
+            else {
+                continue;
+            };
+            warnings.extend(
+                apply_value(probe.as_mut(), wanted)
+                    .into_iter()
+                    .map(|warning| ValueWarning {
+                        path: message.path().to_owned(),
+                        reason: format!("OnMessage value {}: {}", warning.path, warning.reason),
+                    }),
+            );
+        }
+        warnings
+    }
+
     fn create_state(
         &self,
         graphs: &Res<AssetStore<AnimationGraph>>,
@@ -680,11 +726,20 @@ fn fires(
         AnimationFSMTrigger::OnAnimationEnd => state
             .current_graph()
             .is_some_and(|current_graph| current_graph.is_finished(graphs)),
-        AnimationFSMTrigger::OnMessage { message: wanted } => {
-            context.messages().any(|message| wanted.matches(message))
+        AnimationFSMTrigger::OnMessage {
+            message: wanted,
+            value,
+        } => {
+            let holds = |message: &dyn Reflect| {
+                wanted.matches(message)
+                    && value.as_ref().is_none_or(|wanted| {
+                        to_value(message).is_ok_and(|encoded| encoded.contains(wanted))
+                    })
+            };
+            context.messages().any(holds)
                 || state
                     .current_graph()
-                    .is_some_and(|current| current.raised().any(|message| wanted.matches(message)))
+                    .is_some_and(|current| current.raised().any(holds))
         }
         AnimationFSMTrigger::OnSucceeded => {
             state.current_outcome(graphs) == Some(NodeOutcome::Succeeded)

@@ -1705,6 +1705,16 @@ enters it or is reset. `AnimationClipNode` raises `ClipEnded` on each frame
 its clip wraps, or, played once, stops, so `OnMessage(ClipEnded)` leaves a
 state when its clip ends.
 
+`AnimationClipNode` also raises each clip event its clock crosses, in key
+order, whatever the clip's weight; the value is the one that later reaches the
+game as an `AnimationSignal`. `AnimationEvent` is an animation message, so a
+transition can wait for one. `AnimationFSMTrigger::on_message::<M>()` fires on
+any message of type `M`; `on_message_value(&message)` fires only on a message
+that holds every field the given one has, so
+`on_message_value(&AnimationEvent { name: name!("jump_apex") })` moves on that
+event and ignores other names. A value naming a field its type lacks leaves a
+load warning.
+
 `AnimationNode::outcome(state)` says whether the node has `Succeeded` or
 `Failed` at what it does, a `NodeOutcome`; `None` by default. A graph's outcome
 is the first a node reports, inputs before the node they feed, and a state

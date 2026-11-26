@@ -99,16 +99,39 @@ pub struct ShownTransition {
     pub blend_time: f32,
 }
 
+fn value_label(value: &ReflectedValue) -> String {
+    match value {
+        ReflectedValue::Leaf(bytes) => match bincode::deserialize::<String>(bytes) {
+            Ok(text) => text,
+            Err(_) => format!("{} bytes", bytes.len()),
+        },
+        ReflectedValue::Struct(fields) | ReflectedValue::Variant { fields, .. } => {
+            let fields: Vec<String> = fields
+                .iter()
+                .map(|(name, value)| format!("{name}: {}", value_label(value)))
+                .collect();
+            format!("{{ {} }}", fields.join(", "))
+        }
+        ReflectedValue::List(items) => {
+            let items: Vec<String> = items.iter().map(value_label).collect();
+            format!("[{}]", items.join(", "))
+        }
+    }
+}
+
 fn trigger_label(trigger: &AnimationFSMTrigger) -> String {
     match trigger {
         AnimationFSMTrigger::Instant => "Instant".to_owned(),
         AnimationFSMTrigger::OnAnimationEnd => "OnAnimationEnd".to_owned(),
         AnimationFSMTrigger::BoolEquals { param, value } => format!("{} = {value}", param.0),
         AnimationFSMTrigger::Vec2NonZero { param } => format!("{} ≠ 0", param.0),
-        AnimationFSMTrigger::OnMessage { message } => format!(
-            "on {}",
-            message.path().rsplit("::").next().unwrap_or_default()
-        ),
+        AnimationFSMTrigger::OnMessage { message, value } => {
+            let short = message.path().rsplit("::").next().unwrap_or_default();
+            match value {
+                Some(value) => format!("on {short} {}", value_label(value)),
+                None => format!("on {short}"),
+            }
+        }
         AnimationFSMTrigger::OnSucceeded => "OnSucceeded".to_owned(),
         AnimationFSMTrigger::OnFailed => "OnFailed".to_owned(),
     }

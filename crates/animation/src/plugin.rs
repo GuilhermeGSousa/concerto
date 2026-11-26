@@ -47,7 +47,9 @@ pub fn register_animation_types(registry: &mut TypeRegistry) {
     registry.register::<AnimationStateMachine>();
     registry.register::<RetargetNode>();
     registry.register::<PlaceholderNode>();
-    registry.register::<AnimationEvent>();
+    let mut event = AnimationEvent::get_type_registration();
+    event.insert(ReflectAnimationMessage);
+    registry.add(event);
     registry.register::<AnimationNodeData>();
     registry.register::<SlotEntry>();
     registry.register::<AssetHandle<AnimationClip>>();
@@ -147,6 +149,7 @@ impl Plugin for AnimationPlugin {
         register_animation_node_inputs(app.main_mut().world_mut());
         app.register_animation_message::<PlayInSlot>();
         app.register_animation_message::<ClipEnded>();
+        app.register_animation_message::<AnimationEvent>();
         app.add_listener(queue_reflected_message.at_preview_time());
 
         app.add_system(LateUpdate, initialize_skeletons.at_preview_time())

@@ -3,6 +3,7 @@ use std::{any::TypeId, thread, time::Duration};
 use concerto_animation::{
     clip::{AnimationChanelOutput, AnimationChannel, AnimationClip},
     evaluation::{AnimationGraphContext, DriveContext},
+    event::AnimationEvent,
     graph::AnimationGraph,
     message::{
         AnimationMessage, ClipEnded, MessageType, SendAnimationMessage, SendReflectedMessage,
@@ -35,7 +36,9 @@ use concerto_foundation::{
 };
 use concerto_mesh::skeleton::{JointPose, Skeleton, SkeletonComponent};
 use concerto_name::{Name, name};
-use concerto_reflect::{Reflect, ReflectDefault, apply_value, json_to_value, to_json, to_value};
+use concerto_reflect::{
+    Reflect, ReflectDefault, ReflectedValue, apply_value, json_to_value, to_json, to_value,
+};
 use glam::{Mat4, Vec3};
 use uuid::Uuid;
 
@@ -169,6 +172,51 @@ impl AnimationNode for Counter {
     fn reset(&self, state: &mut Count) {
         *state = Count::default();
     }
+}
+
+fn event_named(event: &str) -> AnimationEvent {
+    AnimationEvent {
+        name: Name::new(event),
+    }
+}
+
+fn evented_clip(event: &str, at: f32, length: f32) -> AnimationClip {
+    let mut clip = AnimationClip::default();
+    clip.add_channel(
+        Uuid::from_u128(1),
+        AnimationChannel::new(
+            vec![0.0, length],
+            AnimationChanelOutput::from_translation([[0.0; 3], [0.0; 3]].into_iter()),
+        ),
+    );
+    clip.add_event(at, event_named(event));
+    clip
+}
+
+fn waiting_machine(
+    app: &mut App,
+    clip: AnimationClip,
+    trigger: AnimationFSMTrigger,
+) -> AnimationGraph {
+    let clip = insert(app, clip);
+    let playing = graph(app, AnimationGraph::from_node(AnimationClipNode::new(clip)));
+    let moved = graph(app, AnimationGraph::new());
+    let machine =
+        AnimationStateMachine::from_initial_state(name!("Waiting"), playing, |transition| {
+            transition.to(name!("Moved"), trigger, 0.0);
+        })
+        .state(name!("Moved"), moved, |_| {})
+        .build();
+    stored(AnimationGraph::from_node(machine))
+}
+
+fn spawn_waiting(app: &mut App, clip: AnimationClip, trigger: AnimationFSMTrigger) -> Entity {
+    let machine = waiting_machine(app, clip, trigger);
+    let machine = graph(app, machine);
+    app.main_mut().world_mut().spawn((
+        AnimationPlayer::new(1),
+        AnimationHandleComponent::new(machine),
+    ))
 }
 
 fn insert<T: Asset>(app: &mut App, asset: T) -> AssetHandle<T> {
@@ -860,5 +908,55 @@ fn messages_move_the_graph_and_nodes_answer_with_outcomes_and_signals() {
     assert!(
         stage.heard_by(slotted).len() > heard,
         "a reflected message of a registered type reaches the player"
+    );
+
+    let wanted = AnimationFSMTrigger::on_message_value(&event_named("jump_apex"));
+    let apex = spawn_waiting(
+        &mut stage.app,
+        evented_clip("jump_apex", 0.1, 0.2),
+        wanted.clone(),
+    );
+    let other = spawn_waiting(
+        &mut stage.app,
+        evented_clip("other", 0.1, 0.2),
+        wanted.clone(),
+    );
+    let first = spawn_waiting(&mut stage.app, evented_clip("jump_apex", 0.0, 10.0), wanted);
+    stage.frame();
+    stage.frame();
+    stage.frame();
+    assert!(
+        stage.in_state_of(first, name!("Moved")),
+        "an event keyed at the start of a clip that just started is raised on its first update"
+    );
+    stage.advance(0.15);
+    assert!(
+        stage.in_state_of(apex, name!("Waiting")),
+        "a clip event crossed in a frame moves its machine on the next"
+    );
+    stage.frame();
+    assert!(stage.in_state_of(apex, name!("Moved")));
+    assert!(
+        stage.in_state_of(other, name!("Waiting")),
+        "a clip event of another name does not match the wanted value"
+    );
+
+    let mistyped = AnimationFSMTrigger::OnMessage {
+        message: MessageType::of::<AnimationEvent>(),
+        value: Some(ReflectedValue::Struct(vec![(
+            "nope".to_owned(),
+            ReflectedValue::Struct(Vec::new()),
+        )])),
+    };
+    let mut checked = waiting_machine(&mut stage.app, AnimationClip::default(), mistyped);
+    let registry = stage.app.get_resource::<AppTypeRegistry>().unwrap().read();
+    checked.make_live(&registry, None).unwrap();
+    assert!(
+        checked
+            .load_warnings()
+            .iter()
+            .any(|warning| warning.reason.contains("no such field")),
+        "a wanted value naming a field its type lacks warns at load: {:?}",
+        checked.load_warnings()
     );
 }

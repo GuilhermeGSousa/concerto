@@ -6,7 +6,7 @@ use uuid::Uuid;
 
 use crate::{
     blackboard::AnimationBlackboard,
-    clip::{AnimationChannel, AnimationClip, KeyCursor},
+    clip::{AnimationChannel, AnimationClip, ClipEventData, KeyCursor},
     evaluation::{AnimationGraphContext, DriveContext, RootBone},
     message::ClipEnded,
     param::Param,
@@ -400,6 +400,16 @@ impl AnimationNode for AnimationClipNode {
         state
             .clock
             .advance(clip, span, delta_time, rate, &self.play_mode);
+        for crossed in &state.clock.fired {
+            if let Some(ClipEventData::Live { value, data, .. }) = clip
+                .events()
+                .get(crossed.key as usize)
+                .map(|key| &key.event)
+                && let Some(event) = (data.boxed)(value.as_ref())
+            {
+                context.raise_boxed(event);
+            }
+        }
         if state.clock.is_finished {
             context.raise(ClipEnded);
         }
