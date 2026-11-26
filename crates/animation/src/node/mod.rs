@@ -8,6 +8,7 @@ use crate::{
     blackboard::AnimationBlackboard,
     clip::{AnimationChannel, AnimationClip, KeyCursor},
     evaluation::{AnimationGraphContext, DriveContext, RootBone},
+    message::ClipEnded,
     param::Param,
     pose::{
         AnimationFrame, EvaluatedFrame, FiredEvent, FramePool, JointPose, RootMotion,
@@ -399,6 +400,9 @@ impl AnimationNode for AnimationClipNode {
         state
             .clock
             .advance(clip, span, delta_time, rate, &self.play_mode);
+        if state.clock.is_finished {
+            context.raise(ClipEnded);
+        }
     }
 
     fn evaluate(

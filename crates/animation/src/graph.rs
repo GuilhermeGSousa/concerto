@@ -1,4 +1,4 @@
-use std::{borrow::Cow, collections::HashMap, fmt, ops::Deref};
+use std::{borrow::Cow, collections::HashMap, fmt, ops::Deref, sync::Arc};
 
 use concerto_foundation::assets::{
     Asset, CreatableAsset, LoadableAsset,
@@ -23,7 +23,7 @@ use uuid::Uuid;
 
 use crate::{
     blackboard::AnimationBlackboard,
-    evaluation::{AnimationGraphContext, AnimationGraphEvaluator, DriveContext},
+    evaluation::{AnimationGraphContext, AnimationGraphEvaluator, DriveContext, Raised},
     message::resolve_message_types,
     node::{
         AnimationNode, ErasedAnimationNode, LayerNode, NodeOutcome, NodeReport, NodeState,
@@ -655,6 +655,7 @@ pub struct AnimationGraphState {
     graph_handle: Option<AssetHandle<AnimationGraph>>,
     graph_state: HashMap<AnimationNodeIndex, ActiveNodeState>,
     warned_stateless: bool,
+    raised: Vec<Arc<dyn Reflect>>,
 }
 
 impl AnimationGraphState {
@@ -816,6 +817,7 @@ impl AnimationGraphState {
     ) {
         self.graph_state.clear();
         self.warned_stateless = false;
+        self.raised.clear();
         let Some(graph) = graphs.get(&animation_graph) else {
             self.graph_handle = None;
             return;
@@ -868,6 +870,7 @@ impl AnimationGraphState {
     }
 
     pub(crate) fn reset(&mut self, graphs: &AssetStore<AnimationGraph>) {
+        self.raised.clear();
         let Some(graph) = self.get_animation_graph(graphs) else {
             return;
         };
@@ -887,10 +890,13 @@ impl AnimationGraphState {
         graphs: &AssetStore<AnimationGraph>,
         context: &AnimationGraphContext<'_>,
     ) {
+        self.raised.clear();
         let Some(graph) = self.get_animation_graph(graphs) else {
             return;
         };
 
+        let raised = Raised::default();
+        let collecting = context.collecting(&raised);
         self.graph_state
             .iter_mut()
             .for_each(|(node_index, node_state)| {
@@ -898,8 +904,20 @@ impl AnimationGraphState {
                     return;
                 };
 
-                node_state.update(node, delta_time, context);
+                node_state.update(node, delta_time, &collecting);
             });
+        self.raised = raised.into_messages();
+        for message in &self.raised {
+            context.raise_shared(Arc::clone(message));
+        }
+    }
+
+    pub(crate) fn raised(&self) -> impl Iterator<Item = &dyn Reflect> {
+        self.raised.iter().map(|message| message.as_ref())
+    }
+
+    pub(crate) fn forget_raised(&mut self) {
+        self.raised.clear();
     }
 
     pub(crate) fn outcome(&self, graphs: &AssetStore<AnimationGraph>) -> Option<NodeOutcome> {
@@ -1141,7 +1159,6 @@ impl AnimationGraphStates {
         self.states.iter()
     }
 
-    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn iter_mut(&mut self) -> impl Iterator<Item = &mut AnimationGraphState> {
         self.states.iter_mut()
     }

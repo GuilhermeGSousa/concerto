@@ -162,11 +162,10 @@ impl AnimationNode for FallNode {
         if let Some(input) = inputs.first() {
             output.attributes_mut().copy_from(input.frame.attributes());
         }
-        let graph = context.graph();
-        let (Some(body), Some(skeleton)) = (context.extra::<BodyView>(), graph.skeleton()) else {
+        let (Some(body), Some(skeleton)) = (context.extra::<BodyView>(), context.skeleton()) else {
             return;
         };
-        let strength = graph
+        let strength = context
             .blackboard()
             .read(&self.strength)
             .copied()
@@ -191,7 +190,7 @@ impl AnimationNode for FallNode {
             if let Some(step) = step {
                 if step.landed && !state.announced {
                     state.announced = true;
-                    graph.emit(BodyDown);
+                    context.emit(BodyDown);
                 }
                 if step.relaxed {
                     state.limp = true;

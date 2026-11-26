@@ -132,6 +132,7 @@ impl AnimationPlayer {
             extras: &self.extras,
             outbox: &outbox,
             messages: &[],
+            raised: None,
         };
         let bone_ids = skeleton.map_or(&[][..], |skeleton| &skeleton.bone_ids);
         let context = DriveContext {
@@ -276,6 +277,7 @@ impl AnimationPlayer {
             extras: &self.extras,
             outbox: &outbox,
             messages: &[],
+            raised: None,
         };
         self.graph_state
             .initialize(animation_graph, graphs, &context);
@@ -301,6 +303,7 @@ impl AnimationPlayer {
             extras: &self.extras,
             outbox: &outbox,
             messages: &self.messages,
+            raised: None,
         };
         self.graph_state.update(delta_time, graphs, &context);
         self.emitted.extend(outbox.into_signals());
@@ -323,6 +326,7 @@ impl AnimationPlayer {
             extras: &self.extras,
             outbox: &outbox,
             messages: &[],
+            raised: None,
         };
         let motion = self
             .graph_state
@@ -365,6 +369,7 @@ impl AnimationPlayer {
             extras: &self.extras,
             outbox: &outbox,
             messages: &[],
+            raised: None,
         };
 
         self.frame_pool.set_rest(rest_pose);

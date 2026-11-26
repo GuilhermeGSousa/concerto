@@ -2,6 +2,7 @@ use std::{
     any::{Any, TypeId},
     cell::RefCell,
     collections::HashMap,
+    sync::Arc,
 };
 
 use concerto_ecs::{CommandQueue, Entity, signal::EntitySignal, system::input::Inputs};
@@ -93,6 +94,17 @@ impl Outbox {
     }
 }
 
+#[derive(Default)]
+pub(crate) struct Raised {
+    messages: RefCell<Vec<Arc<dyn Reflect>>>,
+}
+
+impl Raised {
+    pub(crate) fn into_messages(self) -> Vec<Arc<dyn Reflect>> {
+        self.messages.into_inner()
+    }
+}
+
 /// What every node of one player's graph is walked with: the player's own data and the walk's node inputs.
 pub struct AnimationGraphContext<'a> {
     pub(crate) blackboard: &'a AnimationBlackboard,
@@ -103,6 +115,7 @@ pub struct AnimationGraphContext<'a> {
     pub(crate) extras: &'a Extras,
     pub(crate) outbox: &'a Outbox,
     pub(crate) messages: &'a [Box<dyn Reflect>],
+    pub(crate) raised: Option<&'a Raised>,
 }
 
 impl<'a> AnimationGraphContext<'a> {
@@ -131,6 +144,35 @@ impl<'a> AnimationGraphContext<'a> {
             .filter_map(|message| message.downcast_ref::<M>())
     }
 
+    /// In `update`, queues `message` for every state machine, slot and retarget this node plays in, which can act on it; dropped in every other walk and above the player's graph.
+    pub fn raise<M: AnimationMessage>(&self, message: M) {
+        self.raise_boxed(Box::new(message));
+    }
+
+    pub(crate) fn raise_boxed(&self, message: Box<dyn Reflect>) {
+        self.raise_shared(Arc::from(message));
+    }
+
+    pub(crate) fn raise_shared(&self, message: Arc<dyn Reflect>) {
+        if let Some(raised) = self.raised {
+            raised.messages.borrow_mut().push(message);
+        }
+    }
+
+    pub(crate) fn collecting<'b>(&'b self, raised: &'b Raised) -> AnimationGraphContext<'b> {
+        AnimationGraphContext {
+            blackboard: self.blackboard,
+            root: self.root.clone(),
+            skeleton: self.skeleton,
+            model_to_world: self.model_to_world,
+            inputs: self.inputs,
+            extras: self.extras,
+            outbox: self.outbox,
+            messages: self.messages,
+            raised: Some(raised),
+        }
+    }
+
     /// The root bone of the player being evaluated, if it has one.
     pub fn root(&self) -> Option<&RootBone> {
         self.root.as_ref()
@@ -147,7 +189,7 @@ impl<'a> AnimationGraphContext<'a> {
     }
 }
 
-/// What every node of one player's graph is driven with in one physics step: the step's length and the player's graph context.
+/// What every node of one player's graph is driven with in one physics step: the step's length and the player's blackboard, root, skeleton, extras and outbox.
 pub struct DriveContext<'a> {
     pub(crate) delta_time: f32,
     pub(crate) graph: &'a AnimationGraphContext<'a>,
@@ -159,13 +201,28 @@ impl<'a> DriveContext<'a> {
         self.delta_time
     }
 
-    /// The player's blackboard, root, skeleton, extras and outbox; `model_to_world` is `None` in a drive step.
-    pub fn graph(&self) -> &'a AnimationGraphContext<'a> {
-        self.graph
+    /// The player's blackboard.
+    pub fn blackboard(&self) -> &'a AnimationBlackboard {
+        self.graph.blackboard
+    }
+
+    /// The root bone of the player being driven, if it has one.
+    pub fn root(&self) -> Option<&'a RootBone> {
+        self.graph.root.as_ref()
+    }
+
+    /// The skeleton of the player being driven, once its asset is loaded.
+    pub fn skeleton(&self) -> Option<&'a Skeleton> {
+        self.graph.skeleton
     }
 
     /// The value of type `T` the player was handed with `AnimationPlayer::set_extra`.
     pub fn extra<T: Send + Sync + 'static>(&self) -> Option<&'a T> {
         self.graph.extra::<T>()
+    }
+
+    /// Queues `signal`, triggered on the player's entity when `animate_targets` next runs.
+    pub fn emit<S: EntitySignal>(&self, signal: S) {
+        self.graph.emit(signal);
     }
 }

@@ -291,17 +291,16 @@ impl AnimationNode for HoldNode {
         if let Some(input) = inputs.first() {
             output.attributes_mut().copy_from(input.frame.attributes());
         }
-        let graph = context.graph();
-        let (Some(body), Some(skeleton)) = (context.extra::<BodyView>(), graph.skeleton()) else {
+        let (Some(body), Some(skeleton)) = (context.extra::<BodyView>(), context.skeleton()) else {
             return;
         };
-        let root = graph.root().map(|root| root.index);
+        let root = context.root().map(|root| root.index);
         let weight = state
             .weight
-            .unwrap_or_else(|| self.target_weight(graph.blackboard()));
+            .unwrap_or_else(|| self.target_weight(context.blackboard()));
         let strength = state
             .strength
-            .unwrap_or_else(|| self.target_strength(graph.blackboard()));
+            .unwrap_or_else(|| self.target_strength(context.blackboard()));
         let parts = self.held_parts(state, masks, skeleton, root, body);
         let commands = output
             .attributes_mut()

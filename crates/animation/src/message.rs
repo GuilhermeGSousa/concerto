@@ -15,6 +15,13 @@ use crate::player::AnimationPlayer;
 /// A value an animation graph can receive, queued with `AnimationPlayer::send`; register it with `register_animation_message`.
 pub trait AnimationMessage: Reflect + Clone + Send + Sync + 'static {}
 
+/// Raised by a clip node on each frame its clip wraps, or, played once, stops.
+#[derive(Clone, Default, Reflect)]
+#[reflect(Default)]
+pub struct ClipEnded;
+
+impl AnimationMessage for ClipEnded {}
+
 #[derive(Clone, Copy)]
 pub(crate) struct ReflectAnimationMessage;
 

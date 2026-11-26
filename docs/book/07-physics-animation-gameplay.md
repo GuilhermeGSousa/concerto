@@ -1184,16 +1184,17 @@ A graph is a tree of nodes under a result node:
   when messages call for them, like a montage slot. A `SlotEntry` holds a
   `name`, one node of any registered type (stored and made live with the graph,
   so nothing is built at run time), an optional `BoneMask`, `fade_in` and
-  `fade_out` seconds (0 is at once) and the message types `on` that start it;
+  `fade_out` seconds (0 is at once), the message types `on` that start it
+  and the message types `out` that end it, `ClipEnded` by default;
   build it with `SlotEntry::new(name, node)` and `with_mask`, `with_fade_in`,
-  `with_fade_out` and `with_on`. An entry plays when a queued message matches
+  `with_fade_out`, `with_on` and `with_out`. An entry plays when a queued message matches
   one of its `on` types or a `PlayInSlot { entry }` message names it, and a
   message that arrives while it plays resets it. The entry's node takes the
   slot's base as its input and is layered over it in the order the entries
   started, by its fade weight times its mask, in the pose, in the attributes
   of the drive pass and in root motion (an entry with a mask leaves the root
-  motion to the base). An entry fades out once its node reports an outcome or
-  is finished, and stops at weight 0; the slot reports no outcome of its own.
+  motion to the base). An entry fades out once its node raises one of its
+  `out` types in an update, reports an outcome or is finished, and stops at weight 0; the slot reports no outcome of its own.
   A slot reacts only while it is in a playing graph, so one inside the walk
   state's graph flinches a walking body and a falling body has none.
 - **2D blend space** places clips at points and blends by a `Vec2`
@@ -1201,7 +1202,8 @@ A graph is a tree of nodes under a result node:
 - **State machine** switches between sub-graphs on triggers such as
   `AnimationFSMTrigger::on_bool(name!("is_grounded"), false)` or
   `AnimationFSMTrigger::OnAnimationEnd`, `AnimationFSMTrigger::on_message::<M>()`,
-  which fires when a message of type `M` was sent to the player this frame,
+  which fires when a message of type `M` was sent to the player this frame
+  or the current state raised one in the previous frame (below),
   or `OnSucceeded` and `OnFailed`, which fire on the outcome the current
   state's graph reports (below). Each transition takes a
   `blend_time`, and the machine's `TransitionBlender` (set with
@@ -1584,8 +1586,8 @@ blend by weight, a layer by the mask it resolved in its last `evaluate`, and a
 state machine drives the states it plays without advancing. Under
 inertialization the drive frame is the destination's alone. A node advances its
 physics-side state in `drive` at the step's `DriveContext::delta_time`; the
-context also gives the player's graph context, through `graph()`, with its
-blackboard, root, skeleton, extras and outbox, and `bone_ids` are the
+context also gives the player's `blackboard()`, `root()`, `skeleton()` and
+`extra::<T>()`, and `emit(signal)` queues a signal as in the other passes, and `bone_ids` are the
 skeleton's, as in `evaluate`; `model_to_world` is `None` in a drive step.
 
 A node gives root motion with `root_motion(state, input, context, bone_ids,
@@ -1686,6 +1688,23 @@ message's full type path and finds the type by that exact path when its graph
 is made live, with no fallback to a short name; a path that names no type
 registered as a message leaves a load warning, and that trigger never fires.
 
+A node tells the containers above it what happened with
+`context.raise(message)`, for any `AnimationMessage`, in `update`; a raise
+from `evaluate` or `root_motion` is dropped, and `drive` has no `raise`. A
+node raises once, on the frame its condition becomes true, not on every frame
+it holds. Each state machine, slot and retarget the node plays in collects
+what each of its states, entries or inner graph raised in this update and
+raises it again to its own container, so the message reaches every ancestor
+and is never consumed; what the player's graph raises is dropped, and a node
+never sees a raised message in `context.messages()`. A state machine's
+`OnMessage` transitions also fire on what its current state raised in the
+previous frame's update, so a raise moves its machine one frame later; a
+state that is fading out still raises to the machine's container, but not to
+the machine's own triggers. A state's collection empties when the machine
+enters it or is reset. `AnimationClipNode` raises `ClipEnded` on each frame
+its clip wraps, or, played once, stops, so `OnMessage(ClipEnded)` leaves a
+state when its clip ends.
+
 `AnimationNode::outcome(state)` says whether the node has `Succeeded` or
 `Failed` at what it does, a `NodeOutcome`; `None` by default. A graph's outcome
 is the first a node reports, inputs before the node they feed, and a state
@@ -1696,7 +1715,7 @@ by outcome returns `false` from `is_finished`, so `OnAnimationEnd` leaves it
 alone.
 
 A node tells the game what happened with `context.emit(signal)`, for any
-`EntitySignal`, from any pass: `create_state`, `update`, `root_motion`, `evaluate` or, through `context.graph()`, `drive`. The signals go to a per-player outbox,
+`EntitySignal`, from any pass: `create_state`, `update`, `root_motion`, `evaluate` or `drive`. The signals go to a per-player outbox,
 not into the frame, so one emitted by a state the machine leaves at once still
 arrives, and `animate_targets` triggers every signal in it on the player's
 entity each frame, in the order they were emitted, after the clip events. It

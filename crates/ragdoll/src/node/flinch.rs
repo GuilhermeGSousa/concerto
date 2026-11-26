@@ -235,7 +235,7 @@ impl AnimationNode for FlinchNode {
         }
         let (Some(body), Some(skeleton), Some(weight)) = (
             context.extra::<BodyView>(),
-            context.graph().skeleton(),
+            context.skeleton(),
             self.acting_weight(state),
         ) else {
             return;

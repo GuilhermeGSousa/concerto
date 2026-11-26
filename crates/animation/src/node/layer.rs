@@ -194,7 +194,7 @@ impl AnimationNode for LayerNode {
         let Some(overlay) = inputs.get(1) else {
             return;
         };
-        let weight = effective_weight(self.weight, self.weight_param, context.graph().blackboard());
+        let weight = effective_weight(self.weight, self.weight_param, context.blackboard());
         if weight > 0.0 {
             blend_attributes(&state.mask.weights, weight, &overlay.frame, output);
         }

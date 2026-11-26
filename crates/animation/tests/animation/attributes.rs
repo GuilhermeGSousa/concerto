@@ -165,7 +165,6 @@ impl AnimationNode for SetAmount {
         }
         self.write(*elapsed, output);
         let seen = context
-            .graph()
             .skeleton()
             .filter(|skeleton| *skeleton.bone_ids == *bone_ids)
             .map_or(0.0, |_| bone_ids.len() as f32);

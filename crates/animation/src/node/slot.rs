@@ -7,10 +7,10 @@ use log::warn;
 use uuid::Uuid;
 
 use crate::{
-    evaluation::{AnimationGraphContext, DriveContext},
+    evaluation::{AnimationGraphContext, DriveContext, Raised},
     graph::AnimationNodeData,
     mask::{BoneMask, MaskResolution, resolve_mask},
-    message::{AnimationMessage, MessageType},
+    message::{AnimationMessage, ClipEnded, MessageType},
     node::{
         AnimationNode, BehaviourReport, InputSlots, NodeReport, NodeState, PlaceholderNode,
         ReflectAnimationNode,
@@ -36,6 +36,7 @@ pub struct SlotEntry {
     pub fade_in: f32,
     pub fade_out: f32,
     pub on: Vec<MessageType>,
+    pub out: Vec<MessageType>,
 }
 
 impl Default for SlotEntry {
@@ -45,7 +46,7 @@ impl Default for SlotEntry {
 }
 
 impl SlotEntry {
-    /// An entry named `name` playing `node` over the whole body, with no fades and no message that starts it.
+    /// An entry named `name` playing `node` over the whole body, with no fades and no message that starts it, ending when its node raises `ClipEnded`.
     pub fn new<N: AnimationNode>(name: Name, node: N) -> Self {
         Self {
             name,
@@ -54,6 +55,7 @@ impl SlotEntry {
             fade_in: 0.0,
             fade_out: 0.0,
             on: Vec::new(),
+            out: vec![MessageType::of::<ClipEnded>()],
         }
     }
 
@@ -69,7 +71,7 @@ impl SlotEntry {
         self
     }
 
-    /// Sets the seconds the entry takes to leave once its node has an outcome or is finished; 0 is at once.
+    /// Sets the seconds the entry takes to leave once its node raises one of its `out` types, has an outcome or is finished; 0 is at once.
     pub fn with_fade_out(mut self, fade_out: f32) -> Self {
         self.fade_out = fade_out;
         self
@@ -78,6 +80,12 @@ impl SlotEntry {
     /// Adds a message type that starts the entry.
     pub fn with_on(mut self, message: MessageType) -> Self {
         self.on.push(message);
+        self
+    }
+
+    /// Adds a message type that, raised by the entry's node, fades the entry out.
+    pub fn with_out(mut self, message: MessageType) -> Self {
+        self.out.push(message);
         self
     }
 }
@@ -259,8 +267,14 @@ impl AnimationNode for SlotNode {
             else {
                 return false;
             };
-            live.update(node_state, delta_time, context);
-            if live.outcome(node_state).is_some() || live.is_finished(node_state) {
+            let raised = Raised::default();
+            live.update(node_state, delta_time, &context.collecting(&raised));
+            let mut ended = false;
+            for message in raised.into_messages() {
+                ended |= entry.out.iter().any(|out| out.matches(message.as_ref()));
+                context.raise_shared(message);
+            }
+            if ended || live.outcome(node_state).is_some() || live.is_finished(node_state) {
                 entry_state.fading_out = true;
             }
             if entry_state.fading_out {
@@ -404,7 +418,7 @@ impl AnimationNode for SlotNode {
                 || !resolve_weights(
                     entry,
                     &mut entry_state.mask,
-                    context.graph(),
+                    context.graph,
                     masks,
                     output.len(),
                 )

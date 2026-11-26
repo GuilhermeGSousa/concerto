@@ -972,9 +972,7 @@ impl AnimationNode for BalanceNode {
         if let Some(input) = inputs.first() {
             output.attributes_mut().copy_from(input.frame.attributes());
         }
-        let (Some(body), Some(skeleton)) =
-            (context.extra::<BodyView>(), context.graph().skeleton())
-        else {
+        let (Some(body), Some(skeleton)) = (context.extra::<BodyView>(), context.skeleton()) else {
             return;
         };
         if state.outcome.is_none() {

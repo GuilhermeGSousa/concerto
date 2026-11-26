@@ -48,7 +48,7 @@ pub enum AnimationFSMTrigger {
     Vec2NonZero {
         param: Param<Vec2>,
     },
-    /// Fires when a message of this type was sent to the player this frame; tried before the state's other transitions.
+    /// Fires when a message of this type was sent to the player this frame, or the current state raised one in the previous frame's update; tried before the state's other transitions.
     OnMessage {
         message: MessageType,
     },
@@ -532,13 +532,19 @@ impl AnimationNode for AnimationStateMachine {
         let fired = |transition: &&AnimationStateMachineTransition| {
             fires(&transition.trigger, state, graphs, context)
         };
+        let on_message = |transition: &&AnimationStateMachineTransition| {
+            matches!(transition.trigger, AnimationFSMTrigger::OnMessage { .. })
+        };
         let next = transitions
             .iter()
-            .filter(|transition| {
-                matches!(transition.trigger, AnimationFSMTrigger::OnMessage { .. })
-            })
+            .filter(on_message)
             .find(fired)
-            .or_else(|| transitions.iter().find(fired));
+            .or_else(|| {
+                transitions
+                    .iter()
+                    .filter(|transition| !on_message(transition))
+                    .find(fired)
+            });
         if let Some(transition) = next {
             state.transition(graphs, transition);
         }
@@ -606,7 +612,12 @@ impl AnimationNode for AnimationStateMachine {
             .root_motion(bone_ids, &mut state.state_graphs, graphs, context)
     }
 
-    fn reset(&self, _state: &mut AnimationStateMachineState) {}
+    fn reset(&self, state: &mut AnimationStateMachineState) {
+        state
+            .state_graphs
+            .iter_mut()
+            .for_each(AnimationGraphState::forget_raised);
+    }
 
     fn inner_graphs(&self, visit: &mut dyn FnMut(&AssetHandle<AnimationGraph>)) {
         self.state_graphs().for_each(visit);
@@ -671,6 +682,9 @@ fn fires(
             .is_some_and(|current_graph| current_graph.is_finished(graphs)),
         AnimationFSMTrigger::OnMessage { message: wanted } => {
             context.messages().any(|message| wanted.matches(message))
+                || state
+                    .current_graph()
+                    .is_some_and(|current| current.raised().any(|message| wanted.matches(message)))
         }
         AnimationFSMTrigger::OnSucceeded => {
             state.current_outcome(graphs) == Some(NodeOutcome::Succeeded)

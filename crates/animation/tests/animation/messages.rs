@@ -1,12 +1,14 @@
 use std::{any::TypeId, thread, time::Duration};
 
 use concerto_animation::{
-    clip::AnimationClip,
+    clip::{AnimationChanelOutput, AnimationChannel, AnimationClip},
     evaluation::{AnimationGraphContext, DriveContext},
     graph::AnimationGraph,
-    message::{AnimationMessage, MessageType, SendAnimationMessage, SendReflectedMessage},
+    message::{
+        AnimationMessage, ClipEnded, MessageType, SendAnimationMessage, SendReflectedMessage,
+    },
     node::{
-        AnimationClipNode, AnimationNode, InputSlots, NodeOutcome, PlayInSlot,
+        AnimationClipNode, AnimationNode, AnimationPlayMode, InputSlots, NodeOutcome, PlayInSlot,
         ReflectAnimationNode, SlotEntry, SlotNode,
         state_machine::{AnimationFSMTrigger, AnimationStateMachine},
     },
@@ -53,6 +55,16 @@ impl AnimationMessage for Poke {}
 struct Other {}
 
 impl AnimationMessage for Other {}
+
+#[derive(Clone, Default, Reflect)]
+struct Ring {}
+
+impl AnimationMessage for Ring {}
+
+#[derive(Clone, Default, Reflect)]
+struct Rang {}
+
+impl AnimationMessage for Rang {}
 
 struct Marker(u32);
 
@@ -117,6 +129,9 @@ impl AnimationNode for Counter {
             context.emit(Counted {
                 count: state.received,
             });
+        }
+        if context.message::<Ring>().next().is_some() {
+            context.raise(Rang {});
         }
     }
 
@@ -214,6 +229,8 @@ struct Stage {
     slot_bone: Entity,
     jsoned: Entity,
     retargeted: Entity,
+    nested: Entity,
+    fading: Entity,
 }
 
 fn slot_node() -> SlotNode {
@@ -228,7 +245,8 @@ fn slot_node() -> SlotNode {
             SlotEntry::new(name!("snap"), Counter {})
                 .with_fade_in(0.0)
                 .with_fade_out(0.0)
-                .with_on(MessageType::of::<Other>()),
+                .with_on(MessageType::of::<Other>())
+                .with_out(MessageType::of::<Rang>()),
         )
 }
 
@@ -251,6 +269,8 @@ impl Stage {
         app.register_animation_node::<Counter>();
         app.register_animation_message::<Poke>();
         app.register_animation_message::<Other>();
+        app.register_animation_message::<Ring>();
+        app.register_animation_message::<Rang>();
         app.main_mut().world_mut().register_component::<Transform>();
         let idle = graph(&mut app, AnimationGraph::new());
         let poked = graph(&mut app, AnimationGraph::from_node(Counter {}));
@@ -258,7 +278,7 @@ impl Stage {
         let retargeted_poked = poked.clone();
         let elsewhere = graph(&mut app, AnimationGraph::new());
         let machine =
-            AnimationStateMachine::from_initial_state(name!("Idle"), idle, |transition| {
+            AnimationStateMachine::from_initial_state(name!("Idle"), idle.clone(), |transition| {
                 transition.to(
                     name!("Poked"),
                     AnimationFSMTrigger::on_message::<Poke>(),
@@ -276,6 +296,72 @@ impl Stage {
             .state(name!("Elsewhere"), elsewhere, |_| {})
             .build();
         let machine = graph(&mut app, stored(AnimationGraph::from_node(machine)));
+        let deep =
+            AnimationStateMachine::from_initial_state(name!("Deep"), poked.clone(), |_| {}).build();
+        let deep = graph(&mut app, stored(AnimationGraph::from_node(deep)));
+        let mut short = AnimationClip::default();
+        short.add_channel(
+            Uuid::from_u128(1),
+            AnimationChannel::new(
+                vec![0.0, 0.2],
+                AnimationChanelOutput::from_translation([[0.0; 3], [0.0; 3]].into_iter()),
+            ),
+        );
+        let short = insert(&mut app, short);
+        let ending = graph(
+            &mut app,
+            stored(AnimationGraph::from_node(
+                AnimationClipNode::new(short).with_play_mode(AnimationPlayMode::PlayOnce),
+            )),
+        );
+        let nested =
+            AnimationStateMachine::from_initial_state(name!("Inside"), deep, |transition| {
+                transition.to(name!("Out"), AnimationFSMTrigger::on_message::<Rang>(), 0.0);
+            })
+            .state(name!("Out"), ending, |transition| {
+                transition.to(
+                    name!("Done"),
+                    AnimationFSMTrigger::on_message::<ClipEnded>(),
+                    0.0,
+                );
+            })
+            .state(name!("Done"), idle.clone(), |_| {})
+            .build();
+        let nested = graph(&mut app, stored(AnimationGraph::from_node(nested)));
+        let fading = AnimationStateMachine::from_initial_state(
+            name!("Ringing"),
+            poked.clone(),
+            |transition| {
+                transition
+                    .to(
+                        name!("Away"),
+                        AnimationFSMTrigger::on_message::<Poke>(),
+                        1.0,
+                    )
+                    .to(
+                        name!("Stale"),
+                        AnimationFSMTrigger::on_message::<Rang>(),
+                        0.0,
+                    );
+            },
+        )
+        .state(name!("Away"), idle.clone(), |transition| {
+            transition
+                .to(
+                    name!("Fired"),
+                    AnimationFSMTrigger::on_message::<Rang>(),
+                    0.0,
+                )
+                .to(
+                    name!("Ringing"),
+                    AnimationFSMTrigger::on_message::<Other>(),
+                    1.0,
+                );
+        })
+        .state(name!("Fired"), idle.clone(), |_| {})
+        .state(name!("Stale"), idle.clone(), |_| {})
+        .build();
+        let fading = graph(&mut app, stored(AnimationGraph::from_node(fading)));
         let clip = insert(&mut app, AnimationClip::default());
         let json = {
             let registry = app.get_resource::<AppTypeRegistry>().unwrap().read();
@@ -287,6 +373,11 @@ impl Stage {
             let stored = json_to_value(&json, TypeId::of::<SlotNode>(), &registry).unwrap();
             let mut rebuilt = SlotNode::new();
             assert!(apply_value(&mut rebuilt, &stored).is_empty());
+            assert_eq!(
+                to_json(&rebuilt, &registry),
+                json,
+                "a slot's JSON form, its entries' out types included, reads back as written"
+            );
             rebuilt
         };
         let jsoned = graph(&mut app, slot_graph(clip.clone(), json));
@@ -355,7 +446,11 @@ impl Stage {
         let jsoned = world.spawn((
             AnimationPlayer::new(1),
             AnimationHandleComponent::new(jsoned),
-            SkeletonComponent::new(skeleton, vec![SceneEntityRef::Entity(json_bone)], None),
+            SkeletonComponent::new(
+                skeleton.clone(),
+                vec![SceneEntityRef::Entity(json_bone)],
+                None,
+            ),
             hear_counted.into_listener(),
         ));
         let standing_bone = world.spawn(Transform::IDENTITY);
@@ -365,6 +460,16 @@ impl Stage {
             SkeletonComponent::new(standing, vec![SceneEntityRef::Entity(standing_bone)], None),
             hear_counted.into_listener(),
         ));
+        let nested = world.spawn((
+            AnimationPlayer::new(1),
+            AnimationHandleComponent::new(nested),
+        ));
+        let fading_bone = world.spawn(Transform::IDENTITY);
+        let fading = world.spawn((
+            AnimationPlayer::new(1),
+            AnimationHandleComponent::new(fading),
+            SkeletonComponent::new(skeleton, vec![SceneEntityRef::Entity(fading_bone)], None),
+        ));
         Self {
             app,
             character,
@@ -373,6 +478,8 @@ impl Stage {
             slot_bone,
             jsoned,
             retargeted,
+            nested,
+            fading,
         }
     }
 
@@ -482,6 +589,10 @@ impl Stage {
 
     fn in_state(&mut self, state: Name) -> bool {
         let character = self.character;
+        self.in_state_of(character, state)
+    }
+
+    fn in_state_of(&mut self, character: Entity, state: Name) -> bool {
         let world = self.world();
         let graphs = world.get_resource::<AssetStore<AnimationGraph>>().unwrap();
         world
@@ -578,6 +689,48 @@ fn messages_move_the_graph_and_nodes_answer_with_outcomes_and_signals() {
         "a message reaches a node inside a retarget"
     );
 
+    let nested = stage.nested;
+    stage.player_of(nested).send(Ring {});
+    stage.frame();
+    assert!(
+        stage.in_state_of(nested, name!("Inside")),
+        "a raised message moves an outer machine on the next frame, not the one it was raised in"
+    );
+    stage.frame();
+    assert!(
+        stage.in_state_of(nested, name!("Out")),
+        "a message raised two levels down moves the outer machine"
+    );
+
+    let fading = stage.fading;
+    stage.player_of(fading).send(Poke { strength: 1.0 });
+    stage.frame();
+    assert!(stage.in_state_of(fading, name!("Away")));
+    stage.player_of(fading).send(Ring {});
+    stage.frame();
+    stage.frame();
+    assert!(
+        stage.in_state_of(fading, name!("Away")) && !stage.in_state_of(fading, name!("Fired")),
+        "a state fading out raises, and its machine does not move on it"
+    );
+    stage.player_of(fading).send(Other {});
+    stage.frame();
+    stage.frame();
+    assert!(
+        stage.in_state_of(fading, name!("Ringing")) && !stage.in_state_of(fading, name!("Stale")),
+        "a state re-entered within its fade does not see what it raised before"
+    );
+
+    stage.advance(0.1);
+    assert!(stage.in_state_of(nested, name!("Out")));
+    stage.advance(0.15);
+    assert!(stage.in_state_of(nested, name!("Out")));
+    stage.advance(0.0);
+    assert!(
+        stage.in_state_of(nested, name!("Done")),
+        "OnMessage(ClipEnded) leaves a state once its clip, played once, stops"
+    );
+
     let slotted = stage.slotted;
     stage.advance(0.0);
     assert_eq!(stage.slot_amount(), 0.0);
@@ -667,6 +820,20 @@ fn messages_move_the_graph_and_nodes_answer_with_outcomes_and_signals() {
         stage.slot_amount(),
         1.0,
         "an entry with no fade in is at full weight at once"
+    );
+
+    stage.slot_player().send(Ring {});
+    stage.advance(0.0);
+    assert!(
+        (stage.slot_amount() - played).abs() < 0.05,
+        "an entry fades out when its node raises one of its out types"
+    );
+    stage.slot_player().send(Other {});
+    stage.advance(0.0);
+    assert_eq!(
+        stage.slot_amount(),
+        1.0,
+        "a restarted entry does not fade out at once"
     );
 
     stage.advance(0.3);

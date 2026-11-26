@@ -239,6 +239,7 @@ fn walk<K: 'static, R>(
         extras: &extras,
         outbox: &outbox,
         messages: &[],
+        raised: None,
     };
     f(&context)
 }

@@ -1184,6 +1184,7 @@ impl Running {
             extras: context.extras,
             outbox: context.outbox,
             messages: context.messages,
+            raised: context.raised,
         }
     }
 

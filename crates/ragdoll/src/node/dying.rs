@@ -182,8 +182,7 @@ impl AnimationNode for DyingNode {
         if let Some(input) = inputs.first() {
             output.attributes_mut().copy_from(input.frame.attributes());
         }
-        let graph = context.graph();
-        let (Some(body), Some(skeleton)) = (context.extra::<BodyView>(), graph.skeleton()) else {
+        let (Some(body), Some(skeleton)) = (context.extra::<BodyView>(), context.skeleton()) else {
             return;
         };
         if state.outcome.is_none()
@@ -191,7 +190,7 @@ impl AnimationNode for DyingNode {
             && dying.advance(context.delta_time())
         {
             state.outcome = Some(NodeOutcome::Succeeded);
-            graph.emit(BodyDead);
+            context.emit(BodyDead);
         }
         let commands = output
             .attributes_mut()

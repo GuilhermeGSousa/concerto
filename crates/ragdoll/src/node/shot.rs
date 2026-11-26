@@ -174,7 +174,7 @@ impl AnimationNode for ShotNode {
         }
         let (Some(body), Some(skeleton), true) = (
             context.extra::<BodyView>(),
-            context.graph().skeleton(),
+            context.skeleton(),
             state.started,
         ) else {
             return;
@@ -188,7 +188,7 @@ impl AnimationNode for ShotNode {
             .step(body, physics, dt, &mut state.out)
             .unwrap_or_default();
             for wounded in state.out.wounded.drain(..) {
-                context.graph().emit(wounded);
+                context.emit(wounded);
             }
             state.outcome = BalanceController {
                 settings: &self.balance,

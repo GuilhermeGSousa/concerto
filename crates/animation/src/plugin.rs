@@ -16,7 +16,10 @@ use crate::{
     event::{AnimationEvent, ClipEvent},
     graph::{AnimationGraph, AnimationNodeData},
     mask::BoneMask,
-    message::{AnimationMessage, ReflectAnimationMessage, queue_message, queue_reflected_message},
+    message::{
+        AnimationMessage, ClipEnded, ReflectAnimationMessage, queue_message,
+        queue_reflected_message,
+    },
     node::{
         AdditiveNode, AimOffsetNode, AnimationClipNode, AnimationNode, BlendNode, IkTarget,
         LayerNode, PlaceholderNode, PlayInSlot, ResultNode, SlotEntry, SlotNode, TwoBoneIkNode,
@@ -143,6 +146,7 @@ impl Plugin for AnimationPlugin {
         }
         register_animation_node_inputs(app.main_mut().world_mut());
         app.register_animation_message::<PlayInSlot>();
+        app.register_animation_message::<ClipEnded>();
         app.add_listener(queue_reflected_message.at_preview_time());
 
         app.add_system(LateUpdate, initialize_skeletons.at_preview_time())

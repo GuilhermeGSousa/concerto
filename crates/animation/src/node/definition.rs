@@ -383,7 +383,7 @@ impl<T: AnimationNode> ErasedAnimationNode for T {
         output: &mut AnimationFrame,
     ) {
         if let Some(state) = state.downcast_mut::<T::State>()
-            && let Some(input) = fetched::<T, T::DriveInput>(context.graph())
+            && let Some(input) = fetched::<T, T::DriveInput>(context.graph)
         {
             AnimationNode::drive(self, state, input, context, bone_ids, inputs, pool, output);
         }

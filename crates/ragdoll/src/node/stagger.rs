@@ -174,7 +174,7 @@ impl AnimationNode for StaggerNode {
         }
         let (Some(body), Some(skeleton), true) = (
             context.extra::<BodyView>(),
-            context.graph().skeleton(),
+            context.skeleton(),
             state.started,
         ) else {
             return;
