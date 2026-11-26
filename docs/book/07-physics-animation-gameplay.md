@@ -1748,10 +1748,13 @@ order, whatever the clip's weight; the value is the one that later reaches the
 game as an `AnimationSignal`. `AnimationEvent` is an animation message, so a
 transition can wait for one. `AnimationFSMTrigger::on_message::<M>()` fires on
 any message of type `M`; `on_message_value(&message)`, which returns an error when the message cannot
-be encoded, fires only on a message that holds every field the given one has, so
+be encoded, encodes every field of the message it is given, defaults included, so it fires
+only on a message whose fields all equal that one's:
 `on_message_value(&AnimationEvent { name: name!("jump_apex") })?` moves on that
-event and ignores other names. A value naming a field its type lacks leaves a
-load warning.
+event and ignores other names. To match on some fields only, build
+`AnimationFSMTrigger::OnMessage { message, value: Some(ReflectedValue::Struct(..)) }` by hand
+with just those fields, such as `part` whatever the impulse. A value naming a field its type
+lacks leaves a load warning.
 
 A node that decides something in `drive`, during a physics step, keeps it in
 its state and raises it in its next `update`, with a flag in its state saying

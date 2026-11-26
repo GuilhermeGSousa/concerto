@@ -134,6 +134,14 @@ fn state_machine() -> AnimationStateMachine {
             AnimationFSMTrigger::on_message::<ClipEnded>(),
             0.1,
         );
+        transition.to(
+            name!("walk"),
+            AnimationFSMTrigger::on_message_value(&AnimationEvent {
+                name: name!("stumble"),
+            })
+            .unwrap(),
+            0.05,
+        );
     })
     .blender(TransitionBlender::Inertialization)
     .build()
@@ -209,10 +217,15 @@ fn a_mixed_graph_loaded_from_its_bytes_matches_the_one_built_in_code_node_for_no
         AnimationFSMTrigger::OnMessage { message, value: None }
             if message.path() == MessageType::of::<ClipEnded>().path()
     )));
+    assert!(triggers.iter().any(|trigger| matches!(
+        trigger,
+        AnimationFSMTrigger::OnMessage { message, value: Some(_) }
+            if message.path() == MessageType::of::<AnimationEvent>().path()
+    )));
     assert_eq!(machine.blender(), TransitionBlender::Inertialization);
     assert_eq!(
         machine.blend_times().collect::<Vec<_>>(),
-        vec![0.2, 0.15, 0.1]
+        vec![0.2, 0.15, 0.1, 0.05]
     );
 }
 

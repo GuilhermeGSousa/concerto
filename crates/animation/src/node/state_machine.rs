@@ -77,7 +77,7 @@ impl AnimationFSMTrigger {
         }
     }
 
-    /// Fires on a message of type `M` that holds every field of `message`, whatever its other fields.
+    /// Fires on a message of type `M` whose every field equals the one in `message`, defaults included.
     pub fn on_message_value<M: AnimationMessage>(message: &M) -> Result<Self, EncodeError> {
         Ok(Self::OnMessage {
             message: MessageType::of::<M>(),
