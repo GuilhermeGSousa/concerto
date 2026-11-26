@@ -970,7 +970,7 @@ fn messages_move_the_graph_and_nodes_answer_with_outcomes_and_signals() {
         "a reflected message of a registered type reaches the player"
     );
 
-    let wanted = AnimationFSMTrigger::on_message_value(&event_named("jump_apex"));
+    let wanted = AnimationFSMTrigger::on_message_value(&event_named("jump_apex")).unwrap();
     let apex = spawn_waiting(
         &mut stage.app,
         evented_clip("jump_apex", 0.1, 0.2),

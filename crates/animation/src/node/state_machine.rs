@@ -22,7 +22,8 @@ use concerto_foundation::assets::handle::LiveLeaves;
 use concerto_foundation::assets::{asset_store::AssetStore, handle::AssetHandle};
 use concerto_name::Name;
 use concerto_reflect::{
-    Reflect, ReflectDefault, ReflectedValue, TypeRegistry, ValueWarning, apply_value, to_value,
+    EncodeError, Reflect, ReflectDefault, ReflectedValue, TypeRegistry, ValueWarning, apply_value,
+    to_value,
 };
 use derive_more::Deref;
 use glam::Vec2;
@@ -85,11 +86,11 @@ impl AnimationFSMTrigger {
     }
 
     /// Fires on a message of type `M` that holds every field of `message`, whatever its other fields.
-    pub fn on_message_value<M: AnimationMessage>(message: &M) -> Self {
-        Self::OnMessage {
+    pub fn on_message_value<M: AnimationMessage>(message: &M) -> Result<Self, EncodeError> {
+        Ok(Self::OnMessage {
             message: MessageType::of::<M>(),
-            value: to_value(message).ok(),
-        }
+            value: Some(to_value(message)?),
+        })
     }
 }
 

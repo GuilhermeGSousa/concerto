@@ -1713,9 +1713,9 @@ state when its clip ends.
 order, whatever the clip's weight; the value is the one that later reaches the
 game as an `AnimationSignal`. `AnimationEvent` is an animation message, so a
 transition can wait for one. `AnimationFSMTrigger::on_message::<M>()` fires on
-any message of type `M`; `on_message_value(&message)` fires only on a message
-that holds every field the given one has, so
-`on_message_value(&AnimationEvent { name: name!("jump_apex") })` moves on that
+any message of type `M`; `on_message_value(&message)`, which returns an error when the message cannot
+be encoded, fires only on a message that holds every field the given one has, so
+`on_message_value(&AnimationEvent { name: name!("jump_apex") })?` moves on that
 event and ignores other names. A value naming a field its type lacks leaves a
 load warning.
 
