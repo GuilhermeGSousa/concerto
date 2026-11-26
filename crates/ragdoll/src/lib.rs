@@ -44,12 +44,15 @@ pub use generate::{
 };
 pub use hit::{BodyHit, Flinch, FlinchRecord, HitKind, HitReaction};
 pub use messages::{BodyDead, BodyDown, Death, Hit, PendingImpulses, Wounded};
-pub use node::{BalanceNode, BalanceSettings, BalanceState, FlinchNode, HoldNode, LimpNode};
+pub use node::{
+    BalanceNode, BalanceSettings, BalanceState, FlinchNode, HoldNode, LimpNode, StaggerNode,
+    StaggerState,
+};
 pub use overlap::PartOverlap;
 pub use plugin::RagdollPlugin;
 pub use resolve::{Landmarks, Limbs, RagdollError, ResolvedRagdoll};
 pub use sandbox::{Trial, TrialReport, run_trial};
 pub use sensing::{BodySense, Impact, MassPoint};
 pub use shot::{SHOT, SHOT_PRIORITY, Shot, ShotReaction, Wound, Wounds};
-pub use stagger::{STAGGER, STAGGER_PRIORITY, Stagger};
+pub use stagger::{STAGGER, STAGGER_PRIORITY, Stagger, StaggerSettings};
 pub use view::BodyView;

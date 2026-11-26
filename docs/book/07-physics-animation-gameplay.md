@@ -795,6 +795,19 @@ where `balance` is a graph holding `BalanceNode::default()` over the standing
 clip, and `fallen` one holding a `LimpNode`. `BalanceState::steps` and `stepping` say how it is going, and
 `AnimationPlayer::for_each_state::<BalanceNode>` reads them.
 
+`StaggerNode` is the graph's `Stagger`: it holds a `StaggerSettings` (the
+settings of the `Stagger` component, with the same defaults) and a
+`BalanceSettings`, and it starts when it receives a `Stagger` message
+(`messages::Stagger { direction, severity }`), taking both from it. Until then
+it passes its input through. From then on each physics step it hinders its own
+balance by what is left of the stumble, and lays the stagger's spine bend and
+arm swing over the balance's commands, blended by their weights, as `Stagger`
+does over `Balance`. It succeeds when its balance settles and fails when it
+gives up, so a graph moves into it on `OnMessage` and out of it on `OnSucceeded`
+and `OnFailed`. Send the message from the character's `AnimationPlayer`; it
+takes effect on that frame's update, one physics step later than inserting a
+`Stagger` would.
+
 #### What the body senses
 
 A `BodySense` beside a `CharacterRagdoll` is rewritten after each fixed step

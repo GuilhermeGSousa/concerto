@@ -778,20 +778,24 @@ impl BalanceNode {
     }
 }
 
-fn wanted(
-    state: &BalanceState,
+pub(crate) fn motor_of(ordered: PartCommand, animated: Quat) -> MotorCommand {
+    MotorCommand {
+        target: ordered.target.unwrap_or(animated),
+        force: ordered.force,
+        torque: ordered.torque,
+        ..command(ordered.strength, 1.0, animated)
+    }
+}
+
+pub(crate) fn wanted(
+    commands: &CommandsOut,
     body: &BodyView,
     profile: Option<&StrengthProfile>,
     part: usize,
 ) -> Option<MotorCommand> {
     let target = body.animated_target(part);
-    if let Some(ordered) = state.commands.get(part) {
-        return Some(MotorCommand {
-            target: ordered.target.unwrap_or(target),
-            force: ordered.force,
-            torque: ordered.torque,
-            ..command(ordered.strength, 1.0, target)
-        });
+    if let Some(ordered) = commands.get(part) {
+        return Some(motor_of(ordered, target));
     }
     let strength = profile?.strength_of(&body.resolved().bone_name(part)?);
     (strength != PartStrength::Kinematic).then(|| command(strength, 1.0, target))
@@ -855,7 +859,7 @@ impl AnimationNode for BalanceNode {
             .channel_mut::<PhysicsAmount>(skeleton.bone_count());
         let profile = body.profile(&self.profile);
         for (part, bone) in body.resolved().bones().iter().enumerate() {
-            let acted = wanted(state, body, profile, part).is_some();
+            let acted = wanted(&state.commands, body, profile, part).is_some();
             if let (true, Some(amount)) = (acted, amounts.get_mut(*bone)) {
                 *amount = PhysicsAmount(1.0);
             }
@@ -900,9 +904,10 @@ impl AnimationNode for BalanceNode {
             .channel_mut::<MotorCommand>(skeleton.bone_count());
         let profile = body.profile(&self.profile);
         for (part, bone) in body.resolved().bones().iter().enumerate() {
-            if let (Some(wanted), Some(command)) =
-                (wanted(state, body, profile, part), commands.get_mut(*bone))
-            {
+            if let (Some(wanted), Some(command)) = (
+                wanted(&state.commands, body, profile, part),
+                commands.get_mut(*bone),
+            ) {
                 *command = wanted;
             }
         }

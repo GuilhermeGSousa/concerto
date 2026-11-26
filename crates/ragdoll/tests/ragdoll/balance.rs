@@ -1,6 +1,7 @@
 use concerto_animation::{
     clip::{AnimationChanelOutput, AnimationChannel, AnimationClip},
     graph::AnimationGraph,
+    message::AnimationMessage,
     node::{
         AnimationClipNode, AnimationNode, NodeOutcome,
         state_machine::{AnimationFSMTrigger, AnimationStateMachine},
@@ -31,8 +32,9 @@ use concerto_ragdoll::testing::{
     SpawnedHumanoid, humanoid_skeleton, reference_humanoid, spawn_humanoid,
 };
 use concerto_ragdoll::{
-    Balance, BalanceNode, BalanceSettings, BalanceState, BehaviourEnded, BodyDrive, BodySense,
-    BodySettled, BodyState, CharacterRagdoll, LimpNode, PhysicalState, RagdollBody, RagdollPlugin,
+    BalanceNode, BalanceSettings, BalanceState, BehaviourEnded, BodyDrive, BodySense, BodySettled,
+    BodyState, CharacterRagdoll, LimpNode, PhysicalState, RagdollBody, RagdollPlugin, StaggerNode,
+    StaggerState,
 };
 use glam::{Quat, Vec3};
 
@@ -49,6 +51,8 @@ struct Settles(usize);
 fn count_settles(_: On<BodySettled>, mut settles: ResMut<Settles>) {
     settles.0 += 1;
 }
+
+type GraphBuilder = Box<dyn FnOnce(&AssetServer) -> AnimationGraph>;
 
 pub struct Stage {
     pub app: App,
@@ -68,17 +72,22 @@ impl Stage {
 
     /// A body whose animation graph balances it with `node` over the standing pose, moving to the state `steady` when it succeeds and `fallen`, where it goes limp, when it gives up.
     pub fn balancing(node: BalanceNode) -> Self {
-        Self::build(Transform::default(), Some(node))
+        Self::graphed(move |server| balance_graph(server, node))
     }
 
-    fn build(placement: Transform, balance: Option<BalanceNode>) -> Self {
+    /// A body whose animation graph is `build`'s.
+    pub fn graphed(build: impl FnOnce(&AssetServer) -> AnimationGraph + 'static) -> Self {
+        Self::build(Transform::default(), Some(Box::new(build)))
+    }
+
+    fn build(placement: Transform, graph: Option<GraphBuilder>) -> Self {
         let mut app = App::new();
         app.register_plugin(MainSchedulePlugin)
             .register_plugin(TimePlugin)
             .register_plugin(AssetManagerPlugin)
             .register_plugin(TransformPlugin)
             .register_plugin(PhysicsPlugin);
-        if balance.is_some() {
+        if graph.is_some() {
             app.register_plugin(AnimationPlugin);
         }
         app.register_plugin(RagdollPlugin);
@@ -92,7 +101,7 @@ impl Stage {
         let mut asset = reference.ragdoll;
         asset.skeleton = skeleton.clone();
         let asset = server.add(asset);
-        let graph = balance.map(|node| server.add(balance_graph(&server, node)));
+        let graph = graph.map(|build| server.add(build(&server)));
         app.update();
         let world = app.main_mut().world_mut();
         world.spawn((
@@ -226,7 +235,16 @@ impl Stage {
         self.player().in_state(graphs, &state)
     }
 
-    fn outcome(&self) -> Option<NodeOutcome> {
+    pub fn send(&mut self, message: impl AnimationMessage) {
+        self.app
+            .main_mut()
+            .world_mut()
+            .get_component_for_entity_mut::<AnimationPlayer>(self.character)
+            .unwrap()
+            .send(message);
+    }
+
+    pub fn outcome(&self) -> Option<NodeOutcome> {
         if self.in_state(name!("steady")) {
             Some(NodeOutcome::Succeeded)
         } else if self.in_state(name!("fallen")) {
@@ -236,7 +254,7 @@ impl Stage {
         }
     }
 
-    fn stepping(&self) -> bool {
+    pub fn stepping(&self) -> bool {
         let graphs = self
             .app
             .get_resource::<AssetStore<AnimationGraph>>()
@@ -246,15 +264,11 @@ impl Stage {
             .for_each_state::<BalanceNode>(graphs, |_, state: &BalanceState, _| {
                 stepping |= state.stepping();
             });
+        self.player()
+            .for_each_state::<StaggerNode>(graphs, |_, state: &StaggerState, _| {
+                stepping |= state.stepping();
+            });
         stepping
-    }
-
-    pub fn balance(&self) -> Option<Balance> {
-        self.app
-            .main()
-            .world()
-            .get_component_for_entity::<Balance>(self.character)
-            .cloned()
     }
 
     pub fn insert<C: concerto_ecs::Component>(&mut self, component: C) {
@@ -265,7 +279,7 @@ impl Stage {
     }
 }
 
-fn standing_clip(skeleton: &Skeleton) -> AnimationClip {
+pub fn standing_clip(skeleton: &Skeleton) -> AnimationClip {
     let pelvis = skeleton.bone_index(Name::from("pelvis")).unwrap();
     let mut clip = AnimationClip::default();
     clip.add_channel(
@@ -280,7 +294,7 @@ fn standing_clip(skeleton: &Skeleton) -> AnimationClip {
     clip
 }
 
-fn over_clip(node: impl AnimationNode, clip: &AssetHandle<AnimationClip>) -> AnimationGraph {
+pub fn over_clip(node: impl AnimationNode, clip: &AssetHandle<AnimationClip>) -> AnimationGraph {
     let mut graph = AnimationGraph::new();
     graph
         .result_node()
