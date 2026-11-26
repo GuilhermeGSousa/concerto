@@ -17,7 +17,9 @@ pub(crate) const FREE_COLOR: Color = Color::rgba(0.6, 0.6, 0.6, 1.0);
 pub(crate) const LOCK_RADIUS: f32 = 0.06;
 pub(crate) const CROSS_SIZE: f32 = 0.04;
 
-/// Whether a player's foot locks are drawn; goes on the entity that holds the `AnimationPlayer`.
+/// Whether a player's foot locks are drawn.
+///
+/// It goes on the entity that holds the `AnimationPlayer`.
 #[derive(Component, Reflect, Clone, Debug, PartialEq)]
 #[reflect(Component, Default)]
 pub struct FootLockGizmos {
@@ -30,7 +32,9 @@ impl Default for FootLockGizmos {
     }
 }
 
-/// Draws `FootLockGizmos` in game time; register it after `DefaultPlugins`.
+/// Draws [`FootLockGizmos`] in game time.
+///
+/// Register it after `DefaultPlugins`.
 pub struct ProceduralAnimationGizmosPlugin;
 
 impl Plugin for ProceduralAnimationGizmosPlugin {

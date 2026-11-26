@@ -71,15 +71,19 @@ impl Collider {
 pub struct ColliderOffset(pub Vec3);
 
 impl ColliderOffset {
-    /// Lifts the shape so its bottom touches the entity origin — e.g. a
-    /// standing character whose transform (and skeleton root) sits at the
-    /// feet.
+    /// Lifts the shape so its bottom touches the entity origin.
+    ///
+    /// Use it for a standing character whose transform, and skeleton root,
+    /// sits at the feet.
     pub fn bottom_origin(collider: &Collider) -> Self {
         Self(Vec3::Y * collider.bottom_offset())
     }
 }
 
-/// Multiplies gravity for the entity's dynamic body. Optional sibling of [`Collider`], read when the body is created: 0 makes a body that moves only by the velocities it is given.
+/// Multiplies gravity for the entity's dynamic body.
+///
+/// An optional sibling of [`Collider`], read when the body is created. A
+/// scale of 0 makes a body that moves only by the velocities it is given.
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
 pub struct GravityScale(pub f32);
 

@@ -15,7 +15,10 @@ use crate::{
     sensing::BodySense,
 };
 
-/// The set, in `FixedUpdate`, that behaviours' systems run in: after it the claims of the step are complete, and the ragdoll is driven from them later in the same step.
+/// The set, in `FixedUpdate`, that behaviours' systems run in.
+///
+/// After it the claims of the step are complete, and the ragdoll is driven
+/// from them later in the same step.
 #[derive(SystemSet, Clone, PartialEq, Eq, Hash, Debug)]
 pub struct BehaviourSet;
 
@@ -67,7 +70,9 @@ pub struct Claim {
     pub part: usize,
     /// The higher priority wins the part; the animated pose is below every claim.
     pub priority: i32,
-    /// How much of the command takes hold over what lower priorities ask, from 0 to 1: a behaviour fading in or out blends by it.
+    /// How much of the command takes hold over what lower priorities ask, from 0 to 1.
+    ///
+    /// A behaviour fading in or out blends by it.
     pub weight: f32,
     pub command: PartCommand,
 }
@@ -80,7 +85,13 @@ pub struct RunningBehaviour {
     pub parts: Vec<usize>,
 }
 
-/// Where behaviours write what they want of a character's body. Each fixed step every running behaviour claims the parts it drives; for each part the highest priority wins, blended by its weight over what is below it, with the animated pose and the character's strength profile at the bottom. The claims are taken when the ragdoll is driven, so a behaviour claims again every step it runs.
+/// Where behaviours write what they want of a character's body.
+///
+/// Each fixed step every running behaviour claims the parts it drives. For
+/// each part the highest priority wins, blended by its weight over what is
+/// below it, with the animated pose and the character's strength profile at
+/// the bottom. The claims are taken when the ragdoll is driven, so a
+/// behaviour claims again every step it runs.
 #[derive(Component, Clone, Debug, Default)]
 pub struct BodyDrive {
     claims: Vec<Claim>,
@@ -159,7 +170,11 @@ pub enum BodyState {
     Dead,
 }
 
-/// The state a physical character is in. The engine moves it between `Animated` and `Reacting` and to `Down`; a behaviour that gives up its balance sets `Falling`, and a game or the dying behaviour sets `Dead`. Every change triggers `BodyStateChanged`.
+/// The state a physical character is in.
+///
+/// The engine moves it between `Animated` and `Reacting` and to `Down`. A
+/// behaviour that gives up its balance sets `Falling`, and a game or the
+/// dying behaviour sets `Dead`. Every change triggers [`BodyStateChanged`].
 #[derive(Component, Reflect, Clone, Copy, Debug, Default, PartialEq)]
 #[reflect(Component, Default, SceneComponent)]
 pub struct PhysicalState {
@@ -209,7 +224,12 @@ impl Signal for BehaviourEnded {}
 
 pub(crate) const LYING: f32 = 1.0;
 
-/// Each fixed step, after the body is sensed, moves every character's `PhysicalState` where the body is: `Animated` while its ragdoll follows its animation and nothing claims a part, `Reacting` otherwise, `Down` once a falling or limp body lies at rest. Triggers `BodyStateChanged` for every change, whoever made it.
+/// Moves every character's [`PhysicalState`] to where its body is, each fixed step after the body is sensed.
+///
+/// The state is `Animated` while the ragdoll follows its animation and
+/// nothing claims a part, `Reacting` otherwise, and `Down` once a falling or
+/// limp body lies at rest. Triggers [`BodyStateChanged`] for every change,
+/// whoever made it.
 pub fn update_physical_states(
     mut characters: Query<(
         Entity,

@@ -3,7 +3,9 @@ use glam::Vec3;
 
 use crate::resolve::ResolvedRagdoll;
 
-/// Two parts, not joined to each other, whose shapes overlap in the rest pose: physics pushes them apart the moment the body is simulated.
+/// Two parts, not joined to each other, whose shapes overlap in the rest pose.
+///
+/// Physics pushes them apart the moment the body is simulated.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PartOverlap {
     pub first: usize,
@@ -95,7 +97,9 @@ fn segment_distance(a: &Rounded, b: &Rounded) -> f32 {
 }
 
 impl ResolvedRagdoll {
-    /// The pairs of parts that overlap in the rest pose and are not joined to each other, deepest first. A box is judged as a capsule along its longest side.
+    /// The pairs of parts that overlap in the rest pose and are not joined to each other, deepest first.
+///
+/// A box is judged as a capsule along its longest side.
     pub fn overlapping_parts(&self) -> Vec<PartOverlap> {
         let parts = &self.settings().parts;
         let shapes: Vec<Rounded> = parts.iter().map(rounded).collect();

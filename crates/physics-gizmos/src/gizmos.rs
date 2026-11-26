@@ -54,7 +54,9 @@ impl PhysicsGizmos {
     }
 }
 
-/// Draws the layers of `PhysicsGizmos` in game time; register it after `DefaultPlugins`.
+/// Draws the layers of [`PhysicsGizmos`] in game time.
+///
+/// Register it after `DefaultPlugins`.
 pub struct PhysicsGizmosPlugin;
 
 impl Plugin for PhysicsGizmosPlugin {

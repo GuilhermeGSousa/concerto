@@ -51,10 +51,11 @@ pub struct RawShapeHit<Handle> {
     pub normal: Vec3,
 }
 
-/// A ground contact found by [`PhysicsBackend::probe_ground`]: the contact
-/// with the most upward-facing normal within reach of the probed body's
-/// shape. Slope classification against a walkable angle happens in the
-/// facade.
+/// A ground contact found by [`PhysicsBackend::probe_ground`].
+///
+/// It is the contact with the most upward-facing normal within reach of the
+/// probed body's shape. Slope classification against a walkable angle
+/// happens in the facade.
 pub struct RawGroundHit<Handle> {
     /// The ground body.
     pub body: Handle,
@@ -85,7 +86,10 @@ pub struct RawSensorContact<Handle> {
 pub enum RawContactKind {
     /// The pair began touching.
     Start,
-    /// The pair was simulated in one collision step: `normal` points from `first` to `second`, `impulse` is that step's normal impulse.
+    /// The pair was simulated in one collision step.
+    ///
+    /// `normal` points from `first` to `second`, and `impulse` is that step's
+    /// normal impulse.
     Touch {
         point: Vec3,
         normal: Vec3,
@@ -135,16 +139,20 @@ pub trait PhysicsBackend: Send + Sync + Sized {
     /// Advances the world by `delta_time` seconds (one fixed timestep), in `collision_steps` equal collision steps.
     fn step(&mut self, stepper: &mut Self::Stepper, delta_time: f32, collision_steps: u32);
 
-    /// Creates a body from the shared descriptors and adds it to the
-    /// simulation: static when `rigid_body` is `None`, otherwise dynamic or
+    /// Creates a body from the shared descriptors and adds it to the simulation.
+    ///
+    /// The body is static when `rigid_body` is `None`, otherwise dynamic or
     /// kinematic per its [`MotionType`](crate::rigid_body::MotionType), with
-    /// its density and allowed degrees of freedom. `offset` displaces the
-    /// shape's geometry relative to the body origin; it must not leak into
-    /// [`body_transform`](Self::body_transform). A `sensor` body detects
-    /// bodies without colliding with them, is never dynamic, and is skipped
-    /// by [`cast_ray`](Self::cast_ray), [`cast_sphere`](Self::cast_sphere)
-    /// and [`probe_ground`](Self::probe_ground). `gravity_scale` multiplies
+    /// its density and allowed degrees of freedom. `gravity_scale` multiplies
     /// gravity for a dynamic body.
+    ///
+    /// `offset` displaces the shape's geometry relative to the body origin;
+    /// it must not leak into [`body_transform`](Self::body_transform).
+    ///
+    /// A `sensor` body detects bodies without colliding with them, is never
+    /// dynamic, and is skipped by [`cast_ray`](Self::cast_ray),
+    /// [`cast_sphere`](Self::cast_sphere) and
+    /// [`probe_ground`](Self::probe_ground).
     fn create_body(
         &mut self,
         collider: &Collider,
@@ -167,10 +175,14 @@ pub trait PhysicsBackend: Send + Sync + Sized {
     /// Turns the reporting of `body`'s contacts with solid bodies on or off.
     fn set_contact_reporting(&mut self, body: Self::BodyHandle, enabled: bool);
 
-    /// Moves the contacts seen since the last drain into `out`, in order; call it after [`drain_sensor_contacts`](Self::drain_sensor_contacts).
+    /// Moves the contacts seen since the last drain into `out`, in order.
+    ///
+    /// Call it after [`drain_sensor_contacts`](Self::drain_sensor_contacts).
     fn drain_contacts(&mut self, out: &mut Vec<RawContact<Self::BodyHandle>>);
 
-    /// Gives the body its collision layers; in no layer it collides with nothing and no query sees it.
+    /// Gives the body its collision layers.
+    ///
+    /// A body in no layer collides with nothing and no query sees it.
     fn set_body_layers(&mut self, body: Self::BodyHandle, layers: CollisionLayers);
 
     /// Sets the body's velocities so that it reaches `pose` after `delta_time`.
@@ -233,11 +245,18 @@ pub trait PhysicsBackend: Send + Sync + Sized {
     ) -> Option<RawGroundHit<Self::BodyHandle>>;
 
     /// Builds a ragdoll recipe from already validated settings.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RagdollBuildError::Rejected`] when the engine refuses the
+    /// parts, such as a zero-sized shape or a zero joint axis.
     fn build_ragdoll(
         settings: &RagdollSettings,
     ) -> Result<Self::RagdollSettingsHandle, RagdollBuildError>;
 
-    /// Creates a ragdoll with each part at its world pose in `pose` and adds it to the simulation; `None` when the backend has no ragdolls or is out of bodies.
+    /// Creates a ragdoll with each part at its world pose in `pose` and adds it to the simulation.
+    ///
+    /// Returns `None` when the backend has no ragdolls or is out of bodies.
     fn create_ragdoll(
         &mut self,
         built: &Self::RagdollSettingsHandle,
@@ -285,9 +304,10 @@ pub trait PhysicsBackend: Send + Sync + Sized {
 
     fn ragdoll_joint_motor_impulse(&self, ragdoll: Self::RagdollHandle, part: usize) -> Vec3;
 
-    /// The shape's axis-aligned bounds (min, max) in its own local space,
-    /// before any body pose or scale. The engine no longer stores a
-    /// collider's dimensions, so this is how they are recovered.
+    /// The shape's axis-aligned bounds (min, max) in its own local space, before any body pose or scale.
+    ///
+    /// The engine stores no collider's dimensions, so this is how they are
+    /// recovered.
     fn shape_local_aabb(shape: &Self::ShapeHandle) -> Aabb;
 
     fn create_sphere_shape(radius: f32) -> Self::ShapeHandle;

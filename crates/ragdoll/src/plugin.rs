@@ -30,7 +30,14 @@ use crate::{
     stagger::{Stagger, end_staggers, note_balance_ended, stagger_bodies},
 };
 
-/// Registers the ragdoll asset and gives every `CharacterRagdoll` a physical body that follows its animation, is powered towards it or falls limp, drawn on its skeleton by weight; register it after `PhysicsPlugin`. Its systems also run in a preview `App`, where they do nothing until the preview has a `PhysicsPipeline`.
+/// Registers the ragdoll asset and gives every `CharacterRagdoll` a physical body.
+///
+/// The body follows its animation, is powered towards it or falls limp, and
+/// is drawn on its skeleton by weight. Register the plugin after
+/// `PhysicsPlugin`.
+///
+/// Its systems also run in a preview `App`, where they do nothing until the
+/// preview has a `PhysicsPipeline`.
 pub struct RagdollPlugin;
 
 impl Plugin for RagdollPlugin {

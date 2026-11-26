@@ -28,7 +28,14 @@ pub const BALANCE: &str = "balance";
 /// The priority of balance's claims on the pelvis and the legs.
 pub const BALANCE_PRIORITY: i32 = 10;
 
-/// Keeps a body on its own feet: holds it upright while its capture point is inside its feet, steps to catch it when the point leaves, and gives up when it cannot. Add it to a character with a `BodyDrive`, a `BodySense` and a `PhysicalState` to start it; it removes itself when it succeeds or gives up, with a `BehaviourEnded`.
+/// Keeps a body on its own feet.
+///
+/// It holds the body upright while its capture point is inside its feet,
+/// steps to catch it when the point leaves, and gives up when it cannot.
+///
+/// Add it to a character with a `BodyDrive`, a `BodySense` and a
+/// `PhysicalState` to start it. It removes itself when it succeeds or gives
+/// up, with a `BehaviourEnded`.
 #[derive(Component, Reflect, Clone, Debug, PartialEq)]
 #[reflect(Component, Default, SceneComponent)]
 pub struct Balance {
@@ -50,7 +57,10 @@ pub struct Balance {
     pub height_damping: f32,
     /// The most force the height assist applies, in N.
     pub max_lift: f32,
-    /// The assist: a horizontal force on the pelvis that pushes the capture point back over the feet, in N per metre it is outside them; nothing while it is inside.
+    /// The assist: a horizontal force on the pelvis that pushes the capture point back over the feet.
+    ///
+    /// In N per metre the point is outside the feet; nothing while it is
+    /// inside.
     pub centring: f32,
     /// The assist: a horizontal force on the pelvis against the centre of mass's horizontal velocity, in N per m/s, which stills the sway of a standing body.
     pub sway_damping: f32,
@@ -103,7 +113,10 @@ pub struct Hindrance {
     pub strength: f32,
     /// How much of their strength the knees lose for a moment after each landing, from 0 to 1.
     pub give: f32,
-    /// The share of its strength the left leg keeps, from 0 to 1. A leg under a half is lame: its knee sags, and it is the one that steps, never the one stood on.
+    /// The share of its strength the left leg keeps, from 0 to 1.
+    ///
+    /// A leg under a half is lame: its knee sags, and it is the one that
+    /// steps, never the one stood on.
     pub left_leg: f32,
     /// The share of its strength the right leg keeps.
     pub right_leg: f32,
@@ -201,7 +214,10 @@ impl Balance {
         self
     }
 
-    /// Hinders balance for the next fixed step, on top of what other behaviours took this step; a behaviour that makes the body stumble calls it every step it runs, before `balance_bodies`.
+    /// Hinders balance for the next fixed step, on top of what other behaviours took this step.
+    ///
+    /// A behaviour that makes the body stumble calls it every step it runs,
+    /// before [`balance_bodies`].
     pub fn hinder(&mut self, hindrance: Hindrance) {
         let held = &mut self.hindrance;
         held.reach *= hindrance.reach;
@@ -253,7 +269,13 @@ fn smooth(phase: f32) -> f32 {
     phase * phase * (3.0 - 2.0 * phase)
 }
 
-/// Each fixed step, in `BehaviourSet`: for every balancing body, pushes the pelvis towards upright and its animated height, holds the legs strong, steps the foot further from the capture point to just past it when the point has left the feet, and ends with success once the body has stood balanced and slow, or by giving up, which makes the character `Falling`.
+/// Balances every balancing body, each fixed step in `BehaviourSet`.
+///
+/// It pushes the pelvis towards upright and its animated height and holds
+/// the legs strong. When the capture point has left the feet, it steps the
+/// foot further from the point to just past it. Balance ends with success
+/// once the body has stood balanced and slow, or by giving up, which makes
+/// the character `Falling`.
 pub fn balance_bodies(
     mut characters: Query<(
         Entity,

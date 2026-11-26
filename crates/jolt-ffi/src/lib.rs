@@ -9,6 +9,15 @@
 //! crate, no bindgen, and no CMake involved.
 //!
 //! The declarations below must mirror the `csrc` headers exactly.
+//!
+//! # Safety
+//!
+//! Every function here is an unchecked call into C++. The caller passes only
+//! pointers that the matching `create` function returned and that have not
+//! been destroyed, buffers of the length each function documents (an xyz
+//! triple is three `f32`s, an xyzw rotation four, a ragdoll pose seven per
+//! part), and body ids of bodies still in the world. A world is used from one
+//! thread at a time, and nothing reads or changes it while it steps.
 
 use std::marker::{PhantomData, PhantomPinned};
 
@@ -283,7 +292,10 @@ extern "C" {
         gravity_factor: f32,
     );
 
-    /// The collision layers the body is in and the ones it collides with, each a mask of bits 0 to 13; by default in layer 0 and colliding with every layer.
+    /// Sets the collision layers the body is in and the ones it collides with.
+    ///
+    /// Each is a mask of bits 0 to 13. By default a body is in layer 0 and
+    /// collides with every layer.
     pub fn jolt_body_creation_settings_set_layers(
         settings: *mut JoltBodyCreationSettings,
         memberships: u32,
@@ -344,7 +356,9 @@ extern "C" {
         capacity: u32,
     ) -> u32;
 
-    /// Puts the body in the layers `memberships` and makes it collide with the layers `filter`; with no memberships it collides with nothing and no query sees it.
+    /// Puts the body in the layers `memberships` and makes it collide with the layers `filter`.
+    ///
+    /// With no memberships it collides with nothing and no query sees it.
     pub fn jolt_body_set_layers(
         world: *mut JoltWorld,
         body: JoltBodyId,
@@ -517,7 +531,11 @@ extern "C" {
     /// Turns every joint's motor on and aims it at the rotation the part has relative to its parent in `poses`.
     pub fn jolt_ragdoll_drive_motors(ragdoll: *mut JoltRagdoll, poses: *const f32);
 
-    /// Turns the motor of the joint between `part` and its parent off, or on towards `target_rotation` (xyzw, the part relative to its parent); `spring` and `damping` are a frequency in Hz and a ratio, or with `by_stiffness` N·m/rad and N·m·s/rad.
+    /// Turns the motor of the joint between `part` and its parent off, or on towards `target_rotation`.
+    ///
+    /// `target_rotation` is xyzw, the part relative to its parent. `spring`
+    /// and `damping` are a frequency in Hz and a damping ratio, or, with
+    /// `by_stiffness`, a stiffness in N·m/rad and a damping in N·m·s/rad.
     pub fn jolt_ragdoll_set_joint_motor(
         ragdoll: *mut JoltRagdoll,
         part: u32,
@@ -537,7 +555,10 @@ extern "C" {
         motion_type: JoltMotionType,
     );
 
-    /// Frozen makes every part static where it is; not frozen makes every part dynamic again and wakes it.
+    /// Freezes every part of the ragdoll where it is, or lets it go again.
+    ///
+    /// Frozen makes every part static; not frozen makes every part dynamic
+    /// again and wakes it.
     pub fn jolt_ragdoll_set_frozen(world: *mut JoltWorld, ragdoll: *mut JoltRagdoll, frozen: bool);
 
     /// The angular impulse the joint's motor applied in the last collision step; zero for the root.

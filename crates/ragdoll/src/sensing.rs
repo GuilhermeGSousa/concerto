@@ -47,7 +47,10 @@ pub fn centre_of_mass(points: &[MassPoint]) -> MassPoint {
     }
 }
 
-/// The spot on ground at height `ground` where a body with its centre of mass at `centre`, moving at `velocity`, would come to rest over its foot if it stepped there now: the ground under the centre plus the horizontal velocity times `sqrt(h / g)`.
+/// The spot on ground at height `ground` where a body with its centre of mass at `centre`, moving at `velocity`, would come to rest over its foot if it stepped there now.
+///
+/// It is the ground under the centre plus the horizontal velocity times
+/// `sqrt(h / g)`, where `h` is the centre's height above the ground.
 pub fn capture_point(centre: Vec3, velocity: Vec3, ground: f32) -> Vec3 {
     let height = (centre.y - ground).max(0.0);
     let reach = (height / GRAVITY).sqrt();
@@ -62,7 +65,10 @@ fn cross(origin: Vec3, a: Vec3, b: Vec3) -> f32 {
     (a.x - origin.x) * (b.z - origin.z) - (a.z - origin.z) * (b.x - origin.x)
 }
 
-/// The convex outline of `points` seen from above, going round once; heights are kept. Fewer than three distinct points, or points in a line, give what there is.
+/// The convex outline of `points` seen from above, going round once.
+///
+/// Heights are kept. Fewer than three distinct points, or points in a line,
+/// give what there is.
 pub fn convex_hull(points: &[Vec3]) -> Vec<Vec3> {
     let mut sorted = points.to_vec();
     sorted.sort_by(|a, b| a.x.total_cmp(&b.x).then(a.z.total_cmp(&b.z)));
@@ -101,7 +107,11 @@ fn nearest_on_edge(a: Vec3, b: Vec3, point: Vec3) -> Vec3 {
     a + (b - a) * along
 }
 
-/// How far `point` is outside the convex `polygon` seen from above, as the horizontal vector from the polygon's nearest edge to the point; zero inside. A polygon of fewer than three points has no inside.
+/// How far `point` is outside the convex `polygon` seen from above.
+///
+/// The result is the horizontal vector from the polygon's nearest edge to
+/// the point, and zero inside. A polygon of fewer than three points has no
+/// inside.
 pub fn outside_by(polygon: &[Vec3], point: Vec3) -> Vec3 {
     if polygon.is_empty() {
         return Vec3::ZERO;
@@ -142,7 +152,10 @@ pub struct Impact {
     pub seconds: f32,
 }
 
-/// What a character's body knows about itself, rewritten after each fixed step. Add it beside a `CharacterRagdoll` to have it kept; its ragdoll's parts then report their contacts.
+/// What a character's body knows about itself, rewritten after each fixed step.
+///
+/// Add it beside a `CharacterRagdoll` to have it kept; its ragdoll's parts
+/// then report their contacts.
 #[derive(Component, Clone, Debug, Default, PartialEq)]
 pub struct BodySense {
     /// The mass-weighted centre of the parts, with the body's mass and the centre's velocity.
@@ -213,7 +226,10 @@ fn predicted_impact(state: &PhysicsState, from: Vec3, velocity: Vec3) -> Option<
     None
 }
 
-/// After each physics step, rewrites every `BodySense` from its ragdoll: centre of mass, support, capture point, lean, time in the air, predicted impacts and rest.
+/// Rewrites every [`BodySense`] from its ragdoll after each physics step.
+///
+/// It fills in the centre of mass, support, capture point, lean, time in the
+/// air, predicted impacts and rest.
 pub fn sense_bodies(
     mut characters: Query<(Entity, &RagdollId, &RagdollBody, &mut BodySense), Without<Settled>>,
     mut state: ResMut<PhysicsState>,

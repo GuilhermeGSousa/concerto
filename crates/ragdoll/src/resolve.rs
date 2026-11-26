@@ -22,7 +22,9 @@ pub enum RagdollError {
     DuplicateBone {
         bone: Name,
     },
-    /// A part is under no other part, and neither is the first root: a ragdoll is one tree.
+    /// A part is under no other part, and neither is the first root.
+    ///
+    /// A ragdoll is one tree.
     SecondRoot {
         root: Name,
         bone: Name,
@@ -151,7 +153,10 @@ impl ResolvedRagdoll {
         self.names.iter().position(|name| &**name == bone)
     }
 
-    /// For each bone of the skeleton, the part it moves with: its own, or that of its nearest ancestor that has one; `None` above the root part.
+    /// For each bone of the skeleton, the part it moves with.
+    ///
+    /// That is the bone's own part, or that of its nearest ancestor that has
+    /// one; `None` above the root part.
     pub fn followed(&self) -> &[Option<usize>] {
         &self.followed
     }
@@ -163,7 +168,19 @@ impl ResolvedRagdoll {
 }
 
 impl Ragdoll {
-    /// Fits the asset to `skeleton` and builds the physics recipe: parts are ordered parents first, each joined to the part of its nearest ancestor bone that has one.
+    /// Fits the asset to `skeleton` and builds the physics recipe.
+    ///
+    /// Parts are ordered parents first, each joined to the part of its
+    /// nearest ancestor bone that has one.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RagdollError::NoParts`] when the asset has no parts,
+    /// [`RagdollError::UnknownBone`] when a part names a bone `skeleton` does
+    /// not have, [`RagdollError::DuplicateBone`] when two parts are on one
+    /// bone, [`RagdollError::SecondRoot`] when a part is under no other part
+    /// and is not the root, and [`RagdollError::Build`] when the physics
+    /// settings are refused.
     pub fn resolve(&self, skeleton: &Skeleton) -> Result<ResolvedRagdoll, RagdollError> {
         if self.parts.is_empty() {
             return Err(RagdollError::NoParts);

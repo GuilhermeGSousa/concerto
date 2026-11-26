@@ -17,7 +17,12 @@ use crate::{
     shot::{ShotReaction, takes_shot},
 };
 
-/// A character's body was hit: on this part of its ragdoll, at this world point, with this impulse in N·s. It says nothing about damage or death; the game decides those and reacts to the same signal. It is triggered for every listener, with the character it is about, so the engine's flinch and a game's own listeners all hear it.
+/// A character's body was hit on this part of its ragdoll, at this world point, with this impulse in N·s.
+///
+/// It says nothing about damage or death; the game decides those and reacts
+/// to the same signal. It is triggered for every listener, with the
+/// character it is about, so the engine's flinch and a game's own listeners
+/// all hear it.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct BodyHit {
     pub character: Entity,
@@ -59,7 +64,10 @@ pub enum HitKind {
     Shot,
 }
 
-/// Makes a character flinch when it is hit while its ragdoll follows its animation: the body is powered at `profile` and takes the impulse, the muscles at the hit give and recover, and the body settles back on the animation.
+/// Makes a character flinch when it is hit while its ragdoll follows its animation.
+///
+/// The body is powered at `profile` and takes the impulse, the muscles at the
+/// hit give and recover, and the body settles back on the animation.
 #[derive(Component, Reflect, Clone, Debug, PartialEq)]
 #[reflect(Component, Default, SceneComponent)]
 pub struct HitReaction {
@@ -134,7 +142,10 @@ fn dip(scales: &mut [f32], body: &RagdollBody, reaction: &HitReaction, part: usi
     }
 }
 
-/// Starts or restarts a character's flinch when it is hit. A character without a `HitReaction`, or whose ragdoll is limp or powered by something else, only takes the impulse.
+/// Starts or restarts a character's flinch when it is hit.
+///
+/// A character without a [`HitReaction`], or whose ragdoll is limp or
+/// powered by something else, only takes the impulse.
 pub fn flinch_when_hit(
     on: On<BodyHit>,
     mut characters: Query<
@@ -196,7 +207,11 @@ pub fn flinch_when_hit(
     }
 }
 
-/// Each fixed step, after the ragdolls are driven and before physics steps: gives every flinching body the impulses of its hits, lets its dipped strength recover, and once it has held long enough returns the drawn body to the animation and the parts to kinematic.
+/// Updates every flinching body, each fixed step after the ragdolls are driven and before physics steps.
+///
+/// It gives the body the impulses of its hits and lets its dipped strength
+/// recover. Once the flinch has held long enough it returns the drawn body to
+/// the animation and the parts to kinematic.
 pub fn update_flinches(
     mut characters: Query<(
         Entity,

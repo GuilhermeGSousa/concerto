@@ -64,6 +64,11 @@ impl RagdollWorld {
     }
 
     /// Places `ragdoll` in its rest pose moved by `root`, owned by a new entity.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the physics backend has no ragdolls (Rapier) or the world
+    /// is out of bodies.
     pub fn place(&mut self, ragdoll: &ResolvedRagdoll, root: BodyPose) -> PlacedRagdoll {
         let owner = self.world.spawn(Transform::default());
         let pose: Vec<BodyPose> = ragdoll
@@ -80,6 +85,11 @@ impl RagdollWorld {
     }
 
     /// Applies `impulse`, in N·s, at the centre of mass of the part on the bone called `bone`.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `ragdoll` has no part on `bone`, or when `placed` is no
+    /// longer in the world.
     pub fn impulse(
         &mut self,
         ragdoll: &ResolvedRagdoll,
@@ -181,7 +191,10 @@ pub struct TrialReport {
 
 const REST_SPEED: f32 = 0.2;
 
-/// Runs `trial` on `ragdoll` for `seconds` in a world of its own and reports what happened; `None` when the trial names a bone with no part or the backend has no ragdolls.
+/// Runs `trial` on `ragdoll` for `seconds` in a world of its own and reports what happened.
+///
+/// Returns `None` when the trial names a bone with no part or the backend
+/// has no ragdolls.
 pub fn run_trial(ragdoll: &ResolvedRagdoll, trial: Trial, seconds: f32) -> Option<TrialReport> {
     let mut world = RagdollWorld::new();
     let height = match trial {

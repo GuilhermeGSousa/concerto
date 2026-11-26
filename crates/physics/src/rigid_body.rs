@@ -2,9 +2,10 @@ use std::ops::BitOr;
 
 use concerto_ecs::component::Component;
 
-/// Bitmask of the degrees of freedom a dynamic body may use (combine with
-/// `|`). Restricting a body to [`AllowedDofs::TRANSLATION`] keeps it from
-/// ever rotating — e.g. a player capsule that must stay upright.
+/// Bitmask of the degrees of freedom a dynamic body may use, combined with `|`.
+///
+/// Restricting a body to [`AllowedDofs::TRANSLATION`] keeps it from ever
+/// rotating, as a player capsule that must stay upright needs.
 ///
 /// Backend-neutral: each backend translates this into its own axis-locking
 /// representation.
