@@ -1,7 +1,9 @@
 use std::time::Duration;
 
 use concerto_animation::player::AnimationPlayer;
-use concerto_ecs::{Component, Entity, Query, Res, command::CommandQueue};
+use concerto_ecs::{
+    Component, Entity, Query, Res, command::CommandQueue, query::change_detection::DetectChanges,
+};
 use concerto_editor::hosted::{EditWorld, EditWorldSignals};
 use concerto_foundation::time::Time;
 use concerto_mcp::{McpTool, Needs, PendingCall, ToolCalls, ToolError};
@@ -43,6 +45,7 @@ pub(crate) struct HitWait {
     part: usize,
     bone: String,
     seconds: f32,
+    started: bool,
     reacted: bool,
     peak: f32,
 }
@@ -191,6 +194,7 @@ pub(crate) fn hit_character(
                 part,
                 bone: arguments.bone,
                 seconds: 0.0,
+                started: false,
                 reacted: false,
                 peak: 0.0,
             },
@@ -211,7 +215,10 @@ pub(crate) fn answer_hits(
     mut cmd: CommandQueue,
 ) {
     let (characters, graphs, time) = &*scene;
-    let stepped = time.as_ref().map_or(0.0, |time| time.delta().as_secs_f32());
+    let stepped = time
+        .as_ref()
+        .filter(|time| time.is_changed())
+        .map_or(0.0, |time| time.delta().as_secs_f32());
     for (entity, pending, mut wait) in waiting.iter_mut() {
         let id = wait.scene_entity.to_id_string();
         let Some((body, player)) = characters.get_entity(wait.scene_entity) else {
@@ -229,7 +236,10 @@ pub(crate) fn answer_hits(
         if !animated {
             wait.reacted = true;
         }
-        wait.seconds += stepped;
+        if wait.started {
+            wait.seconds += stepped;
+        }
+        wait.started = true;
         let elapsed = wait.seconds;
         if wait.reacted && animated {
             pending.reply.ok(format!(
