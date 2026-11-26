@@ -100,7 +100,7 @@ impl AnimationPlayer {
     }
 
     /// Walks the graph once for a physics step of `delta_time` seconds, each node saying through `AnimationNode::drive` what it asks of physics with `skeleton`'s bone ids, and keeps the attributes it gives; the graph does not advance. A paused player, or one whose graph gives no frame, keeps no attributes, so every bone reads neutral.
-    pub fn drive(
+    pub(crate) fn drive(
         &mut self,
         entity: Entity,
         graphs: &AssetStore<AnimationGraph>,
