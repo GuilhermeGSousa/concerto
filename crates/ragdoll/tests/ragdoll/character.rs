@@ -320,6 +320,28 @@ fn a_walking_character_gone_limp_keeps_its_speed_falls_to_rest_and_is_drawn_by_w
         "a bone with no part keeps its animated pose under its parent, the finger was {finger} m from the hand"
     );
 
+    pose_at_rest(&mut app, &humanoid, root + Vec3::new(0.3, 0.0, 0.0));
+    frame(&mut app);
+    let drawn = bone_poses(&app, body.bones());
+    let stepped = app
+        .main()
+        .world()
+        .get_component_for_entity::<RagdollBody>(humanoid.skeleton)
+        .unwrap()
+        .interpolated_pose(
+            app.get_resource::<concerto_foundation::time::Time>()
+                .unwrap()
+                .fixed_alpha(),
+        );
+    for (part, (simulated, bone)) in stepped.iter().zip(&drawn).enumerate() {
+        let off = simulated.translation.distance(bone.translation);
+        assert!(
+            off < 1e-3,
+            "in the frame its character moves, the bone of part {part} ({:?}) is drawn {off} m from its part",
+            body.bone_name(part)
+        );
+    }
+
     let fallen = pose[pelvis].translation;
     let animated = root + Vec3::new(0.0, 1.0, 0.0);
     edit(&mut app, &humanoid, |character| character.weight = 0.0);

@@ -1,7 +1,6 @@
 use std::ops::Deref;
 
 use concerto_ecs::{
-    Entity,
     component::{Component, scene::SceneEntityRef},
     entity::hierarchy::ChildOf,
     query::Query,
@@ -9,7 +8,7 @@ use concerto_ecs::{
 };
 use concerto_foundation::{
     assets::{asset_store::AssetStore, handle::AssetHandle},
-    transform::{GlobalTransform, Transform},
+    transform::{GlobalTransform, Transform, parent_world_of},
 };
 use concerto_mesh::skeleton::Skeleton;
 use concerto_name::Name;
@@ -325,29 +324,6 @@ fn local_of(transform: &Transform) -> Affine3A {
         transform.rotation,
         transform.translation,
     )
-}
-
-fn parent_world_of(
-    entity: Entity,
-    parents: &Query<&ChildOf>,
-    globals: &Query<&GlobalTransform>,
-    mut local: impl FnMut(Entity) -> Option<Affine3A>,
-) -> Affine3A {
-    let mut world = Affine3A::IDENTITY;
-    let mut next = parents.get_entity(entity).map(ChildOf::parent);
-    while let Some(ancestor) = next {
-        let Some(matrix) = local(ancestor) else {
-            let global = globals
-                .get_entity(ancestor)
-                .map_or(Affine3A::IDENTITY, |global| {
-                    Affine3A::from_mat4(global.matrix())
-                });
-            return global * world;
-        };
-        world = matrix * world;
-        next = parents.get_entity(ancestor).map(ChildOf::parent);
-    }
-    world
 }
 
 #[derive(Component)]

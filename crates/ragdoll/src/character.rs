@@ -1,6 +1,7 @@
 use concerto_ecs::{
     CommandQueue, Component, Entity, Query, Res, ResMut, Without,
     component::scene::SceneEntityRef,
+    entity::hierarchy::ChildOf,
     reflect::{ReflectComponent, ReflectSceneComponent},
     signal::{
         EntitySignal, On, Signal,
@@ -10,7 +11,7 @@ use concerto_ecs::{
 use concerto_foundation::{
     assets::{asset_store::AssetStore, handle::AssetHandle},
     time::Time,
-    transform::{GlobalTransform, Transform},
+    transform::{GlobalTransform, Transform, parent_world_of},
 };
 use concerto_mesh::{JointName, Skeleton, SkeletonComponent};
 use concerto_name::Name;
@@ -25,7 +26,7 @@ use concerto_physics::{
     rigid_body::MotionType,
 };
 use concerto_reflect::{Reflect, ReflectDefault};
-use glam::{Mat4, Quat, Vec3};
+use glam::{Affine3A, Mat4, Quat, Vec3};
 use log::warn;
 
 use crate::{
@@ -811,6 +812,7 @@ pub fn write_ragdoll_poses(
     skeletons: Res<AssetStore<Skeleton>>,
     globals: Query<&GlobalTransform>,
     mut locals: Query<&mut Transform>,
+    parents: Query<&ChildOf>,
     time: Res<Time>,
 ) {
     let alpha = time.fixed_alpha();
@@ -829,6 +831,19 @@ pub fn write_ragdoll_poses(
         for (part, bone) in body.resolved.bones().iter().enumerate() {
             part_of_bone[*bone] = Some(part);
         }
+        let root_parents: Vec<Mat4> = body
+            .skeleton_bones
+            .iter()
+            .enumerate()
+            .map(|(bone, entity)| match skeleton.parents[bone] {
+                Some(_) => Mat4::IDENTITY,
+                None => Mat4::from(parent_world_of(*entity, &parents, &globals, |ancestor| {
+                    locals
+                        .get_entity_mut(ancestor)
+                        .map(|local| Affine3A::from_mat4(local.compute_matrix()))
+                })),
+            })
+            .collect();
         let mut world: Vec<Mat4> = Vec::with_capacity(body.skeleton_bones.len());
         let mut model: Vec<Mat4> = Vec::with_capacity(body.skeleton_bones.len());
         for (bone, entity) in body.skeleton_bones.clone().into_iter().enumerate() {
@@ -845,10 +860,7 @@ pub fn write_ragdoll_poses(
                 }
                 None => {
                     model.push(animated_local);
-                    let propagated = globals
-                        .get_entity(entity)
-                        .map_or(Mat4::IDENTITY, GlobalTransform::matrix);
-                    propagated * body.drawn_roots[bone].unwrap_or(animated_local).inverse()
+                    root_parents[bone]
                 }
             };
             let animated = parent * animated_local;
