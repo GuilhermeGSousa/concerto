@@ -64,7 +64,7 @@ impl<'a> BodyView<'a> {
 
     /// The strength profiles of the ragdoll asset the body was built from.
     pub fn profiles(self) -> &'a [StrengthProfile] {
-        self.body.shared_profiles()
+        self.body.profiles()
     }
 
     /// The profile called `name`.

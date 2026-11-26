@@ -223,7 +223,7 @@ impl RagdollBody {
         &self.part_of_bone
     }
 
-    pub(crate) fn shared_profiles(&self) -> &[StrengthProfile] {
+    pub(crate) fn profiles(&self) -> &[StrengthProfile] {
         &self.profiles
     }
 

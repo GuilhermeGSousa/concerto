@@ -48,6 +48,7 @@ struct Heard(usize);
 const BONES: usize = 3;
 const ALL_BONES: [usize; BONES] = [0, 1, 2];
 const LONGEST_FRAME: Duration = Duration::from_millis(250);
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct Amount(pub(crate) f32);
 

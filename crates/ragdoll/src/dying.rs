@@ -17,7 +17,7 @@ use crate::{
     sensing::BodySense,
 };
 
-/// The game says a character is dying: its strength drains over `seconds`, from the hands and feet inwards, and it is `Dead` when none is left. Zero seconds is an instant kill. The engine has no health; the game decides when.
+/// The game says a character is dying: its strength drains over `seconds`, from the hands and feet inwards, and it is `Dead` when none is left. Zero seconds is an instant kill. The engine has no health; the game decides when. A `Die` sent to a `Settled` body is dropped, even if a hit wakes it later.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Die {
     pub character: Entity,
@@ -46,7 +46,7 @@ pub fn mark_dead() -> Listener<BodyDead> {
     .into_listener()
 }
 
-/// A dead body that lies at rest: its parts are static where they lie, nothing drives or senses it, and its capsule stays where it was left, out of every collision layer. Its graph still runs, but nothing it asks reaches physics. A `BodyHit` of at least `wake_impulse` wakes it, and it settles again.
+/// A dead body that lies at rest: its parts are static where they lie, nothing moves or senses it, and its capsule stays where it was left, out of every collision layer. Its graph still runs, but nothing it asks reaches physics. A `BodyHit` of at least `wake_impulse` wakes it, and it settles again.
 #[derive(Component, Reflect, Clone, Copy, Debug, PartialEq)]
 #[reflect(Component, Default, SceneComponent)]
 pub struct Settled {
@@ -60,7 +60,7 @@ impl Default for Settled {
     }
 }
 
-/// Sends a dying character's animation graph a `Death` message.
+/// Sends a dying character's animation graph a `Death` message; a `Settled` body is skipped and the death is lost.
 pub fn forward_death(on: On<Die>, mut players: Query<&mut AnimationPlayer, Without<Settled>>) {
     let die = *on.signal();
     if let Some(mut player) = players.get_entity_mut(die.character) {

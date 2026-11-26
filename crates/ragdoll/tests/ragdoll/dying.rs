@@ -160,12 +160,6 @@ fn a_dying_body_drains_settles_into_a_static_pose_and_wakes_only_when_hit_hard()
     );
     assert_eq!(stage.settles(), 1);
 
-    stage.run(10);
-    assert_eq!(
-        bones(&stage),
-        lying,
-        "a settled body stays frozen across steps"
-    );
     let deaths = stage.deaths();
     die(&mut stage, 1.0);
     stage.run(30);

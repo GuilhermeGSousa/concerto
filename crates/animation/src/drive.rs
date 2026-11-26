@@ -4,7 +4,7 @@ use concerto_mesh::skeleton::{Skeleton, SkeletonComponent};
 
 use crate::{graph::AnimationGraph, node::DriveNodeInputs, player::AnimationPlayer};
 
-/// The system that walks each animation player's drive pass each fixed step, for ordering systems against it.
+/// The set `drive_animation_players` runs in, for ordering systems against the drive pass.
 #[derive(SystemSet, Clone, PartialEq, Eq, Hash, Debug)]
 pub struct AnimationDriveSet;
 

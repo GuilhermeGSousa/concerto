@@ -1032,10 +1032,11 @@ for `Death`, listed before the others.
 
 When a dead body lies at rest it settles: its parts become static where they
 lie (`PhysicsState::set_ragdoll_frozen`), it gets a `Settled` component, and
-`BodySettled { character }` is triggered. A settled body's graph still runs, but nothing it asks reaches physics, and it is no longer
-sensed and its capsule is no longer carried, so it costs its static shapes
-and the pose write-back and nothing in the solver. Its shapes still block
-doors and stop bullets. The bones keep the pose it lies in.
+`BodySettled { character }` is triggered. A settled body's graph still runs, but
+nothing it asks reaches physics, and it is no longer sensed and its capsule is no
+longer carried, so it costs its static shapes, the pose write-back and one graph
+walk per step, and nothing in the solver. Its shapes still block doors and stop
+bullets. The bones keep the pose it lies in.
 
 A `BodyHit` of at least `Settled::wake_impulse`, 50 N·s by default, wakes it:
 the parts are simulated again, the struck part takes the impulse, and the body
@@ -1043,6 +1044,9 @@ settles again, with another `BodySettled`. A lighter hit does nothing, and a
 settled body takes no pending impulse. A dynamic body pushed into a settled
 one is stopped by it and does not wake it; send a `BodyHit` for an explosion
 or a door that should.
+
+A `Die` sent to a settled body is dropped for good, and a hit that wakes the body
+later does not bring it back.
 
 The capsule is not removed. It stays where the body left it, in no collision
 layer; despawn it, or the character, when the game no longer needs the entity.
@@ -1601,10 +1605,11 @@ skeleton that set them. The player keeps the last evaluated frame's, read with
 `AnimationPlayer::attributes`.
 
 Physics reads attributes once per fixed step, through a second walk of the
-graph. `AnimationPlayer::drive(entity, graphs, skeleton, inputs, delta_time)`, called
-by `drive_animation_players`, the animation crate's system that runs the step
-in `LateFixedUpdate` inside `AnimationDriveSet`, with the player's entity, its
-skeleton and its `InputSet<DriveNodeInputs>`, calls each
+graph. `drive_animation_players`, the animation crate's system, runs it each
+fixed step in `LateFixedUpdate` inside `AnimationDriveSet`, which a system
+orders itself against, and is the only caller: a game does not call `drive` from its
+own system. For each player with a skeleton it walks the graph with the player's entity, its
+skeleton and its `InputSet<DriveNodeInputs>`, calling each
 node's `drive(state, input, context, bone_ids, inputs, pool, output)` from the
 leaves up and keeps the attributes of the result, returned and read again with
 `AnimationPlayer::drive_attributes`. Only attributes are read and written. The
