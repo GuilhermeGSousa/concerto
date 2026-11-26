@@ -756,7 +756,6 @@ fn a_body_senses_its_support_its_balance_its_fall_and_its_rest() {
         (
             CharacterRagdoll::new(asset),
             AnimationHandleComponent::new(flinch),
-            BodySense::default(),
         ),
         humanoid.skeleton,
     );

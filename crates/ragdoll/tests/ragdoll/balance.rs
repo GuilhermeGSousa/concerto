@@ -35,8 +35,8 @@ use concerto_ragdoll::testing::{
     SpawnedHumanoid, humanoid_skeleton, reference_humanoid, spawn_humanoid,
 };
 use concerto_ragdoll::{
-    BalanceNode, BalanceSettings, BalanceState, BodyDown, BodySense, BodySettled, CharacterRagdoll,
-    LimpNode, MotorCommand, RagdollBody, RagdollPlugin, StaggerNode, StaggerState,
+    BalanceNode, BalanceSettings, BalanceState, BodyDown, BodySettled, CharacterRagdoll, LimpNode,
+    MotorCommand, RagdollBody, RagdollPlugin, StaggerNode, StaggerState,
 };
 use concerto_reflect::Reflect;
 use glam::{Quat, Vec3};
@@ -117,14 +117,7 @@ impl Stage {
         ));
         let humanoid = spawn_humanoid(world, skeleton, placement);
         let character = humanoid.skeleton;
-        world.insert(
-            (
-                CharacterRagdoll::new(asset),
-                BodySense::default(),
-                count_downs(),
-            ),
-            character,
-        );
+        world.insert((CharacterRagdoll::new(asset), count_downs()), character);
         if let Some(graph) = graph {
             world.insert(AnimationHandleComponent::new(graph), character);
         }

@@ -40,6 +40,7 @@ use crate::{
     generate::BRACED,
     messages::{BodyDead, PendingImpulses, Wounded, keep_wounds},
     resolve::ResolvedRagdoll,
+    sensing::BodySense,
     shot::Wounds,
 };
 
@@ -52,7 +53,7 @@ impl EntitySignal for PoseLost {}
 /// Gives a character a physical body: goes on the entity with the `SkeletonComponent`, names the ragdoll asset of that skeleton, and builds the ragdoll at the current pose once both have loaded.
 #[derive(Component, Reflect, Clone, Debug, PartialEq)]
 #[reflect(Component, Default, SceneComponent)]
-#[require(PendingImpulses, Wounds, Listener<Wounded> = keep_wounds(), Listener<BodyDead> = mark_dead())]
+#[require(PendingImpulses, Wounds, BodySense, Listener<Wounded> = keep_wounds(), Listener<BodyDead> = mark_dead())]
 pub struct CharacterRagdoll {
     pub ragdoll: AssetHandle<Ragdoll>,
     /// The character's own capsule, carried under the body while the character is physical; it should have `CollisionLayers::character()` so the parts pass through it.
