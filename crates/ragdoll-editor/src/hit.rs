@@ -1,8 +1,9 @@
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use concerto_animation::player::AnimationPlayer;
 use concerto_ecs::{Component, Entity, Query, Res, command::CommandQueue};
 use concerto_editor::hosted::{EditWorld, EditWorldSignals};
+use concerto_foundation::time::Time;
 use concerto_mcp::{McpTool, Needs, PendingCall, ToolCalls, ToolError};
 use concerto_physics::{physics_state::PhysicsState, ragdoll::RagdollId};
 use concerto_ragdoll::{BodyHit, BodyView, CharacterRagdoll, RagdollBody};
@@ -13,8 +14,9 @@ use serde::Deserialize;
 use crate::report::{Graphs, graph_lines, states_text};
 
 const DEFAULT_IMPULSE: Vec3 = Vec3::new(0.0, 0.0, -30.0);
-const PATIENCE: Duration = Duration::from_secs(8);
-const REACTION: Duration = Duration::from_secs(1);
+const PATIENCE: f32 = 8.0;
+const REACTION: f32 = 1.0;
+const WALL_LIMIT: Duration = Duration::from_secs(30);
 
 /// Hits a character of the game that is playing the way a bullet does, by sending `BodyHit` for the part on `bone`, and answers once the body is back on its animation: the bone hit, how far it got from its animated place at most, in metres, and the seconds it took. It answers at once that the graph did not react when no bone of the body is drawn from physics within a second, which is what a character with no reaction in its animation graph does, and with the graph's states after 8 seconds when the body never comes back, as a body that is down or dead does.
 #[derive(Deserialize, JsonSchema)]
@@ -40,7 +42,7 @@ pub(crate) struct HitWait {
     scene_entity: Entity,
     part: usize,
     bone: String,
-    since: Instant,
+    seconds: f32,
     reacted: bool,
     peak: f32,
 }
@@ -59,6 +61,7 @@ type Characters = Query<
 type Waited = (
     Query<'static, 'static, (&'static RagdollBody, &'static AnimationPlayer)>,
     Graphs,
+    Option<Res<'static, Time>>,
 );
 
 fn unknown_bone(body: &RagdollBody, bone: &str) -> ToolError {
@@ -172,13 +175,14 @@ pub(crate) fn hit_character(
             signals.trigger(hit);
         }
         let mut pending =
-            PendingCall::new(reply, "the body to return to its animation").timeout(PATIENCE);
+            PendingCall::new(reply, "the body to return to its animation").timeout(WALL_LIMIT);
         pending.at_deadline = Some(format!(
-            "Hit {} of {} with impulse {} N·s at {}; the graph's states could not be read.",
+            "Hit {} of {} with impulse {} N·s at {}; the game did not step for {} s of real time, so nothing was measured. Is it paused? Call status, then play.",
             arguments.bone,
             arguments.entity,
             vec3_text(impulse),
-            vec3_text(point)
+            vec3_text(point),
+            WALL_LIMIT.as_secs()
         ));
         cmd.spawn((
             pending,
@@ -186,7 +190,7 @@ pub(crate) fn hit_character(
                 scene_entity: entity,
                 part,
                 bone: arguments.bone,
-                since: Instant::now(),
+                seconds: 0.0,
                 reacted: false,
                 peak: 0.0,
             },
@@ -202,12 +206,13 @@ fn displacement(view: Option<&BodyView>, part: usize) -> f32 {
 }
 
 pub(crate) fn answer_hits(
-    mut waiting: Query<(Entity, &mut PendingCall, &mut HitWait)>,
+    mut waiting: Query<(Entity, &PendingCall, &mut HitWait)>,
     scene: EditWorld<Waited>,
     mut cmd: CommandQueue,
 ) {
-    let (characters, graphs) = &*scene;
-    for (entity, mut pending, mut wait) in waiting.iter_mut() {
+    let (characters, graphs, time) = &*scene;
+    let stepped = time.as_ref().map_or(0.0, |time| time.delta().as_secs_f32());
+    for (entity, pending, mut wait) in waiting.iter_mut() {
         let id = wait.scene_entity.to_id_string();
         let Some((body, player)) = characters.get_entity(wait.scene_entity) else {
             pending.reply.err(ToolError::new(
@@ -224,30 +229,33 @@ pub(crate) fn answer_hits(
         if !animated {
             wait.reacted = true;
         }
-        let elapsed = wait.since.elapsed();
+        wait.seconds += stepped;
+        let elapsed = wait.seconds;
         if wait.reacted && animated {
             pending.reply.ok(format!(
                 "Hit {} of {id}; the part got {:.3} m from its animated place at most and the body was back on its animation after {:.2} s.",
                 wait.bone,
                 wait.peak,
-                elapsed.as_secs_f32()
+                elapsed
             ));
             cmd.despawn(entity);
         } else if !wait.reacted && elapsed >= REACTION {
             pending.reply.ok(format!(
                 "Hit {} of {id}, but the graph did not react: no bone was drawn from physics within {} s. Add a flinch or shot entry to a slot node of its graph that listens for the Hit message, which graph_inspect and body_report show.",
                 wait.bone,
-                REACTION.as_secs()
+                REACTION
             ));
             cmd.despawn(entity);
-        } else if let Some(graphs) = graphs {
-            let lines = graph_lines(player, graphs);
-            pending.at_deadline = Some(format!(
-                "Hit {} of {id}, but the body did not return to its animation within {} s; the graph is in {}; call body_report for each limb.",
+        } else if elapsed >= PATIENCE {
+            let states = graphs
+                .as_ref()
+                .map_or_else(Vec::new, |graphs| graph_lines(player, graphs).states);
+            pending.reply.ok(format!(
+                "Hit {} of {id}, but the body did not return to its animation within {PATIENCE} s; the graph is in {}; call body_report for each limb.",
                 wait.bone,
-                PATIENCE.as_secs(),
-                states_text(&lines.states)
+                states_text(&states)
             ));
+            cmd.despawn(entity);
         }
     }
 }

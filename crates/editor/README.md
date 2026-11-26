@@ -1881,11 +1881,13 @@ the hit as a gunshot, which the graph's shot behaviour answers to. The
 character's animation graph decides what the hit does, so the tool watches the
 body and answers when every bone's physics amount is back to 0: the bone, the
 peak distance in metres of the hit part from its animated place, measured from
-the body view, and the seconds until the body was back on its animation. When no
+the body view, and the seconds until the body was back on its animation. The waits are
+measured in the played game's time, with a 30 s wall-clock guard against a game
+that never steps. When no
 bone is drawn from physics within one second it answers at once that the graph
 did not react, and says to add a flinch or shot entry to a slot of its graph.
 When the amounts never return, as for a body that is down or dead, it answers
-after eight seconds with the graph's states. An unknown entity, one with no
+after eight seconds of game time with the graph's states. An unknown entity, one with no
 `CharacterRagdoll` or no `AnimationPlayer`, a ragdoll not built yet and an
 unknown bone (the reply lists the part bones) are errors that say what to do
 next.
@@ -1902,8 +1904,8 @@ is a node of the character's animation graph, which the animation graph tools
 add, edit and drive.
 
 The tab's limp preview gives its character an `AnimationPlayer` with a graph
-built in code, a `LimpNode` that draws every part from physics, and the follow
-preview an empty graph; the preview needs no graph from the asset.
+built in code, a `LimpNode` that draws every part from physics; the follow
+preview has a player with no graph, so the clip it plays writes the bones alone.
 
 ### The texture tab
 

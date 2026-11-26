@@ -111,13 +111,7 @@ struct RagdollStage {
     poke: Option<Poke>,
     framed: bool,
     limp: bool,
-    graphs: Option<Graphs>,
-}
-
-#[derive(Clone)]
-struct Graphs {
-    follow: AssetHandle<AnimationGraph>,
-    limp: AssetHandle<AnimationGraph>,
+    limp_graph: Option<AssetHandle<AnimationGraph>>,
 }
 
 impl RagdollStage {
@@ -129,21 +123,14 @@ impl RagdollStage {
         if let Some(body) = self.character_ragdoll() {
             cmd.insert(body, character);
         }
-        if let Some(graphs) = &self.graphs {
-            let graph = if self.limp {
-                &graphs.limp
-            } else {
-                &graphs.follow
-            };
-            cmd.insert(AnimationHandleComponent::new(graph.clone()), character);
+        if self.limp {
+            if let Some(graph) = &self.limp_graph {
+                cmd.insert(AnimationHandleComponent::new(graph.clone()), character);
+            }
+        } else if let Some(skeleton) = &self.skeleton {
+            cmd.remove::<AnimationHandleComponent>(character);
+            cmd.insert(AnimationPlayer::new(skeleton.bone_count()), character);
         }
-    }
-}
-
-fn preview_graphs(server: &AssetServer) -> Graphs {
-    Graphs {
-        follow: server.add(AnimationGraph::new()),
-        limp: server.add(AnimationGraph::from_node(LimpNode::default())),
     }
 }
 
@@ -194,10 +181,10 @@ fn show_stage(
         skeleton_id: signal.skeleton_id,
         scene,
         ragdoll: stage.ragdoll,
-        graphs: stage
-            .graphs
+        limp_graph: stage
+            .limp_graph
             .clone()
-            .or_else(|| Some(preview_graphs(&server))),
+            .or_else(|| Some(server.add(AnimationGraph::from_node(LimpNode::default())))),
         ..RagdollStage::default()
     };
     cmd.trigger(SetSkeletonGizmo(false));

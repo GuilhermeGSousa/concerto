@@ -176,6 +176,31 @@ struct Hits {
     reacted: String,
     inert: String,
     report: String,
+    mid_flinch: Option<String>,
+}
+
+fn amounts(report: &str) -> Vec<f32> {
+    report
+        .lines()
+        .filter_map(|line| {
+            line.split_once(" · physics ")?
+                .1
+                .split(' ')
+                .next()?
+                .parse()
+                .ok()
+        })
+        .collect()
+}
+
+async fn report_while_reacting(client: &Client, entity: &str) -> Option<String> {
+    for _ in 0..400 {
+        let report = ok(client, "body_report", json!({ "entity": entity })).await;
+        if amounts(&report).iter().any(|amount| *amount > 0.0) {
+            return Some(report);
+        }
+    }
+    None
 }
 
 async fn hit_characters(client: Client) -> Hits {
@@ -207,11 +232,16 @@ async fn hit_characters(client: Client) -> Hits {
     let reacted = hit(reacting.clone()).await;
     let inert = hit(inert).await;
     let report = ok(&client, "body_report", json!({ "entity": reacting })).await;
+    let (_, mid_flinch) = tokio::join!(
+        hit(reacting.clone()),
+        report_while_reacting(&client, &reacting)
+    );
     client.cancel().await.unwrap();
     Hits {
         reacted,
         inert,
         report,
+        mid_flinch,
     }
 }
 
@@ -249,9 +279,16 @@ fn hit_character_waits_for_the_body_to_return_and_body_report_shows_each_limb() 
         .expect("the client's assertions hold")
         .expect("the client connects");
 
+    let peak: f32 = hits
+        .reacted
+        .split("the part got ")
+        .nth(1)
+        .and_then(|rest| rest.split(' ').next())
+        .and_then(|number| number.parse().ok())
+        .unwrap_or_else(|| panic!("no peak distance in {}", hits.reacted));
+    assert!(peak > 0.0, "{}", hits.reacted);
     assert!(
-        hits.reacted.contains("m from its animated place at most")
-            && hits.reacted.contains("back on its animation after"),
+        hits.reacted.contains("back on its animation after"),
         "{}",
         hits.reacted
     );
@@ -268,13 +305,14 @@ fn hit_character_waits_for_the_body_to_return_and_body_report_shows_each_limb() 
         hits.report
     );
     assert_eq!(
-        hits.report
-            .lines()
-            .filter(|line| line.contains(" · physics "))
-            .count(),
-        17,
+        amounts(&hits.report).len(),
+        reference_humanoid().ragdoll.parts.len(),
         "{}",
         hits.report
     );
     assert!(hits.report.contains("graph states: "), "{}", hits.report);
+    assert!(
+        hits.mid_flinch.is_some(),
+        "no limb was drawn from physics while the character flinched"
+    );
 }
