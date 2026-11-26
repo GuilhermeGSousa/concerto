@@ -23,16 +23,14 @@ use crate::{
 const DYING_STIFFNESS: f32 = 400.0;
 const DYING_TORQUE: f32 = 120.0;
 
-/// A strength that drains over `seconds`, from the hands and feet inwards; zero seconds drains it at once.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Dying {
-    /// The seconds over which the strength drains; zero kills at once.
-    pub seconds: f32,
+pub(crate) struct Dying {
+    pub(crate) seconds: f32,
     elapsed: f32,
 }
 
 impl Dying {
-    pub fn new(seconds: f32) -> Self {
+    pub(crate) fn new(seconds: f32) -> Self {
         Self {
             seconds,
             elapsed: 0.0,
@@ -55,8 +53,7 @@ impl Dying {
         held
     }
 
-    /// The share of its strength a part of `segment` has left, from 1 to 0: hands and feet are spent first, the trunk last.
-    pub fn left(&self, segment: Segment) -> f32 {
+    pub(crate) fn left(&self, segment: Segment) -> f32 {
         if self.seconds <= 0.0 {
             return 0.0;
         }

@@ -8,7 +8,7 @@ pub mod shot;
 pub mod stagger;
 
 pub use balance::{BalanceNode, BalanceSettings, BalanceState, Hindrance};
-pub use dying::{Dying, DyingNode, DyingState};
+pub use dying::{DyingNode, DyingState};
 pub use fall::{FallNode, FallState};
 pub use flinch::{FlinchNode, FlinchState};
 pub use hold::{HoldNode, HoldState};

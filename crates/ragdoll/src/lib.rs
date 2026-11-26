@@ -36,7 +36,7 @@ pub use generate::{
 pub use hit::{BodyHit, HitKind};
 pub use messages::{BodyDead, BodyDown, Death, Hit, PendingImpulses, Wounded};
 pub use node::{
-    BalanceNode, BalanceSettings, BalanceState, Dying, DyingNode, DyingState, FallNode, FallState,
+    BalanceNode, BalanceSettings, BalanceState, DyingNode, DyingState, FallNode, FallState,
     FlinchNode, Hindrance, HoldNode, LimpNode, ShotNode, ShotState, StaggerNode, StaggerState,
 };
 pub use overlap::PartOverlap;

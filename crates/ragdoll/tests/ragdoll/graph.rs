@@ -703,6 +703,6 @@ fn a_hit_flinches_from_a_slot_throws_the_part_back_and_the_body_returns_to_its_a
     let impulse = Vec3::new(0.0, 0.0, -100.0);
     assert!(
         stage.struck_speed(calf, impulse) > 1.0,
-        "a hit on a graph that reacts to nothing still takes its impulse"
+        "a hit on a limp body takes its impulse"
     );
 }
