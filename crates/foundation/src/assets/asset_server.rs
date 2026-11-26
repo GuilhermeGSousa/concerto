@@ -283,12 +283,20 @@ impl AssetServer {
         }
     }
 
-    /// Replaces the type registry loads hand to `on_load`; every clone sees it, and a load uses the one the server holds when its `on_load` starts.
+    /// Replaces the type registry loads hand to [`on_load`](LoadableAsset::on_load).
+    ///
+    /// Every clone of the server sees it, and a load uses the one the server
+    /// holds when its `on_load` starts.
     pub fn set_type_registry(&self, registry: AppTypeRegistry) {
         *self.data.type_registry.write().unwrap() = registry;
     }
 
     /// Configures the editor project root and its complete registry snapshot.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `project_root` cannot be canonicalized, for
+    /// instance because it does not exist.
     pub fn publish_project_content(
         &self,
         project_root: &Path,
@@ -304,8 +312,10 @@ impl AssetServer {
         Ok(())
     }
 
-    /// Atomically replaces the root and UUID registry used by subsequent
-    /// loads. This is also available for non-native content providers.
+    /// Atomically replaces the root and UUID registry used by subsequent loads,
+    /// and cancels the loads pending at the call.
+    ///
+    /// This is also available for non-native content providers.
     pub fn publish_content_source(&self, root: ContentAssetRoot, registry: AssetRegistry) {
         // `load` takes these locks in the same order. Holding the pending lock
         // closes the gap where a request could otherwise attach to the old
@@ -329,19 +339,24 @@ impl AssetServer {
         Some(Arc::clone(&self.data.content.read().unwrap().registry))
     }
 
-    /// Whether an asset requested with `load` or `add` has yet to reach the world; a failed load counts until its failure is handled.
+    /// Whether an asset requested with [`load`](Self::load) or [`add`](Self::add) has yet to reach the world.
+    ///
+    /// A failed load counts until its failure is handled.
     pub fn is_loading(&self) -> bool {
         !self.data.pending.read().unwrap().assets.is_empty()
             || !self.data.asset_load_event_receiver.is_empty()
     }
 
-    /// Whether the asset `id` is in the world or on its way there; false for an id never loaded or added, and once its load fails or is cancelled or it unloads.
+    /// Whether the asset `id` is in the world or on its way there.
+    ///
+    /// False for an id never loaded or added, and once its load fails, is
+    /// cancelled, or it unloads.
     pub fn is_loading_or_loaded(&self, id: AssetId) -> bool {
         self.data.pending.read().unwrap().assets.contains_key(&id)
             || self.data.loaded_assets.read().unwrap().contains(&id)
     }
 
-    /// Cancels the loads pending at the call; none of them delivers its asset afterwards.
+    /// Cancels the loads pending at the call, so none of them delivers its asset afterwards.
     pub fn cancel_pending(&self) {
         let mut pending = self.data.pending.write().unwrap();
         let kept: Vec<_> = self
@@ -384,13 +399,27 @@ impl AssetServer {
             .insert(A::name(), cook_hook::<A>);
     }
 
-    /// Whether files of `kind` hold a derived type, whose assets that derive [`cook`](Self::cook) writes with their blob.
+    /// Whether files of `kind` hold a derived type.
+    ///
+    /// [`cook`](Self::cook) writes the assets of such a kind that derive with
+    /// their blob.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn can_cook(&self, kind: &str) -> bool {
         self.data.cook_hooks.read().unwrap().contains_key(kind)
     }
 
-    /// Writes to `<out>/<address>` every file of the registry whose asset derives, with its derived blob, and every other file that has an uncooked section, all without their uncooked sections, in address order, stopping at the first error; the report lists only those written.
+    /// Writes the cooked form of the registry's content under `out`.
+    ///
+    /// Each file goes to `<out>/<address>`, in address order, without its
+    /// uncooked sections: every file whose asset derives, with its derived
+    /// blob, and every other file that has an uncooked section. Other files
+    /// are not written. The report lists only the files written.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first error and stops there: when the content root is a URL,
+    /// a file cannot be read or written, an asset fails to derive, or a derived
+    /// asset is embedded in another file.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn cook(&self, out: &Path) -> anyhow::Result<CookReport> {
         let (root, registry) = self.content_source();
@@ -481,7 +510,14 @@ impl AssetServer {
         Ok(true)
     }
 
-    /// The uncooked data of the asset `id`, read alone from its file through the published root and registry; `None` when its record has none, as in a cooked file.
+    /// The uncooked data of the asset `id`, read alone from its file through the published root and registry.
+    ///
+    /// `None` when its record has none, as in a cooked file.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the registry does not know `id`, its file cannot
+    /// be read or parsed, or the section does not decode as `E`.
     pub async fn load_uncooked<E: UncookedData>(&self, id: AssetId) -> anyhow::Result<Option<E>> {
         let Some(section) = self.uncooked_section(id).await? else {
             return Ok(None);
@@ -565,12 +601,14 @@ impl AssetServer {
         self.data.format_versions.read().unwrap().get(kind).copied()
     }
 
-    /// Whether `A` was registered, without which `load` and `add` panic.
+    /// Whether `A` was registered, without which [`load`](Self::load) and [`add`](Self::add) panic.
     pub fn is_registered<A: Asset>(&self) -> bool {
         self.data.handle_provider.is_registered::<A>()
     }
 
-    /// Lets a handle to `A` be set through this server as a weak one that names its asset and loads nothing, for an editor that edits references to a kind it does not load.
+    /// Lets a handle to `A` be set through this server as a weak one that names its asset and loads nothing.
+    ///
+    /// For an editor that edits references to a kind it does not load.
     pub fn name_asset<A: Asset>(&self) {
         self.data.named.write().unwrap().insert(TypeId::of::<A>());
     }
@@ -580,7 +618,13 @@ impl AssetServer {
         self.data.named.read().unwrap().contains(&TypeId::of::<A>())
     }
 
-    /// Adds a built asset, running its `on_load` inline before it reaches the world; a failing `on_load` is logged and the returned handle never resolves.
+    /// Adds a built asset under a new id, running its `on_load` inline before it reaches the world.
+    ///
+    /// A failing `on_load` is logged, and the returned handle never resolves.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `A` was not registered with [`register_asset`](Self::register_asset).
     pub fn add<A: LoadableAsset>(&self, mut asset: A) -> AssetHandle<A> {
         let id = AssetId::new();
         let handle = self.data.handle_provider.request_handle(id);
@@ -604,7 +648,15 @@ impl AssetServer {
         handle
     }
 
-    /// Puts a built asset in its store under `id`, running its `on_load` inline and dropping a pending load of that id, so `load(id)` returns it and reads no file; inserting again replaces it, and a failing `on_load` is logged and leaves what was there.
+    /// Puts a built asset in its store under `id`, running its `on_load` inline.
+    ///
+    /// A pending load of `id` is dropped, so [`load`](Self::load) of `id`
+    /// returns this asset and reads no file. Inserting again replaces it. A
+    /// failing `on_load` is logged and leaves what was there.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `A` was not registered with [`register_asset`](Self::register_asset).
     pub fn insert_loaded<A: LoadableAsset>(&self, id: AssetId, mut asset: A) -> AssetHandle<A> {
         let handle = self.data.handle_provider.request_handle(id);
         let was_loaded = {
@@ -632,9 +684,15 @@ impl AssetServer {
         handle
     }
 
-    /// Loads a stored asset using its persistent UUID, obtained from `asset_id!`
-    /// or a serialized asset reference. Repeated requests share handles and loads,
-    /// and the assets requested from one file share one read of it.
+    /// Loads a stored asset using its persistent UUID.
+    ///
+    /// The id comes from [`asset_id!`](crate::asset_id) or a serialized asset
+    /// reference. Repeated requests share handles and loads, and the assets
+    /// requested from one file share one read of it.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `A` was not registered with [`register_asset`](Self::register_asset).
     pub fn load<A: LoadableAsset + 'static>(&self, id: AssetId) -> AssetHandle<A> {
         let handle = self.data.handle_provider.request_handle(id);
         let mut pending = self.data.pending.write().unwrap();
@@ -646,7 +704,13 @@ impl AssetServer {
         handle
     }
 
-    /// Reads the asset `id` from its file again, though it is loaded or was inserted, and replaces it once the read lands; a read that fails leaves what was there.
+    /// Reads the asset `id` from its file again, though it is loaded or was inserted, and replaces it once the read lands.
+    ///
+    /// A read that fails leaves what was there.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `A` was not registered with [`register_asset`](Self::register_asset).
     pub fn reload<A: LoadableAsset + 'static>(&self, id: AssetId) -> AssetHandle<A> {
         let handle = self.data.handle_provider.request_handle(id);
         let mut pending = self.data.pending.write().unwrap();
@@ -655,7 +719,10 @@ impl AssetServer {
         handle
     }
 
-    /// Reads every asset of the file `file` that is loaded or loading again, its host and the assets embedded in it, each replaced once the read lands; an asset of a kind this server never loaded is left as it is.
+    /// Reads again every asset of the file `file` that is loaded or loading, its host and the assets embedded in it.
+    ///
+    /// Each is replaced once the read lands. An asset of a kind this server
+    /// never loaded is left as it is.
     pub fn reload_file(&self, file: AssetId) {
         let loaders = self.data.loaders.read().unwrap().clone();
         let (_, registry) = self.content_source();
@@ -879,7 +946,6 @@ impl Default for AssetServer {
     }
 }
 
-// TODO: This shouldn't need to be public
 pub fn handle_asset_load_events(world: &mut world::World) {
     let server = world.remove_resource::<AssetServer>().unwrap();
 

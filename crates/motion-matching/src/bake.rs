@@ -30,6 +30,15 @@ impl EntryPlan {
 }
 
 /// Checks the rate, speed, clips and ranges of a database and lays out the frames of every entry.
+///
+/// # Errors
+///
+/// Returns [`BakeError::InvalidRate`], [`BakeError::InvalidSpeed`] or
+/// [`BakeError::InvalidSampleDt`] for a value that is not positive and
+/// finite, [`BakeError::ClipCountMismatch`] when `clips` does not hold one
+/// clip per entry, and for the first entry that fails,
+/// [`BakeError::ClipHasNoBones`], [`BakeError::InvalidRange`] or
+/// [`BakeError::RangeTooShort`].
 pub fn plan_entries(
     definition: &MotionDatabase,
     skeleton: &Skeleton,
@@ -140,6 +149,16 @@ fn smooth(values: &[f32], window: usize) -> Result<Vec<f32>, BakeError> {
 }
 
 /// The simulation bone's model-space transform for every frame of one range, given each frame's model-space bone transforms.
+///
+/// # Errors
+///
+/// Returns [`BakeError::InvalidWindow`] for a smoothing window that is even
+/// or not greater than 3, and [`BakeError::MissingJoint`] when the skeleton
+/// lacks the position or facing joint.
+///
+/// # Panics
+///
+/// Panics if a pose in `model_poses` has fewer bones than `skeleton`.
 pub fn simulation_bone(
     settings: &SimulationBoneSettings,
     skeleton: &Skeleton,
@@ -275,6 +294,10 @@ pub fn body_motion(simulation: &[Transform], rate: f32) -> Vec<BodyMotion> {
 }
 
 /// The trajectory samples ahead of `frame` of one range, clamped to the range's last frame.
+///
+/// # Panics
+///
+/// Panics if `simulation` is empty or `motion` is shorter than it.
 pub fn trajectory_samples(
     settings: &TrajectorySettings,
     simulation: &[Transform],
@@ -298,6 +321,14 @@ pub fn trajectory_samples(
 }
 
 /// Bakes the computed part of a motion database whose channels are loaded, from the skeleton and one resolved clip per entry.
+///
+/// # Errors
+///
+/// Returns the first [`BakeError`] found: an invalid setting or entry as
+/// [`plan_entries`] reports it, an invalid smoothing window, a joint the
+/// skeleton lacks, a channel that is not loaded or fails its
+/// [`validate`](crate::channel::FeatureChannel::validate), or a pose that
+/// cannot be mirrored.
 pub fn bake(
     definition: &MotionDatabase,
     skeleton: &Skeleton,
@@ -307,6 +338,10 @@ pub fn bake(
 }
 
 /// [`bake`], calling `on_entry(finished, total)` after each entry, with `finished` counting from 1.
+///
+/// # Errors
+///
+/// Fails as [`bake`] does.
 pub fn bake_with_progress(
     definition: &MotionDatabase,
     skeleton: &Skeleton,

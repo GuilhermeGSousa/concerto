@@ -12,7 +12,9 @@ pub struct TimeRange {
     pub end: f32,
 }
 
-/// One clip of a motion database, the part of it to bake, and whether it plays mirrored; no range means the whole clip.
+/// One clip of a motion database, the part of it to bake, and whether it plays mirrored.
+///
+/// No range means the whole clip.
 #[derive(Reflect, Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct MotionEntry {
     pub clip: AssetHandle<AnimationClip>,
@@ -86,7 +88,10 @@ impl Default for SimulationBoneSettings {
     }
 }
 
-/// How the trajectory a channel sees is sampled: `sample_count` points, `sample_dt` seconds apart, starting one step ahead.
+/// How the trajectory a channel sees is sampled.
+///
+/// It has `sample_count` points, `sample_dt` seconds apart, starting one step
+/// ahead of the current frame.
 #[derive(Reflect, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct TrajectorySettings {
     pub sample_dt: f32,

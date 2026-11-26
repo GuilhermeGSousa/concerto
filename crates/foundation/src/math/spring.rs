@@ -85,8 +85,11 @@ pub struct Spring<T: SpringValue> {
     pub velocity: T::Velocity,
     /// Natural (undamped) angular frequency in rad/s; higher is snappier.
     pub angular_frequency: f32,
-    /// 1 = critically damped (fastest approach without overshoot), < 1
-    /// overshoots and oscillates, > 1 approaches more sluggishly.
+    /// Damping relative to critical damping.
+    ///
+    /// `1.0` is critically damped, the fastest approach without overshoot.
+    /// Below 1 the spring overshoots and oscillates; above 1 it approaches
+    /// more sluggishly.
     pub damping_ratio: f32,
 }
 
@@ -112,7 +115,9 @@ impl<T: SpringValue> Spring<T> {
         spring
     }
 
-    /// Critically damped at the angular frequency that halves the remaining distance every `halflife` seconds from rest; keeps the value and velocity.
+    /// Makes the spring critically damped at the angular frequency that halves the remaining distance every `halflife` seconds from rest.
+    ///
+    /// The value and velocity are kept.
     pub fn set_halflife(&mut self, halflife: f32) {
         // Root of (1 + x)e^{-x} = 1/2: the ω·t at which a critically damped
         // spring from rest has covered half its displacement.
@@ -144,7 +149,9 @@ impl<T: SpringValue> Spring<T> {
 }
 
 impl<T: SpringVector> Spring<T> {
-    /// The integral of `value` over the next `dt` seconds of tracking `target`, in closed form; the spring does not move.
+    /// The integral of `value` over the next `dt` seconds of tracking `target`, in closed form.
+    ///
+    /// The spring itself does not move.
     pub fn integral(&self, target: T, dt: f32) -> T {
         let w = self.angular_frequency;
         if w < f32::EPSILON {

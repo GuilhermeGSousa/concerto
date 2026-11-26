@@ -46,6 +46,11 @@ pub(crate) fn decode<A: Asset>(bytes: &[u8]) -> anyhow::Result<A> {
 }
 
 /// Reads the skeleton `asset` names under `root`, checking its id and its kind.
+///
+/// # Errors
+///
+/// Returns an error when the file cannot be read or decoded, or holds another
+/// id or kind than `asset` names.
 pub fn read_skeleton(root: &Path, asset: &AssetEntry) -> anyhow::Result<Skeleton> {
     decode(&read_bytes::<Skeleton>(root, asset)?)
 }

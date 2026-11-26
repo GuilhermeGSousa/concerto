@@ -50,7 +50,9 @@ pub struct BakedPlayback {
     pub channels: Arc<[Box<dyn FeatureChannel>]>,
 }
 
-/// Replaces the baked database the preview plays; `None` stops it.
+/// Replaces the baked database the preview plays.
+///
+/// `None` stops it.
 pub struct ShowDatabase(pub Option<BakedPlayback>);
 
 impl Signal for ShowDatabase {}
@@ -68,7 +70,9 @@ pub struct ShowChannel(pub Option<usize>);
 
 impl Signal for ShowChannel {}
 
-/// Which entry the shown baked frame belongs to and where it sits in the clip; written when the frame changes.
+/// Which entry the shown baked frame belongs to and where it sits in the clip.
+///
+/// Written when the frame changes.
 #[derive(Event, Clone, Debug, PartialEq)]
 pub struct DatabaseProgress {
     pub entry: usize,

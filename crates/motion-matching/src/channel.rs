@@ -10,15 +10,22 @@ use serde::{Deserialize, Serialize};
 
 use crate::{database::BakeError, definition::TrajectorySettings, simulation::TrajectorySample};
 
-/// One group of values a motion database stores per frame; implementors derive `Reflect`, `Default` and `Clone` and declare `#[reflect(FeatureChannel)]`.
+/// One group of values a motion database stores per frame.
+///
+/// Implementors derive `Reflect`, `Default` and `Clone` and declare
+/// `#[reflect(FeatureChannel)]`, so a database can store the channel by type
+/// name and rebuild it through [`ReflectFeatureChannel`].
 pub trait FeatureChannel: Reflect + DynCloneChannel + Send + Sync + 'static {
     /// How many `f32` values the channel writes per frame.
     fn dims(&self) -> usize;
 
-    /// Writes `dims()` values for `frame` into `out`.
+    /// Writes [`dims`](Self::dims) values for `frame` into `out`.
     fn extract(&self, frame: &FrameContext, out: &mut [f32]);
 
-    /// How strongly the channel's group counts against the others; positive and finite.
+    /// How strongly the channel's group counts against the others.
+    ///
+    /// It must be positive and finite; a database with any other weight
+    /// searches nothing.
     fn weight(&self) -> f32 {
         1.0
     }
@@ -28,19 +35,29 @@ pub trait FeatureChannel: Reflect + DynCloneChannel + Send + Sync + 'static {
         ChannelSource::Pose
     }
 
-    /// Checks the channel against the skeleton and trajectory settings before a bake; the reason of an `Err` becomes `BakeError::ChannelValue`.
+    /// Checks the channel against the skeleton and trajectory settings before a bake.
+    ///
+    /// # Errors
+    ///
+    /// Returns the reason the channel cannot be baked with these settings; the
+    /// bake reports it as [`BakeError::ChannelValue`].
     fn validate(&self, skeleton: &Skeleton, trajectory: &TrajectorySettings) -> Result<(), String> {
         let _ = (skeleton, trajectory);
         Ok(())
     }
 
-    /// Adds the shapes that draw `features`, this channel's raw `dims()` values, to `out`; `frame` only places what the values hold no position for.
+    /// Adds the shapes that draw `features`, this channel's raw [`dims`](Self::dims) values, to `out`.
+    ///
+    /// `frame` only places what the values hold no position for.
     fn preview(&self, frame: &FrameContext, features: &[f32], out: &mut Vec<FeatureShape>) {
         let _ = (frame, features, out);
     }
 }
 
-/// A feature channel as an asset holds it: its registered type name with the stored value, or the live channel once loaded.
+/// A feature channel as an asset holds it.
+///
+/// `Stored` is its registered type name with the stored value, as a load
+/// decodes it; `Live` is the channel built from it by [`load`](Self::load).
 pub enum FeatureChannelData {
     Stored {
         type_name: String,
@@ -68,7 +85,11 @@ impl FeatureChannelData {
         }
     }
 
-    /// The live channel; a channel not yet loaded is an error.
+    /// The live channel.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BakeError::UnloadedChannel`] for a channel not yet loaded.
     pub fn channel(&self) -> Result<&dyn FeatureChannel, BakeError> {
         match self {
             Self::Live { channel, .. } => Ok(channel.as_ref()),
@@ -77,6 +98,10 @@ impl FeatureChannelData {
     }
 
     /// The reflected value a save writes.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when a live channel does not encode.
     pub fn value(&self) -> Result<Cow<'_, ReflectedValue>, EncodeError> {
         match self {
             Self::Stored { value, .. } => Ok(Cow::Borrowed(value)),
@@ -84,7 +109,15 @@ impl FeatureChannelData {
         }
     }
 
-    /// Builds the live channel from the stored value; a type the registry lacks, or one without [`ReflectFeatureChannel`], is an error.
+    /// Builds the live channel from the stored value.
+    ///
+    /// A channel already live is left as it is.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BakeError::UnregisteredChannel`] when the registry lacks the
+    /// type or it has no [`ReflectFeatureChannel`], and
+    /// [`BakeError::ChannelValue`] when the stored value does not apply to it.
     pub fn load(&mut self, registry: &TypeRegistry) -> Result<(), BakeError> {
         let Self::Stored { type_name, value } = self else {
             return Ok(());
@@ -190,7 +223,9 @@ impl<T: FeatureChannel + Clone> DynCloneChannel for T {
     }
 }
 
-/// One thing a channel draws, relative to the simulation bone; a `Ring` lies flat in the bone's ground plane.
+/// One thing a channel draws, relative to the simulation bone.
+///
+/// A `Ring` lies flat in the bone's ground plane.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum FeatureShape {
     Ring { center: Vec3, radius: f32 },
@@ -198,7 +233,10 @@ pub enum FeatureShape {
     Arrow { start: Vec3, end: Vec3 },
 }
 
-/// What a channel reads: `Trajectory` channels use only `FrameContext::simulation` and `FrameContext::trajectory`.
+/// What a channel reads.
+///
+/// `Trajectory` channels use only [`FrameContext::simulation`] and
+/// [`FrameContext::trajectory`]; `Pose` channels read the pose too.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ChannelSource {
     Pose,
@@ -216,14 +254,23 @@ pub struct FrameContext<'a> {
     pub trajectory: &'a [TrajectorySample],
 }
 
-/// The simulation bone's linear and angular velocity, in the same space as `FrameContext::simulation`, not in the bone's own frame.
+/// The simulation bone's linear and angular velocity.
+///
+/// Both are in the same space as [`FrameContext::simulation`], not in the
+/// bone's own frame.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct BodyMotion {
     pub velocity: Vec3,
     pub angular_velocity: Vec3,
 }
 
-/// Runs every channel into its span of `out`, in list order; `out` holds exactly the sum of their `dims()`.
+/// Runs every channel into its span of `out`, in list order.
+///
+/// `out` holds exactly the sum of their [`dims`](FeatureChannel::dims).
+///
+/// # Panics
+///
+/// Panics if `out` is shorter than the sum of the channels' dims.
 pub fn extract_features(channels: &[&dyn FeatureChannel], frame: &FrameContext, out: &mut [f32]) {
     let mut offset = 0;
     for channel in channels {
@@ -234,6 +281,10 @@ pub fn extract_features(channels: &[&dyn FeatureChannel], frame: &FrameContext, 
 }
 
 /// The shapes of every channel for one raw feature vector, one list per channel in order.
+///
+/// # Panics
+///
+/// Panics if `features` is shorter than the sum of the channels' dims.
 pub fn preview_features(
     channels: &[Box<dyn FeatureChannel>],
     frame: &FrameContext,

@@ -40,6 +40,11 @@ use playback::{follow_playback, follow_preview_time};
 use save::save_definitions;
 
 /// Adds the motion database editor to the editor's `App`.
+///
+/// # Panics
+///
+/// Panics if `app` lacks the editor's asset-editor registry, as an `App`
+/// the editor did not build does.
 pub fn install(app: &mut App) {
     app.register_derived_asset::<AnimationClip>();
     if let Some(server) = app.get_resource::<AssetServer>()

@@ -266,6 +266,11 @@ pub(crate) fn publish_values(
 }
 
 /// Reads the definition `asset` names under `root`, checking its id and its kind.
+///
+/// # Errors
+///
+/// Returns an error when the file cannot be read or decoded, or holds another
+/// id or kind than `asset` names.
 pub fn read_definition(root: &Path, asset: &AssetEntry) -> anyhow::Result<MotionDatabase> {
     let bytes = read_asset_record(root, asset)?;
     let (header, _) = read_content_asset(&bytes)?;

@@ -6,6 +6,11 @@ use super::content::read_content_without_uncooked;
 use super::{content::decode_content_asset, Asset, ContentAssetRoot};
 
 /// Loads the content asset at `<root>/<address>` as `A`, through [`decode_content_asset`](crate::assets::content::decode_content_asset).
+///
+/// # Errors
+///
+/// Returns an error when no file is at `address`, it cannot be read, or it
+/// does not decode as an `A`.
 pub async fn load_content_asset<A: Asset>(
     root: &ContentAssetRoot,
     address: &str,

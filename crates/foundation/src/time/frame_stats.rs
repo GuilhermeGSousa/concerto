@@ -2,8 +2,10 @@ use std::time::Duration;
 
 use concerto_ecs::resource::Resource;
 
-/// Rolling window of recent CPU frame times, for FPS displays and quick
-/// performance sanity checks (see docs/profiling.md).
+/// Rolling window of recent CPU frame times.
+///
+/// For FPS displays and quick performance sanity checks; see
+/// `docs/profiling.md` for measuring performance properly.
 ///
 /// Updated once per frame by the `TimePlugin`; read it anywhere you want to
 /// show or log frame timing.
@@ -37,8 +39,9 @@ impl FrameStats {
         self.len = (self.len + 1).min(Self::WINDOW);
     }
 
-    /// Advances the summary timer; returns `true` at most once per second.
-    /// Callers use this to throttle logging/redraws of the stats.
+    /// Advances the summary timer, returning `true` at most once per second.
+    ///
+    /// Callers use it to throttle logging or redraws of the stats.
     pub fn tick_summary(&mut self, delta: Duration) -> bool {
         self.summary_timer += delta.as_secs_f32();
         if self.summary_timer >= 1.0 {
@@ -70,8 +73,10 @@ impl FrameStats {
         self.window().iter().copied().fold(0.0, f32::max)
     }
 
-    /// Frame time at the given percentile (0.0–1.0) over the window,
-    /// in milliseconds. E.g. `percentile_ms(0.99)` for p99.
+    /// Frame time at the given percentile over the window, in milliseconds.
+    ///
+    /// `percentile` runs from 0.0 to 1.0 and is clamped to that range, so
+    /// `percentile_ms(0.99)` gives p99.
     pub fn percentile_ms(&self, percentile: f32) -> f32 {
         if self.len == 0 {
             return 0.0;

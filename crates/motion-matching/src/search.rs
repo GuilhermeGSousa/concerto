@@ -20,7 +20,10 @@ fn cost(
     sum.is_finite().then_some(sum)
 }
 
-/// The squared distance from `query` to `frame`, or `None` for a query of the wrong length, a frame outside the database or a database not derived.
+/// The squared distance from `query` to `frame`.
+///
+/// `None` for a query of the wrong length, a frame outside the database or a
+/// database not derived.
 pub fn cost_of(database: &MotionDatabase, query: &[f32], frame: usize) -> Option<f32> {
     if query.len() != database.feature_dims()? {
         return None;
@@ -34,7 +37,11 @@ pub fn cost_of(database: &MotionDatabase, query: &[f32], frame: usize) -> Option
     )
 }
 
-/// The frame nearest `query` by squared distance and that distance; `current` seeds the best, and no frame within `ignore_surrounding` of it or in the last `ignore_range_end` of a range is a candidate; `None` for a database not derived.
+/// The frame nearest `query` by squared distance, and that distance.
+///
+/// `current` seeds the best. No frame within `ignore_surrounding` frames of
+/// it, or in the last `ignore_range_end` frames of a range, is a candidate.
+/// `None` for a query of the wrong length or a database not derived.
 pub fn search(
     database: &MotionDatabase,
     query: &[f32],

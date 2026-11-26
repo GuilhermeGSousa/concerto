@@ -5,7 +5,9 @@ use concerto_motion_matching::{
     BodyMotion, FrameContext, MotionDatabase, TrajectorySample, bake::model_pose,
 };
 
-/// A database's local pose of `frame`, sampled from its clips; `None` when they can't be sampled.
+/// A database's local pose of `frame`, sampled from its clips.
+///
+/// `None` when they can't be sampled.
 pub fn local_pose(
     database: &MotionDatabase,
     skeleton: &Skeleton,
@@ -30,7 +32,7 @@ pub fn placed_pose(
     pose
 }
 
-/// The owned pose, simulation transform and trajectory of a frame, which a `FrameContext` borrows.
+/// The owned pose, simulation transform and trajectory of a frame, which a [`FrameContext`] borrows.
 pub struct BakedFrame {
     local_pose: Vec<JointPose>,
     model_pose: Vec<Transform>,
@@ -39,7 +41,9 @@ pub struct BakedFrame {
 }
 
 impl BakedFrame {
-    /// `frame` of the database, as it was baked; `None` when its clips can't be sampled or it is not derived.
+    /// `frame` of the database, as it was baked.
+    ///
+    /// `None` when its clips can't be sampled or the database is not derived.
     pub fn new(
         database: &MotionDatabase,
         skeleton: &Skeleton,

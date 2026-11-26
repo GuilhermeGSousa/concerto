@@ -1,6 +1,15 @@
 use crate::database::BakeError;
 
-/// Smooths `values` with a Savitzky-Golay filter, fitting a polynomial over the first or last window at the edges.
+/// Smooths `values` with a Savitzky-Golay filter.
+///
+/// At the edges it fits a polynomial over the first or last window. A window
+/// longer than `values` shrinks to the longest odd length that fits, and
+/// `order` is capped below the window.
+///
+/// # Errors
+///
+/// Returns [`BakeError::InvalidWindow`] when `window` is even or not greater
+/// than 3.
 pub fn savitzky_golay(values: &[f32], window: usize, order: usize) -> Result<Vec<f32>, BakeError> {
     if window.is_multiple_of(2) || window <= 3 {
         return Err(BakeError::InvalidWindow {

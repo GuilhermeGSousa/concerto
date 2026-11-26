@@ -58,6 +58,10 @@ pub fn weightless_hash(
 }
 
 /// The weight of each channel of `definition`, in order, read from its live channels.
+///
+/// # Errors
+///
+/// Returns [`BakeError::UnloadedChannel`] when a channel is not loaded.
 pub fn weights_of(definition: &MotionDatabase) -> Result<Vec<f32>, BakeError> {
     Ok(definition
         .live_channels()?
