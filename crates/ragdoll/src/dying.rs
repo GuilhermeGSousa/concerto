@@ -46,7 +46,7 @@ pub fn mark_dead() -> Listener<BodyDead> {
     .into_listener()
 }
 
-/// A dead body that lies at rest: its parts are static where they lie, nothing drives or senses it, and its capsule stays where it was left, out of every collision layer. A `BodyHit` of at least `wake_impulse` wakes it, and it settles again.
+/// A dead body that lies at rest: its parts are static where they lie, nothing drives or senses it, and its capsule stays where it was left, out of every collision layer. Its graph still runs, but nothing it asks reaches physics. A `BodyHit` of at least `wake_impulse` wakes it, and it settles again.
 #[derive(Component, Reflect, Clone, Copy, Debug, PartialEq)]
 #[reflect(Component, Default, SceneComponent)]
 pub struct Settled {
@@ -61,7 +61,7 @@ impl Default for Settled {
 }
 
 /// Sends a dying character's animation graph a `Death` message.
-pub fn forward_death(on: On<Die>, mut players: Query<&mut AnimationPlayer>) {
+pub fn forward_death(on: On<Die>, mut players: Query<&mut AnimationPlayer, Without<Settled>>) {
     let die = *on.signal();
     if let Some(mut player) = players.get_entity_mut(die.character) {
         player.send(Death {

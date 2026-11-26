@@ -1,6 +1,11 @@
 use std::any::TypeId;
 
-use concerto_app::{App, edit_time::AtPreviewTime, plugins::Plugin, schedule_groups::LateUpdate};
+use concerto_app::{
+    App,
+    edit_time::AtPreviewTime,
+    plugins::Plugin,
+    schedule_groups::{LateFixedUpdate, LateUpdate},
+};
 use concerto_ecs::{IntoSystemConfig, World, reflect::AppTypeRegistry};
 use concerto_foundation::{
     assets::handle::AssetHandle,
@@ -13,6 +18,7 @@ use log::warn;
 
 use crate::{
     clip::AnimationClip,
+    drive::{AnimationDriveSet, drive_animation_players},
     event::{AnimationEvent, ClipEvent},
     graph::{AnimationGraph, AnimationNodeData},
     mask::BoneMask,
@@ -159,6 +165,12 @@ impl Plugin for AnimationPlugin {
         app.register_animation_message::<AnimationEvent>();
         app.add_listener(queue_reflected_message.at_preview_time());
 
+        app.add_system(
+            LateFixedUpdate,
+            drive_animation_players
+                .in_set(AnimationDriveSet)
+                .at_preview_time(),
+        );
         app.add_system(LateUpdate, initialize_skeletons.at_preview_time())
             .add_system(
                 LateUpdate,

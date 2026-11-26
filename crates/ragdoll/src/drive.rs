@@ -1,11 +1,6 @@
-use concerto_animation::{
-    attribute::PoseAttribute, graph::AnimationGraph, node::DriveNodeInputs, player::AnimationPlayer,
-};
-use concerto_ecs::{
-    CommandQueue, Entity, Query, Res, ResMut, With, Without, system::input::InputSet,
-};
+use concerto_animation::{attribute::PoseAttribute, player::AnimationPlayer};
+use concerto_ecs::{CommandQueue, Entity, Query, Res, ResMut, Without};
 use concerto_foundation::{assets::asset_store::AssetStore, time::Time};
-use concerto_mesh::{Skeleton, SkeletonComponent};
 use concerto_physics::{physics_state::PhysicsState, ragdoll::RagdollId};
 use glam::{Quat, Vec3};
 
@@ -102,31 +97,6 @@ pub(crate) fn part_drive(
             force,
             torque,
         },
-    }
-}
-
-/// Each fixed step, before the ragdolls are driven, walks its graph's drive pass for the step.
-pub fn drive_graphs(
-    mut characters: Query<
-        (Entity, &mut AnimationPlayer, &SkeletonComponent),
-        (With<RagdollBody>, Without<Settled>),
-    >,
-    graphs: Option<Res<AssetStore<AnimationGraph>>>,
-    skeletons: Res<AssetStore<Skeleton>>,
-    inputs: InputSet<DriveNodeInputs>,
-) {
-    let Some(graphs) = graphs else {
-        return;
-    };
-    let dt = Time::fixed_delta_time().as_secs_f32();
-    for (entity, mut player, skeleton) in characters.iter_mut() {
-        player.drive(
-            entity,
-            &graphs,
-            skeletons.get(skeleton.skeleton()),
-            &inputs,
-            dt,
-        );
     }
 }
 

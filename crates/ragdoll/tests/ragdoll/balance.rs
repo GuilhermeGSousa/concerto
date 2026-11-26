@@ -35,8 +35,8 @@ use concerto_ragdoll::testing::{
     SpawnedHumanoid, humanoid_skeleton, reference_humanoid, spawn_humanoid,
 };
 use concerto_ragdoll::{
-    BalanceNode, BalanceSettings, BalanceState, BodyDown, BodySettled, CharacterRagdoll, LimpNode,
-    MotorCommand, RagdollBody, RagdollPlugin, StaggerNode, StaggerState,
+    BalanceNode, BalanceSettings, BalanceState, BodyDead, BodyDown, BodySettled, CharacterRagdoll,
+    LimpNode, MotorCommand, RagdollBody, RagdollPlugin, StaggerNode, StaggerState,
     messages::{Steadied, Toppled},
 };
 use concerto_reflect::Reflect;
@@ -47,6 +47,13 @@ struct Settles(usize);
 
 #[derive(Resource, Default)]
 struct Downs(usize);
+
+#[derive(Resource, Default)]
+struct Deaths(usize);
+
+fn count_deaths(_: On<BodyDead>, mut deaths: ResMut<Deaths>) {
+    deaths.0 += 1;
+}
 
 fn count_downs() -> Listener<BodyDown> {
     (|_: On<BodyDown>, mut downs: ResMut<Downs>| {
@@ -106,6 +113,8 @@ impl Stage {
         }
         app.register_plugin(RagdollPlugin);
         app.add_listener(count_settles)
+            .add_listener(count_deaths)
+            .insert_resource(Deaths::default())
             .insert_resource(Settles::default())
             .insert_resource(Downs::default());
         app.finish_plugin_build();
@@ -230,6 +239,10 @@ impl Stage {
 
     pub fn settles(&self) -> usize {
         self.app.get_resource::<Settles>().unwrap().0
+    }
+
+    pub fn deaths(&self) -> usize {
+        self.app.get_resource::<Deaths>().unwrap().0
     }
 
     pub fn downs(&self) -> usize {

@@ -5,8 +5,7 @@ use concerto_animation::{
     node::{AnimationNode, EditorAnimationNode, InputSlots, ReflectAnimationNode},
     pose::{AnimationFrame, EvaluatedFrame, FramePool},
 };
-use concerto_ecs::Res;
-use concerto_ecs::system::input::SystemInputData;
+use concerto_ecs::{Res, system::input::SystemInputData};
 use concerto_name::{Name, name};
 use concerto_physics::physics_state::PhysicsState;
 use concerto_reflect::{Reflect, ReflectDefault};

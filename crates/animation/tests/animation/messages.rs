@@ -3,6 +3,7 @@ use std::{any::TypeId, thread, time::Duration};
 use concerto_animation::{
     TransitionBlender,
     clip::{AnimationChanelOutput, AnimationChannel, AnimationClip},
+    drive::drive_animation_players,
     evaluation::{AnimationGraphContext, DriveContext},
     event::AnimationEvent,
     graph::AnimationGraph,
@@ -43,7 +44,7 @@ use concerto_reflect::{
 use glam::{Mat4, Vec3};
 use uuid::Uuid;
 
-use crate::attributes::{Amount, drive_players};
+use crate::attributes::Amount;
 
 const LONGEST_FRAME: Duration = Duration::from_millis(250);
 
@@ -645,7 +646,7 @@ impl Stage {
     fn driven_amount(&mut self) -> f32 {
         let slotted = self.slotted;
         let world = self.world();
-        let mut system = drive_players.into_system();
+        let mut system = drive_animation_players.into_system();
         system.initialize(world);
         system.run_and_apply((), world);
         world

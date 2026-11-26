@@ -9,8 +9,7 @@ use concerto_animation::{
     param::Param,
     pose::{AnimationFrame, EvaluatedFrame, FramePool},
 };
-use concerto_ecs::Res;
-use concerto_ecs::system::input::SystemInputData;
+use concerto_ecs::{Res, system::input::SystemInputData};
 use concerto_foundation::assets::{AssetId, asset_store::AssetStore, handle::AssetHandle};
 use concerto_mesh::Skeleton;
 use concerto_name::{Name, name};

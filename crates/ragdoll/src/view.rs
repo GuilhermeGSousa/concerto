@@ -43,17 +43,17 @@ impl<'a> BodyView<'a> {
             ragdoll_id: *id,
             body,
             sense,
-            wounds: wounds.unwrap_or_else(|| Wounds::none()),
+            wounds: wounds.unwrap_or(Wounds::none()),
         })
     }
 
     /// The character.
-    pub fn entity(&self) -> Entity {
+    pub fn entity(self) -> Entity {
         self.entity
     }
 
     /// The character's ragdoll in the physics world.
-    pub fn ragdoll_id(&self) -> RagdollId {
+    pub fn ragdoll_id(self) -> RagdollId {
         self.ragdoll_id
     }
 
@@ -85,7 +85,7 @@ impl<'a> BodyView<'a> {
     }
 
     /// The rotation `part` has relative to its parent part in the animated pose, the target a motor holding it to the animation aims at; identity for the root part.
-    pub fn animated_target(&self, part: usize) -> Quat {
+    pub fn animated_target(self, part: usize) -> Quat {
         let animated = self.body.animated_pose();
         let parent = self
             .resolved()
@@ -102,12 +102,12 @@ impl<'a> BodyView<'a> {
         }
     }
 
-    pub(crate) fn shared_resolved(&self) -> &Arc<ResolvedRagdoll> {
+    pub(crate) fn shared_resolved(self) -> &'a Arc<ResolvedRagdoll> {
         self.body.shared_resolved()
     }
 
     /// The linear velocity of `part` after the last physics step, in m/s.
-    pub fn velocity(&self, part: usize) -> Vec3 {
+    pub fn velocity(self, part: usize) -> Vec3 {
         self.body
             .velocities()
             .get(part)
@@ -126,14 +126,14 @@ impl<'a> BodyView<'a> {
     }
 
     /// The part on the skeleton bone at index `bone`, if it has one.
-    pub fn part_of_bone(&self, bone: usize) -> Option<usize> {
+    pub fn part_of_bone(self, bone: usize) -> Option<usize> {
         self.body.shared_part_of_bone().get(bone).copied().flatten()
     }
 
     /// The skeleton bone index of each of `parts`, skipping any the ragdoll does not have.
-    pub fn bones_of(&self, parts: impl IntoIterator<Item = usize>) -> impl Iterator<Item = usize> {
+    pub fn bones_of(self, parts: impl IntoIterator<Item = usize>) -> impl Iterator<Item = usize> {
         parts
             .into_iter()
-            .filter_map(|part| self.resolved().bones().get(part).copied())
+            .filter_map(move |part| self.resolved().bones().get(part).copied())
     }
 }

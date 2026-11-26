@@ -1,6 +1,7 @@
 pub mod attribute;
 pub mod blackboard;
 pub mod clip;
+pub mod drive;
 pub mod evaluation;
 pub mod event;
 pub mod graph;
@@ -20,6 +21,7 @@ pub mod root;
 pub mod target;
 pub mod transition;
 
+pub use drive::{AnimationDriveSet, drive_animation_players};
 pub use target::{animate_targets, update_animation_players};
 pub use transition::TransitionBlender;
 

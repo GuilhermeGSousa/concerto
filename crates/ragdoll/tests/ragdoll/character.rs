@@ -872,7 +872,9 @@ fn a_body_senses_its_support_its_balance_its_fall_and_its_rest() {
 
 #[test]
 fn a_drive_input_that_reads_what_the_graph_drive_writes_panics_when_the_drive_is_built() {
-    use concerto_animation::{node::DriveNodeInputs, player::AnimationPlayer};
+    use concerto_animation::{
+        node::DriveNodeInputs, player::AnimationPlayer, plugin::AnimationPlugin,
+    };
     use concerto_ecs::Query;
 
     let mut app = App::new();
@@ -881,6 +883,7 @@ fn a_drive_input_that_reads_what_the_graph_drive_writes_panics_when_the_drive_is
         .register_plugin(AssetManagerPlugin)
         .register_plugin(TransformPlugin)
         .register_plugin(PhysicsPlugin)
+        .register_plugin(AnimationPlugin)
         .register_plugin(RagdollPlugin);
     app.register_input::<DriveNodeInputs, Query<'static, 'static, &'static AnimationPlayer>>();
 

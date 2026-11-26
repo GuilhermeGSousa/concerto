@@ -3,13 +3,14 @@ use std::{thread, time::Duration};
 use concerto_animation::{
     attribute::{PoseAttribute, PoseAttributes},
     clip::{AnimationChanelOutput, AnimationChannel, AnimationClip},
+    drive::drive_animation_players,
     evaluation::{AnimationGraphContext, DriveContext},
     event::{AnimationEvent, AnimationSignal},
     graph::{AnimationGraph, AnimationNodeIndex},
     mask::{BoneMask, BoneMaskBranch},
     node::{
-        AdditiveNode, AnimationClipNode, AnimationNode, BlendNode, DriveNodeInputs,
-        EditorAnimationNode, InputSlots, LayerNode, ReflectAnimationNode,
+        AdditiveNode, AnimationClipNode, AnimationNode, BlendNode, EditorAnimationNode, InputSlots,
+        LayerNode, ReflectAnimationNode,
         state_machine::{AnimationFSMTrigger, AnimationStateMachine},
     },
     player::{AnimationHandleComponent, AnimationPlayer},
@@ -21,16 +22,13 @@ use concerto_app::{App, plugins::AssetManagerPlugin, schedule_groups::LateUpdate
 use concerto_ecs::{
     Entity, IntoSystem, System,
     component::scene::SceneEntityRef,
-    query::Query,
     reflect::AppTypeRegistry,
-    resource::{Res, ResMut, Resource},
+    resource::{ResMut, Resource},
     signal::{
         On,
         listener::{IntoListener, Listener},
     },
-    system::{
-        executor::single_thread::SingleThreadedExecutor, input::InputSet, schedule::Schedules,
-    },
+    system::{executor::single_thread::SingleThreadedExecutor, schedule::Schedules},
     world::World,
 };
 use concerto_foundation::{
@@ -50,8 +48,6 @@ struct Heard(usize);
 const BONES: usize = 3;
 const ALL_BONES: [usize; BONES] = [0, 1, 2];
 const LONGEST_FRAME: Duration = Duration::from_millis(250);
-const PHYSICS_STEP: f32 = 1.0 / 60.0;
-
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct Amount(pub(crate) f32);
 
@@ -179,18 +175,6 @@ impl AnimationNode for SetAmount {
 impl EditorAnimationNode for SetAmount {
     fn input_slots(&self) -> InputSlots {
         InputSlots::Fixed(vec![name!("pose")])
-    }
-}
-
-pub(crate) fn drive_players(
-    mut players: Query<(Entity, &mut AnimationPlayer, &SkeletonComponent)>,
-    graphs: Res<AssetStore<AnimationGraph>>,
-    skeletons: Res<AssetStore<Skeleton>>,
-    inputs: InputSet<DriveNodeInputs>,
-) {
-    for (entity, mut player, component) in players.iter_mut() {
-        let skeleton = skeletons.get(component.skeleton());
-        player.drive(entity, &graphs, skeleton, &inputs, PHYSICS_STEP);
     }
 }
 
@@ -449,7 +433,7 @@ impl Stage {
 
     fn drive(&mut self, player: Entity) -> &PoseAttributes {
         let world = self.world();
-        let mut system = drive_players.into_system();
+        let mut system = drive_animation_players.into_system();
         system.initialize(world);
         system.run_and_apply((), world);
         world

@@ -41,7 +41,13 @@ fn dying_graph(server: &AssetServer) -> AnimationGraph {
                 0.0,
             );
         })
-        .state(name!("dead"), dead, |_| {})
+        .state(name!("dead"), dead, |to| {
+            to.to(
+                name!("dying"),
+                AnimationFSMTrigger::on_message::<Death>(),
+                0.0,
+            );
+        })
         .build(),
     )
 }
@@ -153,6 +159,22 @@ fn a_dying_body_drains_settles_into_a_static_pose_and_wakes_only_when_hit_hard()
         "a settled body is static: a push and a light hit leave every bone where it lay"
     );
     assert_eq!(stage.settles(), 1);
+
+    stage.run(10);
+    assert_eq!(
+        bones(&stage),
+        lying,
+        "a settled body stays frozen across steps"
+    );
+    let deaths = stage.deaths();
+    die(&mut stage, 1.0);
+    stage.run(30);
+    assert!(
+        stage.deaths() == deaths
+            && stage.entries() == [name!("alive"), name!("dying"), name!("dead")]
+            && bones(&stage) == lying,
+        "a Die sent to a settled body neither kills it again nor drains it again"
+    );
 
     let rested = stage.part("pelvis").y;
     hit(&mut stage, "pelvis", Vec3::new(0.0, 300.0, 0.0));

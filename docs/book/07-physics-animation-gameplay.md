@@ -574,10 +574,10 @@ graph plays, through messages, params and state machines. A character with no
 follows its animation and never reacts: a hit does not move it and `Die` does
 nothing. The engine ships no reaction graph; each game authors its own.
 
-Each fixed step, before physics steps, the ragdoll hands the character's player
-a `BodyView`, a snapshot of the body that the graph's nodes read as an extra,
-walks the graph's drive pass, and drives each part from what the graph gives
-its bone:
+Each fixed step, before physics steps, the animation crate walks the drive pass
+of every animation player's graph; the ragdoll nodes read their character's body
+through a `BodyInput` query, which they name as their typed drive input. The
+ragdoll then drives each part from what the graph gave its bone:
 
 - a part whose bone has neither an amount nor a cover is kinematic, driven to
   its bone's pose. The parts trail the drawn pose by up to one frame. They
@@ -1032,8 +1032,8 @@ for `Death`, listed before the others.
 
 When a dead body lies at rest it settles: its parts become static where they
 lie (`PhysicsState::set_ragdoll_frozen`), it gets a `Settled` component, and
-`BodySettled { character }` is triggered. A settled body is no longer driven
-or sensed and its capsule is no longer carried, so it costs its static shapes
+`BodySettled { character }` is triggered. A settled body's graph still runs, but nothing it asks reaches physics, and it is no longer
+sensed and its capsule is no longer carried, so it costs its static shapes
 and the pose write-back and nothing in the solver. Its shapes still block
 doors and stop bullets. The bones keep the pose it lies in.
 
@@ -1572,9 +1572,8 @@ player's own data: its blackboard, its root bone in `evaluate`, its skeleton,
 and, in `evaluate`, `model_to_world`: the transform of bone 0's parent, or
 identity when it has none. It is this frame's: the character has already moved by
 this frame's root motion when `evaluate` runs, so a node that reads the world
-reads where the character is now. `extra::<T>()` reads typed per-character
-data the game handed the player with `AnimationPlayer::set_extra(value)`, one
-value per type, replaced by the next of that type; `None` until one is set.
+reads where the character is now. `entity()` is the entity of the player being walked, which a node passes to a
+typed input, such as a `Query`, to read the character's other components.
 
 `evaluate` writes an `AnimationFrame`: a `Pose`, the joints in bone order, with
 the clip events its sources fired this frame. Its inputs
@@ -1602,9 +1601,10 @@ skeleton that set them. The player keeps the last evaluated frame's, read with
 `AnimationPlayer::attributes`.
 
 Physics reads attributes once per fixed step, through a second walk of the
-graph. `AnimationPlayer::drive(graphs, skeleton, inputs, delta_time)`, called
-by the system that runs the step with the player's skeleton and its
-`InputSet<DriveNodeInputs>`, calls each
+graph. `AnimationPlayer::drive(entity, graphs, skeleton, inputs, delta_time)`, called
+by `drive_animation_players`, the animation crate's system that runs the step
+in `LateFixedUpdate` inside `AnimationDriveSet`, with the player's entity, its
+skeleton and its `InputSet<DriveNodeInputs>`, calls each
 node's `drive(state, input, context, bone_ids, inputs, pool, output)` from the
 leaves up and keeps the attributes of the result, returned and read again with
 `AnimationPlayer::drive_attributes`. Only attributes are read and written. The
@@ -1615,7 +1615,7 @@ state machine drives the states it plays without advancing. Under
 inertialization the drive frame is the destination's alone. A node advances its
 physics-side state in `drive` at the step's `DriveContext::delta_time`; the
 context also gives the player's `blackboard()`, `root()`, `skeleton()` and
-`extra::<T>()`, and `emit(signal)` queues a signal as in the other passes, and `bone_ids` are the
+`entity()`, and `emit(signal)` queues a signal as in the other passes, and `bone_ids` are the
 skeleton's, as in `evaluate`; `model_to_world` is `None` in a drive step.
 
 A node gives root motion with `root_motion(state, input, context, bone_ids,
