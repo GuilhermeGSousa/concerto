@@ -1,0 +1,243 @@
+use concerto_animation::param::Param;
+use concerto_animation::{
+    attribute::PoseAttribute,
+    evaluation::{AnimationGraphContext, DriveContext},
+    node::{
+        AnimationNode, BehaviourReport, InputSlots, NodeOutcome, NodeReport, ReflectAnimationNode,
+    },
+    pose::{AnimationFrame, EvaluatedFrame, FramePool},
+};
+use concerto_ecs::Res;
+use concerto_name::{Name, name};
+use concerto_physics::physics_state::PhysicsState;
+use concerto_reflect::{Reflect, ReflectDefault};
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
+
+use crate::{
+    asset::StrengthProfile,
+    attributes::{MotorCommand, PhysicsAmount},
+    behaviour::LYING,
+    fall::{FallController, FallReaction, FallRun, FallSettings},
+    generate::BRACED,
+    messages::BodyDown,
+    node::balance::{ClaimsOut, CommandsOut, layered, wanted},
+    view::BodyView,
+};
+
+/// Makes a body fall as a person does, from the moment it is active: braced, the hands go to where it will land, with bent elbows that buckle on contact, the head is held away from the ground, the spine curls and the knees fold. It emits `BodyDown` when it has landed, drains its strength and goes limp, and succeeds once it has landed and relaxed. A strength of 0 is the limp fall: the body is limp at once.
+#[derive(Clone, Debug, PartialEq, Reflect, Serialize, Deserialize)]
+#[reflect(AnimationNode, Default)]
+pub struct FallNode {
+    /// The strength profile the body is powered with while it falls.
+    pub profile: Name,
+    /// How conscious the fall is, from 1, fully braced, to 0, limp; 1 while the blackboard has no such value.
+    pub strength: Param<f32>,
+    /// How the fall plays out.
+    pub settings: FallSettings,
+}
+
+impl Default for FallNode {
+    fn default() -> Self {
+        Self::new(BRACED)
+    }
+}
+
+impl FallNode {
+    /// A fall powering `profile`, with the settings of the old `Fall`.
+    pub fn new(profile: impl Into<Name>) -> Self {
+        Self {
+            profile: profile.into(),
+            strength: Param::default(),
+            settings: FallSettings::default(),
+        }
+    }
+
+    pub fn with_strength(mut self, strength: impl Into<Param<f32>>) -> Self {
+        self.strength = strength.into();
+        self
+    }
+
+    pub fn with_settings(mut self, settings: FallSettings) -> Self {
+        self.settings = settings;
+        self
+    }
+
+    fn motor(
+        &self,
+        state: &FallState,
+        body: &BodyView,
+        profile: Option<&StrengthProfile>,
+        part: usize,
+    ) -> Option<MotorCommand> {
+        if state.limp {
+            return Some(limp(
+                wanted(&state.commands, body, profile, part),
+                body,
+                part,
+            ));
+        }
+        layered(&state.commands, state.claims.get(part), body, profile, part)
+    }
+}
+
+fn limp(base: Option<MotorCommand>, body: &BodyView, part: usize) -> MotorCommand {
+    let neutral = MotorCommand::neutral();
+    let held = base.unwrap_or(neutral);
+    MotorCommand {
+        cover: 1.0,
+        target: body.animated_target(part),
+        stiffness: held.stiffness,
+        damping: held.damping,
+        torque_limit: 0.0,
+        ..neutral
+    }
+}
+
+/// A [`FallNode`]'s state: the fall's run, its claims on the parts and whether it has landed and relaxed.
+#[derive(Default)]
+pub struct FallState {
+    run: FallRun,
+    commands: CommandsOut,
+    claims: ClaimsOut,
+    limp: bool,
+    announced: bool,
+    outcome: Option<NodeOutcome>,
+}
+
+impl AnimationNode for FallNode {
+    type State = FallState;
+    type CreateInput = ();
+    type UpdateInput = ();
+    type EvaluateInput = ();
+    type DriveInput = Res<'static, PhysicsState>;
+
+    fn input_slots(&self) -> InputSlots {
+        InputSlots::Fixed(vec![name!("pose")])
+    }
+
+    fn create_state(&self, _: &(), _: &AnimationGraphContext<'_>) -> FallState {
+        FallState::default()
+    }
+
+    fn update(&self, _: &mut FallState, _: f32, _: &(), _: &AnimationGraphContext<'_>) {}
+
+    fn evaluate(
+        &self,
+        state: &mut FallState,
+        _: &(),
+        context: &AnimationGraphContext<'_>,
+        _: &[Uuid],
+        inputs: &[EvaluatedFrame],
+        _: &mut FramePool,
+        output: &mut AnimationFrame,
+    ) {
+        if let Some(input) = inputs.first() {
+            output.copy_from(&input.frame);
+        }
+        let (Some(body), Some(skeleton)) = (context.extra::<BodyView>(), context.skeleton()) else {
+            return;
+        };
+        let amounts = output
+            .attributes_mut()
+            .channel_mut::<PhysicsAmount>(skeleton.bone_count());
+        let profile = body.profile(&self.profile);
+        for (part, bone) in body.resolved().bones().iter().enumerate() {
+            let acted = self.motor(state, body, profile, part).is_some();
+            if let (true, Some(amount)) = (acted, amounts.get_mut(*bone)) {
+                *amount = PhysicsAmount(1.0);
+            }
+        }
+    }
+
+    fn drive(
+        &self,
+        state: &mut FallState,
+        physics: &Res<PhysicsState>,
+        context: &DriveContext<'_>,
+        _: &[Uuid],
+        inputs: &[EvaluatedFrame],
+        _: &mut FramePool,
+        output: &mut AnimationFrame,
+    ) {
+        if let Some(input) = inputs.first() {
+            output.attributes_mut().copy_from(input.frame.attributes());
+        }
+        let graph = context.graph();
+        let (Some(body), Some(skeleton)) = (context.extra::<BodyView>(), graph.skeleton()) else {
+            return;
+        };
+        let strength = graph
+            .blackboard()
+            .read(&self.strength)
+            .copied()
+            .unwrap_or(FallReaction::default().strength);
+        if state.outcome.is_none() {
+            let lying = body
+                .sense()
+                .is_some_and(|sense| sense.at_rest && sense.lean > LYING);
+            let step = FallController {
+                settings: &self.settings,
+                strength,
+                run: &mut state.run,
+            }
+            .step(
+                body,
+                physics,
+                context.delta_time(),
+                lying,
+                &mut state.claims,
+            );
+            state.limp = strength <= 0.0;
+            if let Some(step) = step {
+                if step.landed && !state.announced {
+                    state.announced = true;
+                    graph.emit(BodyDown);
+                }
+                if step.relaxed {
+                    state.limp = true;
+                    state.outcome = Some(NodeOutcome::Succeeded);
+                }
+            }
+        }
+        let commands = output
+            .attributes_mut()
+            .channel_mut::<MotorCommand>(skeleton.bone_count());
+        let profile = body.profile(&self.profile);
+        for (part, bone) in body.resolved().bones().iter().enumerate() {
+            if let (Some(wanted), Some(command)) = (
+                self.motor(state, body, profile, part),
+                commands.get_mut(*bone),
+            ) {
+                *command = wanted;
+            }
+        }
+    }
+
+    fn reset(&self, state: &mut FallState) {
+        *state = FallState::default();
+    }
+
+    fn is_finished(&self, _: &FallState) -> bool {
+        false
+    }
+
+    fn outcome(&self, state: &FallState) -> Option<NodeOutcome> {
+        state.outcome
+    }
+
+    fn report(&self, state: &FallState) -> NodeReport {
+        let text = match state.outcome {
+            Some(_) => format!("landed and relaxed at {}", self.profile),
+            None if state.announced => format!("landed, relaxing at {}", self.profile),
+            None => format!("falling at {}", self.profile),
+        };
+        NodeReport {
+            behaviour: Some(BehaviourReport {
+                outcome: state.outcome,
+                text,
+            }),
+            ..NodeReport::default()
+        }
+    }
+}

@@ -17,7 +17,10 @@ use concerto_app::{
 };
 use concerto_ecs::entity::Entity;
 use concerto_ecs::resource::{ResMut, Resource};
-use concerto_ecs::signal::On;
+use concerto_ecs::signal::{
+    On,
+    listener::{IntoListener, Listener},
+};
 use concerto_foundation::assets::{
     asset_server::AssetServer, asset_store::AssetStore, handle::AssetHandle,
 };
@@ -32,14 +35,25 @@ use concerto_ragdoll::testing::{
     SpawnedHumanoid, humanoid_skeleton, reference_humanoid, spawn_humanoid,
 };
 use concerto_ragdoll::{
-    BalanceNode, BalanceSettings, BalanceState, BodyDrive, BodySense, BodySettled, BodyState,
-    CharacterRagdoll, LimpNode, PhysicalState, RagdollBody, RagdollPlugin, StaggerNode,
-    StaggerState,
+    BalanceNode, BalanceSettings, BalanceState, BodyDown, BodyDrive, BodySense, BodySettled,
+    BodyState, CharacterRagdoll, LimpNode, MotorCommand, PhysicalState, RagdollBody, RagdollPlugin,
+    StaggerNode, StaggerState,
 };
+use concerto_reflect::Reflect;
 use glam::{Quat, Vec3};
 
 #[derive(Resource, Default)]
 struct Settles(usize);
+
+#[derive(Resource, Default)]
+struct Downs(usize);
+
+fn count_downs() -> Listener<BodyDown> {
+    (|_: On<BodyDown>, mut downs: ResMut<Downs>| {
+        downs.0 += 1;
+    })
+    .into_listener()
+}
 
 fn count_settles(_: On<BodySettled>, mut settles: ResMut<Settles>) {
     settles.0 += 1;
@@ -61,6 +75,14 @@ impl Stage {
 
     pub fn placed(placement: Transform) -> Self {
         Self::build(placement, None)
+    }
+
+    /// A body placed at `placement` whose animation graph is `build`'s.
+    pub fn placed_graphed(
+        placement: Transform,
+        build: impl FnOnce(&AssetServer) -> AnimationGraph + 'static,
+    ) -> Self {
+        Self::build(placement, Some(Box::new(build)))
     }
 
     /// A body whose animation graph balances it with `node` over the standing pose, moving to the state `steady` when it succeeds and `fallen`, where it goes limp, when it gives up.
@@ -85,7 +107,8 @@ impl Stage {
         }
         app.register_plugin(RagdollPlugin);
         app.add_listener(count_settles)
-            .insert_resource(Settles::default());
+            .insert_resource(Settles::default())
+            .insert_resource(Downs::default());
         app.finish_plugin_build();
         let server = app.get_resource::<AssetServer>().unwrap().clone();
         let reference = reference_humanoid();
@@ -96,6 +119,7 @@ impl Stage {
         let graph = graph.map(|build| server.add(build(&server)));
         app.update();
         let world = app.main_mut().world_mut();
+        world.register_component::<Listener<BodyDown>>();
         world.spawn((
             Collider::cuboid(50.0, 0.5, 50.0),
             Transform::from_translation(Vec3::new(0.0, -0.5, 0.0)),
@@ -108,6 +132,7 @@ impl Stage {
                 BodyDrive::default(),
                 BodySense::default(),
                 PhysicalState::default(),
+                count_downs(),
             ),
             character,
         );
@@ -122,24 +147,6 @@ impl Stage {
         };
         stage.run(5);
         stage
-    }
-
-    /// Holds the arms half down and the legs apart.
-    pub fn spread_limbs(&mut self) {
-        self.turn(&[
-            ("upperarm_l", -0.9),
-            ("upperarm_r", 0.9),
-            ("thigh_l", 0.35),
-            ("thigh_r", -0.35),
-        ]);
-    }
-
-    fn turn(&mut self, bones: &[(&str, f32)]) {
-        let skeleton = humanoid_skeleton();
-        for &(bone, angle) in bones {
-            let index = skeleton.bone_index(bone.into()).unwrap();
-            self.pose[index].rotation = Quat::from_rotation_z(angle);
-        }
     }
 
     pub fn run(&mut self, frames: usize) {
@@ -207,6 +214,25 @@ impl Stage {
         self.app.get_resource::<Settles>().unwrap().0
     }
 
+    pub fn downs(&self) -> usize {
+        self.app.get_resource::<Downs>().unwrap().0
+    }
+
+    /// What the graph last asked of the motor on `bone`.
+    pub fn motor(&self, bone: &str) -> MotorCommand {
+        let index = humanoid_skeleton().bone_index(bone.into()).unwrap();
+        self.player().drive_attributes().get::<MotorCommand>(index)
+    }
+
+    pub fn set_param<T: Reflect>(&mut self, key: Name, value: T) {
+        self.app
+            .main_mut()
+            .world_mut()
+            .get_component_for_entity_mut::<AnimationPlayer>(self.character)
+            .unwrap()
+            .set_param(key, value);
+    }
+
     fn player(&self) -> &AnimationPlayer {
         self.app
             .main()
@@ -215,7 +241,7 @@ impl Stage {
             .unwrap()
     }
 
-    fn in_state(&self, state: Name) -> bool {
+    pub fn in_state(&self, state: Name) -> bool {
         let graphs = self
             .app
             .get_resource::<AssetStore<AnimationGraph>>()
@@ -257,13 +283,6 @@ impl Stage {
                 stepping |= state.stepping();
             });
         stepping
-    }
-
-    pub fn insert<C: concerto_ecs::Component>(&mut self, component: C) {
-        self.app
-            .main_mut()
-            .world_mut()
-            .insert(component, self.character);
     }
 }
 

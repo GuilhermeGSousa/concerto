@@ -1066,6 +1066,19 @@ handled. On the reference humanoid pushed over with 300 N·s, forward or
 backward, the braced fall's peak contact impulse on the head is under half the
 limp fall's, and falling forward both hands land before the chest.
 
+`FallNode` is the graph's `Fall`: it holds a `FallSettings` (the fields of
+`Fall`, with the same defaults) and a `strength` that is a blackboard `Param`
+replacing `FallReaction::strength`; with no such value it reads 1. It acts from
+the moment its state is entered, braced on every part and with the arms, head,
+trunk and legs claimed as above, so a graph moves into it from a balancing
+state on `OnFailed`. It emits `BodyDown` on the character when the body lands,
+drains its strength to `resting`, then goes limp, keeping its muscles'
+stiffness with no torque, and succeeds, so the graph moves on with
+`OnSucceeded` into a state with a `LimpNode`. A `strength` of 0 is limp from the
+first step, but the node still waits for the landing to emit `BodyDown` and
+succeed. It reads contacts from `PhysicsState` and does not touch
+`CharacterRagdoll` or `PhysicalState`.
+
 #### Dying
 
 The engine has no health. When the game decides a character dies it says so,
