@@ -50,7 +50,12 @@ impl Plugin for RagdollPlugin {
         app.register_animation_message::<Hit>()
             .register_animation_message::<Shot>()
             .register_animation_message::<messages::Stagger>()
-            .register_animation_message::<Death>();
+            .register_animation_message::<Death>()
+            .register_animation_message::<messages::Steadied>()
+            .register_animation_message::<messages::Toppled>()
+            .register_animation_message::<messages::Landed>()
+            .register_animation_message::<messages::Recovered>()
+            .register_animation_message::<messages::Drained>();
         app.add_listener(route_hits.at_preview_time())
             .add_listener(forward_death.at_preview_time())
             .add_system(

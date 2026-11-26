@@ -11,7 +11,7 @@ use crate::transition::{
 };
 use crate::{
     evaluation::{AnimationGraphContext, DriveContext},
-    node::{AnimationNode, EditorAnimationNode, NodeOutcome, ReflectAnimationNode},
+    node::{AnimationNode, EditorAnimationNode, ReflectAnimationNode},
 };
 
 use concerto_ecs::Res;
@@ -41,7 +41,6 @@ pub(crate) struct AnimationFSMState {
 pub enum AnimationFSMTrigger {
     #[default]
     Instant,
-    OnAnimationEnd,
     BoolEquals {
         param: Param<bool>,
         value: bool,
@@ -54,10 +53,6 @@ pub enum AnimationFSMTrigger {
         message: MessageType,
         value: Option<ReflectedValue>,
     },
-    /// Fires when the current state's graph reports that it succeeded.
-    OnSucceeded,
-    /// Fires when the current state's graph reports that it failed.
-    OnFailed,
 }
 
 impl AnimationFSMTrigger {
@@ -448,7 +443,6 @@ pub struct AnimationStateMachineState {
     current_state: StateId,
     state_names: Vec<Name>,
     blender: Box<dyn AnimationTransitionBlender>,
-    outcome: Option<NodeOutcome>,
     reset_pending: bool,
 }
 
@@ -475,7 +469,6 @@ impl AnimationStateMachineState {
             current_state: initial_state,
             state_names,
             blender: blender_from(blender, initial_state),
-            outcome: None,
             reset_pending: false,
         }
     }
@@ -483,7 +476,6 @@ impl AnimationStateMachineState {
     fn restart(&mut self, initial_state: StateId, blender: TransitionBlender) {
         self.current_state = initial_state;
         self.blender = blender_from(blender, initial_state);
-        self.outcome = None;
         self.reset_pending = true;
     }
 
@@ -505,11 +497,6 @@ impl AnimationStateMachineState {
 
     pub(crate) fn current_graph(&self) -> Option<&AnimationGraphState> {
         self.state_graphs.get(self.current_state.as_graph_id())
-    }
-
-    fn current_outcome(&self, graphs: &AssetStore<AnimationGraph>) -> Option<NodeOutcome> {
-        self.current_graph()
-            .and_then(|current_graph| current_graph.outcome(graphs))
     }
 
     fn begin_transition(
@@ -609,7 +596,7 @@ impl AnimationNode for AnimationStateMachine {
             .get_state_transitions(state.current_state)
             .map_or(&[][..], Vec::as_slice);
         let fired = |transition: &&AnimationStateMachineTransition| {
-            fires(&transition.trigger, state, graphs, context)
+            fires(&transition.trigger, state, context)
         };
         let on_message = |transition: &&AnimationStateMachineTransition| {
             matches!(transition.trigger, AnimationFSMTrigger::OnMessage { .. })
@@ -631,11 +618,6 @@ impl AnimationNode for AnimationStateMachine {
         state
             .blender
             .update(delta_time, &mut state.state_graphs, graphs, context);
-        state.outcome = state.current_outcome(graphs);
-    }
-
-    fn outcome(&self, state: &AnimationStateMachineState) -> Option<NodeOutcome> {
-        state.outcome
     }
 
     fn evaluate(
@@ -738,7 +720,6 @@ impl EditorAnimationNode for AnimationStateMachine {
 fn fires(
     trigger: &AnimationFSMTrigger,
     state: &AnimationStateMachineState,
-    graphs: &AssetStore<AnimationGraph>,
     context: &AnimationGraphContext<'_>,
 ) -> bool {
     match trigger {
@@ -750,9 +731,6 @@ fn fires(
             .blackboard()
             .read(param)
             .is_some_and(|v| v.length_squared() > f32::EPSILON),
-        AnimationFSMTrigger::OnAnimationEnd => state
-            .current_graph()
-            .is_some_and(|current_graph| current_graph.is_finished(graphs)),
         AnimationFSMTrigger::OnMessage {
             message: wanted,
             value,
@@ -768,10 +746,6 @@ fn fires(
                     .current_graph()
                     .is_some_and(|current| current.raised().any(holds))
         }
-        AnimationFSMTrigger::OnSucceeded => {
-            state.current_outcome(graphs) == Some(NodeOutcome::Succeeded)
-        }
-        AnimationFSMTrigger::OnFailed => state.current_outcome(graphs) == Some(NodeOutcome::Failed),
     }
 }
 
@@ -895,6 +869,7 @@ mod tests {
         clip::{AnimationChanelOutput, AnimationChannel, AnimationClip},
         evaluation::AnimationGraphContext,
         graph::AnimationGraph,
+        message::ClipEnded,
         node::{
             AnimationClipNode, AnimationClipNodeState, AnimationNode, EditorAnimationNode,
             ReflectAnimationNode, register_node_inputs,
@@ -1014,12 +989,9 @@ mod tests {
                     .map(|transition| {
                         let trigger = match transition.trigger {
                             AnimationFSMTrigger::Instant => "instant",
-                            AnimationFSMTrigger::OnAnimationEnd => "end",
                             AnimationFSMTrigger::BoolEquals { .. } => "bool",
                             AnimationFSMTrigger::Vec2NonZero { .. } => "vec2",
                             AnimationFSMTrigger::OnMessage { .. } => "message",
-                            AnimationFSMTrigger::OnSucceeded => "succeeded",
-                            AnimationFSMTrigger::OnFailed => "failed",
                         };
                         format!(
                             "{}:{} {trigger} {}",
@@ -1038,7 +1010,7 @@ mod tests {
 
     #[test]
     fn edits_keep_states_and_transitions_consistent() {
-        use AnimationFSMTrigger::{Instant, OnAnimationEnd};
+        use AnimationFSMTrigger::Instant;
         use Edit::*;
 
         let mut server = AssetServer::new();
@@ -1102,12 +1074,12 @@ mod tests {
                 edit: AddTransition {
                     from: "idle",
                     to: "run",
-                    trigger: OnAnimationEnd,
+                    trigger: AnimationFSMTrigger::on_message::<ClipEnded>(),
                     blend_time: 0.3,
                 },
                 refused: None,
                 machine: &[
-                    "idle* a -> 0:walk instant 0.2, 1:run end 0.3",
+                    "idle* a -> 0:walk instant 0.2, 1:run message 0.3",
                     "walk b -> ",
                     "run a -> ",
                 ],
@@ -1121,7 +1093,7 @@ mod tests {
                 },
                 refused: unknown("gone"),
                 machine: &[
-                    "idle* a -> 0:walk instant 0.2, 1:run end 0.3",
+                    "idle* a -> 0:walk instant 0.2, 1:run message 0.3",
                     "walk b -> ",
                     "run a -> ",
                 ],
@@ -1135,7 +1107,7 @@ mod tests {
                 },
                 refused: None,
                 machine: &[
-                    "idle* a -> 0:walk instant 0.2, 1:run end 0.3",
+                    "idle* a -> 0:walk instant 0.2, 1:run message 0.3",
                     "walk b -> 0:run instant 0.4",
                     "run a -> ",
                 ],
@@ -1149,7 +1121,7 @@ mod tests {
                 },
                 refused: None,
                 machine: &[
-                    "idle* a -> 0:walk instant 0.2, 1:run end 0.3",
+                    "idle* a -> 0:walk instant 0.2, 1:run message 0.3",
                     "walk b -> 0:run instant 0.4",
                     "run a -> 0:idle instant 0.1",
                 ],
@@ -1158,28 +1130,28 @@ mod tests {
                 edit: AddTransition {
                     from: "run",
                     to: "walk",
-                    trigger: OnAnimationEnd,
+                    trigger: AnimationFSMTrigger::on_message::<ClipEnded>(),
                     blend_time: 0.6,
                 },
                 refused: None,
                 machine: &[
-                    "idle* a -> 0:walk instant 0.2, 1:run end 0.3",
+                    "idle* a -> 0:walk instant 0.2, 1:run message 0.3",
                     "walk b -> 0:run instant 0.4",
-                    "run a -> 0:idle instant 0.1, 1:walk end 0.6",
+                    "run a -> 0:idle instant 0.1, 1:walk message 0.6",
                 ],
             },
             EditCase {
                 edit: AddTransition {
                     from: "run",
                     to: "idle",
-                    trigger: OnAnimationEnd,
+                    trigger: AnimationFSMTrigger::on_message::<ClipEnded>(),
                     blend_time: 0.7,
                 },
                 refused: None,
                 machine: &[
-                    "idle* a -> 0:walk instant 0.2, 1:run end 0.3",
+                    "idle* a -> 0:walk instant 0.2, 1:run message 0.3",
                     "walk b -> 0:run instant 0.4",
-                    "run a -> 0:idle instant 0.1, 1:walk end 0.6, 2:idle end 0.7",
+                    "run a -> 0:idle instant 0.1, 1:walk message 0.6, 2:idle message 0.7",
                 ],
             },
             EditCase {
@@ -1193,7 +1165,7 @@ mod tests {
                 machine: &[
                     "idle* a -> 0:walk instant 0.2, 1:run instant 0.5",
                     "walk b -> 0:run instant 0.4",
-                    "run a -> 0:idle instant 0.1, 1:walk end 0.6, 2:idle end 0.7",
+                    "run a -> 0:idle instant 0.1, 1:walk message 0.6, 2:idle message 0.7",
                 ],
             },
             EditCase {
@@ -1207,7 +1179,7 @@ mod tests {
                 machine: &[
                     "idle* a -> 0:walk instant 0.2, 1:run instant 0.5",
                     "walk b -> 0:run instant 0.4",
-                    "run a -> 0:idle instant 0.1, 1:walk end 0.6, 2:idle end 0.7",
+                    "run a -> 0:idle instant 0.1, 1:walk message 0.6, 2:idle message 0.7",
                 ],
             },
             EditCase {
@@ -1219,7 +1191,7 @@ mod tests {
                 machine: &[
                     "idle* a -> 0:walk instant 0.2, 1:sprint instant 0.5",
                     "walk b -> 0:sprint instant 0.4",
-                    "sprint a -> 0:idle instant 0.1, 1:walk end 0.6, 2:idle end 0.7",
+                    "sprint a -> 0:idle instant 0.1, 1:walk message 0.6, 2:idle message 0.7",
                 ],
             },
             EditCase {
@@ -1231,7 +1203,7 @@ mod tests {
                 machine: &[
                     "idle* a -> 0:walk instant 0.2, 1:sprint instant 0.5",
                     "walk b -> 0:sprint instant 0.4",
-                    "sprint b -> 0:idle instant 0.1, 1:walk end 0.6, 2:idle end 0.7",
+                    "sprint b -> 0:idle instant 0.1, 1:walk message 0.6, 2:idle message 0.7",
                 ],
             },
             EditCase {
@@ -1240,7 +1212,7 @@ mod tests {
                 machine: &[
                     "idle a -> 0:walk instant 0.2, 1:sprint instant 0.5",
                     "walk* b -> 0:sprint instant 0.4",
-                    "sprint b -> 0:idle instant 0.1, 1:walk end 0.6, 2:idle end 0.7",
+                    "sprint b -> 0:idle instant 0.1, 1:walk message 0.6, 2:idle message 0.7",
                 ],
             },
             EditCase {
@@ -1252,7 +1224,7 @@ mod tests {
                 machine: &[
                     "idle a -> 0:walk instant 0.2, 1:sprint instant 0.5",
                     "walk* b -> 0:sprint instant 0.4",
-                    "sprint b -> 0:walk end 0.6, 1:idle end 0.7",
+                    "sprint b -> 0:walk message 0.6, 1:idle message 0.7",
                 ],
             },
             EditCase {
@@ -1260,7 +1232,7 @@ mod tests {
                 refused: None,
                 machine: &[
                     "idle* a -> 0:sprint instant 0.5",
-                    "sprint b -> 0:idle end 0.7",
+                    "sprint b -> 0:idle message 0.7",
                 ],
             },
             EditCase {

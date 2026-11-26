@@ -26,7 +26,7 @@ use crate::{
     evaluation::{AnimationGraphContext, AnimationGraphEvaluator, DriveContext, Raised},
     message::resolve_message_types,
     node::{
-        AnimationNode, ErasedAnimationNode, LayerNode, NodeOutcome, NodeState, PlaceholderNode,
+        AnimationNode, ErasedAnimationNode, LayerNode, NodeState, PlaceholderNode,
         ReflectAnimationNode, ResultNode, blend_space::BlendSpace2DBuilderContext,
         state_machine::AnimationStateMachineState,
     },
@@ -918,14 +918,6 @@ impl AnimationGraphState {
         self.raised.iter().map(|message| message.as_ref())
     }
 
-    pub(crate) fn outcome(&self, graphs: &AssetStore<AnimationGraph>) -> Option<NodeOutcome> {
-        let graph = self.get_animation_graph(graphs)?;
-        graph.iter_post_order().find_map(|node_index| {
-            let node = graph.live_node(node_index)?;
-            node.outcome(&self.graph_state.get(&node_index)?.node_state)
-        })
-    }
-
     pub(crate) fn in_state(&self, graphs: &AssetStore<AnimationGraph>, name: &Name) -> bool {
         let Some(graph) = self.get_animation_graph(graphs) else {
             return false;
@@ -1104,18 +1096,6 @@ impl AnimationGraphState {
         self.graph_handle
             .as_ref()
             .and_then(move |handle| graphs.get(handle))
-    }
-
-    pub(crate) fn is_finished(&self, graphs: &AssetStore<AnimationGraph>) -> bool {
-        let Some(graph) = self.get_animation_graph(graphs) else {
-            return true;
-        };
-
-        self.graph_state.iter().all(|(node_index, node_state)| {
-            graph
-                .live_node(*node_index)
-                .is_none_or(|node| node.is_finished(&node_state.node_state))
-        })
     }
 }
 

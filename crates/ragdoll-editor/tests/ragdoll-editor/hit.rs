@@ -30,7 +30,7 @@ use concerto_physics::{
 };
 use concerto_ragdoll::{
     CharacterRagdoll, FlinchNode,
-    messages::Hit,
+    messages::{Hit, Recovered},
     testing::{humanoid_skeleton, reference_humanoid},
 };
 use concerto_render::gpu::Gpu;
@@ -137,10 +137,11 @@ fn spawn_character(
 fn spawn_characters(server: Res<AssetServer>, mut cmd: CommandQueue) {
     let casting = Casting {
         reacting: server.add(over_clip(
-            SlotNode::new().with_entry(
-                SlotEntry::new(name!("flinch"), FlinchNode::default())
-                    .with_on(MessageType::of::<Hit>()),
-            ),
+            SlotNode::new().with_entry(SlotEntry {
+                out: vec![MessageType::of::<Recovered>()],
+                ..SlotEntry::new(name!("flinch"), FlinchNode::default())
+                    .with_on(MessageType::of::<Hit>())
+            }),
             &server,
         )),
         inert: server.add({

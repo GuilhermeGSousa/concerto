@@ -30,7 +30,7 @@ pub use additive::{AdditiveNode, AdditiveNodeState};
 pub use aim_offset::{AimOffsetNode, AimOffsetState, AimPoint};
 pub use definition::{
     AnimationNode, CreateNodeInputs, DriveNodeInputs, EditorAnimationNode, ErasedAnimationNode,
-    EvaluateNodeInputs, InputSlots, NodeOutcome, NodeState, PlaceholderNode, ReflectAnimationNode,
+    EvaluateNodeInputs, InputSlots, NodeState, PlaceholderNode, ReflectAnimationNode,
     UpdateNodeInputs, register_node_inputs,
 };
 pub use layer::{LayerNode, LayerSpace};
@@ -482,10 +482,6 @@ impl AnimationNode for AnimationClipNode {
 
     fn reset(&self, state: &mut AnimationClipNodeState) {
         state.clock.reset();
-    }
-
-    fn is_finished(&self, state: &AnimationClipNodeState) -> bool {
-        state.clock.is_finished
     }
 }
 

@@ -1,7 +1,7 @@
 use concerto_animation::{
     attribute::PoseAttribute,
     evaluation::{AnimationGraphContext, DriveContext},
-    node::{AnimationNode, EditorAnimationNode, InputSlots, NodeOutcome, ReflectAnimationNode},
+    node::{AnimationNode, EditorAnimationNode, InputSlots, ReflectAnimationNode},
     pose::{AnimationFrame, EvaluatedFrame, FramePool},
 };
 use concerto_ecs::Res;
@@ -17,7 +17,8 @@ use crate::{
     attributes::{MotorCommand, PhysicsAmount},
     generate::BRACED,
     ik::{Chain, reach},
-    node::hold::command,
+    messages::{Steadied, Toppled},
+    node::{Decided, hold::command},
     resolve::Limbs,
     sensing::BodySense,
     view::BodyView,
@@ -450,6 +451,21 @@ fn smooth(phase: f32) -> f32 {
     phase * phase * (3.0 - 2.0 * phase)
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum BalanceEnd {
+    Steadied,
+    Toppled,
+}
+
+impl BalanceEnd {
+    pub(crate) fn raise(self, context: &AnimationGraphContext<'_>) {
+        match self {
+            Self::Steadied => context.raise(Steadied),
+            Self::Toppled => context.raise(Toppled),
+        }
+    }
+}
+
 impl BalanceController<'_> {
     pub(crate) fn step(
         &mut self,
@@ -458,7 +474,7 @@ impl BalanceController<'_> {
         dt: f32,
         hindrance: &Hindrance,
         out: &mut CommandsOut,
-    ) -> Option<NodeOutcome> {
+    ) -> Option<BalanceEnd> {
         let resolved = view.resolved();
         out.reset(resolved.part_count());
         let footing = footing(view)?;
@@ -470,10 +486,10 @@ impl BalanceController<'_> {
             !sense.supporting.is_empty() && sense.off_balance.length() > settings.step_margin;
         let standing_height = footing.animated[footing.pelvis].translation.y - sense.ground;
         if self.gives_up(&footing, hindrance, wants_step, standing_height) {
-            return Some(NodeOutcome::Failed);
+            return Some(BalanceEnd::Toppled);
         }
         if self.settles(sense, dt) {
-            return Some(NodeOutcome::Succeeded);
+            return Some(BalanceEnd::Steadied);
         }
 
         let kept = hindrance.strength.clamp(0.0, 1.0)
@@ -517,7 +533,7 @@ impl BalanceController<'_> {
         if self.state.step.is_none() && wants_step && self.state.since_step >= settings.step_rest {
             match self.plan_step(hindrance, sense, &stance, &footing, physics) {
                 Some(step) => self.state.step = Some(step),
-                None => return Some(NodeOutcome::Failed),
+                None => return Some(BalanceEnd::Toppled),
             }
         }
         self.drive_legs(&footing, &stance, hindrance, out);
@@ -814,7 +830,7 @@ fn hold_leg(
     }
 }
 
-/// Keeps a body on its own feet: every part held with `profile`, the legs with balance's muscles, the pelvis pushed upright, to its animated height and back over the feet, and a step taken to catch the body when its capture point leaves its feet. It succeeds once the body has stood balanced and slow for `settle_seconds`, and fails when it gives up; a state machine moves on with `OnSucceeded` and `OnFailed`.
+/// Keeps a body on its own feet: every part held with `profile`, the legs with balance's muscles, the pelvis pushed upright, to its animated height and back over the feet, and a step taken to catch the body when its capture point leaves its feet. It raises `Steadied` once the body has stood balanced and slow for `settle_seconds`, and `Toppled` when it gives up; a state machine moves on with `OnMessage` of either.
 #[derive(Clone, Debug, PartialEq, Reflect, Serialize, Deserialize)]
 #[reflect(AnimationNode, Default)]
 pub struct BalanceNode {
@@ -897,7 +913,7 @@ pub(crate) fn layered(
 pub struct BalanceState {
     run: BalanceRun,
     commands: CommandsOut,
-    outcome: Option<NodeOutcome>,
+    ended: Decided<BalanceEnd>,
 }
 
 impl BalanceState {
@@ -923,7 +939,17 @@ impl AnimationNode for BalanceNode {
         BalanceState::default()
     }
 
-    fn update(&self, _: &mut BalanceState, _: f32, _: &(), _: &AnimationGraphContext<'_>) {}
+    fn update(
+        &self,
+        state: &mut BalanceState,
+        _: f32,
+        _: &(),
+        context: &AnimationGraphContext<'_>,
+    ) {
+        if let Some(end) = state.ended.unraised() {
+            end.raise(context);
+        }
+    }
 
     fn evaluate(
         &self,
@@ -969,18 +995,20 @@ impl AnimationNode for BalanceNode {
         let (Some(body), Some(skeleton)) = (context.extra::<BodyView>(), context.skeleton()) else {
             return;
         };
-        if state.outcome.is_none() {
-            state.outcome = BalanceController {
+        if !state.ended.is_decided() {
+            if let Some(end) = (BalanceController {
                 settings: &self.settings,
                 state: &mut state.run,
-            }
+            })
             .step(
                 body,
                 physics,
                 context.delta_time(),
                 &Hindrance::default(),
                 &mut state.commands,
-            );
+            ) {
+                state.ended.decide(end);
+            }
         } else {
             state.commands.clear();
         }
@@ -1001,14 +1029,6 @@ impl AnimationNode for BalanceNode {
     fn reset(&self, state: &mut BalanceState) {
         *state = BalanceState::default();
     }
-
-    fn is_finished(&self, _: &BalanceState) -> bool {
-        false
-    }
-
-    fn outcome(&self, state: &BalanceState) -> Option<NodeOutcome> {
-        state.outcome
-    }
 }
 
 impl EditorAnimationNode for BalanceNode {
@@ -1017,9 +1037,9 @@ impl EditorAnimationNode for BalanceNode {
     }
 
     fn describe(&self, state: &BalanceState) -> Option<String> {
-        let text = match state.outcome {
-            Some(NodeOutcome::Succeeded) => format!("stood still at {}", self.profile),
-            Some(NodeOutcome::Failed) => format!("gave up at {}", self.profile),
+        let text = match state.ended.get() {
+            Some(BalanceEnd::Steadied) => format!("stood still at {}", self.profile),
+            Some(BalanceEnd::Toppled) => format!("gave up at {}", self.profile),
             None if state.stepping() => format!(
                 "stepping at {}, step {} since it last stood still",
                 self.profile,

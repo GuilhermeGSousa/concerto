@@ -274,7 +274,7 @@ impl AnimationTransitionBlender for BlendStack {
             }
         }
 
-        // Anchor the target's clip (and OnAnimationEnd) to the moment of entry (invariant 3).
+        // Anchor the target's clip (and its ClipEnded) to the moment of entry (invariant 3).
         if let Some(graph_state) = graph_states.get_mut(next_graph) {
             graph_state.reset(graphs);
         }

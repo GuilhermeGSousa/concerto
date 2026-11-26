@@ -2,7 +2,7 @@ use concerto_animation::param::Param;
 use concerto_animation::{
     attribute::PoseAttribute,
     evaluation::{AnimationGraphContext, DriveContext},
-    node::{AnimationNode, EditorAnimationNode, InputSlots, NodeOutcome, ReflectAnimationNode},
+    node::{AnimationNode, EditorAnimationNode, InputSlots, ReflectAnimationNode},
     pose::{AnimationFrame, EvaluatedFrame, FramePool},
 };
 use concerto_ecs::Res;
@@ -17,12 +17,15 @@ use crate::{
     attributes::{MotorCommand, PhysicsAmount},
     fall::{FallController, FallRun, FallSettings, LYING},
     generate::BRACED,
-    messages::BodyDown,
-    node::balance::{ClaimsOut, CommandsOut, layered, wanted},
+    messages::{BodyDown, Landed},
+    node::{
+        Decided,
+        balance::{ClaimsOut, CommandsOut, layered, wanted},
+    },
     view::BodyView,
 };
 
-/// Makes a body fall as a person does, from the moment it is active: braced, the hands go to where it will land, with bent elbows that buckle on contact, the head is held away from the ground, the spine curls and the knees fold. It emits `BodyDown` when it has landed, drains its strength and goes limp, and succeeds once it has landed and relaxed. A strength of 0 is the limp fall: the body is limp at once.
+/// Makes a body fall as a person does, from the moment it is active: braced, the hands go to where it will land, with bent elbows that buckle on contact, the head is held away from the ground, the spine curls and the knees fold. It emits `BodyDown` when it has landed, drains its strength and goes limp, and raises `Landed` once it has landed and relaxed. A strength of 0 is the limp fall: the body is limp at once.
 #[derive(Clone, Debug, PartialEq, Reflect, Serialize, Deserialize)]
 #[reflect(AnimationNode, Default)]
 pub struct FallNode {
@@ -99,7 +102,7 @@ pub struct FallState {
     claims: ClaimsOut,
     limp: bool,
     announced: bool,
-    outcome: Option<NodeOutcome>,
+    landed: Decided<Landed>,
 }
 
 impl AnimationNode for FallNode {
@@ -113,7 +116,11 @@ impl AnimationNode for FallNode {
         FallState::default()
     }
 
-    fn update(&self, _: &mut FallState, _: f32, _: &(), _: &AnimationGraphContext<'_>) {}
+    fn update(&self, state: &mut FallState, _: f32, _: &(), context: &AnimationGraphContext<'_>) {
+        if let Some(landed) = state.landed.unraised() {
+            context.raise(landed);
+        }
+    }
 
     fn evaluate(
         &self,
@@ -164,7 +171,7 @@ impl AnimationNode for FallNode {
             .read(&self.strength)
             .copied()
             .unwrap_or(1.0);
-        if state.outcome.is_none() {
+        if !state.landed.is_decided() {
             let lying = body
                 .sense()
                 .is_some_and(|sense| sense.at_rest && sense.lean > LYING);
@@ -188,7 +195,7 @@ impl AnimationNode for FallNode {
                 }
                 if step.relaxed {
                     state.limp = true;
-                    state.outcome = Some(NodeOutcome::Succeeded);
+                    state.landed.decide(Landed);
                 }
             }
         }
@@ -209,14 +216,6 @@ impl AnimationNode for FallNode {
     fn reset(&self, state: &mut FallState) {
         *state = FallState::default();
     }
-
-    fn is_finished(&self, _: &FallState) -> bool {
-        false
-    }
-
-    fn outcome(&self, state: &FallState) -> Option<NodeOutcome> {
-        state.outcome
-    }
 }
 
 impl EditorAnimationNode for FallNode {
@@ -225,7 +224,7 @@ impl EditorAnimationNode for FallNode {
     }
 
     fn describe(&self, state: &FallState) -> Option<String> {
-        let text = match state.outcome {
+        let text = match state.landed.get() {
             Some(_) => format!("landed and relaxed at {}", self.profile),
             None if state.announced => format!("landed, relaxing at {}", self.profile),
             None => format!("falling at {}", self.profile),

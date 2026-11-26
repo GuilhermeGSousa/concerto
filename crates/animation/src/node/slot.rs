@@ -71,7 +71,7 @@ impl SlotEntry {
         self
     }
 
-    /// Sets the seconds the entry takes to leave once its node raises one of its `out` types, has an outcome or is finished; 0 is at once.
+    /// Sets the seconds the entry takes to leave once its node raises one of its `out` types; 0 is at once.
     pub fn with_fade_out(mut self, fade_out: f32) -> Self {
         self.fade_out = fade_out;
         self
@@ -270,7 +270,7 @@ impl AnimationNode for SlotNode {
                 ended |= entry.out.iter().any(|out| out.matches(message.as_ref()));
                 context.raise_shared(message);
             }
-            if ended || live.outcome(node_state).is_some() || live.is_finished(node_state) {
+            if ended {
                 entry_state.fading_out = true;
             }
             if entry_state.fading_out {

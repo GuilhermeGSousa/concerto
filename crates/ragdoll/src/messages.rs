@@ -58,6 +58,41 @@ pub struct Death {
 
 impl AnimationMessage for Death {}
 
+/// Raised by a balance, stagger or shot behaviour once the body has stood still on its feet.
+#[derive(Clone, Debug, Default, PartialEq, Reflect)]
+#[reflect(Default)]
+pub struct Steadied;
+
+impl AnimationMessage for Steadied {}
+
+/// Raised by a balance, stagger or shot behaviour once it has given up keeping the body on its feet.
+#[derive(Clone, Debug, Default, PartialEq, Reflect)]
+#[reflect(Default)]
+pub struct Toppled;
+
+impl AnimationMessage for Toppled {}
+
+/// Raised by a fall behaviour once the body has landed and relaxed.
+#[derive(Clone, Debug, Default, PartialEq, Reflect)]
+#[reflect(Default)]
+pub struct Landed;
+
+impl AnimationMessage for Landed {}
+
+/// Raised by a flinch behaviour once the body has recovered from its hit.
+#[derive(Clone, Debug, Default, PartialEq, Reflect)]
+#[reflect(Default)]
+pub struct Recovered;
+
+impl AnimationMessage for Recovered {}
+
+/// Raised by a dying behaviour once it has drained the body's last strength.
+#[derive(Clone, Debug, Default, PartialEq, Reflect)]
+#[reflect(Default)]
+pub struct Drained;
+
+impl AnimationMessage for Drained {}
+
 /// A behaviour wounded `part` of the character it triggers on: it keeps `share` of its strength.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Wounded {

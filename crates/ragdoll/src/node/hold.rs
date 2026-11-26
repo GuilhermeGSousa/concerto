@@ -315,10 +315,6 @@ impl AnimationNode for HoldNode {
         state.weight = None;
         state.strength = None;
     }
-
-    fn is_finished(&self, _: &HoldState) -> bool {
-        false
-    }
 }
 
 impl EditorAnimationNode for HoldNode {

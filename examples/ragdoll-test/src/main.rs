@@ -52,7 +52,7 @@ use concerto_physics_gizmos::{PhysicsGizmos, PhysicsGizmosPlugin};
 use concerto_ragdoll::{
     BRACED, BalanceNode, BalanceSettings, BodyHit, CharacterRagdoll, Death, Die, DyingNode, FLINCH,
     FallNode, HoldNode, LimpNode, RagdollBody, ShotNode, StaggerNode,
-    messages::{Shot, Stagger},
+    messages::{Drained, Landed, Shot, Stagger, Steadied, Toppled},
     testing::reference_humanoid,
 };
 use glam::{Quat, Vec3};
@@ -332,13 +332,21 @@ fn humanoid_graph(assets: &AssetServer, skeleton: &Skeleton) -> AnimationGraph {
         });
     }
     let steady = |to: &mut TransitionBuilder| {
-        to.to(name!("walk"), AnimationFSMTrigger::OnSucceeded, 0.0)
-            .to(name!("fall"), AnimationFSMTrigger::OnFailed, 0.0)
-            .to(
-                name!("dying"),
-                AnimationFSMTrigger::on_message::<Death>(),
-                0.0,
-            );
+        to.to(
+            name!("dying"),
+            AnimationFSMTrigger::on_message::<Death>(),
+            0.0,
+        )
+        .to(
+            name!("walk"),
+            AnimationFSMTrigger::on_message::<Steadied>(),
+            0.0,
+        )
+        .to(
+            name!("fall"),
+            AnimationFSMTrigger::on_message::<Toppled>(),
+            0.0,
+        );
     };
     AnimationGraph::from_node(
         machine
@@ -356,12 +364,16 @@ fn humanoid_graph(assets: &AssetServer, skeleton: &Skeleton) -> AnimationGraph {
                 name!("fall"),
                 assets.add(over_clip(FallNode::default(), &clip)),
                 |to| {
-                    to.to(name!("down"), AnimationFSMTrigger::OnSucceeded, 0.0)
-                        .to(
-                            name!("dying"),
-                            AnimationFSMTrigger::on_message::<Death>(),
-                            0.0,
-                        );
+                    to.to(
+                        name!("dying"),
+                        AnimationFSMTrigger::on_message::<Death>(),
+                        0.0,
+                    )
+                    .to(
+                        name!("down"),
+                        AnimationFSMTrigger::on_message::<Landed>(),
+                        0.0,
+                    );
                 },
             )
             .state(
@@ -384,7 +396,11 @@ fn humanoid_graph(assets: &AssetServer, skeleton: &Skeleton) -> AnimationGraph {
                 name!("dying"),
                 assets.add(over_clip(DyingNode::default(), &clip)),
                 |to| {
-                    to.to(name!("dead"), AnimationFSMTrigger::OnSucceeded, 0.0);
+                    to.to(
+                        name!("dead"),
+                        AnimationFSMTrigger::on_message::<Drained>(),
+                        0.0,
+                    );
                 },
             )
             .state(

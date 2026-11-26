@@ -1,7 +1,7 @@
 use concerto_animation::{
     attribute::PoseAttribute,
     evaluation::{AnimationGraphContext, DriveContext},
-    node::{AnimationNode, EditorAnimationNode, InputSlots, NodeOutcome, ReflectAnimationNode},
+    node::{AnimationNode, EditorAnimationNode, InputSlots, ReflectAnimationNode},
     pose::{AnimationFrame, EvaluatedFrame, FramePool},
 };
 use concerto_name::{Name, name};
@@ -13,12 +13,12 @@ use crate::{
     asset::PartStrength,
     attributes::{MotorCommand, PhysicsAmount},
     generate::FLINCH,
-    messages::Hit,
+    messages::{Hit, Recovered},
     node::hold::command,
     view::BodyView,
 };
 
-/// Makes a character flinch when it is hit while its ragdoll follows its animation: the parts of `profile` are powered and take the impulse, the muscles at the hit give and recover, and the body settles back on the animation. Play it from a slot entry that starts on `Hit`.
+/// Makes a character flinch when it is hit while its ragdoll follows its animation: the parts of `profile` are powered and take the impulse, the muscles at the hit give and recover, and the body settles back on the animation, when it raises `Recovered`. Play it from a slot entry that starts on `Hit` and ends on `Recovered`.
 #[derive(Clone, Debug, PartialEq, Reflect, Serialize, Deserialize)]
 #[reflect(AnimationNode, Default)]
 pub struct FlinchNode {
@@ -116,6 +116,7 @@ impl FlinchNode {
         state.struck = Some(Struck {
             part: hit.part,
             since_hit: 0.0,
+            recovered: false,
         });
     }
 
@@ -131,6 +132,7 @@ impl FlinchNode {
 struct Struck {
     part: usize,
     since_hit: f32,
+    recovered: bool,
 }
 
 /// A [`FlinchNode`]'s state: the hit it is answering, and what is left of each part's strength.
@@ -174,6 +176,10 @@ impl AnimationNode for FlinchNode {
         };
         for scale in &mut state.scales {
             *scale = (*scale + regained).min(1.0);
+        }
+        if !struck.recovered && self.weight(struck.since_hit) <= 0.0 {
+            struck.recovered = true;
+            context.raise(Recovered);
         }
     }
 
@@ -263,18 +269,6 @@ impl AnimationNode for FlinchNode {
         state.struck = None;
         state.scales.clear();
     }
-
-    fn is_finished(&self, _: &FlinchState) -> bool {
-        false
-    }
-
-    fn outcome(&self, state: &FlinchState) -> Option<NodeOutcome> {
-        state
-            .struck
-            .as_ref()
-            .is_some_and(|struck| self.weight(struck.since_hit) <= 0.0)
-            .then_some(NodeOutcome::Succeeded)
-    }
 }
 
 impl EditorAnimationNode for FlinchNode {
@@ -284,7 +278,7 @@ impl EditorAnimationNode for FlinchNode {
 
     fn describe(&self, state: &FlinchState) -> Option<String> {
         let text = match &state.struck {
-            Some(struck) if self.outcome(state).is_some() => format!(
+            Some(struck) if struck.recovered => format!(
                 "recovered from a hit on part {} at {}",
                 struck.part, self.profile
             ),

@@ -1,16 +1,17 @@
 use concerto_animation::{
     graph::AnimationGraph,
     node::{
-        AnimationClipNode, NodeOutcome,
+        AnimationClipNode,
         state_machine::{AnimationFSMTrigger, AnimationStateMachine},
     },
 };
 use concerto_foundation::assets::asset_server::AssetServer;
-use concerto_name::name;
+use concerto_name::{Name, name};
 use concerto_physics::physics_state::PhysicsState;
 use concerto_physics::ragdoll::RagdollId;
 use concerto_ragdoll::{
-    BalanceNode, BalanceSettings, BodyHit, LimpNode, RagdollBody, ShotNode, Wounds, messages::Shot,
+    BalanceNode, BalanceSettings, BodyHit, LimpNode, RagdollBody, ShotNode, Wounds,
+    messages::{Shot, Steadied, Toppled},
     testing::humanoid_skeleton,
 };
 use glam::Vec3;
@@ -26,7 +27,7 @@ struct Bullet {
 
 #[derive(Debug)]
 struct Answered {
-    outcome: Option<NodeOutcome>,
+    entries: Vec<Name>,
     animated: bool,
     chest: Vec3,
     hand_gap: f32,
@@ -84,8 +85,16 @@ fn shooting_graph(server: &AssetServer) -> AnimationGraph {
             );
         })
         .state(name!("shot"), shot, |to| {
-            to.to(name!("steady"), AnimationFSMTrigger::OnSucceeded, 0.0)
-                .to(name!("fallen"), AnimationFSMTrigger::OnFailed, 0.0);
+            to.to(
+                name!("steady"),
+                AnimationFSMTrigger::on_message::<Steadied>(),
+                0.0,
+            )
+            .to(
+                name!("fallen"),
+                AnimationFSMTrigger::on_message::<Toppled>(),
+                0.0,
+            );
         })
         .state(name!("steady"), steady, |_| {})
         .state(name!("fallen"), fallen, |_| {})
@@ -139,7 +148,7 @@ fn shot(bullets: &[Bullet]) -> Answered {
     }
     stage.run(2);
     Answered {
-        outcome: stage.outcome(),
+        entries: stage.entries().to_vec(),
         animated: stage.animated(),
         chest,
         hand_gap,
@@ -170,9 +179,9 @@ fn a_shot_body_answers_by_where_it_was_struck() {
         "a shot to the chest from the front throws it back and brings a hand to the wound: {chest:?}"
     );
     assert_eq!(
-        chest.outcome,
-        Some(NodeOutcome::Succeeded),
-        "a body that keeps its feet ends the reaction: {chest:?}"
+        chest.entries,
+        [name!("walk"), name!("shot"), name!("steady")],
+        "a body that keeps its feet ends the reaction, steady once and for good: {chest:?}"
     );
     assert!(
         chest.animated,
@@ -185,9 +194,9 @@ fn a_shot_body_answers_by_where_it_was_struck() {
 
     let heavy = shot(&[bullet("spine_03", 300.0)]);
     assert_eq!(
-        heavy.outcome,
-        Some(NodeOutcome::Failed),
-        "a shot the body cannot take ends the reaction with balance's failure: {heavy:?}"
+        heavy.entries,
+        [name!("walk"), name!("shot"), name!("fallen")],
+        "a shot the body cannot take ends the reaction fallen, once and for good: {heavy:?}"
     );
     assert_eq!(
         heavy.wounded, 0.6,
@@ -213,7 +222,7 @@ fn a_shot_body_answers_by_where_it_was_struck() {
 
     let both = shot(&[bullet("thigh_l", 20.0), bullet("thigh_r", 20.0)]);
     assert!(
-        both.lowest < 0.52 && both.outcome == Some(NodeOutcome::Failed),
+        both.lowest < 0.52 && both.entries == [name!("walk"), name!("shot"), name!("fallen")],
         "shots to both thighs fold the knees and bring the pelvis under knee height: {both:?}"
     );
 }

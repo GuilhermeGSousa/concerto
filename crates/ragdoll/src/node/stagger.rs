@@ -1,6 +1,6 @@
 use concerto_animation::{
     evaluation::{AnimationGraphContext, DriveContext},
-    node::{AnimationNode, EditorAnimationNode, InputSlots, NodeOutcome, ReflectAnimationNode},
+    node::{AnimationNode, EditorAnimationNode, InputSlots, ReflectAnimationNode},
     pose::{AnimationFrame, EvaluatedFrame, FramePool},
 };
 use concerto_ecs::Res;
@@ -15,14 +15,18 @@ use crate::{
     attributes::{MotorCommand, PhysicsAmount},
     generate::BRACED,
     messages,
-    node::balance::{
-        BalanceController, BalanceRun, BalanceSettings, ClaimsOut, CommandsOut, layered,
+    node::{
+        Decided,
+        balance::{
+            BalanceController, BalanceEnd, BalanceRun, BalanceSettings, ClaimsOut, CommandsOut,
+            layered,
+        },
     },
     stagger::{StaggerController, StaggerRun, StaggerSettings},
     view::BodyView,
 };
 
-/// Makes a body stumble from the moment it receives a `Stagger` message: it balances as a `BalanceNode` does, but its steps fall short and late, its legs are weaker and its knees give on each landing, its trunk bends the way it was sent and its arms windmill. It succeeds when balance settles and fails when balance gives up.
+/// Makes a body stumble from the moment it receives a `Stagger` message: it balances as a `BalanceNode` does, but its steps fall short and late, its legs are weaker and its knees give on each landing, its trunk bends the way it was sent and its arms windmill. It raises `Steadied` when balance settles and `Toppled` when balance gives up.
 #[derive(Clone, Debug, PartialEq, Reflect, Serialize, Deserialize)]
 #[reflect(AnimationNode, Default)]
 pub struct StaggerNode {
@@ -79,7 +83,7 @@ pub struct StaggerState {
     balance: BalanceRun,
     commands: CommandsOut,
     claims: ClaimsOut,
-    outcome: Option<NodeOutcome>,
+    ended: Decided<BalanceEnd>,
 }
 
 impl StaggerState {
@@ -118,6 +122,9 @@ impl AnimationNode for StaggerNode {
                 run: StaggerRun::towards(stagger.direction, stagger.severity),
                 ..StaggerState::default()
             };
+        }
+        if let Some(end) = state.ended.unraised() {
+            end.raise(context);
         }
     }
 
@@ -173,7 +180,7 @@ impl AnimationNode for StaggerNode {
         ) else {
             return;
         };
-        if state.outcome.is_none() {
+        if !state.ended.is_decided() {
             let dt = context.delta_time();
             let hindrance = StaggerController {
                 settings: &self.settings,
@@ -181,11 +188,14 @@ impl AnimationNode for StaggerNode {
             }
             .step(body, physics, dt, &mut state.claims)
             .unwrap_or_default();
-            state.outcome = BalanceController {
+            if let Some(end) = (BalanceController {
                 settings: &self.balance,
                 state: &mut state.balance,
+            })
+            .step(body, physics, dt, &hindrance, &mut state.commands)
+            {
+                state.ended.decide(end);
             }
-            .step(body, physics, dt, &hindrance, &mut state.commands);
         } else {
             state.commands.clear();
             state.claims.clear();
@@ -207,14 +217,6 @@ impl AnimationNode for StaggerNode {
     fn reset(&self, state: &mut StaggerState) {
         *state = StaggerState::default();
     }
-
-    fn is_finished(&self, _: &StaggerState) -> bool {
-        false
-    }
-
-    fn outcome(&self, state: &StaggerState) -> Option<NodeOutcome> {
-        state.outcome
-    }
 }
 
 impl EditorAnimationNode for StaggerNode {
@@ -223,10 +225,10 @@ impl EditorAnimationNode for StaggerNode {
     }
 
     fn describe(&self, state: &StaggerState) -> Option<String> {
-        let text = match state.outcome {
+        let text = match state.ended.get() {
             _ if !state.started => format!("waiting for a stagger at {}", self.profile),
-            Some(NodeOutcome::Succeeded) => format!("recovered from a stagger at {}", self.profile),
-            Some(NodeOutcome::Failed) => format!("fell in a stagger at {}", self.profile),
+            Some(BalanceEnd::Steadied) => format!("recovered from a stagger at {}", self.profile),
+            Some(BalanceEnd::Toppled) => format!("fell in a stagger at {}", self.profile),
             None => format!(
                 "staggering at {}, {} steps since it last stood still",
                 self.profile,

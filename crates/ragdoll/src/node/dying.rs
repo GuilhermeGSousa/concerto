@@ -1,7 +1,7 @@
 use concerto_animation::{
     attribute::PoseAttribute,
     evaluation::{AnimationGraphContext, DriveContext},
-    node::{AnimationNode, EditorAnimationNode, InputSlots, NodeOutcome, ReflectAnimationNode},
+    node::{AnimationNode, EditorAnimationNode, InputSlots, ReflectAnimationNode},
     pose::{AnimationFrame, EvaluatedFrame, FramePool},
 };
 use concerto_name::{Name, name};
@@ -14,7 +14,8 @@ use crate::{
     attributes::{MotorCommand, PhysicsAmount},
     character::Held,
     generate::BRACED,
-    messages::{BodyDead, Death},
+    messages::{BodyDead, Death, Drained},
+    node::Decided,
     view::BodyView,
 };
 
@@ -65,7 +66,7 @@ impl Dying {
     }
 }
 
-/// Drains a body's strength from the moment it receives a `Death` message, over its seconds, from the hands and feet inwards: every part is powered, a part that would be kinematic starting at a fixed strength, and each loses its muscles by how far its segment is from the trunk. It emits `BodyDead` once nothing is left and succeeds. Zero seconds drains it at once.
+/// Drains a body's strength from the moment it receives a `Death` message, over its seconds, from the hands and feet inwards: every part is powered, a part that would be kinematic starting at a fixed strength, and each loses its muscles by how far its segment is from the trunk. It emits `BodyDead` and raises `Drained` once nothing is left. Zero seconds drains it at once.
 #[derive(Clone, Debug, PartialEq, Reflect, Serialize, Deserialize)]
 #[reflect(AnimationNode, Default)]
 pub struct DyingNode {
@@ -111,7 +112,7 @@ impl DyingNode {
 #[derive(Default)]
 pub struct DyingState {
     dying: Option<Dying>,
-    outcome: Option<NodeOutcome>,
+    drained: Decided<Drained>,
 }
 
 impl AnimationNode for DyingNode {
@@ -129,8 +130,11 @@ impl AnimationNode for DyingNode {
         for death in context.message::<Death>() {
             *state = DyingState {
                 dying: Some(Dying::new(death.seconds)),
-                outcome: None,
+                drained: Decided::default(),
             };
+        }
+        if let Some(drained) = state.drained.unraised() {
+            context.raise(drained);
         }
     }
 
@@ -179,11 +183,11 @@ impl AnimationNode for DyingNode {
         let (Some(body), Some(skeleton)) = (context.extra::<BodyView>(), context.skeleton()) else {
             return;
         };
-        if state.outcome.is_none()
+        if !state.drained.is_decided()
             && let Some(dying) = state.dying.as_mut()
             && dying.advance(context.delta_time())
         {
-            state.outcome = Some(NodeOutcome::Succeeded);
+            state.drained.decide(Drained);
             context.emit(BodyDead);
         }
         let commands = output
@@ -201,14 +205,6 @@ impl AnimationNode for DyingNode {
     fn reset(&self, state: &mut DyingState) {
         *state = DyingState::default();
     }
-
-    fn is_finished(&self, _: &DyingState) -> bool {
-        false
-    }
-
-    fn outcome(&self, state: &DyingState) -> Option<NodeOutcome> {
-        state.outcome
-    }
 }
 
 impl EditorAnimationNode for DyingNode {
@@ -217,7 +213,7 @@ impl EditorAnimationNode for DyingNode {
     }
 
     fn describe(&self, state: &DyingState) -> Option<String> {
-        let text = match (&state.dying, state.outcome) {
+        let text = match (&state.dying, state.drained.get()) {
             (None, _) => "waiting for a death".to_string(),
             (Some(_), Some(_)) => "drained".to_string(),
             (Some(dying), None) => format!("draining over {} s", dying.seconds),

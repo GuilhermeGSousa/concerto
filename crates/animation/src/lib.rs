@@ -37,9 +37,10 @@ mod tests {
 
     use crate::blackboard::AnimationBlackboard;
     use crate::clip::{AnimationChanelOutput, AnimationChannel, AnimationClip};
-    use crate::evaluation::RootBone;
+    use crate::evaluation::{Raised, RootBone};
     use crate::event::AnimationEvent;
     use crate::graph::AnimationGraph;
+    use crate::message::ClipEnded;
     use crate::node::AnimationPlayMode::PlayOnce;
     use crate::node::state_machine::{
         AnimationFSMTrigger, AnimationStateMachine, AnimationStateMachineState,
@@ -86,7 +87,8 @@ mod tests {
     }
 
     #[test]
-    fn a_clip_node_starts_at_its_start_time_wraps_when_looping_finishes_once_and_resets_to_it() {
+    fn a_clip_node_starts_at_its_start_time_raises_clip_ended_on_a_wrap_or_its_end_and_resets_to_it()
+     {
         let mut server = AssetServer::new();
         let mut clips = AssetStore::<AnimationClip>::new();
         server.register_asset(&clips);
@@ -94,8 +96,15 @@ mod tests {
         clips.insert(handle.id(), unit_duration_clip());
         let walks = Walks::new(clips, AssetStore::<AnimationGraph>::new());
         let blackboard = AnimationBlackboard::default();
-        let update = |node: &dyn ErasedAnimationNode, node_state: &mut NodeState, dt: f32| {
-            walks.update(&blackboard, |context| node.update(node_state, dt, context));
+        let ended = |node: &dyn ErasedAnimationNode, node_state: &mut NodeState, dt: f32| {
+            walks.update(&blackboard, |context| {
+                let raised = Raised::default();
+                node.update(node_state, dt, &context.collecting(&raised));
+                raised
+                    .into_messages()
+                    .iter()
+                    .any(|message| message.as_ref().downcast_ref::<ClipEnded>().is_some())
+            })
         };
 
         let looping = erased(AnimationClipNode::new(handle.clone()).with_start_time(0.4));
@@ -104,21 +113,18 @@ mod tests {
             .unwrap();
         assert_eq!(current_time(&node_state), 0.4);
 
-        update(looping.as_ref(), &mut node_state, 0.3);
+        assert!(!ended(looping.as_ref(), &mut node_state, 0.3));
         assert!((current_time(&node_state) - 0.7).abs() < 1e-5);
-        assert!(!looping.is_finished(&node_state));
 
-        update(looping.as_ref(), &mut node_state, 0.4);
+        assert!(ended(looping.as_ref(), &mut node_state, 0.4));
         assert_eq!(current_time(&node_state), 0.4);
-        assert!(looping.is_finished(&node_state));
 
-        update(looping.as_ref(), &mut node_state, 0.1);
+        assert!(!ended(looping.as_ref(), &mut node_state, 0.1));
         assert!((current_time(&node_state) - 0.5).abs() < 1e-5);
-        assert!(!looping.is_finished(&node_state));
 
         looping.reset(&mut node_state);
         assert_eq!(current_time(&node_state), 0.4);
-        assert!(!looping.is_finished(&node_state));
+        assert!(!ended(looping.as_ref(), &mut node_state, 0.1));
 
         let once = erased(
             AnimationClipNode::new(handle)
@@ -130,12 +136,12 @@ mod tests {
             .unwrap();
         assert_eq!(current_time(&node_state), 0.4);
 
-        update(once.as_ref(), &mut node_state, 0.7);
-        assert!(once.is_finished(&node_state));
+        assert!(ended(once.as_ref(), &mut node_state, 0.7));
+        assert!(!ended(once.as_ref(), &mut node_state, 0.1));
 
         once.reset(&mut node_state);
         assert_eq!(current_time(&node_state), 0.4);
-        assert!(!once.is_finished(&node_state));
+        assert!(!ended(once.as_ref(), &mut node_state, 0.1));
     }
 
     fn clip_with_duration(duration: f32) -> AnimationClip {
@@ -217,7 +223,11 @@ mod tests {
                 );
             })
             .state(name!("jump_start"), jump_start, |transition| {
-                transition.to(name!("air"), AnimationFSMTrigger::OnAnimationEnd, 0.1);
+                transition.to(
+                    name!("air"),
+                    AnimationFSMTrigger::on_message::<ClipEnded>(),
+                    0.1,
+                );
             })
             .state(name!("air"), air, |transition| {
                 transition.to(
@@ -227,7 +237,11 @@ mod tests {
                 );
             })
             .state(name!("land"), land, |transition| {
-                transition.to(name!("movement"), AnimationFSMTrigger::OnAnimationEnd, 0.1);
+                transition.to(
+                    name!("movement"),
+                    AnimationFSMTrigger::on_message::<ClipEnded>(),
+                    0.1,
+                );
             })
             .build();
         let fsm = erased(fsm);

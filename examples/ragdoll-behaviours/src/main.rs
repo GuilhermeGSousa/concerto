@@ -45,7 +45,7 @@ use concerto_physics_gizmos::{PhysicsGizmos, PhysicsGizmosPlugin};
 use concerto_ragdoll::{
     BalanceNode, BalanceSettings, BodyHit, BodySense, CharacterRagdoll, Death, Die, DyingNode,
     FallNode, LimpNode, RagdollBody, Settled, ShotNode, StaggerNode, active_states, describe_body,
-    messages::{Shot, Stagger},
+    messages::{Drained, Landed, Shot, Stagger, Steadied, Toppled},
     testing::reference_humanoid,
 };
 use glam::{Quat, Vec3};
@@ -192,53 +192,77 @@ fn reaction_graph(assets: &AssetServer, skeleton: &Skeleton) -> AnimationGraph {
             );
         })
         .state(name!("balance"), balance, |to| {
-            to.to(name!("fall"), AnimationFSMTrigger::OnFailed, 0.0)
-                .to(
-                    name!("shot"),
-                    AnimationFSMTrigger::on_message::<Shot>(),
-                    0.0,
-                )
-                .to(
-                    name!("stagger"),
-                    AnimationFSMTrigger::on_message::<Stagger>(),
-                    0.0,
-                )
-                .to(
-                    name!("dying"),
-                    AnimationFSMTrigger::on_message::<Death>(),
-                    0.0,
-                );
+            to.to(
+                name!("shot"),
+                AnimationFSMTrigger::on_message::<Shot>(),
+                0.0,
+            )
+            .to(
+                name!("stagger"),
+                AnimationFSMTrigger::on_message::<Stagger>(),
+                0.0,
+            )
+            .to(
+                name!("dying"),
+                AnimationFSMTrigger::on_message::<Death>(),
+                0.0,
+            )
+            .to(
+                name!("fall"),
+                AnimationFSMTrigger::on_message::<Toppled>(),
+                0.0,
+            );
         })
         .state(name!("stagger"), stagger, |to| {
-            to.to(name!("stand"), AnimationFSMTrigger::OnSucceeded, 0.0)
-                .to(name!("fall"), AnimationFSMTrigger::OnFailed, 0.0)
-                .to(
-                    name!("shot"),
-                    AnimationFSMTrigger::on_message::<Shot>(),
-                    0.0,
-                )
-                .to(
-                    name!("dying"),
-                    AnimationFSMTrigger::on_message::<Death>(),
-                    0.0,
-                );
+            to.to(
+                name!("shot"),
+                AnimationFSMTrigger::on_message::<Shot>(),
+                0.0,
+            )
+            .to(
+                name!("dying"),
+                AnimationFSMTrigger::on_message::<Death>(),
+                0.0,
+            )
+            .to(
+                name!("stand"),
+                AnimationFSMTrigger::on_message::<Steadied>(),
+                0.0,
+            )
+            .to(
+                name!("fall"),
+                AnimationFSMTrigger::on_message::<Toppled>(),
+                0.0,
+            );
         })
         .state(name!("shot"), shot, |to| {
-            to.to(name!("stand"), AnimationFSMTrigger::OnSucceeded, 0.0)
-                .to(name!("fall"), AnimationFSMTrigger::OnFailed, 0.0)
-                .to(
-                    name!("dying"),
-                    AnimationFSMTrigger::on_message::<Death>(),
-                    0.0,
-                );
+            to.to(
+                name!("dying"),
+                AnimationFSMTrigger::on_message::<Death>(),
+                0.0,
+            )
+            .to(
+                name!("stand"),
+                AnimationFSMTrigger::on_message::<Steadied>(),
+                0.0,
+            )
+            .to(
+                name!("fall"),
+                AnimationFSMTrigger::on_message::<Toppled>(),
+                0.0,
+            );
         })
         .state(name!("fall"), fall, |to| {
-            to.to(name!("down"), AnimationFSMTrigger::OnSucceeded, 0.0)
-                .to(
-                    name!("dying"),
-                    AnimationFSMTrigger::on_message::<Death>(),
-                    0.0,
-                );
+            to.to(
+                name!("dying"),
+                AnimationFSMTrigger::on_message::<Death>(),
+                0.0,
+            )
+            .to(
+                name!("down"),
+                AnimationFSMTrigger::on_message::<Landed>(),
+                0.0,
+            );
         })
         .state(name!("down"), down, |to| {
             to.to(
@@ -248,7 +272,11 @@ fn reaction_graph(assets: &AssetServer, skeleton: &Skeleton) -> AnimationGraph {
             );
         })
         .state(name!("dying"), dying, |to| {
-            to.to(name!("dead"), AnimationFSMTrigger::OnSucceeded, 0.0);
+            to.to(
+                name!("dead"),
+                AnimationFSMTrigger::on_message::<Drained>(),
+                0.0,
+            );
         })
         .state(name!("dead"), dead, |_| {})
         .build(),

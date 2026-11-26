@@ -1,14 +1,15 @@
 use concerto_animation::{
     graph::AnimationGraph,
     node::{
-        AnimationClipNode, NodeOutcome,
+        AnimationClipNode,
         state_machine::{AnimationFSMTrigger, AnimationStateMachine},
     },
 };
 use concerto_foundation::assets::asset_server::AssetServer;
-use concerto_name::name;
+use concerto_name::{Name, name};
 use concerto_ragdoll::{
-    BalanceNode, BalanceSettings, LimpNode, StaggerNode, messages::Stagger,
+    BalanceNode, BalanceSettings, LimpNode, StaggerNode,
+    messages::{Stagger, Steadied, Toppled},
     testing::humanoid_skeleton,
 };
 use glam::Vec3;
@@ -17,7 +18,7 @@ use crate::balance::{Stage, over_clip, standing_clip};
 
 #[derive(Debug)]
 struct Stumbled {
-    outcome: Option<NodeOutcome>,
+    entries: Vec<Name>,
     steps: u32,
     reach: f32,
     animated: bool,
@@ -46,8 +47,16 @@ fn staggering_graph(server: &AssetServer) -> AnimationGraph {
             );
         })
         .state(name!("stagger"), stagger, |to| {
-            to.to(name!("steady"), AnimationFSMTrigger::OnSucceeded, 0.0)
-                .to(name!("fallen"), AnimationFSMTrigger::OnFailed, 0.0);
+            to.to(
+                name!("steady"),
+                AnimationFSMTrigger::on_message::<Steadied>(),
+                0.0,
+            )
+            .to(
+                name!("fallen"),
+                AnimationFSMTrigger::on_message::<Toppled>(),
+                0.0,
+            );
         })
         .state(name!("steady"), steady, |_| {})
         .state(name!("fallen"), fallen, |_| {})
@@ -86,7 +95,7 @@ fn stumbled(stagger: Option<Stagger>, impulse: Vec3) -> Stumbled {
     }
     stage.run(120);
     Stumbled {
-        outcome: stage.outcome(),
+        entries: stage.entries().to_vec(),
         steps,
         reach,
         animated: stage.animated(),
@@ -101,7 +110,11 @@ fn a_stagger_stumbles_further_than_balance_with_arms_out_and_a_severe_one_falls(
     for direction in [Vec3::Z, Vec3::NEG_Z, Vec3::X, Vec3::NEG_X] {
         let push = direction * 70.0;
         let alone = stumbled(None, push);
-        assert_eq!(alone.outcome, Some(NodeOutcome::Succeeded), "{alone:?}");
+        assert_eq!(
+            alone.entries,
+            [name!("balance"), name!("steady")],
+            "{alone:?}"
+        );
 
         let mild = stumbled(
             Some(Stagger {
@@ -111,9 +124,9 @@ fn a_stagger_stumbles_further_than_balance_with_arms_out_and_a_severe_one_falls(
             push,
         );
         assert_eq!(
-            mild.outcome,
-            Some(NodeOutcome::Succeeded),
-            "a mild stagger towards {direction} ends with balance's outcome: {mild:?}"
+            mild.entries,
+            [name!("stand"), name!("stagger"), name!("steady")],
+            "a mild stagger towards {direction} ends steady, entered once and kept: {mild:?}"
         );
         assert!(
             mild.animated,
@@ -134,9 +147,9 @@ fn a_stagger_stumbles_further_than_balance_with_arms_out_and_a_severe_one_falls(
             push,
         );
         assert_eq!(
-            severe.outcome,
-            Some(NodeOutcome::Failed),
-            "a severe stagger towards {direction} cannot be recovered: {severe:?}"
+            severe.entries,
+            [name!("stand"), name!("stagger"), name!("fallen")],
+            "a severe stagger towards {direction} cannot be recovered, and falls once and stays fallen: {severe:?}"
         );
         assert!(
             severe.pelvis < 0.4,

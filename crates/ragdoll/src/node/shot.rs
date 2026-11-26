@@ -1,6 +1,6 @@
 use concerto_animation::{
     evaluation::{AnimationGraphContext, DriveContext},
-    node::{AnimationNode, EditorAnimationNode, InputSlots, NodeOutcome, ReflectAnimationNode},
+    node::{AnimationNode, EditorAnimationNode, InputSlots, ReflectAnimationNode},
     pose::{AnimationFrame, EvaluatedFrame, FramePool},
 };
 use concerto_ecs::Res;
@@ -15,12 +15,17 @@ use crate::{
     attributes::{MotorCommand, PhysicsAmount},
     generate::BRACED,
     messages,
-    node::balance::{BalanceController, BalanceRun, BalanceSettings, CommandsOut, layered},
+    node::{
+        Decided,
+        balance::{
+            BalanceController, BalanceEnd, BalanceRun, BalanceSettings, CommandsOut, layered,
+        },
+    },
     shot::{ShotController, ShotOut, ShotSettings, Wound},
     view::BodyView,
 };
 
-/// Makes a body answer a gunshot from the moment it receives a `Shot` message, by where it struck: the muscles at the wound snap tight and then give, a hand goes to the wound, the head turns to it and then to where the shot came from, and it balances as a `BalanceNode` does, a shot leg hindering it. Each further `Shot` adds a wound. It emits `Wounded` for each part it weakens, succeeds when balance settles and fails when balance gives up; the impulses are applied by the character's hit routing, not by the node.
+/// Makes a body answer a gunshot from the moment it receives a `Shot` message, by where it struck: the muscles at the wound snap tight and then give, a hand goes to the wound, the head turns to it and then to where the shot came from, and it balances as a `BalanceNode` does, a shot leg hindering it. Each further `Shot` adds a wound. It emits `Wounded` for each part it weakens, raises `Steadied` when balance settles and `Toppled` when balance gives up; the impulses are applied by the character's hit routing, not by the node.
 #[derive(Clone, Debug, PartialEq, Reflect, Serialize, Deserialize)]
 #[reflect(AnimationNode, Default)]
 pub struct ShotNode {
@@ -83,7 +88,7 @@ pub struct ShotState {
     balance: BalanceRun,
     commands: CommandsOut,
     out: ShotOut,
-    outcome: Option<NodeOutcome>,
+    ended: Decided<BalanceEnd>,
 }
 
 impl ShotState {
@@ -105,6 +110,9 @@ impl AnimationNode for ShotNode {
     }
 
     fn update(&self, state: &mut ShotState, _: f32, _: &(), context: &AnimationGraphContext<'_>) {
+        if let Some(end) = state.ended.unraised() {
+            end.raise(context);
+        }
         let Some(body) = context.extra::<BodyView>() else {
             return;
         };
@@ -173,7 +181,7 @@ impl AnimationNode for ShotNode {
         ) else {
             return;
         };
-        if state.outcome.is_none() {
+        if !state.ended.is_decided() {
             let dt = context.delta_time();
             let hindrance = ShotController {
                 settings: &self.settings,
@@ -184,11 +192,14 @@ impl AnimationNode for ShotNode {
             for wounded in state.out.wounded.drain(..) {
                 context.emit(wounded);
             }
-            state.outcome = BalanceController {
+            if let Some(end) = (BalanceController {
                 settings: &self.balance,
                 state: &mut state.balance,
+            })
+            .step(body, physics, dt, &hindrance, &mut state.commands)
+            {
+                state.ended.decide(end);
             }
-            .step(body, physics, dt, &hindrance, &mut state.commands);
         } else {
             state.commands.clear();
             state.out.claims.clear();
@@ -210,14 +221,6 @@ impl AnimationNode for ShotNode {
     fn reset(&self, state: &mut ShotState) {
         *state = ShotState::default();
     }
-
-    fn is_finished(&self, _: &ShotState) -> bool {
-        false
-    }
-
-    fn outcome(&self, state: &ShotState) -> Option<NodeOutcome> {
-        state.outcome
-    }
 }
 
 impl EditorAnimationNode for ShotNode {
@@ -226,12 +229,12 @@ impl EditorAnimationNode for ShotNode {
     }
 
     fn describe(&self, state: &ShotState) -> Option<String> {
-        let text = match state.outcome {
+        let text = match state.ended.get() {
             _ if !state.started => format!("waiting for a shot at {}", self.profile),
-            Some(NodeOutcome::Succeeded) => {
+            Some(BalanceEnd::Steadied) => {
                 format!("kept its feet after {} shots", state.wounds.len())
             }
-            Some(NodeOutcome::Failed) => format!("fell after {} shots", state.wounds.len()),
+            Some(BalanceEnd::Toppled) => format!("fell after {} shots", state.wounds.len()),
             None => format!(
                 "reacting to {} shots at {}",
                 state.wounds.len(),

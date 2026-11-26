@@ -31,7 +31,7 @@ use concerto_physics::physics_state::PhysicsState;
 use concerto_physics::plugin::PhysicsPlugin;
 use concerto_physics::ragdoll::{BodyPose, RagdollId};
 use concerto_physics::rigid_body::{AllowedDofs, RigidBody};
-use concerto_ragdoll::messages::Hit;
+use concerto_ragdoll::messages::{Hit, Recovered};
 use concerto_ragdoll::testing::{
     SpawnedHumanoid, humanoid_skeleton, reference_humanoid, spawn_humanoid,
 };
@@ -162,10 +162,11 @@ impl Stage {
         let ragdoll = server.add(ragdoll);
         let left_leg = server.add(BoneMask::new().with_branch(BoneMaskBranch::new("thigh_l")));
         let walk = server.add(over_clip(
-            SlotNode::new().with_entry(
-                SlotEntry::new(name!("flinch"), FlinchNode::default())
-                    .with_on(MessageType::of::<Hit>()),
-            ),
+            SlotNode::new().with_entry(SlotEntry {
+                out: vec![MessageType::of::<Recovered>()],
+                ..SlotEntry::new(name!("flinch"), FlinchNode::default())
+                    .with_on(MessageType::of::<Hit>())
+            }),
             &clip,
         ));
         let hold = server.add(over_clip(

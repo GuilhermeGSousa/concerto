@@ -10,7 +10,9 @@ use concerto_foundation::assets::{asset_server::AssetServer, asset_store::AssetS
 use concerto_foundation::transform::GlobalTransform;
 use concerto_name::name;
 use concerto_ragdoll::{
-    BodyHit, Dead, Die, DyingNode, LimpNode, RagdollBody, Settled, messages::Death, report_body,
+    BodyHit, Dead, Die, DyingNode, LimpNode, RagdollBody, Settled,
+    messages::{Death, Drained},
+    report_body,
     testing::humanoid_skeleton,
 };
 use glam::Vec3;
@@ -33,7 +35,11 @@ fn dying_graph(server: &AssetServer) -> AnimationGraph {
             );
         })
         .state(name!("dying"), dying, |to| {
-            to.to(name!("dead"), AnimationFSMTrigger::OnSucceeded, 0.0);
+            to.to(
+                name!("dead"),
+                AnimationFSMTrigger::on_message::<Drained>(),
+                0.0,
+            );
         })
         .state(name!("dead"), dead, |_| {})
         .build(),
@@ -160,13 +166,19 @@ fn a_dying_body_drains_settles_into_a_static_pose_and_wakes_only_when_hit_hard()
         stage.settles() == 2 && has::<Settled>(&stage) && has::<Dead>(&stage),
         "the woken body settles again and stays dead"
     );
+    assert_eq!(
+        stage.entries(),
+        [name!("alive"), name!("dying"), name!("dead")],
+        "the machine enters the dead state once and stays there"
+    );
 
     let mut stage = Stage::graphed(dying_graph);
     stage.run(5);
     die(&mut stage, 0.0);
     stage.run(3);
     assert!(
-        has::<Dead>(&stage) && stage.in_state(name!("dead")),
-        "a zero duration kills at once"
+        has::<Dead>(&stage) && stage.entries() == [name!("alive"), name!("dying"), name!("dead")],
+        "a zero duration kills at once: {:?}",
+        stage.entries()
     );
 }

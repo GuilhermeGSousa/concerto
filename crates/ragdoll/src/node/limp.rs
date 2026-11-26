@@ -97,10 +97,6 @@ impl AnimationNode for LimpNode {
     }
 
     fn reset(&self, _: &mut ()) {}
-
-    fn is_finished(&self, _: &()) -> bool {
-        false
-    }
 }
 
 impl EditorAnimationNode for LimpNode {

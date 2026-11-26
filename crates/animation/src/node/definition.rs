@@ -91,15 +91,6 @@ pub trait AnimationNode: Reflect + Send + Sync + 'static {
 
     fn reset(&self, state: &mut Self::State);
 
-    fn is_finished(&self, _state: &Self::State) -> bool {
-        true
-    }
-
-    /// Whether the node has succeeded or failed at what it does; none by default.
-    fn outcome(&self, _state: &Self::State) -> Option<NodeOutcome> {
-        None
-    }
-
     /// Builds the nodes this node holds inside itself from their stored values, once, when the graph holding it is made live; returns what could not be applied.
     fn make_live(
         &mut self,
@@ -129,13 +120,6 @@ pub trait AnimationNode: Reflect + Send + Sync + 'static {
         _visit: &mut dyn FnMut(&mut AnimationGraphState),
     ) {
     }
-}
-
-/// How a node ended what it does, read by a state machine's `OnSucceeded` and `OnFailed` triggers.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum NodeOutcome {
-    Succeeded,
-    Failed,
 }
 
 /// What an editor or a tool asks of a node beyond running it: its input pins and a line saying what it does now; every method has a default, so a node with nothing to add writes `impl EditorAnimationNode for X {}`.
@@ -227,10 +211,6 @@ pub trait ErasedAnimationNode: Send + Sync {
     );
 
     fn reset(&self, state: &mut NodeState);
-
-    fn is_finished(&self, state: &NodeState) -> bool;
-
-    fn outcome(&self, state: &NodeState) -> Option<NodeOutcome>;
 
     fn make_live(&mut self, registry: &TypeRegistry, leaves: &mut LiveLeaves) -> Vec<ValueWarning>;
 
@@ -347,20 +327,8 @@ impl<T: EditorAnimationNode> ErasedAnimationNode for T {
         }
     }
 
-    fn is_finished(&self, state: &NodeState) -> bool {
-        state
-            .downcast_ref::<T::State>()
-            .is_none_or(|state| AnimationNode::is_finished(self, state))
-    }
-
     fn make_live(&mut self, registry: &TypeRegistry, leaves: &mut LiveLeaves) -> Vec<ValueWarning> {
         AnimationNode::make_live(self, registry, leaves)
-    }
-
-    fn outcome(&self, state: &NodeState) -> Option<NodeOutcome> {
-        state
-            .downcast_ref::<T::State>()
-            .and_then(|state| AnimationNode::outcome(self, state))
     }
 
     fn inner_graphs(&self, visit: &mut dyn FnMut(&AssetHandle<AnimationGraph>)) {
@@ -561,10 +529,6 @@ mod tests {
 
         fn reset(&self, state: &mut GainState) {
             state.resets += 1;
-        }
-
-        fn is_finished(&self, state: &GainState) -> bool {
-            state.updates >= 2
         }
     }
 

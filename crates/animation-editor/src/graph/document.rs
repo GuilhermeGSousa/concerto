@@ -122,7 +122,6 @@ fn value_label(value: &ReflectedValue) -> String {
 fn trigger_label(trigger: &AnimationFSMTrigger) -> String {
     match trigger {
         AnimationFSMTrigger::Instant => "Instant".to_owned(),
-        AnimationFSMTrigger::OnAnimationEnd => "OnAnimationEnd".to_owned(),
         AnimationFSMTrigger::BoolEquals { param, value } => format!("{} = {value}", param.0),
         AnimationFSMTrigger::Vec2NonZero { param } => format!("{} ≠ 0", param.0),
         AnimationFSMTrigger::OnMessage { message, value } => {
@@ -132,8 +131,6 @@ fn trigger_label(trigger: &AnimationFSMTrigger) -> String {
                 None => format!("on {short}"),
             }
         }
-        AnimationFSMTrigger::OnSucceeded => "OnSucceeded".to_owned(),
-        AnimationFSMTrigger::OnFailed => "OnFailed".to_owned(),
     }
 }
 

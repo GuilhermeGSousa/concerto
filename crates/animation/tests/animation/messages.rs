@@ -10,8 +10,8 @@ use concerto_animation::{
         AnimationMessage, ClipEnded, MessageType, SendAnimationMessage, SendReflectedMessage,
     },
     node::{
-        AnimationClipNode, AnimationNode, AnimationPlayMode, EditorAnimationNode, NodeOutcome,
-        PlayInSlot, ReflectAnimationNode, SlotEntry, SlotNode,
+        AnimationClipNode, AnimationNode, AnimationPlayMode, EditorAnimationNode, PlayInSlot,
+        ReflectAnimationNode, SlotEntry, SlotNode,
         state_machine::{AnimationFSMTrigger, AnimationStateMachine},
     },
     player::{AnimationHandleComponent, AnimationPlayer},
@@ -69,6 +69,11 @@ impl AnimationMessage for Ring {}
 struct Rang {}
 
 impl AnimationMessage for Rang {}
+
+#[derive(Clone, Default, Reflect)]
+struct Twice {}
+
+impl AnimationMessage for Twice {}
 
 struct Marker(u32);
 
@@ -129,6 +134,9 @@ impl AnimationNode for Counter {
             context.emit(Counted {
                 count: state.received,
             });
+            if state.received == 2 {
+                context.raise(Twice {});
+            }
         }
         if context.message::<Ring>().next().is_some() {
             context.raise(Rang {});
@@ -156,14 +164,6 @@ impl AnimationNode for Counter {
             .attributes_mut()
             .channel_mut::<Amount>(bone_count)
             .fill(Amount(1.0));
-    }
-
-    fn outcome(&self, state: &Count) -> Option<NodeOutcome> {
-        (state.received >= 2).then_some(NodeOutcome::Succeeded)
-    }
-
-    fn is_finished(&self, _: &Count) -> bool {
-        false
     }
 
     fn reset(&self, state: &mut Count) {
@@ -291,7 +291,8 @@ fn slot_node() -> SlotNode {
             SlotEntry::new(name!("count"), Counter {})
                 .with_fade_in(0.2)
                 .with_fade_out(0.2)
-                .with_on(MessageType::of::<Poke>()),
+                .with_on(MessageType::of::<Poke>())
+                .with_out(MessageType::of::<Twice>()),
         )
         .with_entry(
             SlotEntry::new(name!("snap"), Counter {})
@@ -323,6 +324,7 @@ impl Stage {
         app.register_animation_message::<Other>();
         app.register_animation_message::<Ring>();
         app.register_animation_message::<Rang>();
+        app.register_animation_message::<Twice>();
         app.main_mut().world_mut().register_component::<Transform>();
         let idle = graph(&mut app, AnimationGraph::new());
         let poked = graph(&mut app, AnimationGraph::from_node(Counter {}));
@@ -338,7 +340,11 @@ impl Stage {
                 );
             })
             .state(name!("Poked"), machine_poked, |transition| {
-                transition.to(name!("Idle"), AnimationFSMTrigger::OnSucceeded, 0.0);
+                transition.to(
+                    name!("Idle"),
+                    AnimationFSMTrigger::on_message::<Twice>(),
+                    0.0,
+                );
                 transition.to(
                     name!("Elsewhere"),
                     AnimationFSMTrigger::on_message::<Other>(),
@@ -717,7 +723,7 @@ impl Stage {
 }
 
 #[test]
-fn messages_move_the_graph_and_nodes_answer_with_outcomes_and_signals() {
+fn messages_move_the_graph_and_nodes_answer_with_raised_messages_and_signals() {
     let mut stage = Stage::new();
     stage.start();
     stage.player().set_extra(Marker(7));

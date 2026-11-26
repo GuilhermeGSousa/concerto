@@ -6,7 +6,7 @@ use std::{
 
 use concerto_animation::{
     graph::{AnimationGraph, AnimationNodeData},
-    message::AnimationMessage,
+    message::{AnimationMessage, ClipEnded},
     node::{
         AnimationClipNode, LayerNode,
         state_machine::{AnimationFSMTrigger, AnimationStateMachine},
@@ -1263,6 +1263,7 @@ fn poking_game(app: &mut App) {
 
 struct Told {
     sent: String,
+    ended: String,
     refused: Value,
     bad_id: Value,
     idle: Value,
@@ -1298,6 +1299,7 @@ fn send_animation_message_moves_a_playing_graph_and_says_where_it_is() {
         ok(&client, "graph_open", json!({ "node": 2 })).await;
         ok(&client, "graph_add_state", json!({ "name": "Idle" })).await;
         ok(&client, "graph_add_state", json!({ "name": "Poked" })).await;
+        ok(&client, "graph_add_state", json!({ "name": "Ended" })).await;
         ok(
             &client,
             "graph_connect",
@@ -1311,6 +1313,22 @@ fn send_animation_message_moves_a_playing_graph_and_says_where_it_is() {
                 "target": "Transition",
                 "path": "trigger",
                 "value": { "OnMessage": { "message": { "path": std::any::type_name::<Poke>() } } }
+            }),
+        )
+        .await;
+        ok(
+            &client,
+            "graph_connect",
+            json!({ "from": "Poked", "to": "Ended" }),
+        )
+        .await;
+        ok(
+            &client,
+            "set_property",
+            json!({
+                "target": "Transition",
+                "path": "trigger",
+                "value": { "OnMessage": { "message": { "path": std::any::type_name::<ClipEnded>() } } }
             }),
         )
         .await;
@@ -1345,10 +1363,23 @@ fn send_animation_message_moves_a_playing_graph_and_says_where_it_is() {
                 break;
             }
         }
+        let mut ended = String::new();
+        for _ in 0..10 {
+            ended = ok(
+                &client,
+                "send_animation_message",
+                json!({ "message": { "type": std::any::type_name::<ClipEnded>(), "value": {} } }),
+            )
+            .await;
+            if ended.contains("States: Ended.") {
+                break;
+            }
+        }
         let inspected = ok(&client, "graph_inspect", json!({})).await;
         client.cancel().await.unwrap();
         Told {
             sent,
+            ended,
             refused,
             bad_id,
             idle,
@@ -1359,6 +1390,11 @@ fn send_animation_message_moves_a_playing_graph_and_says_where_it_is() {
     };
 
     assert!(told.sent.contains("Poked"), "{}", told.sent);
+    assert!(
+        told.ended.contains("States: Ended."),
+        "a raised type sent as a message moves the machine: {}",
+        told.ended
+    );
     assert_eq!(told.bad_id["code"], "unknown_entity", "{}", told.bad_id);
     assert_eq!(told.idle["code"], "not_playing", "{}", told.idle);
     assert!(

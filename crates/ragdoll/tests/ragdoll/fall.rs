@@ -9,11 +9,12 @@ use concerto_animation::{
 use concerto_foundation::assets::asset_server::AssetServer;
 use concerto_foundation::transform::Transform;
 use concerto_mesh::Skeleton;
-use concerto_name::name;
+use concerto_name::{Name, name};
 use concerto_physics::ragdoll::RagdollId;
 use concerto_physics::{collider::Collider, physics_state::PhysicsState};
 use concerto_ragdoll::{
     BalanceNode, BalanceSettings, BodySense, FallNode, LimpNode, RagdollBody,
+    messages::{Landed, Toppled},
     testing::humanoid_skeleton,
 };
 use glam::{Quat, Vec3};
@@ -25,7 +26,7 @@ struct Fallen {
     hands_down: [Option<usize>; 2],
     chest_down: Option<usize>,
     head_peak: f32,
-    down: bool,
+    entries: Vec<Name>,
     limp: bool,
     resting: bool,
     downs: usize,
@@ -65,10 +66,18 @@ fn falling_graph(server: &AssetServer) -> AnimationGraph {
     let down = server.add(over_clip(LimpNode::default(), &clip));
     AnimationGraph::from_node(
         AnimationStateMachine::from_initial_state(name!("stand"), stand, |to| {
-            to.to(name!("fall"), AnimationFSMTrigger::OnFailed, 0.0);
+            to.to(
+                name!("fall"),
+                AnimationFSMTrigger::on_message::<Toppled>(),
+                0.0,
+            );
         })
         .state(name!("fall"), fall, |to| {
-            to.to(name!("down"), AnimationFSMTrigger::OnSucceeded, 0.0);
+            to.to(
+                name!("down"),
+                AnimationFSMTrigger::on_message::<Landed>(),
+                0.0,
+            );
         })
         .state(name!("down"), down, |_| {})
         .build(),
@@ -131,7 +140,11 @@ fn already_falling_graph(server: &AssetServer) -> AnimationGraph {
             );
         })
         .state(name!("fall"), fall, |to| {
-            to.to(name!("down"), AnimationFSMTrigger::OnSucceeded, 0.0);
+            to.to(
+                name!("down"),
+                AnimationFSMTrigger::on_message::<Landed>(),
+                0.0,
+            );
         })
         .state(name!("down"), down, |_| {})
         .build(),
@@ -186,7 +199,7 @@ fn watch(mut stage: Stage) -> Fallen {
         hands_down,
         chest_down,
         head_peak,
-        down: stage.in_state(name!("down")),
+        entries: stage.entries().to_vec(),
         limp: ["spine_03", "upperarm_l", "thigh_r"]
             .into_iter()
             .all(|bone| stage.motor(bone).torque_limit == 0.0),
@@ -209,8 +222,11 @@ fn a_falling_body_lands_on_its_hands_spares_its_head_and_ends_down_and_limp() {
         );
         for fall in [&limp, &braced] {
             assert!(
-                fall.down && fall.limp && fall.resting && fall.downs == 1,
-                "a fall towards {direction} says it is down once, then ends in the down state, limp and at rest: {fall:?}"
+                fall.entries == [name!("stand"), name!("fall"), name!("down")]
+                    && fall.limp
+                    && fall.resting
+                    && fall.downs == 1,
+                "a fall towards {direction} says it is down once, then enters the down state once and stays there, limp and at rest: {fall:?}"
             );
         }
         if direction == Vec3::Z {
@@ -226,7 +242,9 @@ fn a_falling_body_lands_on_its_hands_spares_its_head_and_ends_down_and_limp() {
     }
     let propped = fallen_on_its_limbs();
     assert!(
-        propped.down && propped.limp && propped.downs == 1,
+        propped.entries == [name!("waiting"), name!("fall"), name!("down")]
+            && propped.limp
+            && propped.downs == 1,
         "a fall that comes to rest on the hands and thighs across a trench, the trunk held off the ground, ends in the down state and limp: {propped:?}"
     );
 }

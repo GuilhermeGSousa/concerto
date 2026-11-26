@@ -50,6 +50,9 @@ pub fn register_animation_types(registry: &mut TypeRegistry) {
     let mut event = AnimationEvent::get_type_registration();
     event.insert(ReflectAnimationMessage);
     registry.add(event);
+    let mut ended = ClipEnded::get_type_registration();
+    ended.insert(ReflectAnimationMessage);
+    registry.add(ended);
     registry.register::<AnimationNodeData>();
     registry.register::<SlotEntry>();
     registry.register::<AssetHandle<AnimationClip>>();

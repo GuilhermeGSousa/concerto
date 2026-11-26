@@ -696,9 +696,22 @@ A behaviour node is a modifier in the character's graph: it takes the pose to
 act on as its input, passes it through, and sets the physics attributes on the
 bones of the parts it acts on, which it reads from the `BodyView`. A character
 without a ragdoll has no view, and the node only passes its pose through.
-Behaviour nodes never finish on their own, so a state holding one ends by a
-trigger or an outcome. `RagdollPlugin` registers them, and the messages `Hit`,
-`Shot`, `Stagger` and `Death`.
+A behaviour that comes to an end raises a message saying how, and a state
+machine moves on with `OnMessage` of its type. The behaviour decides in
+`drive`, during a physics step, and raises the message once, in its next
+`update`, however many steps the frame ran; its machine moves in the update
+after that. `RagdollPlugin` registers them, the messages `Hit`, `Shot`,
+`Stagger` and `Death` they read, and the messages they raise:
+
+| Nodes | Raise |
+|---|---|
+| `BalanceNode`, `StaggerNode`, `ShotNode` | `Steadied` when the body stands still, `Toppled` when it gives up |
+| `FallNode` | `Landed` once it has landed and relaxed |
+| `FlinchNode` | `Recovered` once the flinch is over |
+| `DyingNode` | `Drained` once nothing is left, beside its `BodyDead` signal |
+
+`HoldNode` and `LimpNode` raise nothing; a state holding one ends by another
+trigger.
 
 `HoldNode` holds the parts on a mask's bones with the muscles of a strength
 `profile`, `braced` by default, and acts on every part that profile does not
@@ -732,15 +745,16 @@ the pelvis and legs keep following the animation and need no balance, and
 waits for a `Hit` message. On one it dips the hit part's strength to `dip` and
 its neighbours' to `neighbour_dip`, brings them back over `recover` seconds,
 draws the powered parts in full for `hold` seconds after the last hit, then
-lets their amount fall to 0 over `settle` and succeeds. A second `Hit`
-restarts it. Play it from a `SlotNode` entry started `on` the `Hit` message
-type, so the walk plays underneath and the flinch is there only while it
-lasts:
+lets their amount fall to 0 over `settle` and raises `Recovered`. A second
+`Hit` restarts it. Play it from a `SlotNode` entry started `on` the `Hit`
+message type and ended on `Recovered`, its `out`, so the walk plays underneath
+and the flinch is there only while it lasts:
 
 ```rust
-let slot = SlotNode::new().with_entry(
-    SlotEntry::new(name!("flinch"), FlinchNode::default()).with_on(MessageType::of::<Hit>()),
-);
+let slot = SlotNode::new().with_entry(SlotEntry {
+    out: vec![MessageType::of::<Recovered>()],
+    ..SlotEntry::new(name!("flinch"), FlinchNode::default()).with_on(MessageType::of::<Hit>())
+});
 graph.result_node().input(slot).input(AnimationClipNode::new(walk));
 ```
 
@@ -752,7 +766,8 @@ state, has no slot to flinch with.
 
 The reaction chain of a game, a shot, a stagger, a fall, lying down, getting
 up and dying, is a state machine whose states hold the behaviour nodes below
-over the pose they act on, moved on by messages and outcomes:
+over the pose they act on, moved on by the messages the game sends and those
+the behaviours raise:
 
 ```rust
 let machine = AnimationStateMachine::from_initial_state(name!("walk"), walk, |to| {
@@ -761,15 +776,15 @@ let machine = AnimationStateMachine::from_initial_state(name!("walk"), walk, |to
 })
 .state(name!("shot"), shot, |to| {
     to.to(name!("dying"), AnimationFSMTrigger::on_message::<Death>(), 0.0)
-        .to(name!("walk"), AnimationFSMTrigger::OnSucceeded, 0.4)
-        .to(name!("fall"), AnimationFSMTrigger::OnFailed, 0.0);
+        .to(name!("walk"), AnimationFSMTrigger::on_message::<Steadied>(), 0.4)
+        .to(name!("fall"), AnimationFSMTrigger::on_message::<Toppled>(), 0.0);
 })
 .state(name!("fall"), fall, |to| {
-    to.to(name!("down"), AnimationFSMTrigger::OnSucceeded, 0.0);
+    to.to(name!("down"), AnimationFSMTrigger::on_message::<Landed>(), 0.0);
 })
 .state(name!("down"), down, |_| {})
 .state(name!("dying"), dying, |to| {
-    to.to(name!("dead"), AnimationFSMTrigger::OnSucceeded, 0.0);
+    to.to(name!("dead"), AnimationFSMTrigger::on_message::<Drained>(), 0.0);
 })
 .state(name!("dead"), dead, |_| {})
 .build();
@@ -779,7 +794,9 @@ where `walk` plays the locomotion, `shot` holds a `ShotNode`, `fall` a
 `FallNode`, `down` and `dead` a `LimpNode`, and `dying` a `DyingNode`, each
 over a standing clip or the locomotion. A machine takes one transition a
 frame, its `OnMessage` transitions first and in order, so `Death` is listed
-before `Shot`: the bullet that kills sends both. Transitions between two
+before `Shot`: the bullet that kills sends both. For the same reason `Death`
+comes before `Steadied` and `Toppled` in the shot state, so a death sent on
+the frame the shot ends still wins. Transitions between two
 physical states can be instant, since nothing drawn changes; those to and
 from the walk blend the amount. Getting up is a transition too: from a state
 with a `LimpNode` over the get-up clip held at its first frame, so the blend
@@ -840,12 +857,13 @@ panel prints the same.
   A point to the side is caught by the foot on that side, so the legs never
   cross. Both feet rest `step_rest` before the next.
 
-It draws all those parts from physics. It succeeds once the body has been
-balanced and slower than `settle_speed` for `settle_seconds`, and fails when
+It draws all those parts from physics. It raises `Steadied` once the body has
+been balanced and slower than `settle_speed` for `settle_seconds`, and
+`Toppled` when
 the trunk leans past `max_lean`, the pelvis sinks under `min_height` of its
 standing height, the feet leave the ground, a step has no ground to land on,
 or `max_steps` steps did not bring the point back. The state machine moves on
-with `OnSucceeded` and `OnFailed`. `BalanceState::steps` and `stepping` say how
+with `OnMessage` of either. `BalanceState::steps` and `stepping` say how
 it is going, and `AnimationPlayer::for_each_state::<BalanceNode>` reads them.
 
 With the defaults the reference humanoid, 75 kg, absorbs a 12 N·s push on the
@@ -884,9 +902,11 @@ It embeds a balance, its `balance` settings, and runs on top of it with its
   not solved from the angular momentum.
 
 The spine bend and the arm swing are laid over the balance's commands. It
-succeeds when its balance settles and fails when it gives up. On the
-reference humanoid a 70 N·s push with severity 0.3 takes more steps than
-balance alone and ends standing; with severity 1 it fails. Between those the
+raises `Steadied` when its balance settles and `Toppled` when it gives up. On
+the reference humanoid a 70 N·s push with severity 0.3 takes more steps than
+balance alone and ends standing; with severity 1 it topples. A further
+`Stagger` restarts it, and a result it decided but has not raised yet is
+dropped. Between those the
 outcome is in doubt, as it should be: do not build game logic on a stagger of
 a given severity surviving.
 
@@ -933,8 +953,8 @@ routing does. It emits `Wounded { part, share }` on the character for each
 part it weakens, which the `Wounds` every `CharacterRagdoll` carries keeps
 after the shot ends: `strength_of(part)` is the share of its strength each
 part kept, for the game to turn into a limp or a guarded arm. A `HoldNode`
-scales its muscles by it. It succeeds when its balance settles and fails when
-it gives up.
+scales its muscles by it. It raises `Steadied` when its balance settles and
+`Toppled` when it gives up.
 
 A body standing on one leg may take a long time to settle or never settle;
 the state then lasts until the graph leaves it on a message or a param, or the
@@ -945,7 +965,7 @@ character dies.
 A body that goes limp the moment it loses its balance falls like a dropped
 puppet. `FallNode` is what a person does instead. It acts from the moment its
 state is entered, so a graph moves into it from a balancing state on
-`OnFailed`. Its `strength`, a blackboard `Param` that reads 1 with no such
+`OnMessage` of `Toppled`. Its `strength`, a blackboard `Param` that reads 1 with no such
 value, is how conscious the fall is: 1 is fully braced, 0 is the limp fall,
 and everything between is a weaker version of the same motion, so the game
 sets it from the wound. With its `settings`, a `FallSettings`, the body is
@@ -969,11 +989,12 @@ braced on every part and:
   other than a foot, it has landed and emits `BodyDown` on the character. A
   body that comes to rest on its side, propped on an arm and a leg, lands too.
   The strength then drains to `resting` over `relax_seconds`, the body goes
-  limp, keeping its muscles' stiffness with no torque, and the node succeeds,
-  so the graph moves on with `OnSucceeded` into a state with a `LimpNode`.
+  limp, keeping its muscles' stiffness with no torque, and the node raises
+  `Landed`, so the graph moves on with `OnMessage` of it into a state with a
+  `LimpNode`.
 
 A `strength` of 0 is limp from the first step, but the node still waits for
-the landing to emit `BodyDown` and succeed. Hands are held to the ground by
+the landing to emit `BodyDown` and raise `Landed`. Hands are held to the ground by
 friction, not by a constraint. A fall from a height, where a roll is the right
 answer, is not handled. On the reference humanoid pushed over with 270 N·s,
 forward or backward, the braced fall's peak contact impulse on the head is
@@ -998,8 +1019,9 @@ The character's graph receives a `Death { seconds }` message, and a
   spent at 40% of the time, forearms and shins at 60%, upper arms, thighs and
   the head at 80%, the trunk at the end. A character that was following its
   animation is simulated in full from the first step;
-- when nothing is left it emits `BodyDead` on the character and succeeds, so
-  the graph moves on with `OnSucceeded` into a state with a `LimpNode`. Every
+- when nothing is left it emits `BodyDead` on the character and raises
+  `Drained`, so the graph moves on with `OnMessage` of it into a state with a
+  `LimpNode`. Every
   character ragdoll carries a listener that inserts a `Dead` component when
   `BodyDead` reaches it, and nothing removes it;
 - zero seconds does all of that at once, which a head shot wants.
@@ -1120,8 +1142,8 @@ A graph is a tree of nodes under a result node:
   are added at the node's weight. A plain clip passes the base through with
   one warning; an additive clip whose delta isn't built, such as one added in
   code, passes it through with none. `AnimationPlayer::play(node, graphs)`
-  restarts the delta, and the node never holds back `OnAnimationEnd`: it always counts
-  as finished. The node has no mask: it layers the delta on every bone the
+  restarts the delta, and the node raises no `ClipEnded`: a state that waits
+  on one leaves when its base's clip ends. The node has no mask: it layers the delta on every bone the
   delta covers. `AdditiveNode::new(clip)` starts at weight 1, looping from 0
   at rate 1, and every other field has a `with_<field>`:
   ```rust
@@ -1194,18 +1216,18 @@ A graph is a tree of nodes under a result node:
   started, by its fade weight times its mask, in the pose, in the attributes
   of the drive pass and in root motion (an entry with a mask leaves the root
   motion to the base). An entry fades out once its node raises one of its
-  `out` types in an update, reports an outcome or is finished, and stops at weight 0; the slot reports no outcome of its own.
+  `out` types in an update, and stops at weight 0. What an entry's node raises
+  also goes on up to the slot's own machine.
   A slot reacts only while it is in a playing graph, so one inside the walk
   state's graph flinches a walking body and a falling body has none.
 - **2D blend space** places clips at points and blends by a `Vec2`
   parameter: the classic locomotion setup.
 - **State machine** switches between sub-graphs on triggers such as
   `AnimationFSMTrigger::on_bool(name!("is_grounded"), false)` or
-  `AnimationFSMTrigger::OnAnimationEnd`, `AnimationFSMTrigger::on_message::<M>()`,
-  which fires when a message of type `M` was sent to the player this frame
-  or the current state raised one in the previous frame (below),
-  or `OnSucceeded` and `OnFailed`, which fire on the outcome the current
-  state's graph reports (below). Each transition takes a
+  `AnimationFSMTrigger::on_message::<M>()`, which fires when a message of
+  type `M` was sent to the player this frame or the current state raised one
+  in the previous frame (below); `on_message::<ClipEnded>()` leaves a state
+  once a clip in it ends. Each transition takes a
   `blend_time`, and the machine's `TransitionBlender` (set with
   `.blender(..)` on the builder) decides what it means: `CrossFade`, the
   default, fades the old state out over `blend_time` seconds (a transition
@@ -1500,7 +1522,7 @@ impl AnimationNode for Gain {
     type UpdateInput = Res<'static, Tuning>;
     type EvaluateInput = ();
     type DriveInput = ();
-    // create_state, update, evaluate, reset; is_finished and drive have defaults
+    // create_state, update, evaluate, reset; root_motion and drive have defaults
 }
 
 impl EditorAnimationNode for Gain {}
@@ -1508,8 +1530,8 @@ impl EditorAnimationNode for Gain {}
 
 The node's fields are its data and are stored with the graph. `State` is the
 per-player runtime state (a playhead, say): `create_state` makes one for each
-player that uses the graph, and `update`, `evaluate`, `reset` and `is_finished`
-receive it. `AnimationPlayer::play(node, graphs)` calls the node's `reset`, so
+player that uses the graph, and `update`, `evaluate` and `reset` receive it.
+A node that comes to an end says so by raising a message (below). `AnimationPlayer::play(node, graphs)` calls the node's `reset`, so
 a node restarts on `play` by resetting its state there. A node that plays graphs
 inside itself, as the state machine and the retarget node do, reports them
 through `inner_graphs` and their states through `inner_states`, each with the
@@ -1651,7 +1673,7 @@ an `AnimationStateMachine`) are stored as asset ids and loaded again by
 `make_live`. Keep the clip and state graph handles you give to a builder alive
 until `assets.add(graph)` has run.
 
-#### Messages, outcomes and signals
+#### Messages and signals
 
 A message is a value a graph reacts to: a type that derives `Reflect` and
 `Clone`, implements the marker trait `AnimationMessage`, and is registered
@@ -1724,14 +1746,18 @@ be encoded, fires only on a message that holds every field the given one has, so
 event and ignores other names. A value naming a field its type lacks leaves a
 load warning.
 
-`AnimationNode::outcome(state)` says whether the node has `Succeeded` or
-`Failed` at what it does, a `NodeOutcome`; `None` by default. A graph's outcome
-is the first a node reports, inputs before the node they feed, and a state
-machine reports its current state's graph's outcome. `OnSucceeded` and
-`OnFailed` read it before the machine updates its states, so a message that
-makes a node succeed in its `update` moves its machine on the next frame. A node whose state ends
-by outcome returns `false` from `is_finished`, so `OnAnimationEnd` leaves it
-alone.
+A node that decides something in `drive`, during a physics step, keeps it in
+its state and raises it in its next `update`, with a flag in its state saying
+it has been raised: `drive` runs zero, one or several times a frame, so a
+result raised from there would be lost or repeated. The ragdoll behaviours
+end this way, so their machine moves two updates after the step that decided
+it.
+
+One frame can bring both a message the game sent and one the current state
+raised in the previous frame, such as a second `Stagger` and the `Toppled` of
+the first. The machine then takes whichever matching `OnMessage` transition
+comes first in the state's list, so order a state's transitions by which
+should win.
 
 A node tells the game what happened with `context.emit(signal)`, for any
 `EntitySignal`, from any pass: `create_state`, `update`, `root_motion`, `evaluate` or `drive`. The signals go to a per-player outbox,
@@ -2202,8 +2228,8 @@ skeleton's root, netted against the source rig's reference root joint (see
 root motion against the target reference, and the node's root motion is the
 inner graph's, with its translation multiplied by `scale()` and its rotation
 unchanged. Clip events fired in the inner graph reach the player as its own,
-and the node is finished when the inner graph is, so a state machine's
-`OnAnimationEnd` follows it. `AnimationPlayer::for_each_state` also visits
+and what the inner graph raises, its clips' `ClipEnded` among it, goes on up
+to the containers above the node. `AnimationPlayer::for_each_state` also visits
 the nodes inside the inner graph, which is how motion matching's gizmos find a
 matcher under a retarget node.
 
@@ -2227,8 +2253,8 @@ goals when it starts, so an edit to a rig's goals reaches a node that is
 already playing only once the node restarts.
 
 Until the player's skeleton, both rigs, their skeletons, a `ClipFrame`
-reference clip and the inner graph have loaded, the node gives the rest pose,
-and its `is_finished` is false. The inner graph also sees the player's
+reference clip and the inner graph have loaded, the node gives the rest pose
+and raises nothing. The inner graph also sees the player's
 `model_to_world`, but at the source's scale, so nodes that read the world, such
 as foot placement, IK and look-at, go above the retarget node, on the target
 skeleton, not inside its inner graph.
@@ -2243,8 +2269,8 @@ The node refuses:
   `CreateInput` is not also an update input, which would get no state inside
   the node's update, and gives the target rig's reference pose.
 
-Each refusal logs one warning naming it, and the node then counts as
-finished. It stays refused until the player's graph changes: fixing or
+Each refusal logs one warning naming it, and the node then raises nothing, so
+a state that waits on `ClipEnded` above it never leaves on it. It stays refused until the player's graph changes: fixing or
 reloading the inner graph or a rig does not bring it back. A player skeleton
 whose bones change while the node plays fails it the same way, at the rest
 pose. A pose the solve rejects while playing gives the rest pose with no root

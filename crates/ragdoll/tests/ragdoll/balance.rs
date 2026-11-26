@@ -3,8 +3,8 @@ use concerto_animation::{
     graph::AnimationGraph,
     message::AnimationMessage,
     node::{
-        AnimationClipNode, AnimationNode, NodeOutcome,
-        state_machine::{AnimationFSMTrigger, AnimationStateMachine},
+        AnimationClipNode, AnimationNode,
+        state_machine::{AnimationFSMTrigger, AnimationStateMachine, AnimationStateMachineState},
     },
     player::{AnimationHandleComponent, AnimationPlayer},
     plugin::AnimationPlugin,
@@ -37,6 +37,7 @@ use concerto_ragdoll::testing::{
 use concerto_ragdoll::{
     BalanceNode, BalanceSettings, BalanceState, BodyDown, BodySettled, CharacterRagdoll, LimpNode,
     MotorCommand, RagdollBody, RagdollPlugin, StaggerNode, StaggerState,
+    messages::{Steadied, Toppled},
 };
 use concerto_reflect::Reflect;
 use glam::{Quat, Vec3};
@@ -65,6 +66,13 @@ pub struct Stage {
     pub humanoid: SpawnedHumanoid,
     pub character: Entity,
     pub pose: Vec<JointPose>,
+    entries: Vec<Name>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Ended {
+    Steady,
+    Fallen,
 }
 
 impl Stage {
@@ -126,6 +134,7 @@ impl Stage {
             humanoid,
             character,
             pose: humanoid_skeleton().rest_pose.to_vec(),
+            entries: Vec::new(),
         };
         stage.run(5);
         stage
@@ -145,7 +154,34 @@ impl Stage {
             self.app.serve(LateFixedUpdate);
             self.app.serve(Update);
             self.app.serve(LateUpdate);
+            if let Some(state) = self.current_state()
+                && self.entries.last() != Some(&state)
+            {
+                self.entries.push(state);
+            }
         }
+    }
+
+    fn current_state(&self) -> Option<Name> {
+        let graphs = self.app.get_resource::<AssetStore<AnimationGraph>>()?;
+        let player = self
+            .app
+            .main()
+            .world()
+            .get_component_for_entity::<AnimationPlayer>(self.character)?;
+        let mut current = None;
+        player.for_each_state::<AnimationStateMachine>(
+            graphs,
+            |_, state: &AnimationStateMachineState, _| {
+                current = current.or(state.current_state_name());
+            },
+        );
+        current
+    }
+
+    /// The states the graph's machine has been in, in the order it entered them.
+    pub fn entries(&self) -> &[Name] {
+        &self.entries
     }
 
     pub fn push(&mut self, bone: &str, impulse: Vec3) {
@@ -240,11 +276,11 @@ impl Stage {
             .send(message);
     }
 
-    pub fn outcome(&self) -> Option<NodeOutcome> {
+    pub fn outcome(&self) -> Option<Ended> {
         if self.in_state(name!("steady")) {
-            Some(NodeOutcome::Succeeded)
+            Some(Ended::Steady)
         } else if self.in_state(name!("fallen")) {
-            Some(NodeOutcome::Failed)
+            Some(Ended::Fallen)
         } else {
             None
         }
@@ -301,8 +337,16 @@ fn balance_graph(server: &AssetServer, node: BalanceNode) -> AnimationGraph {
     let fallen = server.add(over_clip(LimpNode::default(), &clip));
     AnimationGraph::from_node(
         AnimationStateMachine::from_initial_state(name!("balance"), balance, |to| {
-            to.to(name!("steady"), AnimationFSMTrigger::OnSucceeded, 0.0)
-                .to(name!("fallen"), AnimationFSMTrigger::OnFailed, 0.0);
+            to.to(
+                name!("steady"),
+                AnimationFSMTrigger::on_message::<Steadied>(),
+                0.0,
+            )
+            .to(
+                name!("fallen"),
+                AnimationFSMTrigger::on_message::<Toppled>(),
+                0.0,
+            );
         })
         .state(name!("steady"), steady, |_| {})
         .state(name!("fallen"), fallen, |_| {})
@@ -312,7 +356,7 @@ fn balance_graph(server: &AssetServer, node: BalanceNode) -> AnimationGraph {
 
 #[derive(Debug)]
 struct Pushed {
-    outcome: Option<NodeOutcome>,
+    entries: Vec<Name>,
     steps: u32,
     travelled: Vec3,
     pelvis_height: f32,
@@ -337,8 +381,9 @@ fn pushed(balance: BalanceNode, impulse: Vec3, seconds: f32) -> Pushed {
         stepping = stage.stepping();
         stage.run(1);
     }
+    stage.run(30);
     Pushed {
-        outcome: stage.outcome(),
+        entries: stage.entries().to_vec(),
         steps,
         travelled: pelvis - start,
         pelvis_height: pelvis.y,
@@ -350,7 +395,11 @@ fn a_balancing_body_stands_absorbs_a_push_steps_to_catch_itself_or_gives_up() {
     let patient = BalanceNode::default()
         .with_settings(BalanceSettings::default().with_settle_seconds(f32::MAX));
     let standing = pushed(patient, Vec3::ZERO, 10.0);
-    assert_eq!(standing.outcome, None, "an unpushed body keeps balancing");
+    assert_eq!(
+        standing.entries,
+        [name!("balance")],
+        "an unpushed body keeps balancing"
+    );
     assert_eq!(standing.steps, 0);
     assert!(
         standing.travelled.length() < 0.05,
@@ -361,9 +410,9 @@ fn a_balancing_body_stands_absorbs_a_push_steps_to_catch_itself_or_gives_up() {
     for direction in [Vec3::Z, Vec3::NEG_Z, Vec3::X, Vec3::NEG_X] {
         let light = pushed(BalanceNode::default(), direction * 12.0, 10.0);
         assert_eq!(
-            light.outcome,
-            Some(NodeOutcome::Succeeded),
-            "a light push towards {direction} is absorbed and the graph moves on to its steady state: {light:?}"
+            light.entries,
+            [name!("balance"), name!("steady")],
+            "a light push towards {direction} is absorbed and the graph moves on to its steady state once and stays: {light:?}"
         );
         assert_eq!(
             light.steps, 0,
@@ -372,7 +421,7 @@ fn a_balancing_body_stands_absorbs_a_push_steps_to_catch_itself_or_gives_up() {
 
         let medium = pushed(BalanceNode::default(), direction * 70.0, 10.0);
         assert!(
-            medium.outcome == Some(NodeOutcome::Succeeded)
+            medium.entries == [name!("balance"), name!("steady")]
                 && (1..=2).contains(&medium.steps)
                 && medium.pelvis_height > 0.9
                 && medium.travelled.dot(direction) > 0.0,
@@ -381,9 +430,9 @@ fn a_balancing_body_stands_absorbs_a_push_steps_to_catch_itself_or_gives_up() {
 
         let hard = pushed(BalanceNode::default(), direction * 300.0, 10.0);
         assert_eq!(
-            hard.outcome,
-            Some(NodeOutcome::Failed),
-            "a hard push towards {direction} ends in giving up, and the graph moves on to its fallen state: {hard:?}"
+            hard.entries,
+            [name!("balance"), name!("fallen")],
+            "a hard push towards {direction} ends in giving up, and the graph moves on to its fallen state once and stays: {hard:?}"
         );
     }
 }

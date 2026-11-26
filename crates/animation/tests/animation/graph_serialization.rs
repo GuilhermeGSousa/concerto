@@ -12,6 +12,7 @@ use concerto_animation::graph::{
 };
 use concerto_animation::ik::Hinge;
 use concerto_animation::mask::{BoneMask, BoneMaskBranch};
+use concerto_animation::message::{ClipEnded, MessageType};
 use concerto_animation::node::blend_space::BlendSpace2DNode;
 use concerto_animation::node::state_machine::{AnimationFSMTrigger, AnimationStateMachine};
 use concerto_animation::node::{
@@ -128,7 +129,11 @@ fn state_machine() -> AnimationStateMachine {
         );
     })
     .state(name!("run"), state("run_graph"), |transition| {
-        transition.to(name!("idle"), AnimationFSMTrigger::OnAnimationEnd, 0.1);
+        transition.to(
+            name!("idle"),
+            AnimationFSMTrigger::on_message::<ClipEnded>(),
+            0.1,
+        );
     })
     .blender(TransitionBlender::Inertialization)
     .build()
@@ -199,11 +204,11 @@ fn a_mixed_graph_loaded_from_its_bytes_matches_the_one_built_in_code_node_for_no
         trigger,
         AnimationFSMTrigger::Vec2NonZero { param } if *param == name!("move").into()
     )));
-    assert!(
-        triggers
-            .iter()
-            .any(|trigger| matches!(trigger, AnimationFSMTrigger::OnAnimationEnd))
-    );
+    assert!(triggers.iter().any(|trigger| matches!(
+        trigger,
+        AnimationFSMTrigger::OnMessage { message, value: None }
+            if message.path() == MessageType::of::<ClipEnded>().path()
+    )));
     assert_eq!(machine.blender(), TransitionBlender::Inertialization);
     assert_eq!(
         machine.blend_times().collect::<Vec<_>>(),
