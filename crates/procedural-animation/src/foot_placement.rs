@@ -1,6 +1,7 @@
 use concerto_animation::{
     blackboard::AnimationBlackboard,
     evaluation::AnimationGraphContext,
+    ik::Hinge,
     node::{
         AnimationNode, InputSlots, ReflectAnimationNode,
         model_space::{WorldToModel, bone_under_first, model_joint, parent},
@@ -153,11 +154,12 @@ impl FootPlacementNode {
     }
 }
 
-/// A leg: the foot bone names the chain (its parent the knee, its grandparent the hip), and an optional toe bone adds a second ray.
+/// A leg: the foot bone names the chain (its parent the knee, its grandparent the hip), an optional toe bone adds a second ray, and `hinge` is the knee's hinge axis.
 #[derive(Clone, Debug, Default, PartialEq, Reflect, serde::Serialize, serde::Deserialize)]
 pub struct FootPlacementLeg {
     pub foot: JointName,
     pub toe: Option<JointName>,
+    pub hinge: Hinge,
 }
 
 impl FootPlacementLeg {
@@ -166,12 +168,19 @@ impl FootPlacementLeg {
         Self {
             foot: foot.into(),
             toe: None,
+            hinge: Hinge::Off,
         }
     }
 
     /// Sets the toe bone the second ray is cast at.
     pub fn with_toe(mut self, toe: impl Into<JointName>) -> Self {
         self.toe = Some(toe.into());
+        self
+    }
+
+    /// Sets the knee's hinge axis; see `Hinge`.
+    pub fn with_hinge(mut self, hinge: Hinge) -> Self {
+        self.hinge = hinge;
         self
     }
 }
@@ -272,7 +281,7 @@ impl FootPlacementNode {
         let pelvis = bone_under_first(skeleton, self.pelvis)?;
         let mut legs = Vec::with_capacity(self.legs.len());
         for leg in &self.legs {
-            let resolved = resolve_leg(skeleton, leg.foot, leg.toe)?;
+            let resolved = resolve_leg(skeleton, leg.foot, leg.toe, &leg.hinge)?;
             if !descends_from(skeleton, resolved.hip, pelvis) {
                 return Err(format!(
                     "the hip of foot `{}` does not descend from pelvis `{}`",

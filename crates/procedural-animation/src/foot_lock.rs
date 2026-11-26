@@ -1,6 +1,7 @@
 use concerto_animation::{
     blackboard::AnimationBlackboard,
     evaluation::{AnimationGraphContext, RootBone},
+    ik::Hinge,
     node::{
         AnimationNode, InputSlots, ReflectAnimationNode,
         model_space::{WorldToModel, model_joint},
@@ -113,11 +114,12 @@ impl FootLockNode {
     }
 }
 
-/// A leg: the foot bone names the chain (its parent the knee, its grandparent the hip), and an optional toe bone is the point a plant is read from and held at.
+/// A leg: the foot bone names the chain (its parent the knee, its grandparent the hip), an optional toe bone is the point a plant is read from and held at, and `hinge` is the knee's hinge axis.
 #[derive(Clone, Debug, Default, PartialEq, Reflect, serde::Serialize, serde::Deserialize)]
 pub struct FootLockLeg {
     pub foot: JointName,
     pub toe: Option<JointName>,
+    pub hinge: Hinge,
 }
 
 impl FootLockLeg {
@@ -126,12 +128,19 @@ impl FootLockLeg {
         Self {
             foot: foot.into(),
             toe: None,
+            hinge: Hinge::Off,
         }
     }
 
     /// Sets the toe bone a plant is read from and held at.
     pub fn with_toe(mut self, toe: impl Into<JointName>) -> Self {
         self.toe = Some(toe.into());
+        self
+    }
+
+    /// Sets the knee's hinge axis; see `Hinge`.
+    pub fn with_hinge(mut self, hinge: Hinge) -> Self {
+        self.hinge = hinge;
         self
     }
 }
@@ -223,7 +232,7 @@ impl FootLockNode {
         let legs = self
             .legs
             .iter()
-            .map(|leg| resolve_leg(skeleton, leg.foot, leg.toe))
+            .map(|leg| resolve_leg(skeleton, leg.foot, leg.toe, &leg.hinge))
             .collect::<Result<Vec<_>, _>>()?;
         Ok(ResolvedLegs { skeleton, legs })
     }
@@ -514,6 +523,7 @@ impl AnimationNode for FootLockNode {
 mod tests {
     use concerto_animation::{
         evaluation::AnimationGraphContext,
+        ik::Hinge,
         node::{AnimationNode, InputSlots, ReflectAnimationNode},
         player::AnimationPlayer,
         pose::{AnimationFrame, EvaluatedFrame, FramePool, JointPose, RootMotion, WeightedMotion},
@@ -544,6 +554,7 @@ mod tests {
     const HALF_LEG: f32 = 0.45;
     const TOE_AHEAD: Vec3 = Vec3::new(0.0, 0.0, 0.15);
     const HIPS: [usize; 2] = [1, 5];
+    const KNEES: [usize; 2] = [2, 6];
     const FEET: [usize; 2] = [3, 7];
     const TOES: [usize; 2] = [4, 8];
     const STRIDE: Vec3 = Vec3::new(0.0, 0.0, 0.5);
@@ -650,39 +661,52 @@ mod tests {
         fn reset(&self, _: &mut ()) {}
     }
 
-    fn leg_bones(names: [&'static str; 4], hip_x: f32, first: u16) -> [Bone; 4] {
-        let joint = |translation| JointPose {
+    fn leg_bones(
+        names: [&'static str; 4],
+        hip_x: f32,
+        first: u16,
+        hip_turn: Quat,
+        knee_turn: Quat,
+    ) -> [Bone; 4] {
+        let hip_frame = hip_turn;
+        let knee_frame = hip_turn * knee_turn;
+        let joint = |translation, rotation| JointPose {
             translation,
+            rotation,
             ..JointPose::IDENTITY
         };
         [
             Bone {
                 name: names[0],
                 parent: Some(0),
-                joint: joint(Vec3::new(hip_x, 0.0, 0.0)),
+                joint: joint(Vec3::new(hip_x, 0.0, 0.0), hip_turn),
             },
             Bone {
                 name: names[1],
                 parent: Some(first),
-                joint: joint(Vec3::new(
-                    0.0,
-                    -HALF_LEG * KNEE_BEND.cos(),
-                    HALF_LEG * KNEE_BEND.sin(),
-                )),
+                joint: joint(
+                    hip_frame.inverse()
+                        * Vec3::new(0.0, -HALF_LEG * KNEE_BEND.cos(), HALF_LEG * KNEE_BEND.sin()),
+                    knee_turn,
+                ),
             },
             Bone {
                 name: names[2],
                 parent: Some(first + 1),
-                joint: joint(Vec3::new(
-                    0.0,
-                    -HALF_LEG * KNEE_BEND.cos(),
-                    -HALF_LEG * KNEE_BEND.sin(),
-                )),
+                joint: joint(
+                    knee_frame.inverse()
+                        * Vec3::new(
+                            0.0,
+                            -HALF_LEG * KNEE_BEND.cos(),
+                            -HALF_LEG * KNEE_BEND.sin(),
+                        ),
+                    Quat::IDENTITY,
+                ),
             },
             Bone {
                 name: names[3],
                 parent: Some(first + 2),
-                joint: joint(TOE_AHEAD),
+                joint: joint(knee_frame.inverse() * TOE_AHEAD, Quat::IDENTITY),
             },
         ]
     }
@@ -692,6 +716,10 @@ mod tests {
     }
 
     fn rig_with_pelvis_at(pelvis: Vec3) -> Skeleton {
+        rig_turned(pelvis, Quat::IDENTITY, Quat::IDENTITY)
+    }
+
+    fn rig_turned(pelvis: Vec3, hip_turn: Quat, knee_turn: Quat) -> Skeleton {
         let mut bones = vec![Bone {
             name: "pelvis",
             parent: None,
@@ -704,11 +732,15 @@ mod tests {
             ["left_hip", "left_knee", "left_foot", "left_toe"],
             0.1,
             1,
+            hip_turn,
+            knee_turn,
         ));
         bones.extend(leg_bones(
             ["right_hip", "right_knee", "right_foot", "right_toe"],
             -0.1,
             5,
+            hip_turn,
+            knee_turn,
         ));
         skeleton_of(&bones)
     }
@@ -1098,6 +1130,62 @@ mod tests {
                     rotation_of(stage.input_model(foot)),
                 );
                 prop_assert!(turned < 1.0e-3, "the foot turned {turned}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_locked_leg_bends_about_its_hinge() {
+        let build = || {
+            rig_turned(
+                PELVIS,
+                Quat::from_rotation_z(0.5),
+                Quat::from_rotation_y(0.7),
+            )
+        };
+        let skeleton = build();
+        let opposite = -Hinge::Rest
+            .local(&skeleton, HIPS[0], KNEES[0], FEET[0])
+            .expect("the rig's knee is bent");
+        let node = FootLockNode::new()
+            .with_leg(
+                FootLockLeg::new("left_foot")
+                    .with_toe("left_toe")
+                    .with_hinge(Hinge::Axis { axis: opposite }),
+            )
+            .with_leg(FootLockLeg::new("right_foot").with_toe("right_toe"));
+        let script = Script::rest_of(&skeleton);
+        let mut stage = Stage::new(build(), script, node).under(Affine3A::IDENTITY);
+        stage.settle();
+        stage.step(DT);
+        assert_eq!(stage.phases(), [LockPhase::Locked; 2]);
+        let slides = [
+            Vec3::new(0.05, 0.0, 0.0),
+            Vec3::new(0.0, 0.0, 0.06),
+            Vec3::new(-0.04, 0.0, -0.04),
+            Vec3::new(0.03, 0.0, -0.05),
+        ];
+        for by in slides {
+            stage.move_model(Affine3A::from_translation(by));
+            stage.step(DT);
+            for leg in 0..2 {
+                let hinged = leg == 0;
+                let hip = stage.output_model(HIPS[leg]).translation;
+                let knee = stage.output_model(KNEES[leg]).translation;
+                let foot = stage.output_model(FEET[leg]).translation;
+                let reach = Vec3::from(foot - hip).length();
+                assert!(reach < 2.0 * HALF_LEG - 1.0e-3, "{reach}");
+                let bend = Vec3::from(knee - hip).cross(Vec3::from(foot - knee));
+                let frame = rotation_of(stage.input_model(KNEES[leg]));
+                let hinge = frame
+                    * Hinge::Rest
+                        .local(&skeleton, HIPS[leg], KNEES[leg], FEET[leg])
+                        .unwrap();
+                let side = if hinged { -hinge } else { hinge };
+                assert!(
+                    bend.normalize().dot(side) > 0.99,
+                    "leg {leg} at {by}: {bend}"
+                );
             }
         }
     }
