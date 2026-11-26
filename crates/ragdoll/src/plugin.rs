@@ -33,7 +33,7 @@ use crate::{
     fall::{Fall, FallReaction, fall_bodies, fall_when_falling},
     hit::{HitReaction, flinch_when_hit, update_flinches},
     messages::{self, Death, Hit, Shot, apply_impulses, keep_wounds, route_hits},
-    node::{FlinchNode, HoldNode, LimpNode},
+    node::{BalanceNode, FlinchNode, HoldNode, LimpNode},
     sensing::sense_bodies,
     shot::{ShotReaction, end_shots, note_shot_balance_ended, react_when_shot, shot_bodies},
     stagger::{Stagger, end_staggers, note_balance_ended, stagger_bodies},
@@ -50,7 +50,8 @@ impl Plugin for RagdollPlugin {
         app.register_type::<CharacterRagdoll>();
         app.register_animation_node::<HoldNode>()
             .register_animation_node::<LimpNode>()
-            .register_animation_node::<FlinchNode>();
+            .register_animation_node::<FlinchNode>()
+            .register_animation_node::<BalanceNode>();
         app.register_animation_message::<Hit>()
             .register_animation_message::<Shot>()
             .register_animation_message::<messages::Stagger>()

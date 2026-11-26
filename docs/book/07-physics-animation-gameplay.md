@@ -769,6 +769,32 @@ A character with a `HitReaction` or a `ShotReaction` is still flinched by the
 old components, which take its impulses; a character with neither is flinched
 by its graph.
 
+`BalanceNode` is the graph's `Balance`, described below, with its `profile`
+(`braced`) and its `settings`, a `BalanceSettings` holding the settings of the
+`Balance` component with the same defaults. Each physics step it holds every
+part its profile powers, gives the pelvis and the legs balance's muscles and
+assists, and steps when the capture point leaves the feet, exactly as
+`Balance` does, reading the body from the `BodyView` and casting its step's
+ray through the `PhysicsState`. It draws all those parts from physics. It
+succeeds once the body has stood balanced and slow for `settle_seconds`, and
+fails where `Balance` gives up; it changes neither the character's
+`CharacterRagdoll` nor its `PhysicalState`, so the state machine moves on with
+`OnSucceeded` and `OnFailed`:
+
+```rust
+let machine = AnimationStateMachine::from_initial_state(name!("balance"), balance, |to| {
+    to.to(name!("walk"), AnimationFSMTrigger::OnSucceeded, 0.3)
+        .to(name!("fallen"), AnimationFSMTrigger::OnFailed, 0.2);
+})
+.state(name!("walk"), walk, |_| {})
+.state(name!("fallen"), fallen, |_| {})
+.build();
+```
+
+where `balance` is a graph holding `BalanceNode::default()` over the standing
+clip, and `fallen` one holding a `LimpNode`. `BalanceState::steps` and `stepping` say how it is going, and
+`AnimationPlayer::for_each_state::<BalanceNode>` reads them.
+
 #### What the body senses
 
 A `BodySense` beside a `CharacterRagdoll` is rewritten after each fixed step

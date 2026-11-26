@@ -1,3 +1,13 @@
+use concerto_animation::{
+    clip::{AnimationChanelOutput, AnimationChannel, AnimationClip},
+    graph::AnimationGraph,
+    node::{
+        AnimationClipNode, AnimationNode, NodeOutcome,
+        state_machine::{AnimationFSMTrigger, AnimationStateMachine},
+    },
+    player::{AnimationHandleComponent, AnimationPlayer},
+    plugin::AnimationPlugin,
+};
 use concerto_app::{
     App,
     main_schedule::MainSchedulePlugin,
@@ -7,9 +17,12 @@ use concerto_app::{
 use concerto_ecs::entity::Entity;
 use concerto_ecs::resource::{ResMut, Resource};
 use concerto_ecs::signal::On;
-use concerto_foundation::assets::asset_server::AssetServer;
+use concerto_foundation::assets::{
+    asset_server::AssetServer, asset_store::AssetStore, handle::AssetHandle,
+};
 use concerto_foundation::transform::Transform;
-use concerto_mesh::JointPose;
+use concerto_mesh::{JointPose, Skeleton};
+use concerto_name::{Name, name};
 use concerto_physics::collider::Collider;
 use concerto_physics::physics_state::PhysicsState;
 use concerto_physics::plugin::PhysicsPlugin;
@@ -18,8 +31,8 @@ use concerto_ragdoll::testing::{
     SpawnedHumanoid, humanoid_skeleton, reference_humanoid, spawn_humanoid,
 };
 use concerto_ragdoll::{
-    Balance, BehaviourEnded, BodyDrive, BodySense, BodySettled, BodyState, CharacterRagdoll,
-    Outcome, PhysicalState, RagdollBody, RagdollPlugin,
+    Balance, BalanceNode, BalanceSettings, BalanceState, BehaviourEnded, BodyDrive, BodySense,
+    BodySettled, BodyState, CharacterRagdoll, LimpNode, PhysicalState, RagdollBody, RagdollPlugin,
 };
 use glam::{Quat, Vec3};
 
@@ -50,13 +63,25 @@ impl Stage {
     }
 
     pub fn placed(placement: Transform) -> Self {
+        Self::build(placement, None)
+    }
+
+    /// A body whose animation graph balances it with `node` over the standing pose, moving to the state `steady` when it succeeds and `fallen`, where it goes limp, when it gives up.
+    pub fn balancing(node: BalanceNode) -> Self {
+        Self::build(Transform::default(), Some(node))
+    }
+
+    fn build(placement: Transform, balance: Option<BalanceNode>) -> Self {
         let mut app = App::new();
         app.register_plugin(MainSchedulePlugin)
             .register_plugin(TimePlugin)
             .register_plugin(AssetManagerPlugin)
             .register_plugin(TransformPlugin)
-            .register_plugin(PhysicsPlugin)
-            .register_plugin(RagdollPlugin);
+            .register_plugin(PhysicsPlugin);
+        if balance.is_some() {
+            app.register_plugin(AnimationPlugin);
+        }
+        app.register_plugin(RagdollPlugin);
         app.add_listener(record).insert_resource(Ended::default());
         app.add_listener(count_settles)
             .insert_resource(Settles::default());
@@ -67,6 +92,7 @@ impl Stage {
         let mut asset = reference.ragdoll;
         asset.skeleton = skeleton.clone();
         let asset = server.add(asset);
+        let graph = balance.map(|node| server.add(balance_graph(&server, node)));
         app.update();
         let world = app.main_mut().world_mut();
         world.spawn((
@@ -84,6 +110,9 @@ impl Stage {
             ),
             character,
         );
+        if let Some(graph) = graph {
+            world.insert(AnimationHandleComponent::new(graph), character);
+        }
         let mut stage = Self {
             app,
             humanoid,
@@ -181,6 +210,45 @@ impl Stage {
         self.app.get_resource::<Ended>().unwrap().0.clone()
     }
 
+    fn player(&self) -> &AnimationPlayer {
+        self.app
+            .main()
+            .world()
+            .get_component_for_entity::<AnimationPlayer>(self.character)
+            .unwrap()
+    }
+
+    fn in_state(&self, state: Name) -> bool {
+        let graphs = self
+            .app
+            .get_resource::<AssetStore<AnimationGraph>>()
+            .unwrap();
+        self.player().in_state(graphs, &state)
+    }
+
+    fn outcome(&self) -> Option<NodeOutcome> {
+        if self.in_state(name!("steady")) {
+            Some(NodeOutcome::Succeeded)
+        } else if self.in_state(name!("fallen")) {
+            Some(NodeOutcome::Failed)
+        } else {
+            None
+        }
+    }
+
+    fn stepping(&self) -> bool {
+        let graphs = self
+            .app
+            .get_resource::<AssetStore<AnimationGraph>>()
+            .unwrap();
+        let mut stepping = false;
+        self.player()
+            .for_each_state::<BalanceNode>(graphs, |_, state: &BalanceState, _| {
+                stepping |= state.stepping();
+            });
+        stepping
+    }
+
     pub fn balance(&self) -> Option<Balance> {
         self.app
             .main()
@@ -197,18 +265,58 @@ impl Stage {
     }
 }
 
+fn standing_clip(skeleton: &Skeleton) -> AnimationClip {
+    let pelvis = skeleton.bone_index(Name::from("pelvis")).unwrap();
+    let mut clip = AnimationClip::default();
+    clip.add_channel(
+        skeleton.bone_ids[pelvis],
+        AnimationChannel::new(
+            vec![0.0, 1.0],
+            AnimationChanelOutput::from_rotation(
+                [Quat::IDENTITY.to_array(), Quat::IDENTITY.to_array()].into_iter(),
+            ),
+        ),
+    );
+    clip
+}
+
+fn over_clip(node: impl AnimationNode, clip: &AssetHandle<AnimationClip>) -> AnimationGraph {
+    let mut graph = AnimationGraph::new();
+    graph
+        .result_node()
+        .input(node)
+        .input(AnimationClipNode::new(clip.clone()));
+    graph
+}
+
+fn balance_graph(server: &AssetServer, node: BalanceNode) -> AnimationGraph {
+    let clip = server.add(standing_clip(&humanoid_skeleton()));
+    let balance = server.add(over_clip(node, &clip));
+    let steady = server.add(AnimationGraph::from_node(AnimationClipNode::new(
+        clip.clone(),
+    )));
+    let fallen = server.add(over_clip(LimpNode::default(), &clip));
+    AnimationGraph::from_node(
+        AnimationStateMachine::from_initial_state(name!("balance"), balance, |to| {
+            to.to(name!("steady"), AnimationFSMTrigger::OnSucceeded, 0.0)
+                .to(name!("fallen"), AnimationFSMTrigger::OnFailed, 0.0);
+        })
+        .state(name!("steady"), steady, |_| {})
+        .state(name!("fallen"), fallen, |_| {})
+        .build(),
+    )
+}
+
 #[derive(Debug)]
 struct Pushed {
-    outcome: Option<Outcome>,
+    outcome: Option<NodeOutcome>,
     steps: u32,
     travelled: Vec3,
     pelvis_height: f32,
-    state: BodyState,
 }
 
-fn pushed(balance: Balance, impulse: Vec3, seconds: f32) -> Pushed {
-    let mut stage = Stage::new();
-    stage.insert(balance);
+fn pushed(balance: BalanceNode, impulse: Vec3, seconds: f32) -> Pushed {
+    let mut stage = Stage::balancing(balance);
     stage.run(15);
     let start = stage.part("pelvis");
     stage.push("spine_03", impulse);
@@ -216,30 +324,28 @@ fn pushed(balance: Balance, impulse: Vec3, seconds: f32) -> Pushed {
     let mut stepping = false;
     let mut pelvis = start;
     for _ in 0..(seconds / 0.033) as usize {
-        if !stage.ended().is_empty() {
+        if stage.outcome().is_some() {
             break;
         }
         pelvis = stage.part("pelvis");
-        if let Some(balance) = stage.balance() {
-            if balance.stepping() && !stepping {
-                steps += 1;
-            }
-            stepping = balance.stepping();
+        if stage.stepping() && !stepping {
+            steps += 1;
         }
+        stepping = stage.stepping();
         stage.run(1);
     }
     Pushed {
-        outcome: stage.ended().first().map(|ended| ended.outcome),
+        outcome: stage.outcome(),
         steps,
         travelled: pelvis - start,
         pelvis_height: pelvis.y,
-        state: stage.state(),
     }
 }
 
 #[test]
 fn a_balancing_body_stands_absorbs_a_push_steps_to_catch_itself_or_gives_up() {
-    let patient = Balance::default().with_settle_seconds(f32::MAX);
+    let patient = BalanceNode::default()
+        .with_settings(BalanceSettings::default().with_settle_seconds(f32::MAX));
     let standing = pushed(patient, Vec3::ZERO, 10.0);
     assert_eq!(standing.outcome, None, "an unpushed body keeps balancing");
     assert_eq!(standing.steps, 0);
@@ -248,31 +354,29 @@ fn a_balancing_body_stands_absorbs_a_push_steps_to_catch_itself_or_gives_up() {
         "an unpushed body stands where it is for ten seconds, it drifted {}",
         standing.travelled
     );
-    assert_eq!(standing.state, BodyState::Reacting);
 
     for direction in [Vec3::Z, Vec3::NEG_Z, Vec3::X, Vec3::NEG_X] {
-        let light = pushed(Balance::default(), direction * 12.0, 10.0);
+        let light = pushed(BalanceNode::default(), direction * 12.0, 10.0);
         assert_eq!(
             (light.outcome, light.steps),
-            (Some(Outcome::Succeeded), 0),
-            "a light push towards {direction} is absorbed without a step: {light:?}"
+            (Some(NodeOutcome::Succeeded), 0),
+            "a light push towards {direction} is absorbed without a step and the graph moves on to its steady state: {light:?}"
         );
-        assert_eq!(light.state, BodyState::Animated);
 
-        let medium = pushed(Balance::default(), direction * 70.0, 10.0);
+        let medium = pushed(BalanceNode::default(), direction * 70.0, 10.0);
         assert!(
-            medium.outcome == Some(Outcome::Succeeded)
+            medium.outcome == Some(NodeOutcome::Succeeded)
                 && (1..=2).contains(&medium.steps)
                 && medium.pelvis_height > 0.9
                 && medium.travelled.dot(direction) > 0.0,
             "a medium push towards {direction} takes a step or two that way and the body ends standing: {medium:?}"
         );
 
-        let hard = pushed(Balance::default(), direction * 300.0, 10.0);
+        let hard = pushed(BalanceNode::default(), direction * 300.0, 10.0);
         assert_eq!(
-            (hard.outcome, hard.state),
-            (Some(Outcome::GaveUp), BodyState::Falling),
-            "a hard push towards {direction} ends in giving up: {hard:?}"
+            hard.outcome,
+            Some(NodeOutcome::Failed),
+            "a hard push towards {direction} ends in giving up, and the graph moves on to its fallen state: {hard:?}"
         );
     }
 }

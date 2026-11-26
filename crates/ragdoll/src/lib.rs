@@ -44,7 +44,7 @@ pub use generate::{
 };
 pub use hit::{BodyHit, Flinch, FlinchRecord, HitKind, HitReaction};
 pub use messages::{BodyDead, BodyDown, Death, Hit, PendingImpulses, Wounded};
-pub use node::{FlinchNode, HoldNode, LimpNode};
+pub use node::{BalanceNode, BalanceSettings, BalanceState, FlinchNode, HoldNode, LimpNode};
 pub use overlap::PartOverlap;
 pub use plugin::RagdollPlugin;
 pub use resolve::{Landmarks, Limbs, RagdollError, ResolvedRagdoll};
