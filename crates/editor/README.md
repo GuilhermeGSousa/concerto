@@ -1897,7 +1897,8 @@ first. It takes `entity` (the character's id as `scene_tree` shows it) and
 answers at once with one line per limb, `bone · physics amount · cover`, the
 amount its animation graph draws from physics and how much of the bone the
 behaviours cover, then the states of the graph, the line each behaviour node
-reports, and what the body senses, from `describe_body`. Errors are the same as
+reports, and what the body senses: the text of `concerto::ragdoll::report_body`,
+which a game can print too. Errors are the same as
 `hit_character`'s. There is no tool to start or stop a behaviour: a behaviour
 is a node of the character's animation graph, which the animation graph tools
 (`graph_add_node`, `graph_connect`, `graph_add_state`, `send_animation_message`)
