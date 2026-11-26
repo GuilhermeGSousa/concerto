@@ -99,6 +99,10 @@ pub struct Res<'world, T: Resource> {
 impl<'world, T: Resource> Res<'world, T> {
     /// Borrows `T` from `world` for a run with `ticks`, or reports it missing.
     ///
+    /// # Errors
+    ///
+    /// Returns a [`ValidationError`] of kind `Missing` when the world holds no `T`.
+    ///
     /// # Safety
     /// The caller must hold read access to `T`.
     pub unsafe fn new(
@@ -219,6 +223,10 @@ pub struct ResMut<'world, T: Resource> {
 
 impl<'world, T: Resource> ResMut<'world, T> {
     /// Borrows `T` mutably from `world` for a run with `ticks`, or reports it missing.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`ValidationError`] of kind `Missing` when the world holds no `T`.
     ///
     /// # Safety
     /// The caller must hold write access to `T`.

@@ -102,7 +102,10 @@ pub struct InputSetState<K> {
     marker: PhantomData<fn() -> K>,
 }
 
-/// A read-only input whose members were registered under `K` at app build time; it declares their union.
+/// A read-only input whose members were registered under `K` at app build time.
+///
+/// It declares the union of its members' access, and hands each member's data out through
+/// [`Inputs::get`].
 pub struct InputSet<'w, 's, K> {
     inputs: Inputs<'w, 's>,
     marker: PhantomData<fn() -> K>,
@@ -123,7 +126,12 @@ pub struct Inputs<'w, 's> {
 }
 
 impl<'w, 's> Inputs<'w, 's> {
-    /// The data of member `P`; a member that is not registered declines with `Skip`, a missing resource with `Missing`.
+    /// The data of member `P`.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`ValidationError`] of kind `Skip` when `P` is not a member of this set, and
+    /// the member's own error, such as `Missing` for an absent resource, when it declined.
     pub fn get<P: ReadOnlySystemInput + 'static>(
         &self,
     ) -> Result<&P::Data<'w, 's>, ValidationError> {

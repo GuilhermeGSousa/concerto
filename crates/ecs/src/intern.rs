@@ -6,8 +6,6 @@ use std::{
     sync::{PoisonError, RwLock},
 };
 
-// Once more here's some great stuff from Bevy
-
 #[doc(hidden)]
 pub use std::boxed::Box;
 

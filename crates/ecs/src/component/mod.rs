@@ -76,26 +76,29 @@ pub trait Component: Send + Sync + 'static {
     }
 
     /// Optional callback invoked before an insert overwrites this component, while the old
-    /// value is still readable. This callback is not invoked by the first insert, by explicit
-    /// removal, or by despawning the entity.
+    /// value is still readable.
+    ///
+    /// It is not invoked by the first insert, by explicit removal, or by despawning the entity.
     fn on_replace() -> Option<ComponentLifecycleCallback> {
         None
     }
 
     /// Optional callback invoked before this component is removed, while its data is
-    /// readable. Despawning removes every component, so this fires then too; replacement
-    /// does not fire it.
-    /// Structural changes requested by the callback are queued and applied after
-    /// the removal completes; the callback cannot invalidate component storage.
+    /// readable.
+    ///
+    /// Despawning removes every component, so this fires then too; replacement does not
+    /// fire it. Structural changes requested by the callback are queued and applied after
+    /// the removal completes, so the callback cannot invalidate component storage.
     fn on_remove() -> Option<ComponentLifecycleCallback> {
         None
     }
 
-    /// Optional callback for teardown that only makes sense for a dying entity, invoked
-    /// after this component's [`on_remove`](Component::on_remove) during a despawn and not
-    /// at all on explicit component removal.
-    /// All components remain present throughout the despawn hook pass. Structural
-    /// commands queued by callbacks run after the entity has been dropped.
+    /// Optional callback for teardown that only makes sense for a dying entity.
+    ///
+    /// It is invoked after this component's [`on_remove`](Component::on_remove) during a
+    /// despawn, and not at all on explicit component removal. All components remain present
+    /// throughout the despawn hook pass. Structural commands queued by callbacks run after
+    /// the entity has been dropped.
     fn on_despawn() -> Option<ComponentLifecycleCallback> {
         None
     }

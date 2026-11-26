@@ -100,7 +100,7 @@ impl<T: Event + 'static> Default for EventChannel<T> {
 
 /// System that advances an event channel's double buffer once per frame.
 ///
-/// Registered automatically by [`App::register_event`].
+/// Registered automatically by the app's `register_event`.
 pub fn update_event_channel<T: Event + 'static>(mut channel: ResMut<EventChannel<T>>) {
     channel.update();
 }

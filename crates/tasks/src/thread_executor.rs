@@ -8,7 +8,6 @@ use async_executor::Task;
 use derive_more::{Deref, DerefMut};
 
 type ExecutorInner<'a> = async_executor::Executor<'a>;
-// type LocalExecutorInner<'a> = async_executor::LocalExecutor<'a>;
 
 #[derive(Deref, DerefMut, Default, Debug)]
 pub struct Executor<'a>(ExecutorInner<'a>);

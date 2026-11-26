@@ -130,6 +130,10 @@ impl<'w> EntityWorldMut<'w> {
     }
 
     /// Makes `child` a child of this entity, detaching it from its previous parent.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `child` is not live in the world.
     pub fn add_child(&mut self, child: Entity) -> &mut Self {
         let parent = self
             .world
