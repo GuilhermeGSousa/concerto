@@ -1079,6 +1079,18 @@ first step, but the node still waits for the landing to emit `BodyDown` and
 succeed. It reads contacts from `PhysicsState` and does not touch
 `CharacterRagdoll` or `PhysicalState`.
 
+`DyingNode` is the graph's `Dying`. It waits for a `Death { seconds }` message,
+which the `Die` signal forwards, and from then drains every part as the old
+drain did: a part that would be kinematic starts powered at stiffness 400 and
+torque 120, and each loses its muscles from the hands and feet inwards, the
+trunk last, so none is left after `seconds`; zero is instant. It emits
+`BodyDead` on the character and succeeds, so the graph moves on with
+`OnSucceeded`, into a state with a `LimpNode`. Every character ragdoll carries a
+listener that inserts a `Dead` component when `BodyDead` reaches it, and a body
+with `Dead` that lies at rest settles as before: it is frozen, marked `Settled`,
+`BodySettled` is triggered, and a `BodyHit` of `wake_impulse` wakes it. A settled
+body takes no pending impulse.
+
 #### Dying
 
 The engine has no health. When the game decides a character dies it says so,

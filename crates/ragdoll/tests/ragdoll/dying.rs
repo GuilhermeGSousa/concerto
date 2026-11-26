@@ -1,19 +1,42 @@
+use concerto_animation::{
+    graph::AnimationGraph,
+    node::{
+        AnimationClipNode,
+        state_machine::{AnimationFSMTrigger, AnimationStateMachine},
+    },
+};
+use concerto_foundation::assets::asset_server::AssetServer;
 use concerto_foundation::transform::GlobalTransform;
+use concerto_name::name;
 use concerto_ragdoll::{
-    BodyHit, BodyState, CharacterRagdoll, Die, Dying, RagdollBody, RagdollMode, Settled,
+    BodyHit, Dead, DyingNode, LimpNode, RagdollBody, Settled, messages::Death,
+    testing::humanoid_skeleton,
 };
 use glam::Vec3;
 
-use crate::balance::Stage;
+use crate::balance::{Stage, over_clip, standing_clip};
 
-fn mode(stage: &Stage) -> RagdollMode {
-    stage
-        .app
-        .main()
-        .world()
-        .get_component_for_entity::<CharacterRagdoll>(stage.character)
-        .unwrap()
-        .mode
+fn dying_graph(server: &AssetServer) -> AnimationGraph {
+    let clip = server.add(standing_clip(&humanoid_skeleton()));
+    let alive = server.add(AnimationGraph::from_node(AnimationClipNode::new(
+        clip.clone(),
+    )));
+    let dying = server.add(over_clip(DyingNode::default(), &clip));
+    let dead = server.add(over_clip(LimpNode::default(), &clip));
+    AnimationGraph::from_node(
+        AnimationStateMachine::from_initial_state(name!("alive"), alive, |to| {
+            to.to(
+                name!("dying"),
+                AnimationFSMTrigger::on_message::<Death>(),
+                0.0,
+            );
+        })
+        .state(name!("dying"), dying, |to| {
+            to.to(name!("dead"), AnimationFSMTrigger::OnSucceeded, 0.0);
+        })
+        .state(name!("dead"), dead, |_| {})
+        .build(),
+    )
 }
 
 fn has<C: concerto_ecs::Component>(stage: &Stage) -> bool {
@@ -60,21 +83,16 @@ fn hit(stage: &mut Stage, bone: &str, impulse: Vec3) {
 
 #[test]
 fn a_dying_body_drains_settles_into_a_static_pose_and_wakes_only_when_hit_hard() {
-    let mut stage = Stage::new();
-    let die = Die {
-        character: stage.character,
-        seconds: 1.0,
-    };
-    stage.app.main_mut().world_mut().trigger(die);
+    let mut stage = Stage::graphed(dying_graph);
+    stage.run(5);
+    stage.send(Death { seconds: 1.0 });
     stage.run(15);
     assert!(
-        has::<Dying>(&stage) && stage.state() != BodyState::Dead,
+        stage.in_state(name!("dying")) && !has::<Dead>(&stage),
         "half a second in the body is still dying"
     );
     stage.run(285);
-    assert_eq!(stage.state(), BodyState::Dead);
-    assert_eq!(mode(&stage), RagdollMode::Limp);
-    assert!(!has::<Dying>(&stage));
+    assert!(has::<Dead>(&stage) && stage.in_state(name!("dead")));
     assert!(
         stage.settles() == 1 && has::<Settled>(&stage),
         "a dead body at rest settles once"
@@ -105,20 +123,16 @@ fn a_dying_body_drains_settles_into_a_static_pose_and_wakes_only_when_hit_hard()
     );
     stage.run(300);
     assert!(
-        stage.settles() == 2 && has::<Settled>(&stage) && stage.state() == BodyState::Dead,
+        stage.settles() == 2 && has::<Settled>(&stage) && has::<Dead>(&stage),
         "the woken body settles again and stays dead"
     );
 
-    let mut stage = Stage::new();
-    let die = Die {
-        character: stage.character,
-        seconds: 0.0,
-    };
-    stage.app.main_mut().world_mut().trigger(die);
-    stage.run(1);
-    assert_eq!(
-        (mode(&stage), stage.state()),
-        (RagdollMode::Limp, BodyState::Dead),
+    let mut stage = Stage::graphed(dying_graph);
+    stage.run(5);
+    stage.send(Death { seconds: 0.0 });
+    stage.run(3);
+    assert!(
+        has::<Dead>(&stage) && stage.in_state(name!("dead")),
         "a zero duration kills at once"
     );
 }

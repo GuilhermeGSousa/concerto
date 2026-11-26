@@ -37,7 +37,7 @@ pub use behaviour::{
 pub use character::{
     CharacterRagdoll, PartWeight, PoseLost, RagdollBody, RagdollMode, RagdollRefused,
 };
-pub use dying::{BodySettled, Die, Dying, Settled};
+pub use dying::{BodySettled, Dead, Die, Dying, Settled};
 pub use fall::{FALL, FALL_PRIORITY, Fall, FallReaction, FallSettings};
 pub use generate::{
     BRACED, FLINCH, GenerateError, HumanoidChains, HumanoidSettings, LIMP, generate_humanoid,
@@ -45,8 +45,8 @@ pub use generate::{
 pub use hit::{BodyHit, Flinch, FlinchRecord, HitKind, HitReaction};
 pub use messages::{BodyDead, BodyDown, Death, Hit, PendingImpulses, Wounded};
 pub use node::{
-    BalanceNode, BalanceSettings, BalanceState, FallNode, FallState, FlinchNode, HoldNode,
-    LimpNode, ShotNode, ShotState, StaggerNode, StaggerState,
+    BalanceNode, BalanceSettings, BalanceState, DyingNode, DyingState, FallNode, FallState,
+    FlinchNode, HoldNode, LimpNode, ShotNode, ShotState, StaggerNode, StaggerState,
 };
 pub use overlap::PartOverlap;
 pub use plugin::RagdollPlugin;

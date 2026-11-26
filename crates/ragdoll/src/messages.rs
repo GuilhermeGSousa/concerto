@@ -151,7 +151,7 @@ pub fn route_hits(
 
 /// Each fixed step, before physics steps, gives each part the impulses waiting on it once it is dynamic, and drops those that waited ten steps in vain.
 pub fn apply_impulses(
-    mut characters: Query<(&RagdollId, &RagdollBody, &mut PendingImpulses)>,
+    mut characters: Query<(&RagdollId, &RagdollBody, &mut PendingImpulses), Without<Settled>>,
     mut state: ResMut<PhysicsState>,
 ) {
     for (id, body, mut pending) in characters.iter_mut() {

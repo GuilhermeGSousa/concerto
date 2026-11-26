@@ -2,20 +2,23 @@ use concerto_animation::player::AnimationPlayer;
 use concerto_ecs::{
     CommandQueue, Component, Entity, Query, ResMut, Without,
     reflect::{ReflectComponent, ReflectSceneComponent},
-    signal::{On, Signal},
+    signal::{
+        On, Signal,
+        listener::{IntoListener, Listener},
+    },
 };
 use concerto_foundation::time::Time;
 use concerto_physics::{physics_state::PhysicsState, ragdoll::RagdollId};
 use concerto_reflect::{Reflect, ReflectDefault};
 
 use crate::{
-    asset::Segment,
+    asset::{PartStrength, Segment},
     balance::Balance,
     behaviour::{BodyState, PhysicalState},
-    character::{CharacterRagdoll, RagdollBody, RagdollMode},
+    character::{CharacterRagdoll, Held, RagdollBody, RagdollMode},
     fall::Fall,
     hit::{BodyHit, Flinch},
-    messages::Death,
+    messages::{BodyDead, Death},
     sensing::BodySense,
     shot::Shot,
     stagger::Stagger,
@@ -63,6 +66,22 @@ impl Dying {
         }
     }
 
+    pub(crate) fn advance(&mut self, dt: f32) -> bool {
+        self.elapsed += dt;
+        self.elapsed >= self.seconds
+    }
+
+    pub(crate) fn drain(&self, segment: Segment, mut held: Held) -> (Held, f32) {
+        let left = self.left(segment);
+        if held.kinematic {
+            held = Held::of(PartStrength::powered(DYING_STIFFNESS, DYING_TORQUE));
+        }
+        held.stiffness *= left;
+        held.damping *= left;
+        held.torque_limit *= left;
+        (held, left)
+    }
+
     /// The share of its strength a part of `segment` has left, from 1 to 0: hands and feet are spent first, the trunk last.
     pub fn left(&self, segment: Segment) -> f32 {
         if self.seconds <= 0.0 {
@@ -76,6 +95,21 @@ impl Dying {
         };
         (1.0 - self.elapsed / self.seconds / spent_at).clamp(0.0, 1.0)
     }
+}
+
+const DYING_STIFFNESS: f32 = 400.0;
+const DYING_TORQUE: f32 = 120.0;
+
+/// A character whose strength a behaviour drained to nothing; inserted when `BodyDead` triggers on it, and read by the settling of its body.
+#[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Dead;
+
+/// The listener every character ragdoll carries: marks the character `Dead` when a `BodyDead` signal reaches it.
+pub fn mark_dead() -> Listener<BodyDead> {
+    (|on: On<BodyDead>, mut cmd: CommandQueue| {
+        cmd.insert(Dead, on.entity());
+    })
+    .into_listener()
 }
 
 /// A dead body that lies at rest: its parts are static where they lie, nothing drives or senses it, and its capsule stays where it was left, out of every collision layer. A `BodyHit` of at least `wake_impulse` wakes it, and it settles again.
@@ -204,8 +238,7 @@ pub fn drain_dying(
             character.mode = RagdollMode::Powered;
             character.weight = 1.0;
         }
-        dying.elapsed += dt;
-        if dying.elapsed >= dying.seconds {
+        if dying.advance(dt) {
             kill(
                 entity,
                 &mut character,
@@ -220,12 +253,21 @@ pub fn drain_dying(
 
 /// Each fixed step, after the body is sensed: freezes every dead body that lies at rest, marks it `Settled` and triggers `BodySettled`.
 pub fn settle_dead_bodies(
-    characters: Query<(Entity, &PhysicalState, &BodySense, &RagdollId), Without<Settled>>,
+    characters: Query<
+        (
+            Entity,
+            &PhysicalState,
+            Option<&Dead>,
+            &BodySense,
+            &RagdollId,
+        ),
+        Without<Settled>,
+    >,
     mut state: ResMut<PhysicsState>,
     mut cmd: CommandQueue,
 ) {
-    for (entity, physical, sense, id) in characters.iter() {
-        if physical.state != BodyState::Dead || !sense.at_rest {
+    for (entity, physical, dead, sense, id) in characters.iter() {
+        if (physical.state != BodyState::Dead && dead.is_none()) || !sense.at_rest {
             continue;
         }
         state.set_ragdoll_frozen(*id, true);

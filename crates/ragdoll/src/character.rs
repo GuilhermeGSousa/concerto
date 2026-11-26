@@ -37,10 +37,10 @@ use crate::{
     asset::{PartStrength, Ragdoll, StrengthProfile},
     behaviour::{BodyDrive, Claim},
     drive::{drawn_amount, old_path_owns, physics_amount},
-    dying::{Dying, Settled},
+    dying::{Dying, Settled, mark_dead},
     generate::BRACED,
     hit::Flinch,
-    messages::{PendingImpulses, Wounded, keep_wounds},
+    messages::{BodyDead, PendingImpulses, Wounded, keep_wounds},
     resolve::ResolvedRagdoll,
     shot::Wounds,
 };
@@ -75,7 +75,7 @@ pub struct PartWeight {
 /// Gives a character a physical body: goes on the entity with the `SkeletonComponent`, names the ragdoll asset of that skeleton, and builds the ragdoll at the current pose once both have loaded.
 #[derive(Component, Reflect, Clone, Debug, PartialEq)]
 #[reflect(Component, Default, SceneComponent)]
-#[require(PendingImpulses, Wounds, Listener<Wounded> = keep_wounds())]
+#[require(PendingImpulses, Wounds, Listener<Wounded> = keep_wounds(), Listener<BodyDead> = mark_dead())]
 pub struct CharacterRagdoll {
     pub ragdoll: AssetHandle<Ragdoll>,
     /// The character's own capsule, carried under the body while the character is physical; it should have `CollisionLayers::character()` so the parts pass through it.
@@ -190,8 +190,6 @@ pub(crate) struct Held {
 
 const SLACK_TORQUE: f32 = 1.0e-3;
 const MAX_LEAD: f32 = 0.5;
-const DYING_STIFFNESS: f32 = 400.0;
-const DYING_TORQUE: f32 = 120.0;
 
 impl Held {
     pub(crate) const KINEMATIC: Self = Self {
@@ -692,13 +690,8 @@ fn drain_strengths(
     asked: &mut Asked,
 ) {
     for (part, held) in wanted.iter_mut().enumerate() {
-        let left = dying.left(resolved.segment(part));
-        if held.kinematic {
-            *held = Held::of(PartStrength::powered(DYING_STIFFNESS, DYING_TORQUE));
-        }
-        held.stiffness *= left;
-        held.damping *= left;
-        held.torque_limit *= left;
+        let (drained, left) = dying.drain(resolved.segment(part), *held);
+        *held = drained;
         asked.forces[part] *= left;
         asked.torques[part] *= left;
     }

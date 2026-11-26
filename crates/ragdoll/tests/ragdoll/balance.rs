@@ -69,14 +69,6 @@ pub struct Stage {
 }
 
 impl Stage {
-    pub fn new() -> Self {
-        Self::placed(Transform::default())
-    }
-
-    pub fn placed(placement: Transform) -> Self {
-        Self::build(placement, None)
-    }
-
     /// A body placed at `placement` whose animation graph is `build`'s.
     pub fn placed_graphed(
         placement: Transform,
