@@ -81,7 +81,9 @@ pub struct Detour {
     pub lane: f32,
 }
 
-/// A link's path: out of `start`, along to `bend`, up or down, and along to `end`; with a `detour`, round the boxes between first.
+/// A link's path: out of `start`, along to `bend`, up or down, and along to `end`.
+///
+/// With a `detour`, the path first goes round the boxes between.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct LinkRoute {
     /// The link's index in the canvas's `links`.

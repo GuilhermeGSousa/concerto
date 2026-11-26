@@ -15,6 +15,8 @@ use concerto_ui::{node::UINode, theme::UITheme};
 
 use super::target::{PropertyAddress, PropertyTarget, TargetWorld};
 
+/// Why a property edit failed.
+///
 /// A rejected edit leaves the target unchanged.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EditError {
@@ -78,12 +80,20 @@ pub trait PropertyEditor<T: Reflect>: Default + Send + Sync + 'static {
     type Edit: Send + Sync + 'static;
 
     fn snapshot(&self, value: &T) -> Self::Snapshot;
-    /// The layout node of the row that holds this editor's widgets. It is read once, when the row is spawned, so an editor whose node depends on the snapshot must return `false` from [`Self::follows_snapshot`].
+    /// The layout node of the row that holds this editor's widgets.
+    ///
+    /// It is read once, when the row is spawned, so an editor whose node depends on the
+    /// snapshot must return `false` from [`Self::follows_snapshot`].
     fn row_node(&self, _snapshot: &Self::Snapshot, theme: &UITheme) -> UINode {
         standard_row_node(theme)
     }
     fn build(&self, row: &mut EntityCommandQueue, snapshot: &Self::Snapshot, theme: &UITheme);
-    /// Validate before mutating. On error the target must remain unchanged.
+    /// Applies `edit` to `value`, validating it before mutating.
+    ///
+    /// # Errors
+    ///
+    /// Returns an [`EditError`] when the edit is not valid for `value`; the value must then
+    /// be left unchanged.
     fn apply(
         &self,
         value: &mut T,

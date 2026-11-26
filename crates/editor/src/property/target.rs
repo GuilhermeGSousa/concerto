@@ -17,7 +17,11 @@ pub trait PropertyTarget: Send + Sync + 'static {
     fn read(&self, world: &World, read: &mut dyn FnMut(&dyn Reflect)) -> bool;
     /// Calls `edit` with the value; false when it's gone.
     fn edit(&self, world: &mut World, edit: &mut dyn FnMut(&mut dyn Reflect)) -> bool;
-    /// Calls `edit` with the value as [`edit`](Self::edit) does, and says why when the value refuses what `edit` made of it; `Ok(false)` when it's gone.
+    /// Calls `edit` with the value as [`edit`](Self::edit) does; `Ok(false)` when it's gone.
+    ///
+    /// # Errors
+    ///
+    /// Returns why the value refuses what `edit` made of it.
     fn try_edit(
         &self,
         world: &mut World,

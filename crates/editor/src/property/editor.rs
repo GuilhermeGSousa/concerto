@@ -10,6 +10,10 @@ use super::rows::{EditContext, EditError, PropertyRowValue, standard_row_node};
 pub trait ErasedEditor: Send + Sync {
     fn snapshot(&self, value: &dyn Reflect) -> Result<PropertyRowValue, EditError>;
     /// The layout node of the row, read once when the row is spawned.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EditError::TypeMismatch`] when `snapshot` was not taken by this editor.
     fn row_node(&self, _snapshot: &PropertyRowValue, theme: &UITheme) -> Result<UINode, EditError> {
         Ok(standard_row_node(theme))
     }
@@ -26,7 +30,13 @@ pub trait ErasedEditor: Send + Sync {
         edit: &dyn Any,
         context: &EditContext,
     ) -> Result<(), EditError>;
-    /// The erased edit that [`Self::apply`] takes to set the field to `value`, or `None` when the editor offers no value edit.
+    /// The erased edit that [`Self::apply`] takes to set the field to `value`.
+    ///
+    /// `None` when the editor offers no value edit.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EditError::TypeMismatch`] when `value` is not the editor's value type.
     fn edit_to(&self, value: &dyn Reflect)
     -> Result<Option<Arc<dyn Any + Send + Sync>>, EditError>;
     fn follows_snapshot(&self) -> bool;

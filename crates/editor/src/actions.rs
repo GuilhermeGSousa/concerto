@@ -75,7 +75,9 @@ define_context!(
     TreeContext
 );
 
-/// The `LateUpdate` systems that push and pop the viewport's and the tree's contexts; a context pushed after this set wins their keys.
+/// The `LateUpdate` systems that push and pop the viewport's and the tree's contexts.
+///
+/// A context pushed after this set wins their keys.
 #[derive(SystemSet, Clone, PartialEq, Eq, Hash, Debug)]
 pub struct EditorContextSet;
 
