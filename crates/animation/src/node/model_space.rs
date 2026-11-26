@@ -46,6 +46,11 @@ pub fn parent(skeleton: &Skeleton, bone: usize) -> Option<usize> {
 }
 
 /// The index of the bone named `name`, if it descends from bone 0.
+///
+/// # Errors
+///
+/// Returns a message when the skeleton has no bone `name` or when it does not descend from
+/// bone 0.
 pub fn bone_under_first(skeleton: &Skeleton, name: JointName) -> Result<usize, String> {
     let bone = skeleton
         .bone_index(name.0)

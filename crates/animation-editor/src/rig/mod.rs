@@ -128,7 +128,9 @@ fn playable_speed(speed: f32) -> bool {
     speed.is_finite() && speed > 0.0
 }
 
-/// A rig tab's [`RigPreview`], shown as the `Preview` value; an edit never marks the tab unsaved, and a speed of 0 or below, or not finite, is refused.
+/// A rig tab's [`RigPreview`], shown as the `Preview` value.
+///
+/// An edit never marks the tab unsaved. A speed of 0 or below, or not finite, is refused.
 pub struct RigPreviewValue {
     pub document: Entity,
 }
@@ -1071,7 +1073,9 @@ pub(crate) fn sync_rig_transport(
     }
 }
 
-/// Registers [`RetargetRigEditor`], lets the editor pick rigs and clips and load what a rig names, and runs the rig tab's systems; needs [`crate::transport::TransportPlugin`].
+/// Registers [`RetargetRigEditor`], lets the editor pick rigs and clips and load what a rig names, and runs the rig tab's systems.
+///
+/// Needs [`crate::transport::TransportPlugin`].
 pub struct RetargetRigEditorPlugin;
 
 impl Plugin for RetargetRigEditorPlugin {

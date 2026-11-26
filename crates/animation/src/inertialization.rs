@@ -21,6 +21,10 @@ impl PoseVelocity {
     }
 
     /// The finite-difference velocity that moves `previous` to `next` in `dt` seconds.
+    ///
+    /// # Panics
+    ///
+    /// In debug builds, panics if `previous` and `next` hold different numbers of bones.
     pub fn between(previous: &Pose, next: &Pose, dt: f32) -> Self {
         debug_assert_eq!(previous.len(), next.len());
         let (linear, angular) = previous
@@ -87,6 +91,12 @@ impl Inertializer {
     }
 
     /// Sets the offsets so that `destination` plus the offsets reproduces `source`.
+    ///
+    /// # Panics
+    ///
+    /// In debug builds, panics if a pose or velocity does not hold [`Self::bone_count`] bones.
+    /// In any build, panics if a velocity holds fewer bones than both poses and the
+    /// inertializer.
     pub fn transition(
         &mut self,
         source: &Pose,
@@ -118,6 +128,14 @@ impl Inertializer {
     }
 
     /// Decays the offsets by `dt` and writes `destination` plus the offsets into `output`.
+    ///
+    /// `halflife` and `dt` are in seconds; a `dt` of zero or less leaves the offsets as they
+    /// are.
+    ///
+    /// # Panics
+    ///
+    /// In debug builds, panics if `destination`, `destination_velocity` or `output` does not
+    /// hold [`Self::bone_count`] bones.
     pub fn update(
         &mut self,
         destination: &Pose,

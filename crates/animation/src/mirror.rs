@@ -14,6 +14,16 @@ pub struct PoseMirror {
 
 impl PoseMirror {
     /// The mirror of `skeleton` across the plane whose normal is `axis`, in model space.
+    ///
+    /// A bone whose name holds `Left` or `Right` takes its pose from the bone named with the
+    /// other side; every other bone mirrors itself.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MirrorError::InvalidAxis`] for a zero or non-finite `axis`,
+    /// [`MirrorError::MissingTwin`] when a sided bone has no twin,
+    /// [`MirrorError::TwinParents`] when twins' parents are not twins, and
+    /// [`MirrorError::Asymmetric`] when the rest pose is not symmetric across the plane.
     pub fn new(skeleton: &Skeleton, axis: Vec3) -> Result<Self, MirrorError> {
         let n = axis.try_normalize().ok_or(MirrorError::InvalidAxis(axis))?;
         let reflection = Mat3::IDENTITY - 2.0 * Mat3::from_cols(n * n.x, n * n.y, n * n.z);
@@ -83,7 +93,12 @@ impl PoseMirror {
         self.twins.get(bone).map(|twin| usize::from(*twin))
     }
 
-    /// Writes `source`, one local `JointPose` per bone in skeleton order, mirrored into `out`.
+    /// Writes `source`, one local [`JointPose`] per bone in skeleton order, mirrored into `out`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MirrorError::BoneCountMismatch`] when `source` or `out` does not hold one
+    /// joint per bone of the skeleton.
     pub fn mirror_into(
         &self,
         source: &[JointPose],

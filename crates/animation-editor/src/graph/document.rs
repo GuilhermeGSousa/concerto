@@ -1313,6 +1313,11 @@ pub(crate) fn finish_state_creation(
 }
 
 /// Reads the graph `asset` names under `root`, checking its id and its kind.
+///
+/// # Errors
+///
+/// Returns an error when the file cannot be read or decoded, or when its header names
+/// another asset or another kind.
 pub fn read_graph(root: &Path, asset: &AssetEntry) -> anyhow::Result<AnimationGraph> {
     let bytes = std::fs::read(root.join(&asset.address))?;
     let (header, _) = read_content_asset(&bytes)?;

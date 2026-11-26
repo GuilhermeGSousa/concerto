@@ -225,6 +225,10 @@ impl AnimationStateMachine {
     }
 
     /// The transitions out of `from`, in the order the machine tries them.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StateMachineEditError::UnknownState`] when the machine has no state `from`.
     pub fn transitions(
         &self,
         from: Name,
@@ -247,7 +251,13 @@ impl AnimationStateMachine {
             }))
     }
 
-    /// Adds a state after the others; the first state added is the initial one.
+    /// Adds a state after the others.
+    ///
+    /// The first state added is the initial one.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StateMachineEditError::DuplicateState`] when a state named `name` exists.
     pub fn add_state(
         &mut self,
         name: Name,
@@ -261,7 +271,13 @@ impl AnimationStateMachine {
         Ok(())
     }
 
-    /// Removes a state with every transition to or from it; a removed initial state hands over to the first state.
+    /// Removes a state with every transition to or from it.
+    ///
+    /// When the removed state was the initial one, the first remaining state becomes initial.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StateMachineEditError::UnknownState`] when the machine has no state `name`.
     pub fn remove_state(&mut self, name: Name) -> Result<(), StateMachineEditError> {
         let removed = self.state_index(name)?;
         self.states.remove(removed);
@@ -284,6 +300,11 @@ impl AnimationStateMachine {
     }
 
     /// Renames a state; its transitions follow it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StateMachineEditError::UnknownState`] when the machine has no state `name`,
+    /// and [`StateMachineEditError::DuplicateState`] when another state is named `to`.
     pub fn rename_state(&mut self, name: Name, to: Name) -> Result<(), StateMachineEditError> {
         let index = self.state_index(name)?;
         if to != name && self.state_index(to).is_ok() {
@@ -294,6 +315,10 @@ impl AnimationStateMachine {
     }
 
     /// Replaces the graph a state plays.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StateMachineEditError::UnknownState`] when the machine has no state `name`.
     pub fn set_state_graph(
         &mut self,
         name: Name,
@@ -305,6 +330,11 @@ impl AnimationStateMachine {
     }
 
     /// Adds a transition after the others out of `from` and returns its index among them.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StateMachineEditError::UnknownState`] when the machine has no state `from`
+    /// or `to`.
     pub fn add_transition(
         &mut self,
         from: Name,
@@ -327,6 +357,11 @@ impl AnimationStateMachine {
     }
 
     /// Removes the transition at `index` among those out of `from`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StateMachineEditError::UnknownState`] when the machine has no state `from`,
+    /// and [`StateMachineEditError::TransitionOutOfRange`] when it has no transition `index`.
     pub fn remove_transition(
         &mut self,
         from: Name,
@@ -343,6 +378,11 @@ impl AnimationStateMachine {
     }
 
     /// Replaces the trigger and blend time of the transition at `index` among those out of `from`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StateMachineEditError::UnknownState`] when the machine has no state `from`,
+    /// and [`StateMachineEditError::TransitionOutOfRange`] when it has no transition `index`.
     pub fn set_transition(
         &mut self,
         from: Name,
@@ -362,6 +402,10 @@ impl AnimationStateMachine {
     }
 
     /// Makes a state the one the machine starts in.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StateMachineEditError::UnknownState`] when the machine has no state `name`.
     pub fn set_initial(&mut self, name: Name) -> Result<(), StateMachineEditError> {
         self.initial_state = StateId(self.state_index(name)?);
         Ok(())
@@ -398,8 +442,9 @@ impl AnimationStateMachine {
         self.transitions.get(*state_index)
     }
 
-    /// Every transition trigger, flattened across states — lets callers inspect
-    /// trigger payloads without exposing the private transition table.
+    /// Every transition trigger, flattened across states.
+    ///
+    /// Lets callers inspect trigger payloads without reaching the transition table.
     pub fn triggers(&self) -> impl Iterator<Item = &AnimationFSMTrigger> + '_ {
         self.transitions
             .iter()

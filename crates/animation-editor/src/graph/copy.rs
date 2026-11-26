@@ -192,7 +192,15 @@ impl GraphCopy {
         })
     }
 
-    /// A fresh graph of what the copy holds: the result node, then every node in id order, connected in slot order.
+    /// Builds a fresh graph of what the copy holds.
+    ///
+    /// The graph holds the result node, then every other node in id order, each connected to
+    /// its inputs in slot order.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when a live node cannot be encoded to a stored value, or when a link
+    /// cannot become a graph edge.
     pub fn build(&self) -> anyhow::Result<BuiltGraph> {
         let mut graph = AnimationGraph::new();
         let mut indices = HashMap::from([(self.result, graph.result_index())]);
@@ -219,7 +227,13 @@ impl GraphCopy {
         Ok(BuiltGraph { graph, nodes })
     }
 
-    /// A fresh graph whose result node is fed by the node `from` and everything that feeds it.
+    /// Builds a fresh graph whose result node is fed by the node `from` and everything that feeds it.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the copy has no node `from` or no node one of its inputs names,
+    /// when a live node cannot be encoded to a stored value, or when a link cannot become a
+    /// graph edge.
     pub fn build_from(&self, from: GraphNodeId) -> anyhow::Result<BuiltGraph> {
         let mut graph = AnimationGraph::new();
         let mut nodes = Vec::new();
@@ -329,7 +343,17 @@ impl GraphCopy {
         }
     }
 
-    /// Makes `child` an input of `parent`: at `slot`, replacing what a fixed slot holds, or at the first empty slot.
+    /// Makes `child` an input of `parent`, detaching it from any parent it had.
+    ///
+    /// With a `slot`, a fixed slot that holds a node is replaced and the replaced node comes
+    /// back loose in [`Connected`]; a variable list inserts there, clamped to its length.
+    /// Without one, `child` goes to the first empty slot.
+    ///
+    /// # Errors
+    ///
+    /// Returns a message when either node is unknown, when `child` is the result node, when the
+    /// link would close a cycle, when `parent` takes no inputs, when `slot` is past its fixed
+    /// slots, or when every fixed slot is taken and no `slot` is named.
     pub fn connect(
         &mut self,
         child: GraphNodeId,
@@ -410,6 +434,10 @@ impl GraphCopy {
     }
 
     /// Takes `child` out of its parent's inputs, leaving it loose.
+    ///
+    /// # Errors
+    ///
+    /// Returns a message when there is no node `child` or when it is no node's input.
     pub fn remove_link(&mut self, child: GraphNodeId) -> Result<(), String> {
         self.known(child)?;
         let link = self
@@ -420,6 +448,10 @@ impl GraphCopy {
     }
 
     /// Removes a node, leaving its inputs loose.
+    ///
+    /// # Errors
+    ///
+    /// Returns a message when there is no node `id` or when it is the result node.
     pub fn remove_node(&mut self, id: GraphNodeId) -> Result<(), String> {
         self.known(id)?;
         if id == self.result {
