@@ -1667,18 +1667,19 @@ app.register_animation_message::<Hit>();
 
 `AnimationPlayer::send(message)` queues it, and so does the signal `SendAnimationMessage { character, message }`,
 for code that holds no player: a listener the registration adds queues it on
-the character's player, and does nothing when the character has none. In the
-player's next update, every state machine in the playing graphs first checks
-its current state's transitions in order against the whole queue: an
-`OnMessage` transition fires when any queued message has its type, and a
-machine takes at most one transition a frame, so a machine that moved on a
-message does not check its other triggers again that frame: in a frame with a
-matching message, `OnMessage` transitions are taken before any other trigger,
-even one listed earlier. Only then does
-every node of the graphs that play, the states entered this frame and those a
-cross-fade still blends included, get each message in queue order through
-`AnimationNode::receive(state, message, context)`, which does nothing unless
-the node overrides it. The queue then empties, and the nodes advance. A paused
+the character's player, and does nothing when the character has none. The
+player's next update walks its graph with the whole queue in the context:
+`context.messages()` gives every queued message in the order sent, and
+`context.message::<M>()` those of type `M`. Every node that updates reads
+them there, in the graph, in a state machine's playing states, in a slot's
+playing entries and in a retarget's inner graph; in `evaluate`, `root_motion`
+and `drive` the list is empty, so a node that acts on a message later keeps
+what it needs in its state. A state machine checks its current state's
+transitions before it updates its states: an `OnMessage` transition fires when
+any queued message has its type, and the machine tries its `OnMessage`
+transitions before its other triggers, even one listed earlier, taking at most
+one transition a frame. The state it enters then updates in the same walk and
+reads the message on that frame. The queue empties after the update. A paused
 player keeps its queue until it resumes; a player whose graph is not
 initialized yet drops what it was sent. An `OnMessage` trigger stores the
 message's full type path and finds the type by that exact path when its graph
@@ -1689,14 +1690,13 @@ registered as a message leaves a load warning, and that trigger never fires.
 `Failed` at what it does, a `NodeOutcome`; `None` by default. A graph's outcome
 is the first a node reports, inputs before the node they feed, and a state
 machine reports its current state's graph's outcome. `OnSucceeded` and
-`OnFailed` read it in the update that follows the messages, so a message that
-makes a node succeed moves its machine on that frame. A node whose state ends
+`OnFailed` read it before the machine updates its states, so a message that
+makes a node succeed in its `update` moves its machine on the next frame. A node whose state ends
 by outcome returns `false` from `is_finished`, so `OnAnimationEnd` leaves it
 alone.
 
 A node tells the game what happened with `context.emit(signal)`, for any
-`EntitySignal`, from any pass: `create_state`, `update`,
-`receive`, `root_motion`, `evaluate` or, through `context.graph()`, `drive`. The signals go to a per-player outbox,
+`EntitySignal`, from any pass: `create_state`, `update`, `root_motion`, `evaluate` or, through `context.graph()`, `drive`. The signals go to a per-player outbox,
 not into the frame, so one emitted by a state the machine leaves at once still
 arrives, and `animate_targets` triggers every signal in it on the player's
 entity each frame, in the order they were emitted, after the clip events. It

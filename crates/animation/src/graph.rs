@@ -902,39 +902,6 @@ impl AnimationGraphState {
             });
     }
 
-    pub(crate) fn route(
-        &mut self,
-        graphs: &AssetStore<AnimationGraph>,
-        messages: &[Box<dyn Reflect>],
-        context: &AnimationGraphContext<'_>,
-    ) {
-        let Some(graph) = self.get_animation_graph(graphs) else {
-            return;
-        };
-        for (node_index, node_state) in self.graph_state.iter_mut() {
-            let Some(node) = graph.live_node(*node_index) else {
-                continue;
-            };
-            node.route(&mut node_state.node_state, messages, context);
-        }
-    }
-
-    pub(crate) fn receive(
-        &mut self,
-        graphs: &AssetStore<AnimationGraph>,
-        message: &dyn Reflect,
-        context: &AnimationGraphContext<'_>,
-    ) {
-        let Some(graph) = self.get_animation_graph(graphs) else {
-            return;
-        };
-        for (node_index, node_state) in self.graph_state.iter_mut() {
-            if let Some(node) = graph.live_node(*node_index) {
-                node.receive(&mut node_state.node_state, message, context);
-            }
-        }
-    }
-
     pub(crate) fn outcome(&self, graphs: &AssetStore<AnimationGraph>) -> Option<NodeOutcome> {
         let graph = self.get_animation_graph(graphs)?;
         graph.iter_post_order().find_map(|node_index| {

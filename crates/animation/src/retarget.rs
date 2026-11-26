@@ -1183,6 +1183,7 @@ impl Running {
             inputs: context.inputs,
             extras: context.extras,
             outbox: context.outbox,
+            messages: context.messages,
         }
     }
 

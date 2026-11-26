@@ -111,13 +111,14 @@ impl AnimationNode for StaggerNode {
         StaggerState::default()
     }
 
-    fn receive(
+    fn update(
         &self,
         state: &mut StaggerState,
-        message: &dyn Reflect,
-        _: &AnimationGraphContext<'_>,
+        _: f32,
+        _: &(),
+        context: &AnimationGraphContext<'_>,
     ) {
-        if let Some(stagger) = message.downcast_ref::<messages::Stagger>() {
+        for stagger in context.message::<messages::Stagger>() {
             *state = StaggerState {
                 started: true,
                 run: StaggerRun::towards(stagger.direction, stagger.severity),
@@ -125,8 +126,6 @@ impl AnimationNode for StaggerNode {
             };
         }
     }
-
-    fn update(&self, _: &mut StaggerState, _: f32, _: &(), _: &AnimationGraphContext<'_>) {}
 
     fn evaluate(
         &self,

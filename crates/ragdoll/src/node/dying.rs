@@ -131,21 +131,14 @@ impl AnimationNode for DyingNode {
         DyingState::default()
     }
 
-    fn receive(
-        &self,
-        state: &mut DyingState,
-        message: &dyn Reflect,
-        _: &AnimationGraphContext<'_>,
-    ) {
-        if let Some(death) = message.downcast_ref::<Death>() {
+    fn update(&self, state: &mut DyingState, _: f32, _: &(), context: &AnimationGraphContext<'_>) {
+        for death in context.message::<Death>() {
             *state = DyingState {
                 dying: Some(Dying::new(death.seconds)),
                 outcome: None,
             };
         }
     }
-
-    fn update(&self, _: &mut DyingState, _: f32, _: &(), _: &AnimationGraphContext<'_>) {}
 
     fn evaluate(
         &self,

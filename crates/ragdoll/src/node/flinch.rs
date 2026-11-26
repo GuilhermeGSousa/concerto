@@ -108,6 +108,19 @@ impl FlinchNode {
         }
     }
 
+    fn take(&self, state: &mut FlinchState, body: &BodyView, hit: &Hit) {
+        let count = body.resolved().part_count();
+        if hit.part >= count {
+            return;
+        }
+        state.scales.resize(count, 1.0);
+        self.dip_around(&mut state.scales, body, hit.part);
+        state.struck = Some(Struck {
+            part: hit.part,
+            since_hit: 0.0,
+        });
+    }
+
     fn acting_weight(&self, state: &FlinchState) -> Option<f32> {
         state
             .struck
@@ -144,35 +157,18 @@ impl AnimationNode for FlinchNode {
         FlinchState::default()
     }
 
-    fn receive(
-        &self,
-        state: &mut FlinchState,
-        message: &dyn Reflect,
-        context: &AnimationGraphContext<'_>,
-    ) {
-        let (Some(hit), Some(body)) = (message.downcast_ref::<Hit>(), context.extra::<BodyView>())
-        else {
-            return;
-        };
-        let count = body.resolved().part_count();
-        if hit.part >= count {
-            return;
-        }
-        state.scales.resize(count, 1.0);
-        self.dip_around(&mut state.scales, body, hit.part);
-        state.struck = Some(Struck {
-            part: hit.part,
-            since_hit: 0.0,
-        });
-    }
-
     fn update(
         &self,
         state: &mut FlinchState,
         delta_time: f32,
         _: &(),
-        _: &AnimationGraphContext<'_>,
+        context: &AnimationGraphContext<'_>,
     ) {
+        if let Some(body) = context.extra::<BodyView>() {
+            for hit in context.message::<Hit>() {
+                self.take(state, body, hit);
+            }
+        }
         let Some(struck) = state.struck.as_mut() else {
             return;
         };

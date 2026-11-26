@@ -230,15 +230,16 @@ impl AnimationNode for SlotNode {
         }
     }
 
-    fn route(
+    fn update(
         &self,
         state: &mut SlotState,
-        messages: &[Box<dyn Reflect>],
+        delta_time: f32,
+        _: &(),
         context: &AnimationGraphContext<'_>,
     ) {
         for (index, entry) in self.entries.iter().enumerate() {
-            let called = messages.iter().any(|message| {
-                entry.on.iter().any(|on| on.matches(message.as_ref()))
+            let called = context.messages().any(|message| {
+                entry.on.iter().any(|on| on.matches(message))
                     || message
                         .downcast_ref::<PlayInSlot>()
                         .is_some_and(|play| play.entry == entry.name)
@@ -247,41 +248,6 @@ impl AnimationNode for SlotNode {
                 self.start(state, index);
             }
         }
-        for &index in &state.playing {
-            if let (Some(entry), Some(entry_state)) =
-                (self.entries.get(index), state.entries.get_mut(index))
-                && let (Some(live), Some(node_state)) =
-                    (entry.node.live(), entry_state.node.as_mut())
-            {
-                live.route(node_state, messages, context);
-            }
-        }
-    }
-
-    fn receive(
-        &self,
-        state: &mut SlotState,
-        message: &dyn Reflect,
-        context: &AnimationGraphContext<'_>,
-    ) {
-        for &index in &state.playing {
-            if let (Some(entry), Some(entry_state)) =
-                (self.entries.get(index), state.entries.get_mut(index))
-                && let (Some(live), Some(node_state)) =
-                    (entry.node.live(), entry_state.node.as_mut())
-            {
-                live.receive(node_state, message, context);
-            }
-        }
-    }
-
-    fn update(
-        &self,
-        state: &mut SlotState,
-        delta_time: f32,
-        _: &(),
-        context: &AnimationGraphContext<'_>,
-    ) {
         let SlotState { entries, playing } = state;
         playing.retain(|&index| {
             let (Some(entry), Some(entry_state)) =

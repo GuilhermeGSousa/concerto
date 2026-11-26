@@ -95,24 +95,6 @@ pub trait AnimationNode: Reflect + Send + Sync + 'static {
         true
     }
 
-    /// Looks over every message queued for the player this frame before any node receives one, so a node can move or start something the messages call for; nothing by default.
-    fn route(
-        &self,
-        _state: &mut Self::State,
-        _messages: &[Box<dyn Reflect>],
-        _context: &AnimationGraphContext<'_>,
-    ) {
-    }
-
-    /// Takes one message sent to the player this frame, before the node advances; ignored by default.
-    fn receive(
-        &self,
-        _state: &mut Self::State,
-        _message: &dyn Reflect,
-        _context: &AnimationGraphContext<'_>,
-    ) {
-    }
-
     /// Whether the node has succeeded or failed at what it does; none by default.
     fn outcome(&self, _state: &Self::State) -> Option<NodeOutcome> {
         None
@@ -296,20 +278,6 @@ pub trait ErasedAnimationNode: Send + Sync {
 
     fn is_finished(&self, state: &NodeState) -> bool;
 
-    fn route(
-        &self,
-        state: &mut NodeState,
-        messages: &[Box<dyn Reflect>],
-        context: &AnimationGraphContext<'_>,
-    );
-
-    fn receive(
-        &self,
-        state: &mut NodeState,
-        message: &dyn Reflect,
-        context: &AnimationGraphContext<'_>,
-    );
-
     fn outcome(&self, state: &NodeState) -> Option<NodeOutcome>;
 
     fn make_live(&mut self, registry: &TypeRegistry, leaves: &mut LiveLeaves) -> Vec<ValueWarning>;
@@ -431,28 +399,6 @@ impl<T: AnimationNode> ErasedAnimationNode for T {
         state
             .downcast_ref::<T::State>()
             .is_none_or(|state| AnimationNode::is_finished(self, state))
-    }
-
-    fn route(
-        &self,
-        state: &mut NodeState,
-        messages: &[Box<dyn Reflect>],
-        context: &AnimationGraphContext<'_>,
-    ) {
-        if let Some(state) = state.downcast_mut::<T::State>() {
-            AnimationNode::route(self, state, messages, context);
-        }
-    }
-
-    fn receive(
-        &self,
-        state: &mut NodeState,
-        message: &dyn Reflect,
-        context: &AnimationGraphContext<'_>,
-    ) {
-        if let Some(state) = state.downcast_mut::<T::State>() {
-            AnimationNode::receive(self, state, message, context);
-        }
     }
 
     fn make_live(&mut self, registry: &TypeRegistry, leaves: &mut LiveLeaves) -> Vec<ValueWarning> {

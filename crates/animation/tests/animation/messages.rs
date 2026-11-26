@@ -13,6 +13,7 @@ use concerto_animation::{
     player::{AnimationHandleComponent, AnimationPlayer},
     plugin::{AnimationAppExt, AnimationPlugin},
     pose::{AnimationFrame, EvaluatedFrame, FramePool},
+    retarget::{RetargetChain, RetargetNode, RetargetRig},
     root::AnimationRootBone,
 };
 use concerto_app::{App, plugins::AssetManagerPlugin, schedule_groups::LateUpdate};
@@ -33,7 +34,7 @@ use concerto_foundation::{
 use concerto_mesh::skeleton::{JointPose, Skeleton, SkeletonComponent};
 use concerto_name::{Name, name};
 use concerto_reflect::{Reflect, ReflectDefault, apply_value, json_to_value, to_json, to_value};
-use glam::Mat4;
+use glam::{Mat4, Vec3};
 use uuid::Uuid;
 
 use crate::attributes::{Amount, drive_players};
@@ -109,7 +110,15 @@ impl AnimationNode for Counter {
         Count::default()
     }
 
-    fn update(&self, _: &mut Count, _: f32, _: &(), _: &AnimationGraphContext<'_>) {}
+    fn update(&self, state: &mut Count, _: f32, _: &(), context: &AnimationGraphContext<'_>) {
+        for _ in context.message::<Poke>().filter(|poke| poke.strength > 0.0) {
+            state.received += 1;
+            state.marker = context.extra::<Marker>().map(|marker| marker.0);
+            context.emit(Counted {
+                count: state.received,
+            });
+        }
+    }
 
     fn evaluate(
         &self,
@@ -132,19 +141,6 @@ impl AnimationNode for Counter {
             .attributes_mut()
             .channel_mut::<Amount>(bone_count)
             .fill(Amount(1.0));
-    }
-
-    fn receive(&self, state: &mut Count, message: &dyn Reflect, context: &AnimationGraphContext) {
-        if message
-            .downcast_ref::<Poke>()
-            .is_some_and(|poke| poke.strength > 0.0)
-        {
-            state.received += 1;
-            state.marker = context.extra::<Marker>().map(|marker| marker.0);
-            context.emit(Counted {
-                count: state.received,
-            });
-        }
     }
 
     fn outcome(&self, state: &Count) -> Option<NodeOutcome> {
@@ -217,6 +213,7 @@ struct Stage {
     slotted: Entity,
     slot_bone: Entity,
     jsoned: Entity,
+    retargeted: Entity,
 }
 
 fn slot_node() -> SlotNode {
@@ -258,6 +255,7 @@ impl Stage {
         let idle = graph(&mut app, AnimationGraph::new());
         let poked = graph(&mut app, AnimationGraph::from_node(Counter {}));
         let machine_poked = poked.clone();
+        let retargeted_poked = poked.clone();
         let elsewhere = graph(&mut app, AnimationGraph::new());
         let machine =
             AnimationStateMachine::from_initial_state(name!("Idle"), idle, |transition| {
@@ -304,6 +302,31 @@ impl Stage {
             )
             .unwrap(),
         );
+        let standing = insert(
+            &mut app,
+            Skeleton::new(
+                vec![Mat4::IDENTITY],
+                vec![None],
+                vec!["root".into()],
+                vec![JointPose {
+                    translation: Vec3::Y,
+                    ..JointPose::IDENTITY
+                }],
+                vec![Uuid::from_u128(2)],
+            )
+            .unwrap(),
+        );
+        let rig = insert(
+            &mut app,
+            RetargetRig::new()
+                .with_skeleton(standing.clone())
+                .with_root("root")
+                .with_chain(RetargetChain::new("body", "root", "root")),
+        );
+        let retarget = graph(
+            &mut app,
+            AnimationGraph::from_node(RetargetNode::new(retargeted_poked, rig.clone(), rig)),
+        );
         let world = app.main_mut().world_mut();
         let bone = world.spawn(Transform::IDENTITY);
         let character = world.spawn((
@@ -335,6 +358,13 @@ impl Stage {
             SkeletonComponent::new(skeleton, vec![SceneEntityRef::Entity(json_bone)], None),
             hear_counted.into_listener(),
         ));
+        let standing_bone = world.spawn(Transform::IDENTITY);
+        let retargeted = world.spawn((
+            AnimationPlayer::new(1),
+            AnimationHandleComponent::new(retarget),
+            SkeletonComponent::new(standing, vec![SceneEntityRef::Entity(standing_bone)], None),
+            hear_counted.into_listener(),
+        ));
         Self {
             app,
             character,
@@ -342,6 +372,7 @@ impl Stage {
             slotted,
             slot_bone,
             jsoned,
+            retargeted,
         }
     }
 
@@ -379,11 +410,15 @@ impl Stage {
         world.run_schedule(LateUpdate);
     }
 
+    fn player_of(&mut self, entity: Entity) -> &mut AnimationPlayer {
+        self.world()
+            .get_component_for_entity_mut::<AnimationPlayer>(entity)
+            .unwrap()
+    }
+
     fn slot_player(&mut self) -> &mut AnimationPlayer {
         let slotted = self.slotted;
-        self.world()
-            .get_component_for_entity_mut::<AnimationPlayer>(slotted)
-            .unwrap()
+        self.player_of(slotted)
     }
 
     fn slot_amount(&mut self) -> f32 {
@@ -499,6 +534,7 @@ fn messages_move_the_graph_and_nodes_answer_with_outcomes_and_signals() {
     stage.player().send(Poke { strength: 1.0 });
     stage.frame();
     assert_eq!(stage.counters(), [saw(2)]);
+    stage.frame();
     assert!(stage.in_state(name!("Idle")));
     let character = stage.character;
     assert_eq!(stage.heard_by(character), [1, 2]);
@@ -519,6 +555,28 @@ fn messages_move_the_graph_and_nodes_answer_with_outcomes_and_signals() {
     });
     stage.frame();
     assert_eq!(stage.heard_by(bodiless), [1]);
+
+    stage.player_of(bodiless).set_paused(true);
+    stage.player_of(bodiless).send(Poke { strength: 1.0 });
+    stage.frame();
+    assert_eq!(stage.heard_by(bodiless), [1]);
+    stage.player_of(bodiless).set_paused(false);
+    stage.frame();
+    stage.frame();
+    assert_eq!(
+        stage.heard_by(bodiless),
+        [1, 2],
+        "a message sent while paused is read once the player resumes, and only once"
+    );
+
+    let retargeted = stage.retargeted;
+    stage.player_of(retargeted).send(Poke { strength: 1.0 });
+    stage.frame();
+    assert_eq!(
+        stage.heard_by(retargeted),
+        [1],
+        "a message reaches a node inside a retarget"
+    );
 
     let slotted = stage.slotted;
     stage.advance(0.0);
@@ -571,7 +629,11 @@ fn messages_move_the_graph_and_nodes_answer_with_outcomes_and_signals() {
     stage.slot_player().send(Poke { strength: 1.0 });
     stage.slot_player().send(Poke { strength: 1.0 });
     stage.advance(0.1);
-    assert_eq!(stage.heard_by(slotted), [1, 1, 1, 2]);
+    assert_eq!(
+        stage.heard_by(slotted),
+        [1, 1, 1, 2],
+        "two pokes in one frame restart the entry once and both reach it"
+    );
     let fading_out = stage.slot_amount();
     assert!(
         (fading_out - 0.5).abs() < 0.05,

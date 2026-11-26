@@ -6,10 +6,12 @@ use std::{
 
 use concerto_ecs::{CommandQueue, Entity, signal::EntitySignal, system::input::Inputs};
 use concerto_mesh::Skeleton;
+use concerto_reflect::Reflect;
 use glam::{Affine3A, Vec3};
 
 use crate::{
     blackboard::AnimationBlackboard,
+    message::AnimationMessage,
     pose::{EvaluatedFrame, JointPose},
 };
 
@@ -100,6 +102,7 @@ pub struct AnimationGraphContext<'a> {
     pub(crate) inputs: &'a Inputs<'a, 'a>,
     pub(crate) extras: &'a Extras,
     pub(crate) outbox: &'a Outbox,
+    pub(crate) messages: &'a [Box<dyn Reflect>],
 }
 
 impl<'a> AnimationGraphContext<'a> {
@@ -115,6 +118,17 @@ impl<'a> AnimationGraphContext<'a> {
     /// The value of type `T` the player was handed with `AnimationPlayer::set_extra`.
     pub fn extra<T: Send + Sync + 'static>(&self) -> Option<&'a T> {
         self.extras.get::<T>()
+    }
+
+    /// In `update`, the messages the game sent the player since its last update, in the order sent; empty in every other walk.
+    pub fn messages(&self) -> impl Iterator<Item = &'a dyn Reflect> + 'a {
+        self.messages.iter().map(|message| message.as_ref())
+    }
+
+    /// The messages of type `M` among `messages`, in the order sent.
+    pub fn message<M: AnimationMessage>(&self) -> impl Iterator<Item = &'a M> + 'a {
+        self.messages()
+            .filter_map(|message| message.downcast_ref::<M>())
     }
 
     /// The root bone of the player being evaluated, if it has one.

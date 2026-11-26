@@ -106,10 +106,6 @@ impl AnimationTransitionBlender for InertializationBlender {
         self.stack.current()
     }
 
-    fn for_each_playing(&self, visit: &mut dyn FnMut(GraphId)) {
-        self.stack.for_each_playing(visit);
-    }
-
     fn in_flight(&self) -> Option<BlendInFlight> {
         let from = self.source?;
         let halflife = match self.pending_halflife {

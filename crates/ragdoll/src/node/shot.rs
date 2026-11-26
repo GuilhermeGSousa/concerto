@@ -110,30 +110,22 @@ impl AnimationNode for ShotNode {
         ShotState::default()
     }
 
-    fn receive(
-        &self,
-        state: &mut ShotState,
-        message: &dyn Reflect,
-        context: &AnimationGraphContext<'_>,
-    ) {
-        let (Some(shot), Some(body)) = (
-            message.downcast_ref::<messages::Shot>(),
-            context.extra::<BodyView>(),
-        ) else {
+    fn update(&self, state: &mut ShotState, _: f32, _: &(), context: &AnimationGraphContext<'_>) {
+        let Some(body) = context.extra::<BodyView>() else {
             return;
         };
-        let Some(struck) = body.pose().get(shot.part) else {
-            return;
-        };
-        state.started = true;
-        state.wounds.push(Wound::struck(
-            shot.part,
-            struck.inverse().transform_point(shot.point),
-            shot.impulse,
-        ));
+        for shot in context.message::<messages::Shot>() {
+            let Some(struck) = body.pose().get(shot.part) else {
+                continue;
+            };
+            state.started = true;
+            state.wounds.push(Wound::struck(
+                shot.part,
+                struck.inverse().transform_point(shot.point),
+                shot.impulse,
+            ));
+        }
     }
-
-    fn update(&self, _: &mut ShotState, _: f32, _: &(), _: &AnimationGraphContext<'_>) {}
 
     fn evaluate(
         &self,
