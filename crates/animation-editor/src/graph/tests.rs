@@ -1362,8 +1362,7 @@ fn send_animation_message_moves_a_playing_graph_and_says_where_it_is() {
     assert_eq!(told.bad_id["code"], "unknown_entity", "{}", told.bad_id);
     assert_eq!(told.idle["code"], "not_playing", "{}", told.idle);
     assert!(
-        told.inspected
-            .contains("\n  behaviour: no entry playing (running)"),
+        told.inspected.contains("\n  no entry playing"),
         "{}",
         told.inspected
     );

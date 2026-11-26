@@ -12,7 +12,7 @@ use crate::{
     mask::{BoneMask, MaskResolution, resolve_mask},
     message::{AnimationMessage, ClipEnded, MessageType},
     node::{
-        AnimationNode, BehaviourReport, InputSlots, NodeReport, NodeState, PlaceholderNode,
+        AnimationNode, EditorAnimationNode, InputSlots, NodeState, PlaceholderNode,
         ReflectAnimationNode,
         layer::{blend_attributes, blend_joint},
     },
@@ -207,10 +207,6 @@ impl AnimationNode for SlotNode {
     type UpdateInput = ();
     type EvaluateInput = Res<'static, AssetStore<BoneMask>>;
     type DriveInput = Res<'static, AssetStore<BoneMask>>;
-
-    fn input_slots(&self) -> InputSlots {
-        InputSlots::Fixed(vec![name!("base")])
-    }
 
     fn make_live(&mut self, registry: &TypeRegistry, leaves: &mut LiveLeaves) -> Vec<ValueWarning> {
         let mut warnings = Vec::new();
@@ -439,37 +435,6 @@ impl AnimationNode for SlotNode {
         }
     }
 
-    fn report(&self, state: &SlotState) -> NodeReport {
-        let playing: Vec<String> = state
-            .playing
-            .iter()
-            .filter_map(|&index| {
-                let entry = self.entries.get(index)?;
-                let entry_state = state.entries.get(index)?;
-                let mut line = format!("{} {:.2}", entry.name.as_str(), entry_state.weight);
-                let behaviour = entry
-                    .node
-                    .live()
-                    .zip(entry_state.node.as_ref())
-                    .and_then(|(live, node_state)| live.report(node_state).behaviour);
-                if let Some(behaviour) = behaviour {
-                    line.push_str(" · ");
-                    line.push_str(&behaviour.describe());
-                }
-                Some(line)
-            })
-            .collect();
-        let text = if playing.is_empty() {
-            "no entry playing".to_owned()
-        } else {
-            format!("playing {}", playing.join(", "))
-        };
-        NodeReport {
-            behaviour: Some(BehaviourReport::running(text)),
-            ..NodeReport::default()
-        }
-    }
-
     fn reset(&self, state: &mut SlotState) {
         for (entry, entry_state) in self.entries.iter().zip(&mut state.entries) {
             if let (Some(live), Some(node_state)) = (entry.node.live(), entry_state.node.as_mut()) {
@@ -479,5 +444,38 @@ impl AnimationNode for SlotNode {
             entry_state.fading_out = false;
         }
         state.playing.clear();
+    }
+}
+
+impl EditorAnimationNode for SlotNode {
+    fn input_slots(&self) -> InputSlots {
+        InputSlots::Fixed(vec![name!("base")])
+    }
+
+    fn describe(&self, state: &SlotState) -> Option<String> {
+        let playing: Vec<String> = state
+            .playing
+            .iter()
+            .filter_map(|&index| {
+                let entry = self.entries.get(index)?;
+                let entry_state = state.entries.get(index)?;
+                let mut line = format!("{} {:.2}", entry.name.as_str(), entry_state.weight);
+                let described = entry
+                    .node
+                    .live()
+                    .zip(entry_state.node.as_ref())
+                    .and_then(|(live, node_state)| live.describe(node_state));
+                if let Some(described) = described {
+                    line.push_str(" · ");
+                    line.push_str(&described);
+                }
+                Some(line)
+            })
+            .collect();
+        Some(if playing.is_empty() {
+            "no entry playing".to_owned()
+        } else {
+            format!("playing {}", playing.join(", "))
+        })
     }
 }

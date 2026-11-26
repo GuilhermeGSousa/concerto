@@ -2,6 +2,7 @@ use std::fmt::Write;
 
 use concerto_animation::{
     graph::{AnimationGraph, NodeVisit},
+    node::{AnimationClipNodeState, state_machine::AnimationStateMachineState},
     player::AnimationPlayer,
 };
 use concerto_foundation::assets::asset_store::AssetStore;
@@ -38,9 +39,9 @@ fn for_each_playing_node(
                         .is_none_or(|machine| machine.playing.contains(&state))
                 })
             });
-        if let Some(machine) = &visit.report.state_machine {
-            let mut names: Vec<Name> = machine.current.into_iter().collect();
-            names.extend(machine.transition.map(|transition| transition.from));
+        if let Some(machine) = visit.state.downcast_ref::<AnimationStateMachineState>() {
+            let mut names: Vec<Name> = machine.current_state_name().into_iter().collect();
+            names.extend(machine.transition().map(|transition| transition.from));
             machines.push(Machine {
                 depth,
                 playing: names,
@@ -57,10 +58,9 @@ pub fn active_states(player: &AnimationPlayer, graphs: &AssetStore<AnimationGrap
     let mut states = Vec::new();
     for_each_playing_node(player, graphs, |visit| {
         if let Some(current) = visit
-            .report
-            .state_machine
-            .as_ref()
-            .and_then(|machine| machine.current)
+            .state
+            .downcast_ref::<AnimationStateMachineState>()
+            .and_then(AnimationStateMachineState::current_state_name)
         {
             states.push(current.to_string());
         }
@@ -68,17 +68,19 @@ pub fn active_states(player: &AnimationPlayer, graphs: &AssetStore<AnimationGrap
     states
 }
 
-fn behaviours(player: &AnimationPlayer, graphs: &AssetStore<AnimationGraph>) -> Vec<String> {
-    let mut behaviours = Vec::new();
+fn descriptions(player: &AnimationPlayer, graphs: &AssetStore<AnimationGraph>) -> Vec<String> {
+    let mut descriptions = Vec::new();
     for_each_playing_node(player, graphs, |visit| {
-        if let Some(behaviour) = &visit.report.behaviour {
-            behaviours.push(behaviour.describe());
+        let shown_elsewhere = visit.state.is::<AnimationStateMachineState>()
+            || visit.state.is::<AnimationClipNodeState>();
+        if !shown_elsewhere && let Some(described) = visit.node.describe(visit.state) {
+            descriptions.push(described);
         }
     });
-    behaviours
+    descriptions
 }
 
-/// What a character's body is doing, as `body_report` prints it: each limb's physics amount and cover, the active graph states and behaviours when `graphs` is given, and what the body senses.
+/// What a character's body is doing, as `body_report` prints it: each limb's physics amount and cover, the active graph states and each playing node's description when `graphs` is given, and what the body senses.
 pub fn report_body(
     body: &RagdollBody,
     player: &AnimationPlayer,
@@ -105,8 +107,8 @@ pub fn report_body(
                 states.join(", ")
             }
         );
-        for behaviour in behaviours(player, graphs) {
-            let _ = writeln!(text, "behaviour: {behaviour}");
+        for described in descriptions(player, graphs) {
+            let _ = writeln!(text, "node: {described}");
         }
     }
     text.push_str(&describe_body(sense, body));

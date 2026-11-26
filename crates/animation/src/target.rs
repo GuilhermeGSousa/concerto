@@ -191,7 +191,7 @@ mod tests {
         event::{AnimationEvent, AnimationSignal},
         graph::{AnimationGraph, AnimationNodeIndex},
         node::{
-            AnimationClipNode, BlendNode, IkGoal, IkTarget, TwoBoneIkNode,
+            AnimationClipNode, AnimationClipNodeState, BlendNode, IkGoal, IkTarget, TwoBoneIkNode,
             state_machine::AnimationStateMachine,
         },
         player::{AnimationHandleComponent, AnimationPlayer},
@@ -865,7 +865,10 @@ mod tests {
             .get_component_for_entity::<AnimationPlayer>(loading.owner)
             .unwrap()
             .for_each_node(graphs, |visit| {
-                clip_time = clip_time.or(visit.report.clip_time)
+                clip_time = clip_time.or(visit
+                    .state
+                    .downcast_ref::<AnimationClipNodeState>()
+                    .map(AnimationClipNodeState::time))
             });
         assert!(
             clip_time.is_some_and(|time| time > 0.0),

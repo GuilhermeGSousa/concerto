@@ -11,10 +11,7 @@ use crate::transition::{
 };
 use crate::{
     evaluation::{AnimationGraphContext, DriveContext},
-    node::{
-        AnimationNode, InputSlots, NodeOutcome, NodeReport, ReflectAnimationNode,
-        StateMachineReport, TransitionReport,
-    },
+    node::{AnimationNode, EditorAnimationNode, NodeOutcome, ReflectAnimationNode},
 };
 
 use concerto_ecs::Res;
@@ -438,6 +435,14 @@ impl AnimationStateMachine {
     }
 }
 
+/// A transition in flight; `progress` runs from 0 to 1.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TransitionView {
+    pub from: Name,
+    pub to: Name,
+    pub progress: f32,
+}
+
 pub struct AnimationStateMachineState {
     state_graphs: AnimationGraphStates,
     current_state: StateId,
@@ -486,6 +491,18 @@ impl AnimationStateMachineState {
         self.state_names.get(*self.current_state).copied()
     }
 
+    /// The transition the machine is blending through, if any.
+    pub fn transition(&self) -> Option<TransitionView> {
+        let named = |graph: GraphId| self.state_names.get(*graph).copied();
+        self.blender.in_flight().and_then(|blend| {
+            Some(TransitionView {
+                from: named(blend.from)?,
+                to: named(blend.to)?,
+                progress: blend.progress,
+            })
+        })
+    }
+
     pub(crate) fn current_graph(&self) -> Option<&AnimationGraphState> {
         self.state_graphs.get(self.current_state.as_graph_id())
     }
@@ -495,7 +512,7 @@ impl AnimationStateMachineState {
             .and_then(|current_graph| current_graph.outcome(graphs))
     }
 
-    fn transition(
+    fn begin_transition(
         &mut self,
         graphs: &AssetStore<AnimationGraph>,
         transition: &AnimationStateMachineTransition,
@@ -524,10 +541,6 @@ impl AnimationNode for AnimationStateMachine {
     type UpdateInput = Res<'static, AssetStore<AnimationGraph>>;
     type EvaluateInput = Res<'static, AssetStore<AnimationGraph>>;
     type DriveInput = Res<'static, AssetStore<AnimationGraph>>;
-
-    fn input_slots(&self) -> InputSlots {
-        InputSlots::None
-    }
 
     fn make_live(&mut self, registry: &TypeRegistry, _: &mut LiveLeaves) -> Vec<ValueWarning> {
         let mut warnings = Vec::new();
@@ -612,7 +625,7 @@ impl AnimationNode for AnimationStateMachine {
                     .find(fired)
             });
         if let Some(transition) = next {
-            state.transition(graphs, transition);
+            state.begin_transition(graphs, transition);
         }
 
         state
@@ -696,25 +709,6 @@ impl AnimationNode for AnimationStateMachine {
         }
     }
 
-    fn report(&self, state: &AnimationStateMachineState) -> NodeReport {
-        let named = |graph: GraphId| state.state_names.get(*graph).copied();
-        let transition = state.blender.in_flight().and_then(|blend| {
-            Some(TransitionReport {
-                from: named(blend.from)?,
-                to: named(blend.to)?,
-                progress: blend.progress,
-            })
-        });
-        NodeReport {
-            clip_time: None,
-            state_machine: Some(StateMachineReport {
-                current: state.current_state_name(),
-                transition,
-            }),
-            behaviour: None,
-        }
-    }
-
     #[cfg(any(test, feature = "test-support"))]
     fn inner_states_mut(
         &self,
@@ -722,6 +716,22 @@ impl AnimationNode for AnimationStateMachine {
         visit: &mut dyn FnMut(&mut AnimationGraphState),
     ) {
         state.state_graphs.iter_mut().for_each(visit);
+    }
+}
+
+impl EditorAnimationNode for AnimationStateMachine {
+    fn describe(&self, state: &AnimationStateMachineState) -> Option<String> {
+        let mut line = match state.current_state_name() {
+            Some(current) => format!("in {current}"),
+            None => "in no state".to_owned(),
+        };
+        if let Some(transition) = state.transition() {
+            line.push_str(&format!(
+                " · {} → {} {:.2}",
+                transition.from, transition.to, transition.progress
+            ));
+        }
+        Some(line)
     }
 }
 
@@ -886,8 +896,8 @@ mod tests {
         evaluation::AnimationGraphContext,
         graph::AnimationGraph,
         node::{
-            AnimationClipNode, AnimationNode, InputSlots, ReflectAnimationNode,
-            register_node_inputs,
+            AnimationClipNode, AnimationClipNodeState, AnimationNode, EditorAnimationNode,
+            ReflectAnimationNode, register_node_inputs,
         },
         player::AnimationPlayer,
         plugin::register_animation_types,
@@ -905,10 +915,6 @@ mod tests {
         type UpdateInput = ();
         type EvaluateInput = ();
         type DriveInput = ();
-
-        fn input_slots(&self) -> InputSlots {
-            InputSlots::None
-        }
 
         fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) -> u32 {
             0
@@ -932,6 +938,8 @@ mod tests {
 
         fn reset(&self, _: &mut u32) {}
     }
+
+    impl EditorAnimationNode for Counter {}
 
     fn counting_graph() -> AnimationGraph {
         let mut registry = TypeRegistry::default();
@@ -1314,13 +1322,18 @@ mod tests {
                 })
                 .collect();
             let mut line = format!("{} w{}", path.join("/"), visit.weight);
-            if let Some(time) = visit.report.clip_time {
-                line.push_str(&format!(" t{time:.2}"));
+            if let Some(clip) = visit.state.downcast_ref::<AnimationClipNodeState>() {
+                line.push_str(&format!(" t{:.2}", clip.time()));
             }
-            if let Some(machine) = &visit.report.state_machine {
-                let current = machine.current.map_or("none", |current| current.as_str());
+            if let Some(machine) = visit
+                .state
+                .downcast_ref::<super::AnimationStateMachineState>()
+            {
+                let current = machine
+                    .current_state_name()
+                    .map_or("none", |current| current.as_str());
                 line.push_str(&format!(" in {current}"));
-                if let Some(transition) = machine.transition {
+                if let Some(transition) = machine.transition() {
                     line.push_str(&format!(
                         " {}>{} {:.2}",
                         transition.from, transition.to, transition.progress

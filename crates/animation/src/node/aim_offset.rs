@@ -19,7 +19,7 @@ use crate::{
     evaluation::AnimationGraphContext,
     look_at::{LookFrame, yaw_pitch_to},
     node::{
-        AnimationNode, InputSlots, ReflectAnimationNode,
+        AnimationNode, EditorAnimationNode, InputSlots, ReflectAnimationNode,
         model_space::{WorldToModel, bone_under_first, model_joint},
         pass_through,
     },
@@ -339,10 +339,6 @@ impl AnimationNode for AimOffsetNode {
     type EvaluateInput = Res<'static, AssetStore<AnimationClip>>;
     type DriveInput = ();
 
-    fn input_slots(&self) -> InputSlots {
-        InputSlots::Fixed(vec![name!("pose")])
-    }
-
     fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) -> AimOffsetState {
         AimOffsetState {
             elapsed: 0.0,
@@ -453,6 +449,12 @@ impl AnimationNode for AimOffsetNode {
         state.snap_angles = true;
         state.clock = 0.0;
         state.weight.reset_to(0.0);
+    }
+}
+
+impl EditorAnimationNode for AimOffsetNode {
+    fn input_slots(&self) -> InputSlots {
+        InputSlots::Fixed(vec![name!("pose")])
     }
 }
 

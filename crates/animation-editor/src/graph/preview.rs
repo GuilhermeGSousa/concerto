@@ -1,7 +1,10 @@
 use concerto_animation::{
-    graph::{AnimationGraph, NodePathStep},
+    graph::{AnimationGraph, NodePathStep, NodeVisit},
     message::build_animation_message,
-    node::{NodeReport, state_machine::AnimationFSMTrigger},
+    node::{
+        AnimationClipNodeState,
+        state_machine::{AnimationFSMTrigger, AnimationStateMachineState, TransitionView},
+    },
     param::ReflectParam,
     player::{AnimationHandleComponent, AnimationPlayer},
     root::AnimationRootBone,
@@ -82,12 +85,42 @@ pub struct SetGraphPlayback {
 }
 impl Signal for SetGraphPlayback {}
 
-/// One playing node of a [`GraphPreviewState`]: its path from the graph the preview plays, its weight and what it reports.
+/// The state a playing state machine is in and the transition it is blending through.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MachineView {
+    pub current: Option<Name>,
+    pub transition: Option<TransitionView>,
+}
+
+/// One playing node of a [`GraphPreviewState`]: its path from the graph the preview plays, its weight, its describe line, a state machine's state and a clip's time.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PreviewNode {
     pub path: Vec<NodePathStep>,
     pub weight: f32,
-    pub report: NodeReport,
+    pub describe: Option<String>,
+    pub machine: Option<MachineView>,
+    pub clip_time: Option<f32>,
+}
+
+impl PreviewNode {
+    pub(crate) fn of(visit: &NodeVisit<'_>) -> Self {
+        Self {
+            path: visit.path.to_vec(),
+            weight: visit.weight,
+            describe: visit.node.describe(visit.state),
+            machine: visit
+                .state
+                .downcast_ref::<AnimationStateMachineState>()
+                .map(|machine| MachineView {
+                    current: machine.current_state_name(),
+                    transition: machine.transition(),
+                }),
+            clip_time: visit
+                .state
+                .downcast_ref::<AnimationClipNodeState>()
+                .map(AnimationClipNodeState::time),
+        }
+    }
 }
 
 /// What a graph preview's first player plays, written each frame the preview plays; `nodes` is empty while no player plays the graph.
@@ -288,13 +321,7 @@ fn report_graph_state(
         .filter(|(_, player)| !player.is_paused())
         .min_by_key(|(entity, _)| entity.index());
     if let (Some((_, player)), Some(graphs)) = (first, graphs) {
-        player.for_each_node(&graphs, |visit| {
-            state.nodes.push(PreviewNode {
-                path: visit.path.to_vec(),
-                weight: visit.weight,
-                report: visit.report.clone(),
-            });
-        });
+        player.for_each_node(&graphs, |visit| state.nodes.push(PreviewNode::of(visit)));
     }
     states.write(state);
 }
@@ -363,7 +390,7 @@ mod tests {
     use super::*;
     use concerto_animation::{
         clip::{AnimationChanelOutput, AnimationChannel, AnimationClip},
-        node::{AnimationClipNode, StateMachineReport, state_machine::AnimationStateMachine},
+        node::{AnimationClipNode, state_machine::AnimationStateMachine},
         plugin::AnimationPlugin,
     };
     use concerto_app::plugins::{AssetManagerPlugin, TransformPlugin};
@@ -462,12 +489,12 @@ mod tests {
         steps.join("/")
     }
 
-    fn machine(state: &GraphPreviewState) -> Option<StateMachineReport> {
+    fn machine(state: &GraphPreviewState) -> Option<MachineView> {
         state
             .nodes
             .iter()
             .find(|node| path(node) == "1")
-            .and_then(|node| node.report.state_machine)
+            .and_then(|node| node.machine)
     }
 
     impl Stage {
@@ -626,7 +653,7 @@ mod tests {
         let idling = stage.states.last().expect("a playing preview reports");
         assert_eq!(
             machine(idling),
-            Some(StateMachineReport {
+            Some(MachineView {
                 current: Some(name!("Idle")),
                 transition: None,
             })
@@ -637,7 +664,7 @@ mod tests {
             .find(|node| path(node) == "1:Idle/1")
             .expect("the state's clip node is reported under its state");
         assert_eq!(clip.weight, 1.0);
-        assert!(clip.report.clip_time.is_some_and(|time| time > 0.0));
+        assert!(clip.clip_time.is_some_and(|time| time > 0.0));
 
         let before = stage.states.len();
         stage.set(name!("moving"), true);
@@ -659,7 +686,7 @@ mod tests {
         );
         assert_eq!(
             since.last().and_then(machine),
-            Some(StateMachineReport {
+            Some(MachineView {
                 current: Some(name!("Moving")),
                 transition: None,
             })

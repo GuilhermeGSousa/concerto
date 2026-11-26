@@ -115,6 +115,11 @@ fn a_dying_body_drains_settles_into_a_static_pose_and_wakes_only_when_hit_hard()
         stage.in_state(name!("dying")) && !has::<Dead>(&stage),
         "half a second in the body is still dying"
     );
+    assert!(
+        report(&stage).contains("\nnode: draining over 1 s\n"),
+        "a dying node says what it does: {}",
+        report(&stage)
+    );
     stage.run(285);
     assert!(has::<Dead>(&stage) && stage.in_state(name!("dead")));
     let report = report(&stage);

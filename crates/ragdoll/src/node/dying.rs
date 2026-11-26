@@ -1,9 +1,7 @@
 use concerto_animation::{
     attribute::PoseAttribute,
     evaluation::{AnimationGraphContext, DriveContext},
-    node::{
-        AnimationNode, BehaviourReport, InputSlots, NodeOutcome, NodeReport, ReflectAnimationNode,
-    },
+    node::{AnimationNode, EditorAnimationNode, InputSlots, NodeOutcome, ReflectAnimationNode},
     pose::{AnimationFrame, EvaluatedFrame, FramePool},
 };
 use concerto_name::{Name, name};
@@ -123,10 +121,6 @@ impl AnimationNode for DyingNode {
     type EvaluateInput = ();
     type DriveInput = ();
 
-    fn input_slots(&self) -> InputSlots {
-        InputSlots::Fixed(vec![name!("pose")])
-    }
-
     fn create_state(&self, _: &(), _: &AnimationGraphContext<'_>) -> DyingState {
         DyingState::default()
     }
@@ -215,19 +209,19 @@ impl AnimationNode for DyingNode {
     fn outcome(&self, state: &DyingState) -> Option<NodeOutcome> {
         state.outcome
     }
+}
 
-    fn report(&self, state: &DyingState) -> NodeReport {
+impl EditorAnimationNode for DyingNode {
+    fn input_slots(&self) -> InputSlots {
+        InputSlots::Fixed(vec![name!("pose")])
+    }
+
+    fn describe(&self, state: &DyingState) -> Option<String> {
         let text = match (&state.dying, state.outcome) {
             (None, _) => "waiting for a death".to_string(),
             (Some(_), Some(_)) => "drained".to_string(),
             (Some(dying), None) => format!("draining over {} s", dying.seconds),
         };
-        NodeReport {
-            behaviour: Some(BehaviourReport {
-                outcome: state.outcome,
-                text,
-            }),
-            ..NodeReport::default()
-        }
+        Some(text)
     }
 }

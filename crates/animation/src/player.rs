@@ -483,7 +483,7 @@ mod tests {
     use crate::{
         evaluation::AnimationGraphContext,
         graph::AnimationGraph,
-        node::{AnimationNode, InputSlots, ReflectAnimationNode, register_node_inputs},
+        node::{AnimationNode, EditorAnimationNode, ReflectAnimationNode, register_node_inputs},
         plugin::register_animation_types,
         pose::{AnimationFrame, EvaluatedFrame, FramePool},
         testing::Walks,
@@ -499,10 +499,6 @@ mod tests {
         type UpdateInput = ();
         type EvaluateInput = ();
         type DriveInput = ();
-
-        fn input_slots(&self) -> InputSlots {
-            InputSlots::None
-        }
 
         fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) -> u32 {
             0
@@ -526,6 +522,8 @@ mod tests {
             *resets += 1;
         }
     }
+
+    impl EditorAnimationNode for Replayable {}
 
     fn replayable_resets(player: &mut AnimationPlayer, walks: &Walks) -> Vec<u32> {
         let mut resets = Vec::new();

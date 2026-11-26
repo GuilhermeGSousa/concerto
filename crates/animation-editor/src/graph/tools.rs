@@ -3,7 +3,7 @@ use std::time::Duration;
 use concerto_animation::{
     graph::AnimationGraph,
     message::{SendReflectedMessage, animation_message_types, decode_animation_message},
-    node::{StateMachineReport, state_machine::AnimationStateMachine},
+    node::state_machine::AnimationStateMachine,
     player::AnimationPlayer,
 };
 use concerto_app::{App, schedule_groups::LateUpdate};
@@ -37,11 +37,11 @@ use super::{
     },
     panels::{subtitle, time_text, weight_text},
     params::{FoundParam, short_type},
-    preview::{GraphPreviewState, PreviewNode, SendGraphMessage},
+    preview::{GraphPreviewState, MachineView, PreviewNode, SendGraphMessage},
     stage::{GraphLive, LiveView, SentPreview},
 };
 
-/// Reads what the front animation graph tab shows: the breadcrumb, then for a pose graph one line per node, `id · type · parent#slot · subtitle`, with the result node and loose nodes marked, and for a state machine one line per state, `name · initial · graph`, then one per transition, `from → to #index · trigger · blend`. When the graph names parameters, a `parameters:` line follows, then one line per parameter, `name · type · value`. Once the preview has reported what it plays, a `live:` line follows: for a pose graph one line per playing node, `id · weight · time` for a clip and `in state · from → to progress` for a state machine, and for a state machine that one part alone. A node that reports behaviour, such as a slot with its playing entries, has an indented `behaviour: text (outcome)` line under its own.
+/// Reads what the front animation graph tab shows: the breadcrumb, then for a pose graph one line per node, `id · type · parent#slot · subtitle`, with the result node and loose nodes marked, and for a state machine one line per state, `name · initial · graph`, then one per transition, `from → to #index · trigger · blend`. When the graph names parameters, a `parameters:` line follows, then one line per parameter, `name · type · value`. Once the preview has reported what it plays, a `live:` line follows: for a pose graph one line per playing node, `id · weight · time` for a clip and `in state · from → to progress` for a state machine, and for a state machine that one part alone. A node that describes itself, such as a slot with its playing entries, has its indented `describe` line under its own.
 #[derive(Deserialize, JsonSchema)]
 pub struct GraphInspect {}
 
@@ -839,7 +839,7 @@ fn graph_set_param(
     }
 }
 
-fn machine_part(machine: &StateMachineReport) -> String {
+fn machine_part(machine: &MachineView) -> String {
     let mut part = match machine.current {
         Some(current) => format!("in {current}"),
         None => "in no state".to_owned(),
@@ -858,7 +858,7 @@ fn machine_part(machine: &StateMachineReport) -> String {
 fn live_block(state: &GraphDocument, live: LiveView) -> Option<String> {
     let mut lines = Vec::new();
     if let Some(node) = state.shown_machine() {
-        let machine = live.node(node)?.report.state_machine?;
+        let machine = live.node(node)?.machine?;
         lines.push(machine_part(&machine));
     } else {
         for node in state.graph()?.nodes() {
@@ -866,17 +866,17 @@ fn live_block(state: &GraphDocument, live: LiveView) -> Option<String> {
                 continue;
             };
             let mut line = format!("{} · weight {}", node.id, weight_text(playing.weight));
-            let behaviour = playing.report.behaviour.as_ref();
-            if let Some(time) = playing.report.clip_time {
+            let shown_inline = playing.clip_time.is_some() || playing.machine.is_some();
+            if let Some(time) = playing.clip_time {
                 line.push_str(&format!(" · time {}", time_text(time)));
             }
-            if let Some(machine) = &playing.report.state_machine {
+            if let Some(machine) = &playing.machine {
                 line.push_str(&format!(" · {}", machine_part(machine)));
             }
             lines.push(line);
-            lines.extend(
-                behaviour.map(|behaviour| format!("  behaviour: {}", behaviour.describe())),
-            );
+            if !shown_inline {
+                lines.extend(playing.describe.as_ref().map(|line| format!("  {line}")));
+            }
         }
     }
     (!lines.is_empty()).then(|| format!("live:\n{}", lines.join("\n")))
@@ -885,7 +885,7 @@ fn live_block(state: &GraphDocument, live: LiveView) -> Option<String> {
 fn message_answer(type_path: &str, target: &str, nodes: &[PreviewNode]) -> String {
     let states: Vec<String> = nodes
         .iter()
-        .filter_map(|node| node.report.state_machine?.current)
+        .filter_map(|node| node.machine?.current)
         .map(|state| state.to_string())
         .collect();
     let mut lines = vec![format!(
@@ -900,8 +900,9 @@ fn message_answer(type_path: &str, target: &str, nodes: &[PreviewNode]) -> Strin
     lines.extend(
         nodes
             .iter()
-            .filter_map(|node| node.report.behaviour.as_ref())
-            .map(|behaviour| format!("behaviour: {}", behaviour.describe())),
+            .filter(|node| node.machine.is_none() && node.clip_time.is_none())
+            .filter_map(|node| node.describe.as_ref())
+            .map(|described| format!("node: {described}")),
     );
     lines.join("\n")
 }
@@ -1111,13 +1112,7 @@ fn answer_character_sends(
             continue;
         }
         let mut nodes = Vec::new();
-        player.for_each_node(graphs, |visit| {
-            nodes.push(PreviewNode {
-                path: visit.path.to_vec(),
-                weight: visit.weight,
-                report: visit.report.clone(),
-            });
-        });
+        player.for_each_node(graphs, |visit| nodes.push(PreviewNode::of(visit)));
         pending
             .reply
             .ok(message_answer(&sending.type_path, "the character", &nodes));

@@ -171,7 +171,7 @@ mod tests {
     use concerto_animation::evaluation::AnimationGraphContext;
     use concerto_animation::graph::AnimationGraph;
     use concerto_animation::node::{
-        AnimationClipNode, AnimationNode, InputSlots, ReflectAnimationNode,
+        AnimationClipNode, AnimationNode, EditorAnimationNode, InputSlots, ReflectAnimationNode,
     };
     use concerto_animation::player::AnimationHandleComponent;
     use concerto_animation::plugin::{AnimationAppExt, AnimationPlugin};
@@ -553,10 +553,6 @@ mod tests {
         type EvaluateInput = ();
         type DriveInput = ();
 
-        fn input_slots(&self) -> InputSlots {
-            InputSlots::Fixed(vec![name!("pose")])
-        }
-
         fn create_state(&self, _: &(), _: &AnimationGraphContext<'_>) -> Option<Affine3A> {
             None
         }
@@ -581,6 +577,12 @@ mod tests {
 
         fn reset(&self, state: &mut Option<Affine3A>) {
             *state = None;
+        }
+    }
+
+    impl EditorAnimationNode for ModelProbe {
+        fn input_slots(&self) -> InputSlots {
+            InputSlots::Fixed(vec![name!("pose")])
         }
     }
 

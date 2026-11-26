@@ -10,8 +10,8 @@ use concerto_animation::{
         AnimationMessage, ClipEnded, MessageType, SendAnimationMessage, SendReflectedMessage,
     },
     node::{
-        AnimationClipNode, AnimationNode, AnimationPlayMode, InputSlots, NodeOutcome, PlayInSlot,
-        ReflectAnimationNode, SlotEntry, SlotNode,
+        AnimationClipNode, AnimationNode, AnimationPlayMode, EditorAnimationNode, NodeOutcome,
+        PlayInSlot, ReflectAnimationNode, SlotEntry, SlotNode,
         state_machine::{AnimationFSMTrigger, AnimationStateMachine},
     },
     player::{AnimationHandleComponent, AnimationPlayer},
@@ -98,10 +98,6 @@ impl AnimationNode for Counter {
     type EvaluateInput = ();
     type DriveInput = ();
 
-    fn input_slots(&self) -> InputSlots {
-        InputSlots::None
-    }
-
     fn drive(
         &self,
         _: &mut Count,
@@ -174,6 +170,8 @@ impl AnimationNode for Counter {
         *state = Count::default();
     }
 }
+
+impl EditorAnimationNode for Counter {}
 
 fn event_named(event: &str) -> AnimationEvent {
     AnimationEvent {
@@ -648,8 +646,10 @@ impl Stage {
             .get_component_for_entity::<AnimationPlayer>(slotted)
             .unwrap()
             .for_each_node(graphs, |visit| {
-                if let Some(behaviour) = &visit.report.behaviour {
-                    reported = behaviour.describe();
+                if let Some(described) = visit.node.describe(visit.state)
+                    && visit.node.as_reflect().downcast_ref::<SlotNode>().is_some()
+                {
+                    reported = described;
                 }
             });
         reported
@@ -905,7 +905,7 @@ fn messages_move_the_graph_and_nodes_answer_with_outcomes_and_signals() {
     assert_eq!(stage.slot_amount(), 0.0);
     assert_eq!(
         stage.slot_behaviour(),
-        "no entry playing (running)",
+        "no entry playing",
         "a faded out entry leaves the report"
     );
     stage.advance(0.1);

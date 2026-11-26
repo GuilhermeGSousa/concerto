@@ -3,7 +3,7 @@ use concerto_animation::{
     evaluation::{AnimationGraphContext, RootBone},
     ik::Hinge,
     node::{
-        AnimationNode, InputSlots, ReflectAnimationNode,
+        AnimationNode, EditorAnimationNode, InputSlots, ReflectAnimationNode,
         model_space::{WorldToModel, model_joint},
     },
     param::Param,
@@ -383,10 +383,6 @@ impl AnimationNode for FootLockNode {
     type EvaluateInput = ();
     type DriveInput = ();
 
-    fn input_slots(&self) -> InputSlots {
-        InputSlots::Fixed(vec![name!("pose")])
-    }
-
     fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) -> FootLockState {
         FootLockState::new(self)
     }
@@ -520,12 +516,18 @@ impl AnimationNode for FootLockNode {
     }
 }
 
+impl EditorAnimationNode for FootLockNode {
+    fn input_slots(&self) -> InputSlots {
+        InputSlots::Fixed(vec![name!("pose")])
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use concerto_animation::{
         evaluation::AnimationGraphContext,
         ik::Hinge,
-        node::{AnimationNode, InputSlots, ReflectAnimationNode},
+        node::{AnimationNode, EditorAnimationNode, ReflectAnimationNode},
         player::AnimationPlayer,
         pose::{AnimationFrame, EvaluatedFrame, FramePool, JointPose, RootMotion, WeightedMotion},
         root::AnimationRootBone,
@@ -609,10 +611,6 @@ mod tests {
         type EvaluateInput = ();
         type DriveInput = ();
 
-        fn input_slots(&self) -> InputSlots {
-            InputSlots::None
-        }
-
         fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) {}
 
         fn update(&self, _: &mut (), _: f32, _: &(), _: &AnimationGraphContext<'_>) {}
@@ -662,6 +660,8 @@ mod tests {
 
         fn reset(&self, _: &mut ()) {}
     }
+
+    impl EditorAnimationNode for ScriptedPose {}
 
     fn leg_bones(
         names: [&'static str; 4],

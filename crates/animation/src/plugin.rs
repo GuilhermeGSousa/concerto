@@ -21,7 +21,7 @@ use crate::{
         queue_reflected_message,
     },
     node::{
-        AdditiveNode, AimOffsetNode, AnimationClipNode, AnimationNode, BlendNode, IkTarget,
+        AdditiveNode, AimOffsetNode, AnimationClipNode, BlendNode, EditorAnimationNode, IkTarget,
         LayerNode, PlaceholderNode, PlayInSlot, ResultNode, SlotEntry, SlotNode, TwoBoneIkNode,
         blend_space::BlendSpace2DNode, register_node_inputs, state_machine::AnimationStateMachine,
     },
@@ -84,7 +84,9 @@ pub fn register_animation_node_inputs(world: &mut World) {
 /// Adds an animation node type to an `App`.
 pub trait AnimationAppExt {
     /// Registers `N` with the type registry and its inputs with the graph walks; call it in a plugin's `build`.
-    fn register_animation_node<N: AnimationNode + GetTypeRegistration>(&mut self) -> &mut Self;
+    fn register_animation_node<N: EditorAnimationNode + GetTypeRegistration>(
+        &mut self,
+    ) -> &mut Self;
 
     /// Registers `S` with the type registry, so clips that store it make it live on load.
     fn register_clip_event<S: ClipEvent + GetTypeRegistration>(&mut self) -> &mut Self;
@@ -96,7 +98,9 @@ pub trait AnimationAppExt {
 }
 
 impl AnimationAppExt for App {
-    fn register_animation_node<N: AnimationNode + GetTypeRegistration>(&mut self) -> &mut Self {
+    fn register_animation_node<N: EditorAnimationNode + GetTypeRegistration>(
+        &mut self,
+    ) -> &mut Self {
         self.register_type::<N>();
         register_node_inputs::<N>(self.main_mut().world_mut());
         self
@@ -200,7 +204,7 @@ mod tests {
     use crate::{
         evaluation::AnimationGraphContext,
         graph::AnimationGraph,
-        node::{AnimationNode, CreateNodeInputs, InputSlots, ReflectAnimationNode},
+        node::{AnimationNode, CreateNodeInputs, EditorAnimationNode, ReflectAnimationNode},
         player::AnimationPlayer,
         pose::{AnimationFrame, EvaluatedFrame, FramePool},
         target::update_animation_players,
@@ -216,10 +220,6 @@ mod tests {
         type UpdateInput = ();
         type EvaluateInput = ();
         type DriveInput = ();
-
-        fn input_slots(&self) -> InputSlots {
-            InputSlots::None
-        }
 
         fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) -> bool {
             false
@@ -248,6 +248,8 @@ mod tests {
             *state = false;
         }
     }
+
+    impl EditorAnimationNode for OrderProbe {}
 
     #[test]
     fn animate_targets_runs_after_update_animation_players() {
@@ -331,10 +333,6 @@ mod tests {
         type EvaluateInput = ();
         type DriveInput = ();
 
-        fn input_slots(&self) -> InputSlots {
-            InputSlots::None
-        }
-
         fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) {}
 
         fn update(&self, _: &mut (), _: f32, _: &Res<Speed>, _: &AnimationGraphContext<'_>) {}
@@ -353,6 +351,8 @@ mod tests {
 
         fn reset(&self, _: &mut ()) {}
     }
+
+    impl EditorAnimationNode for SpeedReader {}
 
     fn access_of<M>(world: &mut World, system: impl IntoSystem<(), M>) -> SystemAccess {
         let mut system = system.into_system();

@@ -1,7 +1,7 @@
 use concerto_animation::{
     evaluation::AnimationGraphContext,
     graph::AnimationGraph,
-    node::{AnimationNode, InputSlots, ReflectAnimationNode},
+    node::{AnimationNode, EditorAnimationNode, InputSlots, ReflectAnimationNode},
     player::{AnimationHandleComponent, AnimationPlayer},
     plugin::{AnimationAppExt, AnimationPlugin, register_animation_types},
     pose::{
@@ -103,10 +103,6 @@ impl AnimationNode for Capture {
     type EvaluateInput = ();
     type DriveInput = ();
 
-    fn input_slots(&self) -> InputSlots {
-        InputSlots::Fixed(vec![name!("pose")])
-    }
-
     fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) -> Option<Frame> {
         None
     }
@@ -160,7 +156,13 @@ impl AnimationNode for Capture {
     }
 }
 
-pub(crate) fn app_with<I: AnimationNode + GetTypeRegistration>() -> App {
+impl EditorAnimationNode for Capture {
+    fn input_slots(&self) -> InputSlots {
+        InputSlots::Fixed(vec![name!("pose")])
+    }
+}
+
+pub(crate) fn app_with<I: EditorAnimationNode + GetTypeRegistration>() -> App {
     let mut app = App::new();
     app.register_plugin(AssetManagerPlugin);
     app.insert_resource(Time::new());
@@ -174,8 +176,8 @@ pub(crate) fn app_with<I: AnimationNode + GetTypeRegistration>() -> App {
 
 pub(crate) fn captured_graph<N, I>(node: N, input: I) -> AnimationGraph
 where
-    N: AnimationNode + GetTypeRegistration,
-    I: AnimationNode + GetTypeRegistration,
+    N: EditorAnimationNode + GetTypeRegistration,
+    I: EditorAnimationNode + GetTypeRegistration,
 {
     let mut registry = TypeRegistry::default();
     register_animation_types(&mut registry);

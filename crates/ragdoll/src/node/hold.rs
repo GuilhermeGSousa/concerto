@@ -5,7 +5,7 @@ use concerto_animation::{
     blackboard::AnimationBlackboard,
     evaluation::{AnimationGraphContext, DriveContext},
     mask::{BoneMask, MaskResolution, resolve_mask},
-    node::{AnimationNode, BehaviourReport, InputSlots, NodeReport, ReflectAnimationNode},
+    node::{AnimationNode, EditorAnimationNode, InputSlots, ReflectAnimationNode},
     param::Param,
     pose::{AnimationFrame, EvaluatedFrame, FramePool},
 };
@@ -224,10 +224,6 @@ impl AnimationNode for HoldNode {
     type EvaluateInput = Res<'static, AssetStore<BoneMask>>;
     type DriveInput = Res<'static, AssetStore<BoneMask>>;
 
-    fn input_slots(&self) -> InputSlots {
-        InputSlots::Fixed(vec![name!("pose")])
-    }
-
     fn create_state(&self, _: &(), _: &AnimationGraphContext<'_>) -> HoldState {
         HoldState::default()
     }
@@ -323,16 +319,19 @@ impl AnimationNode for HoldNode {
     fn is_finished(&self, _: &HoldState) -> bool {
         false
     }
+}
 
-    fn report(&self, state: &HoldState) -> NodeReport {
-        NodeReport {
-            behaviour: Some(BehaviourReport::running(format!(
-                "holding {} parts at {} ×{:.2}",
-                state.held.as_ref().map_or(0, |held| held.parts.len()),
-                self.profile,
-                state.strength.unwrap_or(1.0)
-            ))),
-            ..NodeReport::default()
-        }
+impl EditorAnimationNode for HoldNode {
+    fn input_slots(&self) -> InputSlots {
+        InputSlots::Fixed(vec![name!("pose")])
+    }
+
+    fn describe(&self, state: &HoldState) -> Option<String> {
+        Some(format!(
+            "holding {} parts at {} ×{:.2}",
+            state.held.as_ref().map_or(0, |held| held.parts.len()),
+            self.profile,
+            state.strength.unwrap_or(1.0)
+        ))
     }
 }

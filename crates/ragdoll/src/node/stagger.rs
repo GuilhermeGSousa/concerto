@@ -1,8 +1,6 @@
 use concerto_animation::{
     evaluation::{AnimationGraphContext, DriveContext},
-    node::{
-        AnimationNode, BehaviourReport, InputSlots, NodeOutcome, NodeReport, ReflectAnimationNode,
-    },
+    node::{AnimationNode, EditorAnimationNode, InputSlots, NodeOutcome, ReflectAnimationNode},
     pose::{AnimationFrame, EvaluatedFrame, FramePool},
 };
 use concerto_ecs::Res;
@@ -102,10 +100,6 @@ impl AnimationNode for StaggerNode {
     type UpdateInput = ();
     type EvaluateInput = ();
     type DriveInput = Res<'static, PhysicsState>;
-
-    fn input_slots(&self) -> InputSlots {
-        InputSlots::Fixed(vec![name!("pose")])
-    }
 
     fn create_state(&self, _: &(), _: &AnimationGraphContext<'_>) -> StaggerState {
         StaggerState::default()
@@ -221,8 +215,14 @@ impl AnimationNode for StaggerNode {
     fn outcome(&self, state: &StaggerState) -> Option<NodeOutcome> {
         state.outcome
     }
+}
 
-    fn report(&self, state: &StaggerState) -> NodeReport {
+impl EditorAnimationNode for StaggerNode {
+    fn input_slots(&self) -> InputSlots {
+        InputSlots::Fixed(vec![name!("pose")])
+    }
+
+    fn describe(&self, state: &StaggerState) -> Option<String> {
         let text = match state.outcome {
             _ if !state.started => format!("waiting for a stagger at {}", self.profile),
             Some(NodeOutcome::Succeeded) => format!("recovered from a stagger at {}", self.profile),
@@ -233,12 +233,6 @@ impl AnimationNode for StaggerNode {
                 state.steps()
             ),
         };
-        NodeReport {
-            behaviour: Some(BehaviourReport {
-                outcome: state.outcome,
-                text,
-            }),
-            ..NodeReport::default()
-        }
+        Some(text)
     }
 }

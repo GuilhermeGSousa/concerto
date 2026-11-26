@@ -10,8 +10,8 @@ use crate::{
     clip::{Additive, AnimationClip},
     evaluation::AnimationGraphContext,
     node::{
-        AnimationNode, AnimationPlayMode, ClipClock, ClockSpan, InputSlots, ReflectAnimationNode,
-        effective_play_rate, effective_weight,
+        AnimationNode, AnimationPlayMode, ClipClock, ClockSpan, EditorAnimationNode, InputSlots,
+        ReflectAnimationNode, effective_play_rate, effective_weight,
     },
     param::Param,
     pose::{AnimationFrame, EvaluatedFrame, FiredEvent, FramePool, apply_additive, twist_about},
@@ -122,10 +122,6 @@ impl AnimationNode for AdditiveNode {
     type EvaluateInput = Res<'static, AssetStore<AnimationClip>>;
     type DriveInput = ();
 
-    fn input_slots(&self) -> InputSlots {
-        InputSlots::Fixed(vec![name!("pose")])
-    }
-
     fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) -> AdditiveNodeState {
         AdditiveNodeState {
             clock: ClipClock::new(self.start_time),
@@ -224,6 +220,12 @@ impl AnimationNode for AdditiveNode {
 
     fn reset(&self, state: &mut AdditiveNodeState) {
         state.clock.reset();
+    }
+}
+
+impl EditorAnimationNode for AdditiveNode {
+    fn input_slots(&self) -> InputSlots {
+        InputSlots::Fixed(vec![name!("pose")])
     }
 }
 

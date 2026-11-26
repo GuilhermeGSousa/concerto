@@ -12,7 +12,8 @@ use crate::{
     evaluation::{AnimationGraphContext, DriveContext},
     mask::{BoneMask, MaskResolution, resolve_mask},
     node::{
-        AnimationNode, InputSlots, ReflectAnimationNode, effective_weight, model_space::parent,
+        AnimationNode, EditorAnimationNode, InputSlots, ReflectAnimationNode, effective_weight,
+        model_space::parent,
     },
     param::Param,
     pose::{AnimationFrame, EvaluatedFrame, FiredEvent, FramePool, JointPose},
@@ -93,10 +94,6 @@ impl AnimationNode for LayerNode {
     type UpdateInput = ();
     type EvaluateInput = Res<'static, AssetStore<BoneMask>>;
     type DriveInput = ();
-
-    fn input_slots(&self) -> InputSlots {
-        InputSlots::Fixed(vec![name!("base"), name!("overlay")])
-    }
 
     fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) -> LayerState {
         LayerState::default()
@@ -201,6 +198,12 @@ impl AnimationNode for LayerNode {
     }
 
     fn reset(&self, _: &mut LayerState) {}
+}
+
+impl EditorAnimationNode for LayerNode {
+    fn input_slots(&self) -> InputSlots {
+        InputSlots::Fixed(vec![name!("base"), name!("overlay")])
+    }
 }
 
 pub(crate) fn blend_joint(joint: &mut JointPose, target: &JointPose, weight: f32) {

@@ -1,9 +1,7 @@
 use concerto_animation::{
     attribute::PoseAttribute,
     evaluation::{AnimationGraphContext, DriveContext},
-    node::{
-        AnimationNode, BehaviourReport, InputSlots, NodeOutcome, NodeReport, ReflectAnimationNode,
-    },
+    node::{AnimationNode, EditorAnimationNode, InputSlots, NodeOutcome, ReflectAnimationNode},
     pose::{AnimationFrame, EvaluatedFrame, FramePool},
 };
 use concerto_ecs::Res;
@@ -921,10 +919,6 @@ impl AnimationNode for BalanceNode {
     type EvaluateInput = ();
     type DriveInput = Res<'static, PhysicsState>;
 
-    fn input_slots(&self) -> InputSlots {
-        InputSlots::Fixed(vec![name!("pose")])
-    }
-
     fn create_state(&self, _: &(), _: &AnimationGraphContext<'_>) -> BalanceState {
         BalanceState::default()
     }
@@ -1015,8 +1009,14 @@ impl AnimationNode for BalanceNode {
     fn outcome(&self, state: &BalanceState) -> Option<NodeOutcome> {
         state.outcome
     }
+}
 
-    fn report(&self, state: &BalanceState) -> NodeReport {
+impl EditorAnimationNode for BalanceNode {
+    fn input_slots(&self) -> InputSlots {
+        InputSlots::Fixed(vec![name!("pose")])
+    }
+
+    fn describe(&self, state: &BalanceState) -> Option<String> {
         let text = match state.outcome {
             Some(NodeOutcome::Succeeded) => format!("stood still at {}", self.profile),
             Some(NodeOutcome::Failed) => format!("gave up at {}", self.profile),
@@ -1031,12 +1031,6 @@ impl AnimationNode for BalanceNode {
                 state.steps()
             ),
         };
-        NodeReport {
-            behaviour: Some(BehaviourReport {
-                outcome: state.outcome,
-                text,
-            }),
-            ..NodeReport::default()
-        }
+        Some(text)
     }
 }

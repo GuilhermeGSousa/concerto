@@ -1,6 +1,6 @@
 use concerto_animation::{
     evaluation::{AnimationGraphContext, DriveContext},
-    node::{AnimationNode, InputSlots, ReflectAnimationNode},
+    node::{AnimationNode, EditorAnimationNode, InputSlots, ReflectAnimationNode},
     pose::{AnimationFrame, EvaluatedFrame, FramePool},
 };
 use concerto_name::name;
@@ -25,10 +25,6 @@ impl AnimationNode for LimpNode {
     type UpdateInput = ();
     type EvaluateInput = ();
     type DriveInput = ();
-
-    fn input_slots(&self) -> InputSlots {
-        InputSlots::Fixed(vec![name!("pose")])
-    }
 
     fn create_state(&self, _: &(), _: &AnimationGraphContext<'_>) {}
 
@@ -104,5 +100,11 @@ impl AnimationNode for LimpNode {
 
     fn is_finished(&self, _: &()) -> bool {
         false
+    }
+}
+
+impl EditorAnimationNode for LimpNode {
+    fn input_slots(&self) -> InputSlots {
+        InputSlots::Fixed(vec![name!("pose")])
     }
 }

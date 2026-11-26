@@ -2,9 +2,7 @@ use concerto_animation::param::Param;
 use concerto_animation::{
     attribute::PoseAttribute,
     evaluation::{AnimationGraphContext, DriveContext},
-    node::{
-        AnimationNode, BehaviourReport, InputSlots, NodeOutcome, NodeReport, ReflectAnimationNode,
-    },
+    node::{AnimationNode, EditorAnimationNode, InputSlots, NodeOutcome, ReflectAnimationNode},
     pose::{AnimationFrame, EvaluatedFrame, FramePool},
 };
 use concerto_ecs::Res;
@@ -110,10 +108,6 @@ impl AnimationNode for FallNode {
     type UpdateInput = ();
     type EvaluateInput = ();
     type DriveInput = Res<'static, PhysicsState>;
-
-    fn input_slots(&self) -> InputSlots {
-        InputSlots::Fixed(vec![name!("pose")])
-    }
 
     fn create_state(&self, _: &(), _: &AnimationGraphContext<'_>) -> FallState {
         FallState::default()
@@ -223,19 +217,19 @@ impl AnimationNode for FallNode {
     fn outcome(&self, state: &FallState) -> Option<NodeOutcome> {
         state.outcome
     }
+}
 
-    fn report(&self, state: &FallState) -> NodeReport {
+impl EditorAnimationNode for FallNode {
+    fn input_slots(&self) -> InputSlots {
+        InputSlots::Fixed(vec![name!("pose")])
+    }
+
+    fn describe(&self, state: &FallState) -> Option<String> {
         let text = match state.outcome {
             Some(_) => format!("landed and relaxed at {}", self.profile),
             None if state.announced => format!("landed, relaxing at {}", self.profile),
             None => format!("falling at {}", self.profile),
         };
-        NodeReport {
-            behaviour: Some(BehaviourReport {
-                outcome: state.outcome,
-                text,
-            }),
-            ..NodeReport::default()
-        }
+        Some(text)
     }
 }

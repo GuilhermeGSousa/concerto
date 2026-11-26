@@ -1,9 +1,7 @@
 use concerto_animation::{
     attribute::PoseAttribute,
     evaluation::{AnimationGraphContext, DriveContext},
-    node::{
-        AnimationNode, BehaviourReport, InputSlots, NodeOutcome, NodeReport, ReflectAnimationNode,
-    },
+    node::{AnimationNode, EditorAnimationNode, InputSlots, NodeOutcome, ReflectAnimationNode},
     pose::{AnimationFrame, EvaluatedFrame, FramePool},
 };
 use concerto_name::{Name, name};
@@ -149,10 +147,6 @@ impl AnimationNode for FlinchNode {
     type EvaluateInput = ();
     type DriveInput = ();
 
-    fn input_slots(&self) -> InputSlots {
-        InputSlots::Fixed(vec![name!("pose")])
-    }
-
     fn create_state(&self, _: &(), _: &AnimationGraphContext<'_>) -> FlinchState {
         FlinchState::default()
     }
@@ -281,8 +275,14 @@ impl AnimationNode for FlinchNode {
             .is_some_and(|struck| self.weight(struck.since_hit) <= 0.0)
             .then_some(NodeOutcome::Succeeded)
     }
+}
 
-    fn report(&self, state: &FlinchState) -> NodeReport {
+impl EditorAnimationNode for FlinchNode {
+    fn input_slots(&self) -> InputSlots {
+        InputSlots::Fixed(vec![name!("pose")])
+    }
+
+    fn describe(&self, state: &FlinchState) -> Option<String> {
         let text = match &state.struck {
             Some(struck) => format!(
                 "flinching from a hit on part {} at {}, {:.2} s ago",
@@ -290,12 +290,6 @@ impl AnimationNode for FlinchNode {
             ),
             None => format!("waiting for a hit at {}", self.profile),
         };
-        NodeReport {
-            behaviour: Some(BehaviourReport {
-                outcome: self.outcome(state),
-                text,
-            }),
-            ..NodeReport::default()
-        }
+        Some(text)
     }
 }
