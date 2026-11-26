@@ -9,12 +9,11 @@ use concerto_foundation::assets::asset_server::AssetServer;
 use concerto_name::name;
 use concerto_ragdoll::{
     BalanceNode, BalanceSettings, BodyState, LimpNode, StaggerNode, messages::Stagger,
+    testing::humanoid_skeleton,
 };
 use glam::Vec3;
 
 use crate::balance::{Stage, over_clip, standing_clip};
-use concerto_mesh::Skeleton;
-use concerto_ragdoll::testing::humanoid_skeleton;
 
 #[derive(Debug)]
 struct Stumbled {
@@ -26,7 +25,7 @@ struct Stumbled {
 }
 
 fn staggering_graph(server: &AssetServer) -> AnimationGraph {
-    let skeleton: Skeleton = humanoid_skeleton();
+    let skeleton = humanoid_skeleton();
     let clip = server.add(standing_clip(&skeleton));
     let stand = server.add(over_clip(
         BalanceNode::default()
@@ -112,9 +111,14 @@ fn a_stagger_stumbles_further_than_balance_with_arms_out_and_a_severe_one_falls(
             push,
         );
         assert_eq!(
-            (mild.outcome, mild.state),
-            (Some(NodeOutcome::Succeeded), BodyState::Animated),
-            "a mild stagger towards {direction} ends standing, with balance's outcome: {mild:?}"
+            mild.outcome,
+            Some(NodeOutcome::Succeeded),
+            "a mild stagger towards {direction} ends with balance's outcome: {mild:?}"
+        );
+        assert_eq!(
+            mild.state,
+            BodyState::Animated,
+            "a mild stagger towards {direction} ends standing: {mild:?}"
         );
         assert!(
             mild.reach > alone.reach + 0.05,
@@ -131,9 +135,13 @@ fn a_stagger_stumbles_further_than_balance_with_arms_out_and_a_severe_one_falls(
             push,
         );
         assert_eq!(
-            (severe.outcome, severe.pelvis < 0.4),
-            (Some(NodeOutcome::Failed), true),
+            severe.outcome,
+            Some(NodeOutcome::Failed),
             "a severe stagger towards {direction} cannot be recovered: {severe:?}"
+        );
+        assert!(
+            severe.pelvis < 0.4,
+            "a severe stagger towards {direction} ends on the ground: {severe:?}"
         );
     }
     assert!(

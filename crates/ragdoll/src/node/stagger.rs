@@ -77,7 +77,10 @@ impl StaggerNode {
         let claimed = motor_of(claimed, body.animated_target(part));
         match base {
             Some(mut base) => {
+                let (force, torque) = (base.force, base.torque);
                 base.blend(1.0 - weight, &claimed, weight);
+                base.force = force + claimed.force * weight;
+                base.torque = torque + claimed.torque * weight;
                 Some(base)
             }
             None => (weight >= 0.5).then_some(claimed),
