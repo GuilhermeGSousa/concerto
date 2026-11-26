@@ -45,7 +45,12 @@ impl ShaderDefs {
     }
 }
 
-/// Preprocesses and validates `source`, returning the diagnostic on failure.
+/// Preprocesses and validates `source`.
+///
+/// # Errors
+///
+/// Returns the composer's diagnostic as text when `source` fails to
+/// preprocess or validate.
 pub fn compose_shader(
     label: &str,
     source: &str,
@@ -63,7 +68,12 @@ pub fn compose_shader(
         .map_err(|err| err.emit_to_string(&composer))
 }
 
-/// Preprocesses `source` and creates a shader module. Panics if it fails to compose.
+/// Preprocesses `source` and creates a shader module.
+///
+/// # Panics
+///
+/// Panics with the diagnostic when `source` fails to compose; see
+/// [`compose_shader`].
 pub fn create_shader_module(
     device: &wgpu::Device,
     label: &str,

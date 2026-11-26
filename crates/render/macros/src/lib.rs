@@ -657,9 +657,10 @@ fn gen_material_impl(name: &Ident, m: &MaterialAttr, alpha_mode: Option<&Ident>)
     }
 }
 
-/// `#[derive(AsBindGroup)]` — automatically implement [`AsBindGroup`] for a struct,
-/// and optionally [`Material`] when any Material-related keys are present in
-/// `#[material(...)]`.
+/// Derives `AsBindGroup` and `Material` for a struct with named fields.
+///
+/// Field attributes declare the bindings of the material's `@group(0)`, and the
+/// struct-level `#[material(...)]` attribute overrides trait methods.
 ///
 /// # Field attributes
 ///
@@ -686,8 +687,11 @@ fn gen_material_impl(name: &Ident, m: &MaterialAttr, alpha_mode: Option<&Ident>)
 /// | `depth_stencil`  | `"none" \| "default" \| "read_only"`     | `depth_stencil()` |
 /// | `vertex_layouts` | `<expr>`                                  | `vertex_layouts()` |
 ///
-/// The macro always emits `impl Material for YourStruct { … }`.  Methods whose
-/// keys are absent fall back to the trait's default implementations.
+/// Methods whose keys are absent fall back to the trait's default
+/// implementations.
+///
+/// A struct without named fields, or with more than one `#[alpha_mode]` field,
+/// is a compile error.
 #[proc_macro_derive(
     AsBindGroup,
     attributes(texture, sampler, uniform, material, alpha_mode)

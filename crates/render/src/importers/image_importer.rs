@@ -8,6 +8,10 @@ use concerto_asset_import::{ImportContext, ImportError, Importer, NoSettings};
 pub struct ImageImporter;
 
 /// The encoding of image file `bytes`, read from their signature.
+///
+/// # Errors
+///
+/// Returns a message when `bytes` are not a PNG or JPEG image.
 pub fn source_encoding(bytes: &[u8]) -> Result<SourceEncoding, String> {
     match image::guess_format(bytes) {
         Ok(image::ImageFormat::Png) => Ok(SourceEncoding::Png),
@@ -25,7 +29,16 @@ pub struct ImportedTexture {
     pub source: TextureSource,
 }
 
-/// The texture `name` of `ctx` from image file `bytes`, with `given` settings, else the ones its previous import or the editor gave it, else the defaults; fails when they cannot derive for `role`.
+/// The texture `name` of `ctx` from image file `bytes`.
+///
+/// It takes the `given` settings, else the ones its previous import or the
+/// editor gave it, else the defaults.
+///
+/// # Errors
+///
+/// Returns a message when `bytes` are not a PNG or JPEG image, when the image
+/// header cannot be read, or when the settings cannot derive a texture for
+/// `role`.
 pub fn imported_texture(
     ctx: &ImportContext,
     name: &str,

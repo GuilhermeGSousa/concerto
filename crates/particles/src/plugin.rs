@@ -13,7 +13,12 @@ use crate::{
     simulation::simulate_particles,
 };
 
-/// Simulates every [`ParticleEmitter`] and draws its particles in each camera's transparent phase; requires `RenderPlugin`, registered before it.
+/// Simulates every [`ParticleEmitter`] and draws its particles in each camera's transparent phase.
+///
+/// # Panics
+///
+/// Panics during [`finish`](Plugin::finish) if [`RenderPlugin`](concerto_render::plugin::RenderPlugin)
+/// was not registered before it.
 pub struct ParticlesPlugin;
 
 impl Plugin for ParticlesPlugin {

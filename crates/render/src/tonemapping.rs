@@ -12,7 +12,9 @@ use crate::{
     shader::create_shader_module,
 };
 
-/// The curve that maps a camera's scene light to the range its target can show. Goes on the camera's entity; a camera without one uses `Aces`.
+/// The curve that maps a camera's scene light to the range its target can show.
+///
+/// Goes on the camera's entity. A camera without one uses [`Tonemapping::Aces`].
 #[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq, Reflect)]
 #[reflect(Component, Default, SceneComponent)]
 pub enum Tonemapping {
@@ -62,7 +64,9 @@ impl Tonemapping {
     }
 }
 
-/// How bright a camera's scene light is shown, in photographic stops. Goes on the camera's entity; a camera without one shows it unscaled.
+/// How bright a camera's scene light is shown, in photographic stops.
+///
+/// Goes on the camera's entity. A camera without one shows it unscaled.
 #[derive(Component, Clone, Copy, Debug, Default, PartialEq, Reflect)]
 #[reflect(Component, Default, SceneComponent)]
 pub struct Exposure {

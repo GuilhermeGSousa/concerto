@@ -19,15 +19,10 @@ use crate::{
 
 use bitflags::bitflags;
 
-// ────────────────────────────────────────────────────────────────────────────
-// ShaderRef — reference to a WGSL shader used by a material
-// ────────────────────────────────────────────────────────────────────────────
-
 /// A reference to a WGSL shader source.
 ///
 /// Pass [`ShaderRef::Default`] to use the engine's built-in PBR shader, or
 /// [`ShaderRef::Source`] to supply your own WGSL source string.
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ShaderRef {
     /// Use the engine's built-in shader.
@@ -35,10 +30,6 @@ pub enum ShaderRef {
     /// Use the provided WGSL source string.
     Source(&'static str),
 }
-
-// ────────────────────────────────────────────────────────────────────────────
-// AsBindGroup — trait implemented (manually or via derive) by material types
-// ────────────────────────────────────────────────────────────────────────────
 
 /// Describes a type that can produce a wgpu bind-group layout and a bind-group
 /// populated from its own data.
@@ -86,6 +77,11 @@ pub trait AsBindGroup {
         Self: Sized;
 
     /// Create a `BindGroup` populated with the material's actual GPU resources.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AssetPreparationError::NotReady`] when a texture the material
+    /// binds is not prepared yet.
     fn create_bind_group(
         &self,
         device: &wgpu::Device,
@@ -112,10 +108,6 @@ impl From<&AlphaMode> for AlphaMode {
         *mode
     }
 }
-
-// ────────────────────────────────────────────────────────────────────────────
-// StandardMaterial — the engine's built-in PBR material
-// ────────────────────────────────────────────────────────────────────────────
 
 /// The engine's built-in physically based (metallic/roughness) material.
 ///
@@ -342,10 +334,6 @@ impl StandardMaterial {
     }
 }
 
-// ────────────────────────────────────────────────────────────────────────────
-// Asset loading for StandardMaterial
-// ────────────────────────────────────────────────────────────────────────────
-
 impl Asset for StandardMaterial {
     fn name() -> &'static str {
         "StandardMaterial"
@@ -391,10 +379,6 @@ impl LoadableAsset for StandardMaterial {
         Ok(())
     }
 }
-
-// ────────────────────────────────────────────────────────────────────────────
-// MaterialFlags / MaterialUniform (used by StandardMaterial)
-// ────────────────────────────────────────────────────────────────────────────
 
 #[repr(transparent)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable, serde::Serialize, serde::Deserialize)]
@@ -473,10 +457,6 @@ impl Default for MaterialUniform {
     }
 }
 
-// ────────────────────────────────────────────────────────────────────────────
-// Material — high-level trait that unifies all material types
-// ────────────────────────────────────────────────────────────────────────────
-
 /// High-level material trait.
 ///
 /// Every renderable material type implements `Material`.  The trait extends
@@ -499,6 +479,8 @@ impl Default for MaterialUniform {
 ///
 /// The built-in group indices follow this fixed assignment:
 ///
+/// | Group       | Contents                                                         |
+/// |-------------|------------------------------------------------------------------|
 /// | `@group(0)` | always the material's own bind group                             |
 /// | `@group(1)` | camera uniform (present when `needs_camera()` is `true`)         |
 /// | `@group(2)` | lighting uniform *and* both shadow-map arrays (present when `needs_lighting()` is `true`) |
@@ -615,7 +597,9 @@ pub trait Material: AsBindGroup + LoadableAsset + Send + Sync + 'static {
         Some(wgpu::BlendState::REPLACE)
     }
 
-    /// The fragment shader that discards what an `AlphaMode::Mask` asset cuts away, for shadow maps and depth prepasses; `None` draws the whole mesh there.
+    /// The fragment shader that discards what an [`AlphaMode::Mask`] asset cuts away, for shadow maps and depth prepasses.
+    ///
+    /// Defaults to `None`, which draws the whole mesh there.
     fn cutout_shader() -> Option<ShaderRef>
     where
         Self: Sized,
@@ -623,7 +607,10 @@ pub trait Material: AsBindGroup + LoadableAsset + Send + Sync + 'static {
         None
     }
 
-    /// Whether the fragment shader, compiled with `ALPHA_TO_COVERAGE` defined, returns in its alpha how much of the pixel an `AlphaMode::Mask` asset covers, so a multisampled camera smooths the cutout's edge. Defaults to `false`: the shader discards.
+    /// Whether the fragment shader, compiled with `ALPHA_TO_COVERAGE` defined, returns in its alpha how much of the pixel an [`AlphaMode::Mask`] asset covers.
+    ///
+    /// A multisampled camera then smooths the cutout's edge. Defaults to
+    /// `false`, where the shader discards.
     fn alpha_to_coverage() -> bool
     where
         Self: Sized,

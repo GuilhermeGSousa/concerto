@@ -31,7 +31,9 @@ use crate::{
 const MAX_LEVELS: usize = 7;
 const MIN_LEVEL_SIZE: u32 = 4;
 
-/// Glow around the bright parts of a camera's scene. Goes on the camera's entity; a camera without one has none.
+/// Glow around the bright parts of a camera's scene.
+///
+/// Goes on the camera's entity. A camera without one has none.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Reflect)]
 #[reflect(Component, Default, SceneComponent)]
 pub struct Bloom {
@@ -64,7 +66,12 @@ impl Bloom {
     }
 }
 
-/// Draws [`Bloom`] for the cameras that have it, in [`RenderSet::PostProcess`]; requires `RenderPlugin`, registered before it.
+/// Draws [`Bloom`] for the cameras that have it, in [`RenderSet::PostProcess`].
+///
+/// # Panics
+///
+/// Panics during [`finish`](Plugin::finish) if [`RenderPlugin`](crate::plugin::RenderPlugin)
+/// was not registered before it.
 pub struct BloomPlugin;
 
 impl Plugin for BloomPlugin {

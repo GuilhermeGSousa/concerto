@@ -91,7 +91,12 @@ pub struct LightTint(pub LinearRgba);
 /// The largest radiance an `Rgba8Unorm` [`SkyRadianceMap`] holds.
 pub const SKY_RADIANCE_SCALE: u32 = 16;
 
-/// Render world: sky radiance per world direction `d` at `u = atan2(d.x, -d.z) / 2π + 0.5`, `v = 0.5 - asin(d.y) / π`, as `Rgba16Float` or, without float targets, `Rgba8Unorm` holding `sqrt(radiance / SKY_RADIANCE_SCALE)`; its mip levels, where it has them, are the blur rough surfaces reflect.
+/// Render world: the sky's radiance per world direction.
+///
+/// Direction `d` is at `u = atan2(d.x, -d.z) / 2π + 0.5`, `v = 0.5 - asin(d.y) / π`.
+/// The texture is `Rgba16Float`, or, without float targets, `Rgba8Unorm`
+/// holding `sqrt(radiance / SKY_RADIANCE_SCALE)` (see [`SKY_RADIANCE_SCALE`]).
+/// Its mip levels, where it has them, are the blur rough surfaces reflect.
 #[derive(Resource)]
 pub struct SkyRadianceMap {
     pub view: wgpu::TextureView,

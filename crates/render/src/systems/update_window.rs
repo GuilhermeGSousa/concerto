@@ -14,10 +14,6 @@ pub(crate) fn extract_window(
     window: Extracted<Res<Window>>,
     mut render_window: ResMut<RenderWindow>,
 ) {
-    // if !window.is_changed() {
-    //     return;
-    // }
-
     render_window.set_size(window.size());
 }
 
