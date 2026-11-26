@@ -2,6 +2,15 @@
 
 use concerto::{
     DefaultPlugins,
+    animation::{
+        clip::{AnimationChanelOutput, AnimationChannel, AnimationClip},
+        graph::AnimationGraph,
+        node::{
+            AnimationClipNode, AnimationNode,
+            state_machine::{AnimationFSMTrigger, AnimationStateMachine},
+        },
+        player::{AnimationHandleComponent, AnimationPlayer},
+    },
     app::{
         App,
         plugins::ContentSettings,
@@ -12,8 +21,12 @@ use concerto::{
         CommandQueue, Component, Entity, Query, Res, ResMut, Resource, With,
         component::scene::SceneEntityRef, entity::hierarchy::ChildOf,
     },
-    foundation::{assets::asset_server::AssetServer, transform::Transform},
-    mesh::{JointPose, MeshComponent, SkeletonComponent, primitives},
+    foundation::{
+        assets::{asset_server::AssetServer, asset_store::AssetStore, handle::AssetHandle},
+        transform::Transform,
+    },
+    mesh::{JointPose, MeshComponent, Skeleton, SkeletonComponent, primitives},
+    name::name,
     physics::{collider::Collider, physics_state::PhysicsState, ragdoll::RagdollId},
     render::{
         MaterialComponent,
@@ -30,8 +43,9 @@ use concerto::{
 };
 use concerto_physics_gizmos::{PhysicsGizmos, PhysicsGizmosPlugin};
 use concerto_ragdoll::{
-    Balance, BodyDrive, BodyHit, BodySense, CharacterRagdoll, Die, Fall, FallReaction,
-    PhysicalState, RagdollBody, Settled, ShotReaction, Stagger, describe_body,
+    BalanceNode, BalanceSettings, BodyHit, BodySense, CharacterRagdoll, Death, Die, DyingNode,
+    FallNode, LimpNode, RagdollBody, Settled, ShotNode, StaggerNode, describe_body,
+    messages::{Shot, Stagger},
     testing::reference_humanoid,
 };
 use glam::{Quat, Vec3};
@@ -107,6 +121,140 @@ enum Struck {
     LeftArm,
 }
 
+fn standing_clip(skeleton: &Skeleton) -> AnimationClip {
+    let pelvis = skeleton
+        .bone_index(name!("pelvis"))
+        .expect("the reference humanoid has a pelvis");
+    let mut clip = AnimationClip::default();
+    clip.add_channel(
+        skeleton.bone_ids[pelvis],
+        AnimationChannel::new(
+            vec![0.0, 1.0],
+            AnimationChanelOutput::from_rotation(
+                [Quat::IDENTITY.to_array(), Quat::IDENTITY.to_array()].into_iter(),
+            ),
+        ),
+    );
+    clip
+}
+
+fn over_clip(node: impl AnimationNode, clip: &AssetHandle<AnimationClip>) -> AnimationGraph {
+    let mut graph = AnimationGraph::new();
+    graph
+        .result_node()
+        .input(node)
+        .input(AnimationClipNode::new(clip.clone()));
+    graph
+}
+
+fn reaction_graph(assets: &AssetServer, skeleton: &Skeleton) -> AnimationGraph {
+    let clip = assets.add(standing_clip(skeleton));
+    let stand = assets.add(AnimationGraph::from_node(AnimationClipNode::new(
+        clip.clone(),
+    )));
+    let balance = assets.add(over_clip(
+        BalanceNode::default()
+            .with_settings(BalanceSettings::default().with_settle_seconds(f32::MAX)),
+        &clip,
+    ));
+    let stagger = assets.add(over_clip(StaggerNode::default(), &clip));
+    let shot = assets.add(over_clip(ShotNode::default(), &clip));
+    let fall = assets.add(over_clip(FallNode::default(), &clip));
+    let down = assets.add(over_clip(LimpNode::default(), &clip));
+    let dying = assets.add(over_clip(DyingNode::default(), &clip));
+    let dead = assets.add(over_clip(LimpNode::default(), &clip));
+    AnimationGraph::from_node(
+        AnimationStateMachine::from_initial_state(name!("stand"), stand, |to| {
+            to.to(
+                name!("shot"),
+                AnimationFSMTrigger::on_message::<Shot>(),
+                0.0,
+            )
+            .to(
+                name!("stagger"),
+                AnimationFSMTrigger::on_message::<Stagger>(),
+                0.0,
+            )
+            .to(
+                name!("dying"),
+                AnimationFSMTrigger::on_message::<Death>(),
+                0.0,
+            )
+            .to(
+                name!("balance"),
+                AnimationFSMTrigger::on_bool(name!("balance"), true),
+                0.0,
+            )
+            .to(
+                name!("fall"),
+                AnimationFSMTrigger::on_bool(name!("falling"), true),
+                0.0,
+            );
+        })
+        .state(name!("balance"), balance, |to| {
+            to.to(name!("fall"), AnimationFSMTrigger::OnFailed, 0.0)
+                .to(
+                    name!("shot"),
+                    AnimationFSMTrigger::on_message::<Shot>(),
+                    0.0,
+                )
+                .to(
+                    name!("stagger"),
+                    AnimationFSMTrigger::on_message::<Stagger>(),
+                    0.0,
+                )
+                .to(
+                    name!("dying"),
+                    AnimationFSMTrigger::on_message::<Death>(),
+                    0.0,
+                );
+        })
+        .state(name!("stagger"), stagger, |to| {
+            to.to(name!("stand"), AnimationFSMTrigger::OnSucceeded, 0.0)
+                .to(name!("fall"), AnimationFSMTrigger::OnFailed, 0.0)
+                .to(
+                    name!("shot"),
+                    AnimationFSMTrigger::on_message::<Shot>(),
+                    0.0,
+                )
+                .to(
+                    name!("dying"),
+                    AnimationFSMTrigger::on_message::<Death>(),
+                    0.0,
+                );
+        })
+        .state(name!("shot"), shot, |to| {
+            to.to(name!("stand"), AnimationFSMTrigger::OnSucceeded, 0.0)
+                .to(name!("fall"), AnimationFSMTrigger::OnFailed, 0.0)
+                .to(
+                    name!("dying"),
+                    AnimationFSMTrigger::on_message::<Death>(),
+                    0.0,
+                );
+        })
+        .state(name!("fall"), fall, |to| {
+            to.to(name!("down"), AnimationFSMTrigger::OnSucceeded, 0.0)
+                .to(
+                    name!("dying"),
+                    AnimationFSMTrigger::on_message::<Death>(),
+                    0.0,
+                );
+        })
+        .state(name!("down"), down, |to| {
+            to.to(
+                name!("dying"),
+                AnimationFSMTrigger::on_message::<Death>(),
+                0.0,
+            );
+        })
+        .state(name!("dying"), dying, |to| {
+            to.to(name!("dead"), AnimationFSMTrigger::OnSucceeded, 0.0);
+        })
+        .state(name!("dead"), dead, |_| {})
+        .build(),
+    )
+}
+
 fn spawn_scene(mut cmd: CommandQueue, assets: Res<AssetServer>) {
     cmd.spawn((
         concerto::director::MainCamera,
@@ -164,6 +312,7 @@ fn spawn_humanoid(cmd: &mut CommandQueue, assets: &AssetServer, towards: Towards
     let reference = reference_humanoid();
     let parents = reference.skeleton.parents.to_vec();
     let rest = reference.skeleton.rest_pose.to_vec();
+    let graph = assets.add(reaction_graph(assets, &reference.skeleton));
     let skeleton = assets.add(reference.skeleton);
     let mut ragdoll = reference.ragdoll;
     ragdoll.skeleton = skeleton.clone();
@@ -188,11 +337,7 @@ fn spawn_humanoid(cmd: &mut CommandQueue, assets: &AssetServer, towards: Towards
             bones.first().copied().map(SceneEntityRef::Entity),
         ),
         CharacterRagdoll::new(ragdoll),
-        BodyDrive::default(),
-        BodySense::default(),
-        PhysicalState::default(),
-        ShotReaction::default(),
-        FallReaction::default(),
+        AnimationHandleComponent::new(graph),
     ));
     Stage {
         character,
@@ -233,12 +378,16 @@ fn start_again(
 fn act(
     stage: Res<Stage>,
     bodies: Query<(&RagdollBody, &RagdollId)>,
+    mut players: Query<&mut AnimationPlayer>,
     mut physics: ResMut<PhysicsState>,
     input: Res<Input>,
     mut cmd: CommandQueue,
 ) {
     let character = stage.character;
     let Some((body, &ragdoll)) = bodies.get_entity(character) else {
+        return;
+    };
+    let Some(mut player) = players.get_entity_mut(character) else {
         return;
     };
     let landmarks = body.resolved().landmarks();
@@ -270,8 +419,7 @@ fn act(
     };
 
     if pressed(&input, KeyCode::Digit1) {
-        cmd.entity(character)
-            .insert(Balance::default().with_settle_seconds(f32::MAX));
+        player.set_bool_param(name!("balance"), true);
     }
     let push = pressed(&input, KeyCode::Digit2);
     let stagger = pressed(&input, KeyCode::Digit3);
@@ -283,8 +431,10 @@ fn act(
         let chest = physics.ragdoll_bodies(ragdoll)[chest];
         physics.add_impulse(chest, along * strength);
         if stagger {
-            cmd.entity(character)
-                .insert(Stagger::new(along, STAGGER_SEVERITY));
+            player.send(Stagger {
+                direction: along,
+                severity: STAGGER_SEVERITY,
+            });
         }
     }
     if pressed(&input, KeyCode::Digit4) {
@@ -314,7 +464,7 @@ fn act(
         });
     }
     if pressed(&input, KeyCode::KeyF) {
-        cmd.entity(character).insert(Fall::default());
+        player.set_bool_param(name!("falling"), true);
     }
     if pressed(&input, KeyCode::KeyH)
         && let Some(hit) = hit(Struck::Pelvis, (Vec3::Y + along * 0.3) * WAKING_HIT)
@@ -327,22 +477,32 @@ fn report(
     stage: Res<Stage>,
     bodies: Query<(
         &RagdollBody,
-        &CharacterRagdoll,
-        Option<&PhysicalState>,
-        Option<&BodyDrive>,
+        &AnimationPlayer,
         Option<&BodySense>,
         Option<&Settled>,
     )>,
+    graphs: Res<AssetStore<AnimationGraph>>,
     mut texts: Query<&mut UIText, With<Report>>,
 ) {
     let described = bodies.get_entity(stage.character).map_or_else(
         || "the body is being built".to_string(),
-        |(body, character, physical, drive, sense, settled)| {
+        |(body, player, sense, settled)| {
+            let mut states = Vec::new();
+            player.for_each_node(&graphs, |visit| {
+                if let Some(current) = visit
+                    .report
+                    .state_machine
+                    .as_ref()
+                    .and_then(|machine| machine.current)
+                {
+                    states.push(current.to_string());
+                }
+            });
             format!(
-                "mode: {:?}{}\n{}",
-                character.mode,
+                "graph: {}{}\n{}",
+                states.join(", "),
                 if settled.is_some() { ", settled" } else { "" },
-                describe_body(physical, drive, sense, body)
+                describe_body(sense, body)
             )
         },
     );

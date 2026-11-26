@@ -17,28 +17,33 @@ and white lines and crosses draw the skeleton, so the parts and the bones can
 be compared. Its bones are reset to the rest pose every frame, as an animation
 would rewrite them.
 
-- `H` lets the humanoid go limp: it stops walking, falls and the simulated pose is drawn on
-  the skeleton.
-- `J` puts it back to following its animation with weight 0.
-- `B` sets the weight to 0.5, to see the blend.
+The humanoid has an animation graph built in code, a state machine over a
+standing clip. Each key below sets the one boolean parameter that moves it to a
+state; the `Shot`, `Stagger` and `Death` messages move it to the states of the
+shot, stagger and dying behaviours, and a body whose balance gives up falls.
+
+- `H` lets the humanoid go limp (`LimpNode`): it stops walking, falls and the
+  simulated pose is drawn on the skeleton.
+- `J` puts it back to walking on its animation.
+- `B` holds it with the `braced` profile at weight 0.5 (`HoldNode`), to see the
+  blend.
 - `P` powers the humanoid with the `flinch` profile: pelvis and legs follow the
   animation exactly, everything above is held to it by motors.
-- `O` powers it with the `braced` profile: every part on motors, standing on
-  its own feet until it loses its balance.
+- `O` powers it with the `braced` profile: every part on motors.
 
-- `K` starts the balance behaviour: the humanoid stops walking and stands on
-  its own feet, powered and held upright, until `J` or a fall.
+- `K` starts the balance behaviour (`BalanceNode`): the humanoid stops walking
+  and stands on its own feet, powered and held upright, until `J` or a fall.
 - `U` pushes its chest with 60 N·s. While it balances it steps to catch
   itself; push again mid-step and it gives up and falls.
 
-- `Y`, while it balances, pushes it the same way and staggers it at severity
-  0.5: shorter, later steps, the trunk bent forward and the arms circling.
+- `Y` pushes it the same way and sends a `Stagger` message at severity 0.5:
+  shorter, later steps, the trunk bent forward and the arms circling.
 
 - `I` shoots it in the chest from the front with 40 N·s: the chest is thrown
   back, the spine folds over the wound, a hand goes to it and the head looks
   at it and then at the shooter.
 
-When balance gives up, the humanoid falls with a `FallReaction`: hands to the
+When balance gives up, the humanoid falls with a `FallNode`: hands to the
 ground, head held away, knees folding, then limp where it lies.
 
 - `X` kills it over one second: strength drains from the hands and feet
