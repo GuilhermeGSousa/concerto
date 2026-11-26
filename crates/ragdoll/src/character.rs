@@ -9,6 +9,7 @@ use concerto_ecs::{
     signal::{
         EntitySignal, On, Signal,
         lifecycle::{Remove, Replace},
+        listener::Listener,
     },
 };
 use concerto_foundation::{
@@ -39,8 +40,9 @@ use crate::{
     dying::{Dying, Settled},
     generate::BRACED,
     hit::Flinch,
-    messages::PendingImpulses,
+    messages::{PendingImpulses, Wounded, keep_wounds},
     resolve::ResolvedRagdoll,
+    shot::Wounds,
 };
 
 /// What a character's ragdoll does.
@@ -73,7 +75,7 @@ pub struct PartWeight {
 /// Gives a character a physical body: goes on the entity with the `SkeletonComponent`, names the ragdoll asset of that skeleton, and builds the ragdoll at the current pose once both have loaded.
 #[derive(Component, Reflect, Clone, Debug, PartialEq)]
 #[reflect(Component, Default, SceneComponent)]
-#[require(PendingImpulses)]
+#[require(PendingImpulses, Wounds, Listener<Wounded> = keep_wounds())]
 pub struct CharacterRagdoll {
     pub ragdoll: AssetHandle<Ragdoll>,
     /// The character's own capsule, carried under the body while the character is physical; it should have `CollisionLayers::character()` so the parts pass through it.

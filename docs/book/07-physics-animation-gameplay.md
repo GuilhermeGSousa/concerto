@@ -808,6 +808,22 @@ and `OnFailed`. Send the message from the character's `AnimationPlayer`; it
 takes effect on that frame's update, one physics step later than inserting a
 `Stagger` would.
 
+`ShotNode` is the graph's `ShotReaction`: it holds a `ShotSettings` (the fields
+of `ShotReaction`, with the same defaults) and a `BalanceSettings`, and it
+starts when it receives a `Shot` message (`messages::Shot { part, point,
+impulse }`), which a `BodyHit` of `HitKind::Shot` sends once routed. Each
+further `Shot` while it plays adds a wound, its point taken into the part's own
+frame from the body as it was at that moment. Each physics step it snaps and
+slackens the muscles at each wound, folds the spine over a wound in the trunk,
+lets a shot arm hang, hinders its balance by a shot leg, sends the nearer free
+hand to the newest wound and turns the head to it, then to where the shot came
+from, laying all that over its balance's commands: balance keeps its force and
+torque, and the claims blend over its targets and strengths. It emits a
+`Wounded { part, share }` on the character for each part it weakens, which the
+`Wounds` every `CharacterRagdoll` carries keeps for the game to read after the
+shot ends. The node does not apply the bullet's impulse; the hit routing does.
+It succeeds when its balance settles and fails when it gives up.
+
 #### What the body senses
 
 A `BodySense` beside a `CharacterRagdoll` is rewritten after each fixed step

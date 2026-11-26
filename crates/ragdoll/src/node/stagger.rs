@@ -1,5 +1,4 @@
 use concerto_animation::{
-    attribute::PoseAttribute,
     evaluation::{AnimationGraphContext, DriveContext},
     node::{
         AnimationNode, BehaviourReport, InputSlots, NodeOutcome, NodeReport, ReflectAnimationNode,
@@ -19,9 +18,9 @@ use crate::{
     generate::BRACED,
     messages,
     node::balance::{
-        BalanceController, BalanceRun, BalanceSettings, CommandsOut, motor_of, wanted,
+        BalanceController, BalanceRun, BalanceSettings, ClaimsOut, CommandsOut, layered,
     },
-    stagger::{StaggerController, StaggerOut, StaggerRun, StaggerSettings},
+    stagger::{StaggerController, StaggerRun, StaggerSettings},
     view::BodyView,
 };
 
@@ -70,21 +69,7 @@ impl StaggerNode {
         profile: Option<&StrengthProfile>,
         part: usize,
     ) -> Option<MotorCommand> {
-        let base = wanted(&state.commands, body, profile, part);
-        let Some((weight, claimed)) = state.claims.get(part) else {
-            return base;
-        };
-        let claimed = motor_of(claimed, body.animated_target(part));
-        match base {
-            Some(mut base) => {
-                let (force, torque) = (base.force, base.torque);
-                base.blend(1.0 - weight, &claimed, weight);
-                base.force = force + claimed.force * weight;
-                base.torque = torque + claimed.torque * weight;
-                Some(base)
-            }
-            None => (weight >= 0.5).then_some(claimed),
-        }
+        layered(&state.commands, state.claims.get(part), body, profile, part)
     }
 }
 
@@ -95,7 +80,7 @@ pub struct StaggerState {
     run: StaggerRun,
     balance: BalanceRun,
     commands: CommandsOut,
-    claims: StaggerOut,
+    claims: ClaimsOut,
     outcome: Option<NodeOutcome>,
 }
 

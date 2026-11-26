@@ -1,7 +1,10 @@
 use concerto_animation::{message::AnimationMessage, player::AnimationPlayer};
 use concerto_ecs::{
-    CommandQueue, Component, Query, ResMut, Without,
-    signal::{EntitySignal, On, Signal},
+    Component, Query, ResMut, Without,
+    signal::{
+        EntitySignal, On, Signal,
+        listener::{IntoListener, Listener},
+    },
 };
 use concerto_physics::{physics_state::PhysicsState, ragdoll::RagdollId};
 use concerto_reflect::{Reflect, ReflectDefault};
@@ -168,24 +171,14 @@ pub fn apply_impulses(
     }
 }
 
-/// Keeps what a `Wounded` signal says on the character's `Wounds`.
-pub fn keep_wounds(
-    on: On<Wounded>,
-    mut characters: Query<(&RagdollBody, Option<&mut Wounds>)>,
-    mut cmd: CommandQueue,
-) {
-    let entity = on.entity();
-    let wounded = *on.signal();
-    let Some((body, wounds)) = characters.get_entity_mut(entity) else {
-        return;
-    };
-    let parts = body.resolved().part_count();
-    match wounds {
-        Some(mut wounds) => wounds.weaken(wounded.part, wounded.share, parts),
-        None => {
-            let mut wounds = Wounds::default();
-            wounds.weaken(wounded.part, wounded.share, parts);
-            cmd.insert(wounds, entity);
-        }
-    }
+/// The listener every character ragdoll carries: keeps what a `Wounded` signal says on its `Wounds`.
+pub fn keep_wounds() -> Listener<Wounded> {
+    (|on: On<Wounded>, mut characters: Query<(&RagdollBody, &mut Wounds)>| {
+        let wounded = *on.signal();
+        let Some((body, mut wounds)) = characters.get_entity_mut(on.entity()) else {
+            return;
+        };
+        wounds.weaken(wounded.part, wounded.share, body.resolved().part_count());
+    })
+    .into_listener()
 }

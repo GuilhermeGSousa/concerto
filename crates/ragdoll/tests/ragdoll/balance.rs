@@ -32,18 +32,11 @@ use concerto_ragdoll::testing::{
     SpawnedHumanoid, humanoid_skeleton, reference_humanoid, spawn_humanoid,
 };
 use concerto_ragdoll::{
-    BalanceNode, BalanceSettings, BalanceState, BehaviourEnded, BodyDrive, BodySense, BodySettled,
-    BodyState, CharacterRagdoll, LimpNode, PhysicalState, RagdollBody, RagdollPlugin, StaggerNode,
+    BalanceNode, BalanceSettings, BalanceState, BodyDrive, BodySense, BodySettled, BodyState,
+    CharacterRagdoll, LimpNode, PhysicalState, RagdollBody, RagdollPlugin, StaggerNode,
     StaggerState,
 };
 use glam::{Quat, Vec3};
-
-#[derive(Resource, Default)]
-struct Ended(Vec<BehaviourEnded>);
-
-fn record(on: On<BehaviourEnded>, mut ended: ResMut<Ended>) {
-    ended.0.push(*on.signal());
-}
 
 #[derive(Resource, Default)]
 struct Settles(usize);
@@ -91,7 +84,6 @@ impl Stage {
             app.register_plugin(AnimationPlugin);
         }
         app.register_plugin(RagdollPlugin);
-        app.add_listener(record).insert_resource(Ended::default());
         app.add_listener(count_settles)
             .insert_resource(Settles::default());
         app.finish_plugin_build();
@@ -213,10 +205,6 @@ impl Stage {
 
     pub fn settles(&self) -> usize {
         self.app.get_resource::<Settles>().unwrap().0
-    }
-
-    pub fn ended(&self) -> Vec<BehaviourEnded> {
-        self.app.get_resource::<Ended>().unwrap().0.clone()
     }
 
     fn player(&self) -> &AnimationPlayer {

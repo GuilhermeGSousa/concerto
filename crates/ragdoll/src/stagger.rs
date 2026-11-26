@@ -16,7 +16,7 @@ use crate::{
     behaviour::{BehaviourEnded, BodyDrive, Outcome, PartCommand, PhysicalState},
     character::RagdollBody,
     ik::bent_spine,
-    node::balance::Hindrance,
+    node::balance::{ClaimsOut, Hindrance},
     resolve::Limbs,
     sensing::BodySense,
     view::BodyView,
@@ -138,49 +138,6 @@ impl StaggerRun {
             severity,
             ..Self::default()
         }
-    }
-}
-
-#[derive(Clone, Copy, Debug)]
-struct StaggerClaim {
-    weight: f32,
-    command: PartCommand,
-}
-
-#[derive(Clone, Debug, Default)]
-pub(crate) struct StaggerOut {
-    claims: Vec<Option<StaggerClaim>>,
-}
-
-impl StaggerOut {
-    fn reset(&mut self, count: usize) {
-        self.claims.clear();
-        self.claims.resize(count, None);
-    }
-
-    fn claim(&mut self, part: usize, weight: f32, command: PartCommand) {
-        if let Some(slot) = self.claims.get_mut(part) {
-            *slot = Some(StaggerClaim {
-                weight: weight.clamp(0.0, 1.0),
-                command,
-            });
-        }
-    }
-
-    pub(crate) fn clear(&mut self) {
-        self.claims.clear();
-    }
-
-    pub(crate) fn len(&self) -> usize {
-        self.claims.len()
-    }
-
-    pub(crate) fn get(&self, part: usize) -> Option<(f32, PartCommand)> {
-        self.claims
-            .get(part)
-            .copied()
-            .flatten()
-            .map(|claim| (claim.weight, claim.command))
     }
 }
 
@@ -323,7 +280,7 @@ impl StaggerController<'_> {
         view: &BodyView,
         physics: &PhysicsState,
         dt: f32,
-        out: &mut StaggerOut,
+        out: &mut ClaimsOut,
     ) -> Option<Hindrance> {
         let resolved = view.resolved();
         out.reset(resolved.part_count());
@@ -449,7 +406,7 @@ pub fn stagger_bodies(
     state: Res<PhysicsState>,
 ) {
     let dt = Time::fixed_delta_time().as_secs_f32();
-    let mut claims = StaggerOut::default();
+    let mut claims = ClaimsOut::default();
     for (entity, mut stagger, mut balance, id, body, sense, mut drive) in characters.iter_mut() {
         let stagger = &mut *stagger;
         let view = BodyView::of(entity, *id, body, Some(sense), None);

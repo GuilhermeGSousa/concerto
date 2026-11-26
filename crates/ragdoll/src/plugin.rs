@@ -32,8 +32,8 @@ use crate::{
     },
     fall::{Fall, FallReaction, fall_bodies, fall_when_falling},
     hit::{HitReaction, flinch_when_hit, update_flinches},
-    messages::{self, Death, Hit, Shot, apply_impulses, keep_wounds, route_hits},
-    node::{BalanceNode, FlinchNode, HoldNode, LimpNode, StaggerNode},
+    messages::{self, Death, Hit, Shot, apply_impulses, route_hits},
+    node::{BalanceNode, FlinchNode, HoldNode, LimpNode, ShotNode, StaggerNode},
     sensing::sense_bodies,
     shot::{ShotReaction, end_shots, note_shot_balance_ended, react_when_shot, shot_bodies},
     stagger::{Stagger, end_staggers, note_balance_ended, stagger_bodies},
@@ -52,13 +52,13 @@ impl Plugin for RagdollPlugin {
             .register_animation_node::<LimpNode>()
             .register_animation_node::<FlinchNode>()
             .register_animation_node::<BalanceNode>()
-            .register_animation_node::<StaggerNode>();
+            .register_animation_node::<StaggerNode>()
+            .register_animation_node::<ShotNode>();
         app.register_animation_message::<Hit>()
             .register_animation_message::<Shot>()
             .register_animation_message::<messages::Stagger>()
             .register_animation_message::<Death>();
         app.add_listener(route_hits.at_preview_time())
-            .add_listener(keep_wounds.at_preview_time())
             .add_listener(forward_death.at_preview_time())
             .add_system(
                 LateFixedUpdate,

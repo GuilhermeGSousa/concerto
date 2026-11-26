@@ -1,4 +1,5 @@
 use concerto_animation::{
+    attribute::PoseAttribute,
     evaluation::{AnimationGraphContext, DriveContext},
     node::{
         AnimationNode, BehaviourReport, InputSlots, NodeOutcome, NodeReport, ReflectAnimationNode,
@@ -324,6 +325,49 @@ impl CommandsOut {
 
     pub(crate) fn get(&self, part: usize) -> Option<PartCommand> {
         self.parts.get(part).copied().flatten()
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct OrderedClaim {
+    weight: f32,
+    command: PartCommand,
+}
+
+#[derive(Clone, Debug, Default)]
+pub(crate) struct ClaimsOut {
+    claims: Vec<Option<OrderedClaim>>,
+}
+
+impl ClaimsOut {
+    pub(crate) fn reset(&mut self, count: usize) {
+        self.claims.clear();
+        self.claims.resize(count, None);
+    }
+
+    pub(crate) fn claim(&mut self, part: usize, weight: f32, command: PartCommand) {
+        if let Some(slot) = self.claims.get_mut(part) {
+            *slot = Some(OrderedClaim {
+                weight: weight.clamp(0.0, 1.0),
+                command,
+            });
+        }
+    }
+
+    pub(crate) fn clear(&mut self) {
+        self.claims.clear();
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.claims.len()
+    }
+
+    pub(crate) fn get(&self, part: usize) -> Option<(f32, PartCommand)> {
+        self.claims
+            .get(part)
+            .copied()
+            .flatten()
+            .map(|claim| (claim.weight, claim.command))
     }
 }
 
@@ -799,6 +843,30 @@ pub(crate) fn wanted(
     }
     let strength = profile?.strength_of(&body.resolved().bone_name(part)?);
     (strength != PartStrength::Kinematic).then(|| command(strength, 1.0, target))
+}
+
+pub(crate) fn layered(
+    commands: &CommandsOut,
+    claim: Option<(f32, PartCommand)>,
+    body: &BodyView,
+    profile: Option<&StrengthProfile>,
+    part: usize,
+) -> Option<MotorCommand> {
+    let base = wanted(commands, body, profile, part);
+    let Some((weight, claimed)) = claim else {
+        return base;
+    };
+    let claimed = motor_of(claimed, body.animated_target(part));
+    match base {
+        Some(mut base) => {
+            let (force, torque) = (base.force, base.torque);
+            base.blend(1.0 - weight, &claimed, weight);
+            base.force = force + claimed.force * weight;
+            base.torque = torque + claimed.torque * weight;
+            Some(base)
+        }
+        None => (weight >= 0.5).then_some(claimed),
+    }
 }
 
 /// A [`BalanceNode`]'s state: the step it is taking, the steps since it last stood still, and how it ended.
