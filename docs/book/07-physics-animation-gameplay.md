@@ -817,7 +817,7 @@ from them. While a body has a `BodySense`, its parts report their contacts.
 `describe_body(sense, body)` gives the sensing values as text.
 `report_body(body, player, graphs, sense)` gives what the editor's
 `body_report` tool replies: for each limb its amount and cover, the states of
-the graph and what its behaviour nodes report, then the senses. A game's debug
+the graph and what its nodes `describe`, then the senses. A game's debug
 panel prints the same.
 
 #### Balance

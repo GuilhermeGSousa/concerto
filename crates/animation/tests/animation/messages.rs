@@ -171,7 +171,11 @@ impl AnimationNode for Counter {
     }
 }
 
-impl EditorAnimationNode for Counter {}
+impl EditorAnimationNode for Counter {
+    fn describe(&self, state: &Count) -> Option<String> {
+        Some(format!("heard {}", state.received))
+    }
+}
 
 fn event_named(event: &str) -> AnimationEvent {
     AnimationEvent {
@@ -869,8 +873,9 @@ fn messages_move_the_graph_and_nodes_answer_with_outcomes_and_signals() {
     );
     assert_eq!(stage.heard_by(slotted), [1]);
     assert!(
-        stage.slot_behaviour().starts_with("playing count 0.5"),
-        "the slot reports its playing entry with its fade: {}",
+        stage.slot_behaviour().starts_with("playing count 0.5")
+            && stage.slot_behaviour().ends_with(" · heard 1"),
+        "the slot reports its playing entry with its fade and the entry's own line: {}",
         stage.slot_behaviour()
     );
 

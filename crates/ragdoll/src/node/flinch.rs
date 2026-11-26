@@ -284,6 +284,10 @@ impl EditorAnimationNode for FlinchNode {
 
     fn describe(&self, state: &FlinchState) -> Option<String> {
         let text = match &state.struck {
+            Some(struck) if self.outcome(state).is_some() => format!(
+                "recovered from a hit on part {} at {}",
+                struck.part, self.profile
+            ),
             Some(struck) => format!(
                 "flinching from a hit on part {} at {}, {:.2} s ago",
                 struck.part, self.profile, struck.since_hit
