@@ -79,71 +79,107 @@ pub(crate) enum NavShape {
     },
 }
 
-pub(crate) fn point_shapes(point: &NavGraphPoint) -> Vec<NavShape> {
-    let color = if point.enabled {
-        ENABLED_COLOR
-    } else {
-        DISABLED_COLOR
-    };
-    vec![
-        NavShape::Circle {
-            center: point.position,
-            color,
-        },
-        NavShape::Line {
-            start: point.position,
-            end: point.position + point.facing * Vec3::Z * FACING_LENGTH,
-            color,
-        },
-    ]
-}
-
-pub(crate) fn link_shapes(from: Vec3, to: Vec3, one_way: bool) -> Vec<NavShape> {
-    let mut shapes = vec![NavShape::Line {
-        start: from,
-        end: to,
-        color: LINK_COLOR,
-    }];
-    let Some(direction) = (to - from).try_normalize() else {
-        return shapes;
-    };
-    if one_way {
-        let side = direction.cross(Vec3::Y).try_normalize().unwrap_or(Vec3::X) * ARROW_WIDTH;
-        let tip = to - direction * POINT_RADIUS;
-        let back = tip - direction * ARROW_LENGTH;
-        shapes.extend([back + side, back - side].map(|end| NavShape::Line {
-            start: tip,
-            end,
-            color: LINK_COLOR,
-        }));
-    }
-    shapes
-}
-
-pub(crate) fn graph_shapes(graph: &NavGraph) -> Vec<NavShape> {
-    let points = graph.points().flat_map(point_shapes);
-    let links =
-        graph.edges().flat_map(
-            |edge| match (graph.point(edge.from), graph.point(edge.to)) {
-                (Some(from), Some(to)) => link_shapes(from.position, to.position, edge.one_way),
-                _ => Vec::new(),
+impl NavShape {
+    pub(crate) fn point(point: &NavGraphPoint) -> Vec<NavShape> {
+        let color = if point.enabled {
+            ENABLED_COLOR
+        } else {
+            DISABLED_COLOR
+        };
+        vec![
+            NavShape::Circle {
+                center: point.position,
+                color,
             },
-        );
-    points.chain(links).collect()
-}
+            NavShape::Line {
+                start: point.position,
+                end: point.position + point.facing * Vec3::Z * FACING_LENGTH,
+                color,
+            },
+        ]
+    }
 
-pub(crate) fn route_shapes(start: Vec3, remaining: &[Vec3]) -> Vec<NavShape> {
-    let waypoints: Vec<Vec3> = std::iter::once(start)
-        .chain(remaining.iter().copied())
-        .collect();
-    waypoints
-        .windows(2)
-        .map(|pair| NavShape::Line {
-            start: pair[0],
-            end: pair[1],
-            color: ROUTE_COLOR,
-        })
-        .collect()
+    pub(crate) fn link(from: Vec3, to: Vec3, one_way: bool) -> Vec<NavShape> {
+        let mut shapes = vec![NavShape::Line {
+            start: from,
+            end: to,
+            color: LINK_COLOR,
+        }];
+        let Some(direction) = (to - from).try_normalize() else {
+            return shapes;
+        };
+        if one_way {
+            let side = direction.cross(Vec3::Y).try_normalize().unwrap_or(Vec3::X) * ARROW_WIDTH;
+            let tip = to - direction * POINT_RADIUS;
+            let back = tip - direction * ARROW_LENGTH;
+            shapes.extend([back + side, back - side].map(|end| NavShape::Line {
+                start: tip,
+                end,
+                color: LINK_COLOR,
+            }));
+        }
+        shapes
+    }
+
+    pub(crate) fn graph(graph: &NavGraph) -> Vec<NavShape> {
+        let points = graph.points().flat_map(Self::point);
+        let links =
+            graph.edges().flat_map(
+                |edge| match (graph.point(edge.from), graph.point(edge.to)) {
+                    (Some(from), Some(to)) => Self::link(from.position, to.position, edge.one_way),
+                    _ => Vec::new(),
+                },
+            );
+        points.chain(links).collect()
+    }
+
+    pub(crate) fn route(start: Vec3, remaining: &[Vec3]) -> Vec<NavShape> {
+        let waypoints: Vec<Vec3> = std::iter::once(start)
+            .chain(remaining.iter().copied())
+            .collect();
+        waypoints
+            .windows(2)
+            .map(|pair| NavShape::Line {
+                start: pair[0],
+                end: pair[1],
+                color: ROUTE_COLOR,
+            })
+            .collect()
+    }
+
+    pub(crate) fn mesh(data: &NavMeshData) -> Vec<NavShape> {
+        let mut drawn = HashSet::new();
+        let mut shapes = Vec::new();
+        for polygon in &data.polygons {
+            let count = polygon.vertices.len();
+            for (index, &a) in polygon.vertices.iter().enumerate() {
+                let b = polygon.vertices[(index + 1) % count];
+                if !drawn.insert(MeshEdge::new(a, b)) {
+                    continue;
+                }
+                let (Some(start), Some(end)) =
+                    (data.vertices.get(a as usize), data.vertices.get(b as usize))
+                else {
+                    continue;
+                };
+                shapes.push(NavShape::Line {
+                    start: *start + Vec3::Y * MESH_LIFT,
+                    end: *end + Vec3::Y * MESH_LIFT,
+                    color: MESH_COLOR,
+                });
+            }
+        }
+        shapes
+    }
+
+    pub(crate) fn draw(self, gizmos: &mut DebugGizmos) {
+        match self {
+            NavShape::Circle { center, color } => {
+                gizmos.circle(center, Vec3::Y, POINT_RADIUS, color)
+            }
+            NavShape::Line { start, end, color } => gizmos.line(start, end, color),
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -161,45 +197,13 @@ impl MeshEdge {
     }
 }
 
-pub(crate) fn mesh_shapes(data: &NavMeshData) -> Vec<NavShape> {
-    let mut drawn = HashSet::new();
-    let mut shapes = Vec::new();
-    for polygon in &data.polygons {
-        let count = polygon.vertices.len();
-        for (index, &a) in polygon.vertices.iter().enumerate() {
-            let b = polygon.vertices[(index + 1) % count];
-            if !drawn.insert(MeshEdge::new(a, b)) {
-                continue;
-            }
-            let (Some(start), Some(end)) =
-                (data.vertices.get(a as usize), data.vertices.get(b as usize))
-            else {
-                continue;
-            };
-            shapes.push(NavShape::Line {
-                start: *start + Vec3::Y * MESH_LIFT,
-                end: *end + Vec3::Y * MESH_LIFT,
-                color: MESH_COLOR,
-            });
-        }
-    }
-    shapes
-}
-
-fn draw_shape(gizmos: &mut DebugGizmos, shape: NavShape) {
-    match shape {
-        NavShape::Circle { center, color } => gizmos.circle(center, Vec3::Y, POINT_RADIUS, color),
-        NavShape::Line { start, end, color } => gizmos.line(start, end, color),
-    }
-}
-
 /// Draws every nav point and link while `NavigationGizmos::graph` is on, in the editor too.
 pub fn draw_nav_graph(graph: Res<NavGraph>, shown: Res<NavigationGizmos>, mut gizmos: DebugGizmos) {
     if !shown.graph {
         return;
     }
-    for shape in graph_shapes(&graph) {
-        draw_shape(&mut gizmos, shape);
+    for shape in NavShape::graph(&graph) {
+        shape.draw(&mut gizmos);
     }
 }
 
@@ -213,8 +217,8 @@ pub fn draw_nav_routes(
         return;
     }
     for (transform, route) in agents.iter() {
-        for shape in route_shapes(transform.translation(), route.remaining()) {
-            draw_shape(&mut gizmos, shape);
+        for shape in NavShape::route(transform.translation(), route.remaining()) {
+            shape.draw(&mut gizmos);
         }
     }
 }
@@ -237,8 +241,8 @@ pub fn draw_nav_mesh(
         let Some(data) = navmeshes.get(&component.handle).and_then(NavMesh::data) else {
             continue;
         };
-        for shape in mesh_shapes(data) {
-            draw_shape(&mut gizmos, shape);
+        for shape in NavShape::mesh(data) {
+            shape.draw(&mut gizmos);
         }
     }
 }
@@ -265,8 +269,8 @@ impl ComponentGizmo for NavMeshGizmo {
         else {
             return;
         };
-        for shape in mesh_shapes(data) {
-            draw_shape(gizmos, shape);
+        for shape in NavShape::mesh(data) {
+            shape.draw(gizmos);
         }
     }
 }
