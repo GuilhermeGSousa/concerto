@@ -70,7 +70,9 @@ impl ComponentGizmos {
 
 /// Draws the gizmo kind `kind` for every entity, or only for the selection; an unknown kind changes nothing.
 pub struct SetGizmoAlways {
+    /// The gizmo kind's name, as `gizmos` lists it.
     pub kind: String,
+    /// `true` draws the kind for every entity, `false` only for the selection and its descendants.
     pub always: bool,
 }
 
