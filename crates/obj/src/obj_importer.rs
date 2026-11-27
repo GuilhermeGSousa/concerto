@@ -19,6 +19,7 @@ use concerto_render::components::material::MaterialComponent;
 use concerto_scene::node_id::{NodeId, derive_ids};
 use concerto_scene::scene::{Scene, SceneNode};
 
+/// The [`Importer`] of `.obj` sources, registered under the name `obj`.
 pub struct ObjImporter;
 
 impl Importer for ObjImporter {
