@@ -772,7 +772,7 @@ impl AnimationNode for AnimationStateMachine {
         &self,
         state: &mut AnimationStateMachineState,
         graphs: &Res<AssetStore<AnimationGraph>>,
-        context: &DriveContext<'_>,
+        context: &mut DriveContext<'_>,
         bone_ids: &[Uuid],
         _inputs: &[EvaluatedFrame],
         pool: &mut FramePool,

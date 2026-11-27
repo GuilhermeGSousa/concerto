@@ -211,7 +211,7 @@ impl AnimationNode for SetAmount {
         &self,
         elapsed: &mut f32,
         _: &(),
-        context: &DriveContext<'_>,
+        context: &mut DriveContext<'_>,
         bone_ids: &[Uuid],
         inputs: &[EvaluatedFrame],
         _: &mut FramePool,

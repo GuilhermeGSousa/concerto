@@ -93,11 +93,15 @@ pub trait AnimationNode: Reflect + Send + Sync + 'static {
     /// attributes of the inputs with a positive weight by those weights, as
     /// [`Self::drive_shares`] shares them out. Override it, with `drive_shares`, in a node that
     /// computes its own blend, like a blend space or a layer.
+    ///
+    /// A node that decides something in the physics step raises it with
+    /// [`DriveContext::raise`]; the graph acts on it at the player's next update, as on a message
+    /// the game sent.
     fn drive(
         &self,
         _state: &mut Self::State,
         _input: &SystemInputData<'_, '_, Self::DriveInput>,
-        _context: &DriveContext<'_>,
+        _context: &mut DriveContext<'_>,
         _bone_ids: &[Uuid],
         inputs: &[EvaluatedFrame],
         _pool: &mut FramePool,
@@ -262,7 +266,7 @@ pub trait ErasedAnimationNode: Send + Sync {
     fn drive(
         &self,
         state: &mut NodeState,
-        context: &DriveContext<'_>,
+        context: &mut DriveContext<'_>,
         bone_ids: &[Uuid],
         inputs: &[EvaluatedFrame],
         pool: &mut FramePool,
@@ -387,7 +391,7 @@ impl<T: EditorAnimationNode> ErasedAnimationNode for T {
     fn drive(
         &self,
         state: &mut NodeState,
-        context: &DriveContext<'_>,
+        context: &mut DriveContext<'_>,
         bone_ids: &[Uuid],
         inputs: &[EvaluatedFrame],
         pool: &mut FramePool,

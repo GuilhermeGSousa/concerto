@@ -153,7 +153,7 @@ impl AnimationNode for BlendSpace2DNode {
         &self,
         state: &mut BlendSpace2DInstanceNode,
         _: &(),
-        _: &DriveContext<'_>,
+        _: &mut DriveContext<'_>,
         _: &[uuid::Uuid],
         inputs: &[EvaluatedFrame],
         _: &mut FramePool,

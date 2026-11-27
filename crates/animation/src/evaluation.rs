@@ -104,6 +104,7 @@ pub struct AnimationGraphContext<'a> {
     pub(crate) model_to_world: Option<Affine3A>,
     pub(crate) inputs: &'a Inputs<'a, 'a>,
     pub(crate) messages: &'a [Box<dyn Reflect>],
+    pub(crate) drive_raised: &'a [RaisedMessage],
     pub(crate) raised: Vec<RaisedMessage>,
     pub(crate) entity: Entity,
 }
@@ -115,16 +116,20 @@ impl<'a> AnimationGraphContext<'a> {
     }
 
     /// In `update`, the messages the game sent the player since its last update, in the order
-    /// sent; empty in every other walk.
+    /// sent, then those the graph raised in [`DriveContext::raise`] since then, in the order
+    /// raised; empty in every other walk.
     ///
     /// The game sends them with [`AnimationPlayer::send`](crate::player::AnimationPlayer::send)
     /// or [`SendAnimationMessage`](crate::message::SendAnimationMessage). A message a node raised
-    /// is never among them.
+    /// in `update` is never among them.
     pub fn messages(&self) -> impl Iterator<Item = &'a dyn Reflect> + use<'a> {
-        self.messages.iter().map(|message| message.as_ref())
+        self.messages
+            .iter()
+            .map(|message| message.as_ref())
+            .chain(self.drive_raised.iter().map(RaisedMessage::message))
     }
 
-    /// The messages of type `M` among [`Self::messages`], in the order sent.
+    /// The messages of type `M` among [`Self::messages`], in their order there.
     pub fn message<M: AnimationMessage>(&self) -> impl Iterator<Item = &'a M> + use<'a, M> {
         self.messages()
             .filter_map(|message| message.downcast_ref::<M>())
@@ -159,6 +164,7 @@ impl<'a> AnimationGraphContext<'a> {
             model_to_world: self.model_to_world,
             inputs: self.inputs,
             messages: self.messages,
+            drive_raised: self.drive_raised,
             raised: Vec::new(),
             entity: self.entity,
         }
@@ -192,11 +198,12 @@ impl<'a> AnimationGraphContext<'a> {
     }
 }
 
-/// What every node of one player's graph is driven with in one physics step: the step's length, the node's weight, and the player's blackboard, root, skeleton and entity.
+/// What every node of one player's graph is driven with in one physics step: the step's length, the node's weight, the player's blackboard, root, skeleton and entity, and the messages the node raises.
 pub struct DriveContext<'a> {
     pub(crate) delta_time: f32,
     pub(crate) weight: f32,
     pub(crate) graph: &'a AnimationGraphContext<'a>,
+    pub(crate) raised: Vec<RaisedMessage>,
 }
 
 impl<'a> DriveContext<'a> {
@@ -216,11 +223,38 @@ impl<'a> DriveContext<'a> {
         self.weight
     }
 
+    /// Raises `message` from this physics step for the graph and the player's entity.
+    ///
+    /// Reach for it in a controller that decides in the physics step, such as one that sees its
+    /// balance lost, so the graph can act on the decision without waiting a frame for `update`
+    /// to notice it. The message is not seen during the drive pass. At the player's next update
+    /// it joins the messages the game sent: every node reads it from
+    /// [`AnimationGraphContext::messages`], every state machine takes an `OnMessage`
+    /// transition on it at the start of that update, so the next physics step drives the new
+    /// state, and it is triggered once on the player's entity. A paused player does not drive,
+    /// so it raises nothing.
+    pub fn raise<M: AnimationMessage + EntitySignal>(&mut self, message: M) {
+        self.raised.push(RaisedMessage {
+            message: Box::new(message),
+            trigger: Some(trigger_message::<M>),
+        });
+    }
+
     pub(crate) fn scaled(&self, share: f32) -> DriveContext<'a> {
         DriveContext {
+            delta_time: self.delta_time,
             weight: self.weight * share,
-            ..*self
+            graph: self.graph,
+            raised: Vec::new(),
         }
+    }
+
+    pub(crate) fn pass_up(&mut self, mut child: DriveContext<'a>) {
+        self.raised.append(&mut child.raised);
+    }
+
+    pub(crate) fn into_raised(self) -> Vec<RaisedMessage> {
+        self.raised
     }
 
     /// The player's blackboard.

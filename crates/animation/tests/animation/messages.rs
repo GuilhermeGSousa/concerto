@@ -3,7 +3,7 @@ use std::{thread, time::Duration};
 use concerto_animation::{
     TransitionBlender,
     clip::{AnimationChanelOutput, AnimationChannel, AnimationClip},
-    evaluation::AnimationGraphContext,
+    evaluation::{AnimationGraphContext, DriveContext},
     event::AnimationEvent,
     graph::AnimationGraph,
     message::{
@@ -19,7 +19,11 @@ use concerto_animation::{
     pose::{AnimationFrame, EvaluatedFrame, FramePool},
     retarget::{RetargetChain, RetargetNode, RetargetRig},
 };
-use concerto_app::{App, plugins::AssetManagerPlugin, schedule_groups::LateUpdate};
+use concerto_app::{
+    App,
+    plugins::AssetManagerPlugin,
+    schedule_groups::{LateFixedUpdate, LateUpdate},
+};
 use concerto_ecs::{
     Entity, Query, ResMut,
     component::{Component, scene::SceneEntityRef},
@@ -161,6 +165,72 @@ impl EditorAnimationNode for Counter {
     }
 }
 
+#[derive(Clone, Default, Reflect)]
+struct Planned;
+
+impl Signal for Planned {}
+
+impl EntitySignal for Planned {}
+
+impl AnimationMessage for Planned {}
+
+#[derive(Default, Reflect)]
+#[reflect(AnimationNode, Default)]
+struct Planner {}
+
+#[derive(Default)]
+struct Steps {
+    taken: u32,
+}
+
+impl AnimationNode for Planner {
+    type State = Steps;
+    type CreateInput = ();
+    type UpdateInput = ();
+    type EvaluateInput = ();
+    type DriveInput = ();
+
+    fn create_state(&self, _: &(), _: &AnimationGraphContext<'_>) -> Steps {
+        Steps::default()
+    }
+
+    fn update(&self, _: &mut Steps, _: f32, _: &(), _: &mut AnimationGraphContext<'_>) {}
+
+    fn evaluate(
+        &self,
+        _: &mut Steps,
+        _: &(),
+        _: &AnimationGraphContext<'_>,
+        _: &[Uuid],
+        _: &[EvaluatedFrame],
+        _: &mut FramePool,
+        _: &mut AnimationFrame,
+    ) {
+    }
+
+    fn drive(
+        &self,
+        state: &mut Steps,
+        _: &(),
+        context: &mut DriveContext<'_>,
+        _: &[Uuid],
+        _: &[EvaluatedFrame],
+        _: &mut FramePool,
+        _: &mut AnimationFrame,
+    ) {
+        state.taken += 1;
+        if state.taken == 2 {
+            context.raise(Planned);
+        }
+    }
+
+    fn reset(&self, state: &mut Steps) {
+        *state = Steps::default();
+    }
+}
+
+impl EditorAnimationNode for Planner {}
+
 fn event_named(event: &str) -> AnimationEvent {
     AnimationEvent {
         name: Name::new(event),
@@ -249,6 +319,13 @@ struct HeardCounts(Vec<Heard>);
 #[derive(Default, Resource)]
 struct HeardEvents(u32);
 
+#[derive(Default, Resource)]
+struct HeardPlans(u32);
+
+fn hear_planned(_: On<Planned>, mut heard: ResMut<HeardPlans>) {
+    heard.0 += 1;
+}
+
 fn hear_event(_: On<AnimationEvent>, mut heard: ResMut<HeardEvents>) {
     heard.0 += 1;
 }
@@ -282,6 +359,7 @@ struct Stage {
     fading: Entity,
     restarted: Entity,
     ordered: Entity,
+    planner: Entity,
 }
 
 impl Stage {
@@ -291,14 +369,17 @@ impl Stage {
         app.insert_resource(Time::new());
         app.insert_resource(HeardCounts::default());
         app.insert_resource(HeardEvents::default());
+        app.insert_resource(HeardPlans::default());
         app.register_plugin(AnimationPlugin);
         app.register_animation_node::<Counter>();
+        app.register_animation_node::<Planner>();
         app.register_animation_message::<Poke>();
         app.register_animation_message::<Other>();
         app.register_animation_message::<Ring>();
         app.register_animation_message::<Rang>();
         app.register_animation_message::<Twice>();
         app.register_animation_message::<Counted>();
+        app.register_animation_message::<Planned>();
         app.main_mut().world_mut().register_component::<Transform>();
         let idle = graph(&mut app, AnimationGraph::new());
         let poked = graph(&mut app, AnimationGraph::from_node(Counter {}));
@@ -457,6 +538,18 @@ impl Stage {
             .blender(TransitionBlender::Inertialization)
             .build();
         let restarted = graph(&mut app, stored(AnimationGraph::from_node(restarted)));
+        let planning = graph(&mut app, AnimationGraph::from_node(Planner {}));
+        let planner =
+            AnimationStateMachine::from_initial_state(name!("Planning"), planning, |transition| {
+                transition.to(
+                    name!("Acting"),
+                    AnimationFSMTrigger::on_message::<Planned>(),
+                    0.0,
+                );
+            })
+            .state(name!("Acting"), idle.clone(), |_| {})
+            .build();
+        let planner = graph(&mut app, stored(AnimationGraph::from_node(planner)));
         let skeleton = insert(
             &mut app,
             Skeleton::new(
@@ -528,6 +621,17 @@ impl Stage {
             AnimationHandleComponent::new(ordered),
             Marker(7),
         ));
+        let planner_bone = world.spawn(Transform::IDENTITY);
+        let planner = world.spawn((
+            AnimationPlayer::new(1),
+            AnimationHandleComponent::new(planner),
+            SkeletonComponent::new(
+                skeleton.clone(),
+                vec![SceneEntityRef::Entity(planner_bone)],
+                None,
+            ),
+            hear_planned.into_listener(),
+        ));
         let fading_bone = world.spawn(Transform::IDENTITY);
         let fading = world.spawn((
             AnimationPlayer::new(1),
@@ -543,6 +647,7 @@ impl Stage {
             fading,
             restarted,
             ordered,
+            planner,
         }
     }
 
@@ -567,6 +672,10 @@ impl Stage {
         let world = self.world();
         world.get_resource_mut::<Time>().unwrap().update();
         world.run_schedule(LateUpdate);
+    }
+
+    fn step(&mut self) {
+        self.world().run_schedule(LateFixedUpdate);
     }
 
     fn advance(&mut self, seconds: f32) {
@@ -744,6 +853,26 @@ fn messages_move_the_graph_and_nodes_answer_with_raised_messages_and_signals() {
         stage.counters_of(ordered).last(),
         Some(&saw(2)),
         "a self-transition on a raised message leaves the state playing as it was"
+    );
+
+    let planner = stage.planner;
+    stage.step();
+    stage.step();
+    assert!(
+        stage.in_state_of(planner, name!("Planning")),
+        "a message raised in a physics step waits for the player's next update"
+    );
+    stage.frame();
+    assert!(
+        stage.in_state_of(planner, name!("Acting")),
+        "a message raised in a physics step moves a machine at the start of the next update"
+    );
+    stage.step();
+    stage.frame();
+    assert_eq!(
+        stage.world().get_resource::<HeardPlans>().unwrap().0,
+        1,
+        "a message raised in a physics step reaches the character once"
     );
 
     let fading = stage.fading;

@@ -186,7 +186,7 @@ impl AnimationNode for LayerNode {
         &self,
         state: &mut LayerState,
         _: &(),
-        context: &DriveContext<'_>,
+        context: &mut DriveContext<'_>,
         _: &[Uuid],
         inputs: &[EvaluatedFrame],
         _: &mut FramePool,

@@ -186,7 +186,7 @@ impl AnimationTransitionBlender for BlendStack {
         bone_ids: &[Uuid],
         graph_states: &mut AnimationGraphStates,
         graphs: &AssetStore<AnimationGraph>,
-        context: &DriveContext<'_>,
+        context: &mut DriveContext<'_>,
         pool: &mut FramePool,
         output: &mut AnimationFrame,
     ) {
@@ -197,7 +197,9 @@ impl AnimationTransitionBlender for BlendStack {
             |source, share, pool, frame| match source {
                 Source::Graph(graph_id) => {
                     if let Some(graph_state) = graph_states.get_mut(graph_id) {
-                        graph_state.drive(graphs, &context.scaled(share), bone_ids, pool, frame);
+                        let mut walk = context.scaled(share);
+                        graph_state.drive(graphs, &mut walk, bone_ids, pool, frame);
+                        context.pass_up(walk);
                     }
                 }
                 Source::Snapshot(_) => frame.attributes_mut().copy_from(snapshot),

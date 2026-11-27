@@ -284,6 +284,7 @@ fn walk<K: 'static, R>(
         model_to_world,
         inputs: &inputs,
         messages: &[],
+        drive_raised: &[],
         raised: Vec::new(),
         entity,
     };

@@ -989,7 +989,7 @@ impl AnimationGraphState {
     pub(crate) fn drive(
         &mut self,
         graphs: &AssetStore<AnimationGraph>,
-        context: &DriveContext<'_>,
+        context: &mut DriveContext<'_>,
         bone_ids: &[Uuid],
         pool: &mut FramePool,
         output_frame: &mut AnimationFrame,
@@ -1003,8 +1003,9 @@ impl AnimationGraphState {
             pool,
             output_frame,
             |node_index, node, state, inputs, pool, output| {
-                let context = context.scaled(weights[node_index.index()]);
-                node.drive(state, &context, bone_ids, inputs, pool, output);
+                let mut node_context = context.scaled(weights[node_index.index()]);
+                node.drive(state, &mut node_context, bone_ids, inputs, pool, output);
+                context.pass_up(node_context);
             },
         )
     }

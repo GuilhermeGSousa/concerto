@@ -1299,6 +1299,7 @@ impl Running {
             model_to_world: context.model_to_world,
             inputs: context.inputs,
             messages: context.messages,
+            drive_raised: context.drive_raised,
             raised: Vec::new(),
             entity: context.entity,
         }

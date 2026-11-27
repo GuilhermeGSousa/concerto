@@ -1528,7 +1528,11 @@ physics-side state in `drive` at the step's `DriveContext::delta_time`; the
 context also gives the player's `blackboard()`, `root()`, `skeleton()` and
 `entity()`, and `bone_ids` are the skeleton's, as in `evaluate`. A `DriveInput`
 may not name what the drive writes, the `AnimationPlayer`; one that does panics
-when `drive_animation_players` is initialized.
+when `drive_animation_players` is initialized. The context is mutable, and a
+controller that decides something in the physics step, such as giving up on a
+balance it cannot hold, says so with `context.raise(message)`: the graph acts
+on it at the player's next update, as on a sent message, and the character
+hears it once (see [Messages and signals](#messages-and-signals)).
 
 `DriveContext::weight` is how much of the node's drive frame reaches the
 player's: the product of the shares every combiner above it gives it, 1 at the
@@ -1645,7 +1649,8 @@ for a message given by its type path and stored value, as the editor's
 it is not triggered on the character, and triggering a message on the
 character yourself, with `cmd.trigger`, does not reach the graph. The player's
 next update walks its graph with the whole queue in the context:
-`context.messages()` gives every queued message in the order sent, and
+`context.messages()` gives every queued message in the order sent, then every
+message the drive pass raised since the last update in the order raised, and
 `context.message::<M>()` those of type `M`. Every node that updates reads
 them there, in the graph, in a state machine's playing states and in a
 retarget's inner graph; in `evaluate` and `root_motion` the list is empty, so
@@ -1662,37 +1667,48 @@ transition's trigger, usually as `OnMessage` of `ClipEnded`, and save the graph
 again.
 
 A node tells the containers above it, and through them the character, what
-happened with `context.raise(message)`, in `update`, the one walk that hands a
-node a mutable context; `evaluate` and `root_motion` have no `raise`, so a
-raise from them does not compile. A node raises once, on the frame its
-condition becomes true, not on every frame it holds. Each state machine and
-retarget the node plays in reads what each of its states or its inner graph
-raised in this update and passes it on to its own container, so the message
-reaches every ancestor and is never consumed, and a node never sees a raised
-message in `context.messages()`. At the root, `animate_targets` triggers each
-message the graph raised in its last update on the player's entity, as its own
-type, in the order raised and after the clip events, so a `Listener<M>` on the
-character hears what the state machines heard. `animate_targets` takes the
-list as it triggers it, so each message is triggered once, and it does so for
-every player, one paused or without a `SkeletonComponent` included. The clip
+happened with `context.raise(message)`, in `update` or in `drive`, the two
+walks that hand a node a mutable context; `evaluate` and `root_motion` have no
+`raise`, so a raise from them does not compile. A node raises once, on the
+frame or step its condition becomes true, not on every one it holds. Each
+state machine and retarget the node plays in reads what each of its states or
+its inner graph raised in this update and passes it on to its own container,
+so the message reaches every ancestor and is never consumed, and a node never
+sees a message raised in `update` in `context.messages()`. At the root,
+`animate_targets` triggers each message the graph raised in its last update on
+the player's entity, as its own type, in the order raised and after the clip
+events, so a `Listener<M>` on the character hears what the state machines
+heard. `animate_targets` takes the list as it triggers it, so each message is
+triggered once, and it does so for every player, one paused or without a
+`SkeletonComponent` included. The clip
 events a clip raises stop at the root: they reach the game once, as their
 weighted `AnimationSignal`. `ClipEnded` stops there too and is not a signal,
 so nothing on the character hears it: game code follows the machine's states,
 with `in_state`, rather than the ends of its clips.
 
+What a node raises in `drive` waits on the player, in the order raised, across
+the physics steps until its next update. That update sees it as it sees what
+the game sent: every node reads it in `context.messages()`, and every state
+machine matches it in its check before the update, so a transition it moves
+begins at the start of that update and the next physics step drives the new
+state. The same update hands it to `animate_targets`, ahead of what the update
+raised, which triggers it once on the player's entity. A paused player does
+not drive, so it raises nothing from `drive`.
+
 A state machine checks its transitions twice in each update. Before it updates
 its states, it tries every transition of its current state, its `OnMessage`
 transitions first, with `OnMessage` matching only what the game sent this
-frame, and takes at most one. The state it enters then updates in the same
-walk and reads the message on that frame. After the update, it tries the
+frame and what the drive pass raised since the last update, and takes at most
+one. The state it enters then updates in the same walk and reads the message
+on that frame. After the update, it tries the
 current state's `OnMessage` transitions against what that state raised in it,
 and keeps the one that matches without taking it, so the frame is sampled from
 the state that raised. The next update starts with the check before: a
 transition the game drives that fires there is taken and the kept one is
 dropped; otherwise the kept one is taken. A raise therefore moves its machine
 at the start of the next update, and a machine takes at most one transition
-per update. What the game drives, a sent message, a param or `Instant`, so
-wins over what the state raised in the same frame, whatever the list order;
+per update. What the game drives, a sent message, a param or `Instant`, and a
+message raised in `drive`, so win over what the state raised in the same frame, whatever the list order;
 within one check, the matching transition that comes first in the state's
 list wins. A state that is fading out still raises to the machine's
 container, but not to the machine's own triggers. Resetting a state machine,

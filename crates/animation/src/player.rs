@@ -63,6 +63,7 @@ pub struct AnimationPlayer {
     attributes: PoseAttributes,
     messages: Vec<Box<dyn Reflect>>,
     raised: Vec<RaisedMessage>,
+    drive_raised: Vec<RaisedMessage>,
     drive_attributes: PoseAttributes,
 }
 
@@ -80,6 +81,7 @@ impl AnimationPlayer {
             attributes: PoseAttributes::default(),
             messages: Vec::new(),
             raised: Vec::new(),
+            drive_raised: Vec::new(),
             drive_attributes: PoseAttributes::default(),
         }
     }
@@ -120,6 +122,7 @@ impl AnimationPlayer {
     /// Walks the graph once for a physics step of `delta_time` seconds, each node saying through [`AnimationNode::drive`]
     /// what it asks of physics with `skeleton`'s bone ids, and keeps the attributes it gives; the graph does not advance.
     /// A paused player, or one whose graph gives no frame, keeps no attributes, so every bone reads neutral.
+    /// The messages its nodes raise wait for the player's next update.
     pub(crate) fn drive(
         &mut self,
         entity: Entity,
@@ -139,19 +142,21 @@ impl AnimationPlayer {
             model_to_world: None,
             inputs,
             messages: &[],
+            drive_raised: &[],
             raised: Vec::new(),
             entity,
         };
         let bone_ids = skeleton.map_or(&[][..], |skeleton| &skeleton.bone_ids);
-        let context = DriveContext {
+        let mut context = DriveContext {
             delta_time,
             weight: 1.0,
             graph: &graph,
+            raised: Vec::new(),
         };
         let mut output = self.frame_pool.acquire();
         if self.graph_state.drive(
             graphs,
-            &context,
+            &mut context,
             bone_ids,
             &mut self.frame_pool,
             &mut output,
@@ -160,6 +165,7 @@ impl AnimationPlayer {
         } else {
             self.drive_attributes.clear();
         }
+        self.drive_raised.append(&mut context.into_raised());
         self.frame_pool.release(output);
         &self.drive_attributes
     }
@@ -298,12 +304,14 @@ impl AnimationPlayer {
             model_to_world: None,
             inputs,
             messages: &[],
+            drive_raised: &[],
             raised: Vec::new(),
             entity,
         };
         self.graph_state
             .initialize(animation_graph, graphs, &context);
         self.raised.clear();
+        self.drive_raised.clear();
     }
 
     pub(crate) fn update(
@@ -323,11 +331,14 @@ impl AnimationPlayer {
             model_to_world: None,
             inputs,
             messages: &self.messages,
+            drive_raised: &self.drive_raised,
             raised: Vec::new(),
             entity,
         };
         self.graph_state.update(delta_time, graphs, &mut context);
-        self.raised = context.into_raised();
+        let mut raised = context.into_raised();
+        self.raised = std::mem::take(&mut self.drive_raised);
+        self.raised.append(&mut raised);
         self.messages.clear();
     }
 
@@ -349,6 +360,7 @@ impl AnimationPlayer {
             model_to_world: None,
             inputs,
             messages: &[],
+            drive_raised: &[],
             raised: Vec::new(),
             entity,
         };
@@ -388,6 +400,7 @@ impl AnimationPlayer {
             model_to_world: Some(model_to_world),
             inputs,
             messages: &[],
+            drive_raised: &[],
             raised: Vec::new(),
             entity,
         };
