@@ -223,7 +223,7 @@ impl App {
     /// have been compiled.
     pub fn register_placeable_asset<A: PlaceableAsset>(&mut self) -> &mut Self {
         self.register_asset::<A>();
-        placeable_asset::register::<A>(self);
+        self.install_placeable::<A>();
         self
     }
 
