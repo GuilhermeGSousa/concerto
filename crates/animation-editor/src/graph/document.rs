@@ -206,28 +206,29 @@ fn place_of(machine: &AnimationStateMachine, named: TransitionRef) -> Result<usi
         })
 }
 
-fn state_value(machine: &AnimationStateMachine, name: Name) -> Option<StateValue> {
-    let state = machine.states().find(|state| state.name == name)?;
-    Some(StateValue {
-        name,
-        graph: state.graph.clone(),
-        initial: machine.initial_state() == Some(name),
-    })
+impl StateValue {
+    fn of(machine: &AnimationStateMachine, name: Name) -> Option<Self> {
+        let state = machine.states().find(|state| state.name == name)?;
+        Some(StateValue {
+            name,
+            graph: state.graph.clone(),
+            initial: machine.initial_state() == Some(name),
+        })
+    }
 }
 
-fn transition_value(
-    machine: &AnimationStateMachine,
-    named: TransitionRef,
-) -> Option<TransitionValue> {
-    let place = place_of(machine, named).ok()?;
-    let transition = machine
-        .transitions(named.from)
-        .ok()?
-        .find(|transition| transition.index == place)?;
-    Some(TransitionValue {
-        trigger: transition.trigger.clone(),
-        blend_time: transition.blend_time,
-    })
+impl TransitionValue {
+    fn of(machine: &AnimationStateMachine, named: TransitionRef) -> Option<Self> {
+        let place = place_of(machine, named).ok()?;
+        let transition = machine
+            .transitions(named.from)
+            .ok()?
+            .find(|transition| transition.index == place)?;
+        Some(TransitionValue {
+            trigger: transition.trigger.clone(),
+            blend_time: transition.blend_time,
+        })
+    }
 }
 
 /// The working copy of one graph asset a tab has drilled through, kept until the tab reloads.
@@ -521,14 +522,14 @@ impl GraphDocument {
 
     fn selected_state(&self) -> Option<StateValue> {
         match self.selection {
-            Some(GraphSelection::State(name)) => state_value(self.machine()?, name),
+            Some(GraphSelection::State(name)) => StateValue::of(self.machine()?, name),
             _ => None,
         }
     }
 
     fn selected_transition(&self) -> Option<TransitionValue> {
         match self.selection {
-            Some(GraphSelection::Transition(named)) => transition_value(self.machine()?, named),
+            Some(GraphSelection::Transition(named)) => TransitionValue::of(self.machine()?, named),
             _ => None,
         }
     }
@@ -777,11 +778,11 @@ impl GraphDocument {
                 slot,
             } => {
                 let types = sources.types.ok_or(READ_ONLY)?;
-                add_node(copy, &types.read(), type_name, *parent, *slot)
+                copy.add_node(&types.read(), type_name, *parent, *slot)
             }
             GraphEdit::AddParent { type_name, child } => {
                 let types = sources.types.ok_or(READ_ONLY)?;
-                let added = add_node(copy, &types.read(), type_name, None, None)?;
+                let added = copy.add_node(&types.read(), type_name, None, None)?;
                 let Some(node) = added.node else {
                     return Ok(added);
                 };
@@ -1045,77 +1046,77 @@ fn node_type(registry: &TypeRegistry, name: &str) -> Result<Arc<TypeRegistration
     }
 }
 
-fn add_node(
-    copy: &mut GraphCopy,
-    registry: &TypeRegistry,
-    type_name: &str,
-    parent: Option<GraphNodeId>,
-    slot: Option<usize>,
-) -> Result<GraphChange, String> {
-    let registration = node_type(registry, type_name)?;
-    let data = registration
-        .data::<ReflectAnimationNode>()
-        .ok_or_else(|| format!("{type_name} is not an animation node"))?;
-    let mut leaves = LiveLeaves::from_parts(registry, None);
-    let (built, _) = (data.from_value)(&ReflectedValue::Struct(Vec::new()), &mut leaves);
-    let node = copy.add(registration.type_path().to_owned(), built);
-    let Some(parent) = parent else {
-        return Ok(GraphChange {
-            node: Some(node),
-            ..Default::default()
-        });
-    };
-    match copy.connect(node, parent, slot) {
-        Ok(connected) => Ok(GraphChange {
-            node: Some(node),
-            slot: Some(connected.slot),
-            loose: connected.loose,
-            ..Default::default()
-        }),
-        Err(reason) => {
-            copy.remove_node(node)?;
-            Err(reason)
+impl GraphCopy {
+    fn add_node(
+        &mut self,
+        registry: &TypeRegistry,
+        type_name: &str,
+        parent: Option<GraphNodeId>,
+        slot: Option<usize>,
+    ) -> Result<GraphChange, String> {
+        let registration = node_type(registry, type_name)?;
+        let data = registration
+            .data::<ReflectAnimationNode>()
+            .ok_or_else(|| format!("{type_name} is not an animation node"))?;
+        let mut leaves = LiveLeaves::from_parts(registry, None);
+        let (built, _) = (data.from_value)(&ReflectedValue::Struct(Vec::new()), &mut leaves);
+        let node = self.add(registration.type_path().to_owned(), built);
+        let Some(parent) = parent else {
+            return Ok(GraphChange {
+                node: Some(node),
+                ..Default::default()
+            });
+        };
+        match self.connect(node, parent, slot) {
+            Ok(connected) => Ok(GraphChange {
+                node: Some(node),
+                slot: Some(connected.slot),
+                loose: connected.loose,
+                ..Default::default()
+            }),
+            Err(reason) => {
+                self.remove_node(node)?;
+                Err(reason)
+            }
         }
     }
 }
 
-fn apply(
-    state: &mut GraphDocument,
-    edit: &GraphEdit,
-    sources: &Sources,
-) -> Result<GraphChange, String> {
-    if state.levels.is_empty() {
-        return Err("No graph is open".to_owned());
-    }
-    match edit {
-        GraphEdit::Select(selection) => {
-            if let Some(selection) = selection {
-                state.selectable(*selection)?;
-            }
-            state.selection = *selection;
-            Ok(GraphChange::default())
+impl GraphDocument {
+    fn apply(&mut self, edit: &GraphEdit, sources: &Sources) -> Result<GraphChange, String> {
+        if self.levels.is_empty() {
+            return Err("No graph is open".to_owned());
         }
-        GraphEdit::Up(count) => state.up(*count),
-        GraphEdit::Open(target) => state.open(target, sources),
-        _ => {
-            if !state.graph().is_some_and(GraphCopy::editable) {
-                return Err(READ_ONLY.to_owned());
+        match edit {
+            GraphEdit::Select(selection) => {
+                if let Some(selection) = selection {
+                    self.selectable(*selection)?;
+                }
+                self.selection = *selection;
+                Ok(GraphChange::default())
             }
-            let change = if edit.on_machine() {
-                state.edit_machine(edit, sources)?
-            } else {
-                state.edit_flow(edit, sources)?
-            };
-            if let Some(held) = state.held_mut() {
-                held.changed = true;
+            GraphEdit::Up(count) => self.up(*count),
+            GraphEdit::Open(target) => self.open(target, sources),
+            _ => {
+                if !self.graph().is_some_and(GraphCopy::editable) {
+                    return Err(READ_ONLY.to_owned());
+                }
+                let change = if edit.on_machine() {
+                    self.edit_machine(edit, sources)?
+                } else {
+                    self.edit_flow(edit, sources)?
+                };
+                if let Some(held) = self.held_mut() {
+                    held.changed = true;
+                }
+                self.keep_selection();
+                if let (GraphEdit::AddNode { .. } | GraphEdit::AddParent { .. }, Some(node)) =
+                    (edit, change.node)
+                {
+                    self.selection = Some(GraphSelection::Node(node));
+                }
+                Ok(change)
             }
-            state.keep_selection();
-            if let (GraphEdit::AddNode { .. } | GraphEdit::AddParent { .. }, Some(node)) =
-                (edit, change.node)
-            {
-                state.selection = Some(GraphSelection::Node(node));
-            }
-            Ok(change)
         }
     }
 }
@@ -1351,7 +1352,7 @@ pub(crate) fn apply_graph_edit(
                 .as_ref()
                 .map(|project| project.root.as_path()),
         };
-        apply(&mut state, edit, &sources)
+        state.apply(edit, &sources)
     };
     settle(
         *document,

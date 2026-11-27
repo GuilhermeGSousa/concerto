@@ -21,16 +21,17 @@ use concerto_foundation::assets::{
 use super::{
     ClipDocument, ClipFacts,
     events::{TabEvent, TabEventKind, read_events, write_events},
-    measure_transport,
     preview::{SeekClip, SetClipTransport, ShowClip},
     read_clip,
     transport::ClipTransport,
 };
 
-fn event_name(event: &TabEvent) -> &str {
-    match &event.kind {
-        TabEventKind::Named(name) => name.as_str(),
-        TabEventKind::Typed { type_name, .. } => type_name.as_str(),
+impl TabEvent {
+    fn event_name(&self) -> &str {
+        match &self.kind {
+            TabEventKind::Named(name) => name.as_str(),
+            TabEventKind::Typed { type_name, .. } => type_name.as_str(),
+        }
     }
 }
 
@@ -38,7 +39,7 @@ fn check_times(events: &[TabEvent], duration: f32) -> Result<(), String> {
     match events.iter().find(|event| event.time > duration) {
         Some(event) => Err(format!(
             "`{}` at {:.2} s is past the clip's {duration:.2} s",
-            event_name(event),
+            event.event_name(),
             event.time
         )),
         None => Ok(()),
@@ -119,7 +120,7 @@ pub(crate) fn save_clip(
             .context("Open a project before saving")
             .and_then(|root| save_clip_document(&mut document, &mut state, root, &mut assets));
         if written.is_ok() {
-            measure_transport(&mut transport, &state.facts);
+            transport.measure_transport(&state.facts);
             show_saved_clip(entity, &state, &transport, &mut previews);
         }
         report_save(

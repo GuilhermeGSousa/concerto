@@ -109,11 +109,21 @@ pub struct TransportRow {
     pub speeds: [Entity; SPEEDS.len()],
 }
 
-fn transport_signal(transport: &ClipTransport) -> SetClipTransport {
-    SetClipTransport {
-        playing: transport.playing,
-        looping: transport.looping,
-        rate: transport.speed,
+impl ClipTransport {
+    fn transport_signal(&self) -> SetClipTransport {
+        SetClipTransport {
+            playing: self.playing,
+            looping: self.looping,
+            rate: self.speed,
+        }
+    }
+
+    pub(crate) fn at_the_end(&self) -> bool {
+        let duration = self.duration;
+        let last_frame = self
+            .rate
+            .map(|rate| time_of_frame(frame_at(duration, rate), rate));
+        self.time >= last_frame.unwrap_or(duration).min(duration)
     }
 }
 
@@ -122,18 +132,10 @@ fn pause_at(transport: &ClipTransport, document: Entity, time: f32, previews: &m
         document,
         SetClipTransport {
             playing: false,
-            ..transport_signal(transport)
+            ..transport.transport_signal()
         },
     );
     previews.trigger(document, SeekClip(time));
-}
-
-pub(crate) fn at_the_end(transport: &ClipTransport) -> bool {
-    let duration = transport.duration;
-    let last_frame = transport
-        .rate
-        .map(|rate| time_of_frame(frame_at(duration, rate), rate));
-    transport.time >= last_frame.unwrap_or(duration).min(duration)
 }
 
 fn toggle_playing(document: Entity) -> Listener<UIClick> {
@@ -145,14 +147,14 @@ fn toggle_playing(document: Entity) -> Listener<UIClick> {
             return;
         };
         let playing = !transport.playing;
-        if playing && !transport.looping && at_the_end(transport) {
+        if playing && !transport.looping && transport.at_the_end() {
             previews.trigger(document, SeekClip(0.0));
         }
         previews.trigger(
             document,
             SetClipTransport {
                 playing,
-                ..transport_signal(transport)
+                ..transport.transport_signal()
             },
         );
     })
@@ -186,7 +188,7 @@ fn toggle_looping(document: Entity) -> Listener<UIClick> {
         }
         if let Some(mut transport) = transports.get_entity_mut(document) {
             transport.looping = !transport.looping;
-            previews.trigger(document, transport_signal(&transport));
+            previews.trigger(document, transport.transport_signal());
         }
     })
     .into_listener()
@@ -201,7 +203,7 @@ fn set_speed(document: Entity, speed: f32) -> Listener<UIClick> {
         }
         if let Some(mut transport) = transports.get_entity_mut(document) {
             transport.speed = speed;
-            previews.trigger(document, transport_signal(&transport));
+            previews.trigger(document, transport.transport_signal());
         }
     })
     .into_listener()

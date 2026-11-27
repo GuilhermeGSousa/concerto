@@ -48,11 +48,11 @@ use preview::{
 };
 
 use crate::{
-    ClipFacts, default_scene, measure_transport,
+    ClipFacts, default_scene,
     preview::{ClearClip, SeekClip, SetClipTransport, ShowClip},
     transport::{
-        ClipTransport, TransportDisabled, at_the_end, follow_transport_progress,
-        sync_transport_rows, sync_transport_timelines,
+        ClipTransport, TransportDisabled, follow_transport_progress, sync_transport_rows,
+        sync_transport_timelines,
     },
 };
 
@@ -484,52 +484,64 @@ struct SideView {
     scene: Option<ShownScene>,
 }
 
-fn read_side(
-    rig: Arc<RetargetRig>,
-    reads: &mut RigReads,
-    from: &ReadFrom,
-) -> Result<SideView, String> {
-    let skeleton_id = rig.skeleton.id();
-    let skeleton = reads.skeleton(skeleton_id, from)?;
-    let reference = match &rig.reference {
-        ReferencePose::Rest => Ok(None),
-        ReferencePose::ClipFrame { clip, .. } => reads.clip(clip.id(), from).map(Some),
-    };
-    let resolved = reference.and_then(|clip| {
-        rig.resolve(&skeleton, clip.as_deref())
-            .map_err(|error| error.to_string())
-    });
-    let scene = from
-        .assets
-        .get(skeleton_id)
-        .and_then(|entry| default_scene(entry, from.assets))
-        .and_then(|entry| {
-            let scene = reads.scene(entry, from).ok()?;
-            Some(ShownScene {
-                id: entry.id,
-                scene,
-            })
+impl SideView {
+    fn read_side(
+        rig: Arc<RetargetRig>,
+        reads: &mut RigReads,
+        from: &ReadFrom,
+    ) -> Result<Self, String> {
+        let skeleton_id = rig.skeleton.id();
+        let skeleton = reads.skeleton(skeleton_id, from)?;
+        let reference = match &rig.reference {
+            ReferencePose::Rest => Ok(None),
+            ReferencePose::ClipFrame { clip, .. } => reads.clip(clip.id(), from).map(Some),
+        };
+        let resolved = reference.and_then(|clip| {
+            rig.resolve(&skeleton, clip.as_deref())
+                .map_err(|error| error.to_string())
         });
-    Ok(SideView {
-        rig,
-        skeleton_id,
-        skeleton,
-        resolved,
-        scene,
-    })
-}
-
-fn side_label(side: RigSide) -> &'static str {
-    match side {
-        RigSide::Source => "Source rig",
-        RigSide::Target => "Target rig",
+        let scene = from
+            .assets
+            .get(skeleton_id)
+            .and_then(|entry| default_scene(entry, from.assets))
+            .and_then(|entry| {
+                let scene = reads.scene(entry, from).ok()?;
+                Some(ShownScene {
+                    id: entry.id,
+                    scene,
+                })
+            });
+        Ok(SideView {
+            rig,
+            skeleton_id,
+            skeleton,
+            resolved,
+            scene,
+        })
     }
 }
 
-fn opposite(side: RigSide) -> RigSide {
-    match side {
-        RigSide::Source => RigSide::Target,
-        RigSide::Target => RigSide::Source,
+impl RigSide {
+    fn side_label(self) -> &'static str {
+        match self {
+            RigSide::Source => "Source rig",
+            RigSide::Target => "Target rig",
+        }
+    }
+
+    fn opposite(self) -> RigSide {
+        match self {
+            RigSide::Source => RigSide::Target,
+            RigSide::Target => RigSide::Source,
+        }
+    }
+
+    fn view_part(self, view: &Result<SideView, String>) -> Option<String> {
+        let error = match view {
+            Ok(view) => view.resolved.as_ref().err()?,
+            Err(error) => error,
+        };
+        Some(format!("{}: {error}", self.side_label()))
     }
 }
 
@@ -585,131 +597,137 @@ struct Followed {
     facts: RigFacts,
 }
 
-fn view_part(side: RigSide, view: &Result<SideView, String>) -> Option<String> {
-    let error = match view {
-        Ok(view) => view.resolved.as_ref().err()?,
-        Err(error) => error,
-    };
-    Some(format!("{}: {error}", side_label(side)))
-}
-
-fn built_retarget(sides: &Sides) -> Option<Result<PoseRetarget, String>> {
-    let source = sides.source.as_ref()?;
-    let target = sides.target.as_ref()?;
-    let source_rig = source.resolved.as_ref().ok()?;
-    let target_rig = target.resolved.as_ref().ok()?;
-    Some(
-        PoseRetarget::new(source_rig, &source.skeleton, target_rig, &target.skeleton)
-            .map_err(|error| format!("Retarget: {error}")),
-    )
-}
-
-fn follow(
-    open: &RetargetRig,
-    preview: &RigPreview,
-    reads: &mut RigReads,
-    from: &ReadFrom,
-) -> Followed {
-    let open_side = preview.open_rig_is.side();
-    let other_side = opposite(open_side);
-    let mut parts = SideParts::default();
-    let mut sides = Sides::default();
-
-    let open_view = read_side(Arc::new(open.clone()), reads, from);
-    *parts.side_mut(open_side) = view_part(open_side, &open_view);
-    let skeleton_error = open_view
-        .as_ref()
-        .err()
-        .filter(|_| !open.skeleton.id().is_nil())
-        .cloned();
-    *sides.side_mut(open_side) = open_view.ok();
-
-    let other_id = preview.other.id();
-    if other_id.is_nil() {
-        *parts.side_mut(other_side) = Some("Pick the other rig".to_owned());
-    } else {
-        let other_view = reads
-            .rig(other_id, from)
-            .and_then(|other| read_side(other, reads, from));
-        *parts.side_mut(other_side) = view_part(other_side, &other_view);
-        *sides.side_mut(other_side) = other_view.ok();
+impl Sides {
+    fn built_retarget(&self) -> Option<Result<PoseRetarget, String>> {
+        let source = self.source.as_ref()?;
+        let target = self.target.as_ref()?;
+        let source_rig = source.resolved.as_ref().ok()?;
+        let target_rig = target.resolved.as_ref().ok()?;
+        Some(
+            PoseRetarget::new(source_rig, &source.skeleton, target_rig, &target.skeleton)
+                .map_err(|error| format!("Retarget: {error}")),
+        )
     }
 
-    let mut status: Vec<String> = [parts.source, parts.target].into_iter().flatten().collect();
-    let retarget = match built_retarget(&sides) {
-        Some(Ok(retarget)) => Some(retarget),
-        Some(Err(error)) => {
-            status.push(error);
-            None
+    fn side_offsets(&self) -> SideOffsets {
+        let source = Footprint::of(self.source.as_ref());
+        let target = Footprint::of(self.target.as_ref());
+        let gap = (source.width + target.width) / 2.0 + 0.25 * source.height.max(target.height);
+        SideOffsets {
+            source: -gap / 2.0,
+            target: gap / 2.0,
         }
-        None => None,
-    };
+    }
+}
 
-    let clip = if preview.mode == RigPreviewMode::Clip {
-        let id = preview.clip.id();
-        if id.is_nil() {
-            status.push("Pick a clip".to_owned());
-            None
+impl Followed {
+    fn follow(
+        open: &RetargetRig,
+        preview: &RigPreview,
+        reads: &mut RigReads,
+        from: &ReadFrom,
+    ) -> Self {
+        let open_side = preview.open_rig_is.side();
+        let other_side = open_side.opposite();
+        let mut parts = SideParts::default();
+        let mut sides = Sides::default();
+
+        let open_view = SideView::read_side(Arc::new(open.clone()), reads, from);
+        *parts.side_mut(open_side) = open_side.view_part(&open_view);
+        let skeleton_error = open_view
+            .as_ref()
+            .err()
+            .filter(|_| !open.skeleton.id().is_nil())
+            .cloned();
+        *sides.side_mut(open_side) = open_view.ok();
+
+        let other_id = preview.other.id();
+        if other_id.is_nil() {
+            *parts.side_mut(other_side) = Some("Pick the other rig".to_owned());
         } else {
-            match reads.clip(id, from) {
-                Ok(clip) => Some(ShownClip { id, clip }),
-                Err(error) => {
-                    status.push(format!("Clip: {error}"));
-                    None
+            let other_view = reads
+                .rig(other_id, from)
+                .and_then(|other| SideView::read_side(other, reads, from));
+            *parts.side_mut(other_side) = other_side.view_part(&other_view);
+            *sides.side_mut(other_side) = other_view.ok();
+        }
+
+        let mut status: Vec<String> = [parts.source, parts.target].into_iter().flatten().collect();
+        let retarget = match sides.built_retarget() {
+            Some(Ok(retarget)) => Some(retarget),
+            Some(Err(error)) => {
+                status.push(error);
+                None
+            }
+            None => None,
+        };
+
+        let clip = if preview.mode == RigPreviewMode::Clip {
+            let id = preview.clip.id();
+            if id.is_nil() {
+                status.push("Pick a clip".to_owned());
+                None
+            } else {
+                match reads.clip(id, from) {
+                    Ok(clip) => Some(ShownClip { id, clip }),
+                    Err(error) => {
+                        status.push(format!("Clip: {error}"));
+                        None
+                    }
                 }
             }
+        } else {
+            None
+        };
+
+        let driven = sides.source.as_ref().and_then(|source| {
+            let shown = clip.as_ref()?;
+            Some(Share {
+                count: source
+                    .skeleton
+                    .bone_ids
+                    .iter()
+                    .filter(|&id| shown.clip.get_channels(id).is_some())
+                    .count(),
+                of: source.skeleton.bone_count(),
+            })
+        });
+        if driven.is_some_and(|driven| driven.count == 0) {
+            status.push("The clip drives none of the source skeleton's bones".to_owned());
         }
-    } else {
-        None
-    };
 
-    let driven = sides.source.as_ref().and_then(|source| {
-        let shown = clip.as_ref()?;
-        Some(Share {
-            count: source
-                .skeleton
-                .bone_ids
-                .iter()
-                .filter(|&id| shown.clip.get_channels(id).is_some())
-                .count(),
-            of: source.skeleton.bone_count(),
-        })
-    });
-    if driven.is_some_and(|driven| driven.count == 0) {
-        status.push("The clip drives none of the source skeleton's bones".to_owned());
-    }
+        let chains = sides.source.as_ref().and_then(|source| {
+            let target = sides.target.as_ref()?;
+            Some(Share {
+                count: target
+                    .rig
+                    .chains
+                    .iter()
+                    .filter(|chain| {
+                        source
+                            .rig
+                            .chains
+                            .iter()
+                            .any(|known| known.name == chain.name)
+                    })
+                    .count(),
+                of: target.rig.chains.len(),
+            })
+        });
 
-    let chains = sides.source.as_ref().and_then(|source| {
-        let target = sides.target.as_ref()?;
-        Some(Share {
-            count: target
-                .rig
-                .chains
-                .iter()
-                .filter(|chain| {
-                    source
-                        .rig
-                        .chains
-                        .iter()
-                        .any(|known| known.name == chain.name)
-                })
-                .count(),
-            of: target.rig.chains.len(),
-        })
-    });
-
-    Followed {
-        open_side,
-        skeleton_error,
-        facts: RigFacts {
-            scale: retarget.as_ref().map(PoseRetarget::scale),
-            chains,
-            driven,
-        },
-        sides,
-        retarget,
-        clip,
-        status: status.join(" · "),
+        Followed {
+            open_side,
+            skeleton_error,
+            facts: RigFacts {
+                scale: retarget.as_ref().map(PoseRetarget::scale),
+                chains,
+                driven,
+            },
+            sides,
+            retarget,
+            clip,
+            status: status.join(" · "),
+        }
     }
 }
 
@@ -718,40 +736,32 @@ struct Footprint {
     height: f32,
 }
 
-fn footprint(view: Option<&SideView>) -> Footprint {
-    let Some(view) = view else {
-        return Footprint {
-            width: 0.0,
-            height: 0.0,
+impl Footprint {
+    fn of(view: Option<&SideView>) -> Self {
+        let Some(view) = view else {
+            return Footprint {
+                width: 0.0,
+                height: 0.0,
+            };
         };
-    };
-    let pose = match &view.resolved {
-        Ok(resolved) => &resolved.reference_local[..],
-        Err(_) => &view.skeleton.rest_pose[..],
-    };
-    let xs: Vec<f32> = view
-        .skeleton
-        .forward_kinematics(pose)
-        .map(|model| model.iter().map(|bone| bone.w_axis.x).collect())
-        .unwrap_or_default();
-    let min = xs.iter().copied().reduce(f32::min).unwrap_or(0.0);
-    let max = xs.iter().copied().reduce(f32::max).unwrap_or(0.0);
-    Footprint {
-        width: max - min,
-        height: view
-            .resolved
-            .as_ref()
-            .map_or(0.0, |resolved| resolved.root_height),
-    }
-}
-
-fn side_offsets(sides: &Sides) -> SideOffsets {
-    let source = footprint(sides.source.as_ref());
-    let target = footprint(sides.target.as_ref());
-    let gap = (source.width + target.width) / 2.0 + 0.25 * source.height.max(target.height);
-    SideOffsets {
-        source: -gap / 2.0,
-        target: gap / 2.0,
+        let pose = match &view.resolved {
+            Ok(resolved) => &resolved.reference_local[..],
+            Err(_) => &view.skeleton.rest_pose[..],
+        };
+        let xs: Vec<f32> = view
+            .skeleton
+            .forward_kinematics(pose)
+            .map(|model| model.iter().map(|bone| bone.w_axis.x).collect())
+            .unwrap_or_default();
+        let min = xs.iter().copied().reduce(f32::min).unwrap_or(0.0);
+        let max = xs.iter().copied().reduce(f32::max).unwrap_or(0.0);
+        Footprint {
+            width: max - min,
+            height: view
+                .resolved
+                .as_ref()
+                .map_or(0.0, |resolved| resolved.root_height),
+        }
     }
 }
 
@@ -761,53 +771,55 @@ struct Steered {
     seek: Option<f32>,
 }
 
-fn steer_transport(
-    transport: &ClipTransport,
-    preview: &RigPreview,
-    clip: Option<&ShownClip>,
-    restarted: bool,
-) -> Steered {
-    let mut wanted = transport.clone();
-    let facts = clip.map_or_else(ClipFacts::default, |shown| ClipFacts::of(&shown.clip));
-    measure_transport(&mut wanted, &facts);
-    if restarted {
-        wanted.time = 0.0;
-    }
-    let mut send = false;
-    let mut seek = None;
-    if wanted.looping != preview.looping {
-        wanted.looping = preview.looping;
-        send = true;
-    }
-    if wanted.speed != preview.speed {
-        wanted.speed = preview.speed;
-        send = true;
-    }
-    match preview.paused_at {
-        Some(time) => {
-            if wanted.playing {
-                wanted.playing = false;
-                send = true;
-            }
-            if wanted.time != time {
-                wanted.time = time;
-                seek = Some(time);
-            }
+impl ClipTransport {
+    fn steer_transport(
+        &self,
+        preview: &RigPreview,
+        clip: Option<&ShownClip>,
+        restarted: bool,
+    ) -> Steered {
+        let mut wanted = self.clone();
+        let facts = clip.map_or_else(ClipFacts::default, |shown| ClipFacts::of(&shown.clip));
+        wanted.measure_transport(&facts);
+        if restarted {
+            wanted.time = 0.0;
         }
-        None if !wanted.playing => {
-            if !wanted.looping && at_the_end(&wanted) {
-                wanted.time = 0.0;
-                seek = Some(0.0);
-            }
-            wanted.playing = true;
+        let mut send = false;
+        let mut seek = None;
+        if wanted.looping != preview.looping {
+            wanted.looping = preview.looping;
             send = true;
         }
-        None => {}
-    }
-    Steered {
-        transport: wanted,
-        send,
-        seek,
+        if wanted.speed != preview.speed {
+            wanted.speed = preview.speed;
+            send = true;
+        }
+        match preview.paused_at {
+            Some(time) => {
+                if wanted.playing {
+                    wanted.playing = false;
+                    send = true;
+                }
+                if wanted.time != time {
+                    wanted.time = time;
+                    seek = Some(time);
+                }
+            }
+            None if !wanted.playing => {
+                if !wanted.looping && wanted.at_the_end() {
+                    wanted.time = 0.0;
+                    seek = Some(0.0);
+                }
+                wanted.playing = true;
+                send = true;
+            }
+            None => {}
+        }
+        Steered {
+            transport: wanted,
+            send,
+            seek,
+        }
     }
 }
 
@@ -818,7 +830,7 @@ fn send_sides(
     sent: &mut SentStages,
     previews: &mut PreviewSignals,
 ) {
-    let offsets = side_offsets(&followed.sides);
+    let offsets = followed.sides.side_offsets();
     if sent.offsets != Some(offsets) {
         sent.offsets = Some(offsets);
         previews.trigger(
@@ -831,7 +843,7 @@ fn send_sides(
     }
     let other = followed
         .sides
-        .side(opposite(followed.open_side))
+        .side(followed.open_side.opposite())
         .map(|view| view.rig.as_ref());
     let chains = chain_colors(open, other);
     for side in [RigSide::Source, RigSide::Target] {
@@ -971,7 +983,7 @@ pub(crate) fn follow_rig(
             reads.forget(&written);
             sent.forget(&written);
         }
-        let followed = follow(open, &state.preview, reads, &from);
+        let followed = Followed::follow(open, &state.preview, reads, &from);
 
         let open_skeleton = followed
             .sides
@@ -1004,8 +1016,7 @@ pub(crate) fn follow_rig(
                 None => previews.trigger(document, ClearClip),
             }
         }
-        let mut steered = steer_transport(
-            &transport,
+        let mut steered = transport.steer_transport(
             &state.preview,
             followed.clip.as_ref(),
             restarted || reopened,

@@ -298,25 +298,27 @@ fn spawn_rows(
     rows
 }
 
-fn build_bones(host: &mut EntityCommandQueue, theme: &UITheme) -> BonesPanel {
-    let mut panel = host.spawn_child(theme.column().gap(theme.spacing_sm).grow());
-    panel.add_child(title(theme, "Bones"));
-    let empty = panel
-        .spawn_child(theme.label(NO_SKELETON).muted().fixed())
-        .entity();
-    let tree = panel
-        .spawn_child((
-            UINode::default()
-                .with_height(UIValue::Px(0.0))
-                .with_flex_grow(1.0),
-            UITree::default(),
-        ))
-        .entity();
-    BonesPanel {
-        tree,
-        empty,
-        shown: None,
-        rows: Vec::new(),
+impl BonesPanel {
+    fn build_bones(host: &mut EntityCommandQueue, theme: &UITheme) -> Self {
+        let mut panel = host.spawn_child(theme.column().gap(theme.spacing_sm).grow());
+        panel.add_child(title(theme, "Bones"));
+        let empty = panel
+            .spawn_child(theme.label(NO_SKELETON).muted().fixed())
+            .entity();
+        let tree = panel
+            .spawn_child((
+                UINode::default()
+                    .with_height(UIValue::Px(0.0))
+                    .with_flex_grow(1.0),
+                UITree::default(),
+            ))
+            .entity();
+        BonesPanel {
+            tree,
+            empty,
+            shown: None,
+            rows: Vec::new(),
+        }
     }
 }
 
@@ -369,7 +371,7 @@ pub(crate) fn build_rig_panels(
         };
         build_bottom(&mut cmd.entity(bottom), document, &theme);
         let panels = RigPanels {
-            bones: build_bones(&mut cmd.entity(left), &theme),
+            bones: BonesPanel::build_bones(&mut cmd.entity(left), &theme),
             inspector: build_inspector(&mut cmd.entity(inspector), document, &theme),
         };
         cmd.insert(panels, document);
@@ -382,19 +384,21 @@ struct FactLines {
     driven: String,
 }
 
-fn fact_lines(facts: &RigFacts) -> FactLines {
-    FactLines {
-        scale: facts
-            .scale
-            .map_or_else(|| NO_VALUE.to_owned(), |scale| format!("{scale:.2}×")),
-        chains: facts.chains.map_or_else(
-            || NO_VALUE.to_owned(),
-            |chains| format!("{} of {} shared", chains.count, chains.of),
-        ),
-        driven: facts.driven.map_or_else(
-            || NO_VALUE.to_owned(),
-            |driven| format!("{} of {}", driven.count, driven.of),
-        ),
+impl RigFacts {
+    fn fact_lines(&self) -> FactLines {
+        FactLines {
+            scale: self
+                .scale
+                .map_or_else(|| NO_VALUE.to_owned(), |scale| format!("{scale:.2}×")),
+            chains: self.chains.map_or_else(
+                || NO_VALUE.to_owned(),
+                |chains| format!("{} of {} shared", chains.count, chains.of),
+            ),
+            driven: self.driven.map_or_else(
+                || NO_VALUE.to_owned(),
+                |driven| format!("{} of {}", driven.count, driven.of),
+            ),
+        }
     }
 }
 
@@ -466,7 +470,7 @@ pub(crate) fn sync_rig_panels(
         write_color(&mut texts, bones.empty, color);
 
         let inspector = &panels.inspector;
-        let facts = fact_lines(&state.facts);
+        let facts = state.facts.fact_lines();
         write_text(&mut texts, inspector.scale, &facts.scale);
         write_text(&mut texts, inspector.chains, &facts.chains);
         write_text(&mut texts, inspector.driven, &facts.driven);

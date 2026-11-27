@@ -124,12 +124,14 @@ impl ClipDocument {
     }
 }
 
-pub(crate) fn measure_transport(transport: &mut ClipTransport, facts: &ClipFacts) {
-    if transport.duration != facts.duration {
-        transport.duration = facts.duration;
-    }
-    if transport.rate != facts.rate {
-        transport.rate = facts.rate;
+impl ClipTransport {
+    pub(crate) fn measure_transport(&mut self, facts: &ClipFacts) {
+        if self.duration != facts.duration {
+            self.duration = facts.duration;
+        }
+        if self.rate != facts.rate {
+            self.rate = facts.rate;
+        }
     }
 }
 
@@ -314,17 +316,19 @@ pub fn read_shown_scene(
         .transpose()
 }
 
-fn scene_signal(
-    state: &mut ClipDocument,
-    root: &Path,
-    clip: Option<&AssetEntry>,
-    assets: &AssetRegistry,
-) -> ShowClipScene {
-    let shown = read_shown_scene(root, clip, state.picked_scene, assets);
-    state.scene_error = shown.as_ref().err().map(|error| format!("{error:#}"));
-    let shown = shown.ok().flatten();
-    state.shown_scene = shown.as_ref().map(|(id, _)| *id);
-    ShowClipScene(shown.map(|(_, scene)| scene))
+impl ClipDocument {
+    fn scene_signal(
+        &mut self,
+        root: &Path,
+        clip: Option<&AssetEntry>,
+        assets: &AssetRegistry,
+    ) -> ShowClipScene {
+        let shown = read_shown_scene(root, clip, self.picked_scene, assets);
+        self.scene_error = shown.as_ref().err().map(|error| format!("{error:#}"));
+        let shown = shown.ok().flatten();
+        self.shown_scene = shown.as_ref().map(|(id, _)| *id);
+        ShowClipScene(shown.map(|(_, scene)| scene))
+    }
 }
 
 pub(crate) fn load_clip(
@@ -368,7 +372,7 @@ pub(crate) fn load_clip(
         };
         state.clip = Some(Arc::clone(&clip));
         state.rebuild_rows();
-        measure_transport(&mut transport, &state.facts);
+        transport.measure_transport(&state.facts);
         transport.time = 0.0;
         transport.playing = true;
         previews.trigger(entity, ShowClip(clip));
@@ -380,10 +384,7 @@ pub(crate) fn load_clip(
                 rate: transport.speed,
             },
         );
-        previews.trigger(
-            entity,
-            scene_signal(&mut state, &root, Some(&asset), &assets),
-        );
+        previews.trigger(entity, state.scene_signal(&root, Some(&asset), &assets));
         finish_asset_request(&mut document, &asset, Ok(()));
     }
 }
