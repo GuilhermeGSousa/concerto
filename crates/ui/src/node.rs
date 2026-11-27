@@ -903,12 +903,12 @@ fn sync_node_style(
         None => texts.get_entity(entity),
     };
     let style = match text {
-        Some(text) => leaf_style(node, text.ellipsis, text.wrap),
+        Some(text) => node.leaf_style(text.ellipsis, text.wrap),
         None => node.style(),
     };
     let measure_key = match (extent, text) {
         (Some(extent), _) => Some(extent_measure_signature(extent)),
-        (None, Some(text)) if sized_by_style(node, text) => Some(FIXED_TEXT_MEASURE),
+        (None, Some(text)) if node.sized_by_style(text) => Some(FIXED_TEXT_MEASURE),
         (None, Some(text)) => Some(text_measure_signature(text)),
         (None, None) => None,
     };
@@ -1457,32 +1457,12 @@ fn text_measure_signature(text: &crate::text::UIText) -> u64 {
 
 const FIXED_TEXT_MEASURE: u64 = u64::MAX;
 
-fn sized_by_style(node: &UINode, text: &crate::text::UIText) -> bool {
-    let px = |value: UIValue| matches!(value, UIValue::Px(_));
-    let floored = |min: UIValue, overflow: Overflow| {
-        !matches!(min, UIValue::Auto) || matches!(overflow, Overflow::Hidden | Overflow::Scroll)
-    };
-    px(node.width)
-        && px(node.height)
-        && (node.flex_shrink == 0.0
-            || ((floored(node.min_width, node.overflow_x) || (text.ellipsis && !text.wrap))
-                && floored(node.min_height, node.overflow_y)))
-}
-
 fn extent_measure_signature(extent: f32) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     1_u8.hash(&mut hasher);
     extent.to_bits().hash(&mut hasher);
     hasher.finish()
-}
-
-fn leaf_style(node: &UINode, ellipsis: bool, wrap: bool) -> Style {
-    let mut style = node.style();
-    if ellipsis && !wrap && matches!(node.min_width, UIValue::Auto) {
-        style.min_size.width = Dimension::length(0.0);
-    }
-    style
 }
 
 fn scroll_offset(areas: &Query<&UIScrollArea>, entity: Entity) -> f32 {
@@ -1971,6 +1951,28 @@ fn material_signature(
     ]
 }
 
+impl UINode {
+    fn sized_by_style(&self, text: &crate::text::UIText) -> bool {
+        let px = |value: UIValue| matches!(value, UIValue::Px(_));
+        let floored = |min: UIValue, overflow: Overflow| {
+            !matches!(min, UIValue::Auto) || matches!(overflow, Overflow::Hidden | Overflow::Scroll)
+        };
+        px(self.width)
+            && px(self.height)
+            && (self.flex_shrink == 0.0
+                || ((floored(self.min_width, self.overflow_x) || (text.ellipsis && !text.wrap))
+                    && floored(self.min_height, self.overflow_y)))
+    }
+
+    fn leaf_style(&self, ellipsis: bool, wrap: bool) -> Style {
+        let mut style = self.style();
+        if ellipsis && !wrap && matches!(self.min_width, UIValue::Auto) {
+            style.min_size.width = Dimension::length(0.0);
+        }
+        style
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2025,7 +2027,7 @@ mod tests {
         let node = UINode::default().with_flex_grow(1.0);
         let label = taffy
             .new_leaf_with_context(
-                leaf_style(&node, ellipsis, measure.wrap),
+                node.leaf_style(ellipsis, measure.wrap),
                 LeafMeasure::Text(measure),
             )
             .unwrap();
@@ -2067,7 +2069,7 @@ mod tests {
                     .clipped();
                 taffy
                     .new_leaf_with_context(
-                        leaf_style(&node, false, measure.wrap),
+                        node.leaf_style(false, measure.wrap),
                         LeafMeasure::Text(measure),
                     )
                     .unwrap()
