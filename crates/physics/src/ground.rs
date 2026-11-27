@@ -6,16 +6,21 @@ use crate::{body::BodyId, physics_state::PhysicsState};
 /// One ground contact; only exists while touching something.
 #[derive(Clone, Copy, Debug)]
 pub struct GroundContact {
+    /// The entity of the ground body, when it has one.
     pub entity: Option<Entity>,
+    /// World-space contact point on the ground.
     pub point: Vec3,
+    /// World-space contact normal, pointing away from the ground.
     pub normal: Vec3,
     /// The ground body's velocity at the contact point (moving platforms).
     pub velocity: Vec3,
 }
 
+/// What a [`GroundProbe`]'s body stands on.
 #[derive(Clone, Copy, Debug, Default)]
 pub enum GroundState {
     #[default]
+    /// Touching nothing within the probe's `max_separation`.
     InAir,
     /// Standing on walkable ground.
     OnGround(GroundContact),
@@ -24,6 +29,7 @@ pub enum GroundState {
 }
 
 impl GroundState {
+    /// The ground contact, or `None` in the air.
     pub fn contact(&self) -> Option<&GroundContact> {
         match self {
             Self::InAir => None,
@@ -31,6 +37,7 @@ impl GroundState {
         }
     }
 
+    /// Whether the body stands on walkable ground; steep ground does not count.
     pub fn is_grounded(&self) -> bool {
         matches!(self, Self::OnGround(_))
     }
@@ -49,10 +56,12 @@ pub struct GroundProbe {
 }
 
 impl GroundProbe {
+    /// What the body stood on at the last fixed step.
     pub fn ground(&self) -> &GroundState {
         &self.state
     }
 
+    /// Whether the body stood on walkable ground at the last fixed step.
     pub fn is_grounded(&self) -> bool {
         self.state.is_grounded()
     }

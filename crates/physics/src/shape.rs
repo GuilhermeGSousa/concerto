@@ -21,21 +21,28 @@ use crate::{
 /// What a collision shape is, as plain data.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ShapeKind {
+    /// A sphere centred on the origin.
     Sphere {
+        /// The radius in metres.
         radius: f32,
     },
+    /// A box centred on the origin.
     Cuboid {
+        /// Half the box's size along each local axis, in metres.
         half_extents: Vec3,
     },
     /// A capsule along the local Y axis.
     Capsule {
+        /// Half the length of the cylinder between the end caps, in metres.
         half_height: f32,
+        /// The radius of the cylinder and its caps, in metres.
         radius: f32,
     },
     /// A triangle mesh; its bounds are the shape's `local_aabb`.
     Mesh,
 }
 
+/// A collision shape built by the active backend, together with what it is as plain data.
 pub struct PhysicsShape(
     pub(crate) <ActiveBackend as PhysicsBackend>::ShapeHandle,
     ShapeKind,
@@ -55,6 +62,7 @@ impl PhysicsShape {
         ))
     }
 
+    /// Creates a sphere of `radius` metres centred on the origin.
     pub fn create_sphere_shape(radius: f32) -> Self {
         Self(
             ActiveBackend::create_sphere_shape(radius),
@@ -62,6 +70,7 @@ impl PhysicsShape {
         )
     }
 
+    /// Creates a box centred on the origin from its half extents along x, y and z, in metres.
     pub fn create_cuboid_shape(width: f32, height: f32, length: f32) -> Self {
         Self(
             ActiveBackend::create_cuboid_shape(width, height, length),
@@ -71,6 +80,8 @@ impl PhysicsShape {
         )
     }
 
+    /// Creates a capsule along the local y axis: a cylinder of `half_height` above and below the
+    /// origin, capped by hemispheres of `radius`, in metres.
     pub fn create_capsule_shape(half_height: f32, radius: f32) -> Self {
         Self(
             ActiveBackend::create_capsule_shape(half_height, radius),
@@ -93,8 +104,10 @@ impl PhysicsShape {
     }
 }
 
+/// A collision shape shared by every [`Collider`] that uses it.
 pub type SharedPhysicsShape = Arc<PhysicsShape>;
 
+/// The mesh collision shapes built so far, one per mesh asset, dropped with the asset.
 #[derive(Resource, Default)]
 pub struct PhysicsMeshShapes {
     cache: HashMap<AssetId, SharedPhysicsShape>,
@@ -120,6 +133,10 @@ impl PhysicsMeshShapes {
     }
 }
 
+/// Gives the entity a triangle mesh [`Collider`] built from its [`MeshComponent`]'s mesh.
+///
+/// A [`BoxCollider`] on the same entity takes precedence. A mesh the backend rejects is skipped
+/// with a warning and the `MeshCollider` removed. A mesh collider cannot be a sensor.
 #[derive(Component, Reflect, Default)]
 #[reflect(Component, Default, SceneComponent)]
 pub struct MeshCollider;

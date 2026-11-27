@@ -13,17 +13,24 @@ use concerto_ecs::component::Component;
 pub struct AllowedDofs(u32);
 
 impl AllowedDofs {
+    /// Movement along the world x axis.
     pub const TRANSLATION_X: Self = Self(1 << 0);
+    /// Movement along the world y axis.
     pub const TRANSLATION_Y: Self = Self(1 << 1);
+    /// Movement along the world z axis.
     pub const TRANSLATION_Z: Self = Self(1 << 2);
+    /// Rotation about the world x axis.
     pub const ROTATION_X: Self = Self(1 << 3);
+    /// Rotation about the world y axis.
     pub const ROTATION_Y: Self = Self(1 << 4);
+    /// Rotation about the world z axis.
     pub const ROTATION_Z: Self = Self(1 << 5);
     /// All translation axes, no rotation.
     pub const TRANSLATION: Self =
         Self(Self::TRANSLATION_X.0 | Self::TRANSLATION_Y.0 | Self::TRANSLATION_Z.0);
     /// All rotation axes, no translation.
     pub const ROTATION: Self = Self(Self::ROTATION_X.0 | Self::ROTATION_Y.0 | Self::ROTATION_Z.0);
+    /// Every translation and rotation axis; the default.
     pub const ALL: Self = Self(0x3f);
 
     /// Whether every degree of freedom in `other` is allowed.
@@ -46,9 +53,11 @@ impl Default for AllowedDofs {
     }
 }
 
+/// How a [`RigidBody`] moves.
 #[derive(Default, Clone, Copy, Debug)]
 pub enum MotionType {
     #[default]
+    /// Moved by gravity, forces, impulses and collisions.
     Dynamic,
     /// Unaffected by forces and collisions; moved only by
     /// [`set_linear_velocity`](crate::physics_state::PhysicsState::set_linear_velocity).
@@ -67,11 +76,14 @@ pub struct RigidBody {
     /// Density in kg/m³; the body's mass is the collider shape's volume times
     /// this. Defaults to 1000 (water).
     pub density: f32,
+    /// The axes the body may move and rotate along; all by default.
     pub allowed_dofs: AllowedDofs,
+    /// Whether the body is dynamic or kinematic.
     pub motion_type: MotionType,
 }
 
 impl RigidBody {
+    /// A dynamic body of `density`, in kg/m³, free on every axis.
     pub fn with_density(density: f32) -> Self {
         Self {
             density,
