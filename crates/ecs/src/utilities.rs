@@ -47,6 +47,7 @@ impl Hasher for NoOpHasher {
 
 /// An [`UnsafeCell`] that is `Sync` when its value is, for sharing between threads that rule out
 /// data races themselves.
+#[repr(transparent)]
 pub struct SyncUnsafeCell<T: ?Sized>(UnsafeCell<T>);
 
 // SAFETY: like `std`'s unstable `SyncUnsafeCell`, sharing it is sound because every access to the inner value goes through `unsafe` code that must rule out data races.
@@ -79,7 +80,7 @@ impl<T: ?Sized> SyncUnsafeCell<T> {
     pub fn from_mut(t: &mut T) -> &mut SyncUnsafeCell<T> {
         let ptr = ptr::from_mut(t) as *mut SyncUnsafeCell<T>;
 
-        // SAFETY: `SyncUnsafeCell<T>` wraps only an `UnsafeCell<T>`, which has the layout of `T`, and the exclusive borrow of `t` moves to the result.
+        // SAFETY: `SyncUnsafeCell<T>` is `repr(transparent)` over `UnsafeCell<T>`, which has the layout of `T`, and the exclusive borrow of `t` moves to the result.
         unsafe { &mut *ptr }
     }
 }
@@ -89,7 +90,7 @@ impl<T> SyncUnsafeCell<[T]> {
     pub fn as_slice_of_cells(&self) -> &[SyncUnsafeCell<T>] {
         let self_ptr: *const SyncUnsafeCell<[T]> = ptr::from_ref(self);
         let slice_ptr = self_ptr as *const [SyncUnsafeCell<T>];
-        // SAFETY: `SyncUnsafeCell<T>` has the layout of `T`, so a cell of `[T]` has the layout of a slice of cells of the same length.
+        // SAFETY: `SyncUnsafeCell<T>` is `repr(transparent)` over `UnsafeCell<T>` and so has the layout of `T`, so a cell of `[T]` has the layout of a slice of cells of the same length.
         unsafe { &*slice_ptr }
     }
 }
