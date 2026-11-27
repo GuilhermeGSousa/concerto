@@ -1,3 +1,5 @@
+//! The open project: discovering it and its asset catalogue, the commands that open a project or an
+//! asset, and the status line.
 use concerto_app::{App, Plugin, schedule_groups::Update};
 use concerto_ecs::{
     Event, IntoSystemConfig, Res, ResMut, Resource, World,
@@ -16,8 +18,10 @@ use std::{
     thread::JoinHandle,
 };
 
+/// A project the editor has open.
 #[derive(Debug)]
 pub struct Project {
+    /// The project's directory, canonicalised.
     pub root: PathBuf,
     /// The project-relative folder the catalogue is read from.
     pub content_root: String,
@@ -48,30 +52,39 @@ pub fn discover_project(root: &Path) -> anyhow::Result<(Project, AssetRegistry)>
     ))
 }
 
+/// A request to the project systems, queued on [`EditorCommands`].
 pub enum EditorCommand {
+    /// Opens the project at the path, once the unsaved-changes prompt allows it; any game playing
+    /// stops.
     OpenProject(PathBuf),
+    /// Opens the asset in its editor; an id the project does not know is ignored.
     OpenAsset(AssetId),
 }
 
+/// The queue of [`EditorCommand`]s, run in order each update.
 #[derive(Resource, Default)]
 pub struct EditorCommands(pub VecDeque<EditorCommand>);
 
 /// The project at `root` finished opening and is the editor's project now.
 #[derive(Event, Clone, Debug, PartialEq)]
 pub struct ProjectOpened {
+    /// The open project's directory, canonicalised.
     pub root: PathBuf,
 }
 
 /// The project asked for at `root` did not open; `message` is the status the editor shows.
 #[derive(Event, Clone, Debug, PartialEq)]
 pub struct ProjectOpenFailed {
+    /// The directory that was asked for.
     pub root: PathBuf,
+    /// Why the project did not open, as the status line shows it.
     pub message: String,
 }
 
 /// Content assets `ids` were written to disk by an import, an asset editor's save, or a New in the content browser.
 #[derive(Event, Clone, Debug, PartialEq)]
 pub struct AssetsWritten {
+    /// The ids of the assets written.
     pub ids: Vec<AssetId>,
 }
 
@@ -80,9 +93,12 @@ struct ProjectJob {
     worker: JoinHandle<Result<Option<(Project, AssetRegistry)>, String>>,
 }
 
+/// The open project, if any, and the status message the status line ends with.
 #[derive(Resource)]
 pub struct ProjectState {
+    /// The open project, or `None` before one has opened.
     pub project: Option<Project>,
+    /// The last message about the project, such as why it did not open; empty when there is none.
     pub status: String,
     job: Option<ProjectJob>,
 }
@@ -98,6 +114,7 @@ impl Default for ProjectState {
 }
 
 impl ProjectState {
+    /// Whether a project is being read.
     pub fn busy(&self) -> bool {
         self.job.is_some()
     }
@@ -121,6 +138,8 @@ impl ProjectState {
     }
 }
 
+/// Runs the [`EditorCommands`] queue, opens the project's default scene once it is open, and
+/// reports outdated content.
 pub struct ProjectPlugin;
 impl Plugin for ProjectPlugin {
     fn build(&self, app: &mut App) {
@@ -136,9 +155,13 @@ impl Plugin for ProjectPlugin {
 /// Content assets of one kind whose header is at a type version other than this build's.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OutdatedContent {
+    /// The asset kind.
     pub kind: String,
+    /// The kind version the files' headers carry.
     pub file_version: u32,
+    /// The kind version this build writes.
     pub current: u32,
+    /// How many assets carry `file_version`.
     pub count: usize,
 }
 

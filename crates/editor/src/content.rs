@@ -58,6 +58,7 @@ use concerto_mesh::mesh::Mesh;
 use concerto_render::assets::{material::StandardMaterial, texture::Texture};
 use concerto_scene::scene::Scene;
 
+/// The id the Asset Browser panel is registered under in the [`PanelRegistry`].
 pub const PANEL_ID: &str = "concerto.curiosities";
 
 const ROW_HEIGHT: f32 = 28.0;
@@ -124,6 +125,7 @@ impl ContentState {
 /// On a content browser item that shows an asset: which one.
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
 pub struct ContentAsset {
+    /// The asset the item shows.
     pub id: AssetId,
 }
 
@@ -171,9 +173,13 @@ struct ContentMenuRow;
 ///
 /// Without a `folder` the asset goes in the content root. With `open` set, the new asset opens in its editor.
 pub struct CreateAsset {
+    /// The asset kind, one the Asset Browser's New lists, ignoring case.
     pub kind: String,
+    /// The folder, relative to the content root.
     pub folder: Option<String>,
+    /// The new asset's name, which becomes its file's name.
     pub name: String,
+    /// Whether the new asset opens in its editor.
     pub open: bool,
 }
 impl Signal for CreateAsset {}
@@ -181,11 +187,15 @@ impl Signal for CreateAsset {}
 /// What a `CreateAsset` came to: the new asset's id, or why nothing was written.
 #[derive(Event, Clone, Debug, PartialEq)]
 pub struct AssetCreation {
+    /// The kind that was asked for.
     pub kind: String,
+    /// The address the asset was, or would have been, written to.
     pub address: String,
+    /// The new asset's id, or why nothing was written.
     pub result: Result<AssetId, String>,
 }
 
+/// Adds the Asset Browser panel and the [`CreateAsset`] signal.
 pub struct ContentPlugin;
 
 impl Plugin for ContentPlugin {

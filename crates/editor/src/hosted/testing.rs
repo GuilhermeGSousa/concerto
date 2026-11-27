@@ -1,3 +1,5 @@
+//! Fixtures for tests of the editor and its extension crates: hosted `App`s built on this thread,
+//! and a [`SceneFixture`] with a project and two scenes. Enabled by the `testing` feature.
 use std::{
     path::PathBuf,
     time::{Duration, Instant},
@@ -67,12 +69,15 @@ use crate::{
     },
 };
 
+/// The event a [`plain_recipe`] `App` writes for each [`Say`] it receives.
 #[derive(Event, Clone, Debug, PartialEq)]
 pub struct Echo(pub u32);
 
+/// A signal a [`plain_recipe`] `App` answers with an [`Echo`] of the same value.
 pub struct Say(pub u32);
 impl Signal for Say {}
 
+/// How many frames a test `App` has run at edit time.
 #[derive(Resource, Default)]
 pub struct Frames(pub usize);
 
@@ -84,16 +89,20 @@ fn count_frame(mut frames: ResMut<Frames>) {
     frames.0 += 1;
 }
 
+/// Every [`Say`] that [`remember_said`] received, in order.
 #[derive(Resource, Default)]
 pub struct Said(pub Vec<Heard>);
 
 /// A `Say` value and the number of frames its `App` had run when it arrived.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Heard {
+    /// The value the `Say` carried.
     pub value: u32,
+    /// The `App`'s [`Frames`] count when it arrived.
     pub at_frame: usize,
 }
 
+/// Records each [`Say`] in [`Said`] with the frame it arrived on.
 pub fn remember_said(on: On<Say>, frames: Res<Frames>, mut said: ResMut<Said>) {
     said.0.push(Heard {
         value: on.signal().0,
@@ -112,6 +121,7 @@ fn broken_build(_: &mut App) {
 
 macro_rules! test_asset {
     ($asset:ident, $editor:ident, $preview:expr) => {
+        /// An asset kind for tests, registered with the fixture's asset editors.
         #[derive(serde::Serialize, serde::Deserialize)]
         pub struct $asset;
 
@@ -121,6 +131,7 @@ macro_rules! test_asset {
             }
         }
 
+        /// The editor of a test asset kind, with or without a preview.
         #[derive(Default)]
         pub struct $editor;
 
@@ -148,6 +159,7 @@ test_asset!(
 );
 test_asset!(PlainAsset, PlainEditor, None);
 
+/// A recipe with a window and a frame counter, which answers [`Say`] with [`Echo`] at edit time.
 pub fn plain_recipe(app: &mut App) {
     app.register_plugin(MainSchedulePlugin)
         .register_plugin(TimePlugin)
@@ -158,6 +170,7 @@ pub fn plain_recipe(app: &mut App) {
         .add_listener(say.at_edit_time());
 }
 
+/// A request to build an edit `App` from `recipe`, 320 by 240 pixels, without a GPU.
 pub fn request(recipe: fn(&mut App)) -> HostRequest<'static> {
     HostRequest {
         gpu: None,
@@ -169,6 +182,7 @@ pub fn request(recipe: fn(&mut App)) -> HostRequest<'static> {
     }
 }
 
+/// A request like [`request`] for a play `App`.
 pub fn play_request(recipe: fn(&mut App)) -> HostRequest<'static> {
     HostRequest {
         role: HostRole::Game,
@@ -176,6 +190,8 @@ pub fn play_request(recipe: fn(&mut App)) -> HostRequest<'static> {
     }
 }
 
+/// Starts building a play `App` from `recipe` and `extra` on `document`, which then is
+/// [`PlayState::Starting`].
 pub fn start_play(
     world: &mut World,
     document: Entity,
@@ -188,12 +204,14 @@ pub fn start_play(
     world.trigger(SetEditTarget(None));
 }
 
+/// Runs the system that finishes play `App`s once, which starts the games that are ready.
 pub fn finish_play(world: &mut World) {
     let mut system = super::finish_pending_play.into_system();
     system.initialize(world);
     system.run_and_apply((), world);
 }
 
+/// Starts the game on `document` and runs [`finish_play`] once.
 pub fn play_now(
     world: &mut World,
     document: Entity,
@@ -204,6 +222,7 @@ pub fn play_now(
     finish_play(world);
 }
 
+/// The play state of `document`, or `None` when it holds no scene.
 pub fn play_state(world: &World, document: Entity) -> Option<PlayState> {
     world
         .get_component_for_entity::<PlayState>(document)
@@ -228,8 +247,11 @@ fn insert_play_outcomes(world: &mut World) {
     world.insert_resource(EventChannel::<PlayStopped>::new());
 }
 
+/// An editor world that hosts one `App`, from [`host_world`].
 pub struct HostWorld {
+    /// The editor world.
     pub world: World,
+    /// The document that holds the `App`, active and the edit target.
     pub document: Entity,
 }
 
@@ -250,6 +272,7 @@ pub fn host_world(recipe: fn(&mut App)) -> HostWorld {
     HostWorld { world, document }
 }
 
+/// A recipe with assets, a window, transforms and scenes, enough to open a scene in.
 pub fn scene_recipe(app: &mut App) {
     app.register_plugin(MainSchedulePlugin)
         .register_plugin(AssetManagerPlugin)
@@ -259,6 +282,7 @@ pub fn scene_recipe(app: &mut App) {
         .register_plugin(concerto_scene::plugin::ScenePlugin);
 }
 
+/// Whether the game systems of a fixture's `App` have run, as they do only while it plays.
 #[derive(Resource, Default)]
 pub struct GameRan(pub bool);
 
@@ -279,6 +303,7 @@ pub fn forwarding<E: Event + Clone + 'static>() -> BoxedSystem {
     forward_events::<E>.into_boxed_system()
 }
 
+/// A registry entry for a new scene at `<name>.gasset`.
 pub fn scene_entry(name: &str) -> AssetEntry {
     AssetEntry {
         embedded_in: None,
@@ -336,10 +361,19 @@ fn build_hierarchy_panel(mut cmd: CommandQueue, theme: Res<UITheme>) {
     crate::hierarchy::spawn_panel(&mut cmd, parent, &theme);
 }
 
+/// An editor world with the scene editor, the hierarchy and the inspector's state, a project in a
+/// temporary directory, and two scenes in it.
+///
+/// It runs the editor's systems one frame at a time with [`Self::frame`], and its scenes' `App`s
+/// are built from a recipe with [`Frames`] and [`GameRan`].
 pub struct SceneFixture {
+    /// The editor world.
     pub world: World,
+    /// The project's directory, deleted with the fixture.
     pub project_root: PathBuf,
+    /// The first scene, with entities named first and second.
     pub scene: AssetEntry,
+    /// The second scene, with one entity named third.
     pub other: AssetEntry,
     systems: Vec<BoxedSystem>,
     process_commands: usize,
@@ -544,6 +578,11 @@ impl SceneFixture {
             .expect("opening an asset makes its document the active one")
     }
 
+    /// Opens an asset whose editor has a preview, and runs frames until its preview `App` is built.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the preview is not built within 20 seconds.
     pub fn open_preview(&mut self) -> Entity {
         let document = self.request_kind(PreviewedAsset::name());
         self.frames_until("the preview was never built", |f| {
@@ -554,6 +593,7 @@ impl SceneFixture {
         document
     }
 
+    /// Runs one frame of the editor's systems, then delivers the hosted `App`s' events.
     pub fn frame(&mut self) {
         for system in &mut self.systems {
             system.run_and_apply((), &mut self.world);
@@ -572,12 +612,15 @@ impl SceneFixture {
         self.world.trigger(SetEditTarget(document));
     }
 
+    /// Runs the systems that re-write the hosted `App`s' events in the editor world and act on
+    /// them.
     pub fn deliver(&mut self) {
         for system in &mut self.delivery {
             system.run_and_apply((), &mut self.world);
         }
     }
 
+    /// Adds `system` to the ones [`Self::deliver`] runs, such as one from [`forwarding`].
     pub fn add_delivery(&mut self, mut system: BoxedSystem) {
         system.initialize(&mut self.world);
         self.delivery.push(system);
@@ -617,6 +660,11 @@ impl SceneFixture {
                 .all(|(document, state)| document.pending.is_none() && state.idle())
     }
 
+    /// Writes a scene named `name`, with one entity named the same, and adds it to the project.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the scene file cannot be written.
     pub fn add_scene(&mut self, name: &str) -> AssetEntry {
         let asset = scene_entry(name);
         write_scene_file(&self.project_root, &asset, &[name]);
@@ -636,6 +684,11 @@ impl SceneFixture {
             .insert(asset.clone());
     }
 
+    /// Asks to open `asset` in its editor, as the Asset Browser does.
+    ///
+    /// # Panics
+    ///
+    /// Panics as [`Self::command`] does.
     pub fn request(&mut self, asset: &AssetEntry) {
         self.command(AssetEditorCommand::Open(asset.clone()));
     }
@@ -654,6 +707,11 @@ impl SceneFixture {
         );
     }
 
+    /// Asks to close `document`, as its tab's close button does.
+    ///
+    /// # Panics
+    ///
+    /// Panics as [`Self::command`] does.
     pub fn close(&mut self, document: Entity) {
         self.command(AssetEditorCommand::Close(document));
     }
@@ -672,6 +730,7 @@ impl SceneFixture {
         self.systems[self.process_commands].run_and_apply((), &mut self.world);
     }
 
+    /// Triggers `signal` in the edit target's world and delivers what it reports.
     pub fn signal<S: Signal>(&mut self, signal: S) {
         let mut signal = Some(signal);
         let mut system = (move |mut scene: EditWorldSignals| {
@@ -685,6 +744,11 @@ impl SceneFixture {
         self.deliver();
     }
 
+    /// Renames the entity named `name` in the scene of `document` to `renamed`.
+    ///
+    /// # Panics
+    ///
+    /// Panics as [`Self::scene_entity`] does.
     pub fn rename(&mut self, document: Entity, name: &str, renamed: &str) {
         let entity = self.scene_entity(document, name);
         self.signal(EntityEdit::Rename {
@@ -719,6 +783,11 @@ impl SceneFixture {
             .world_mut()
     }
 
+    /// The names of every entity in the world of `document`'s `App`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `document` hosts no `App`.
     pub fn scene_names(&mut self, document: Entity) -> Vec<String> {
         let scene = self.scene_world_mut(document);
         scene
@@ -770,6 +839,7 @@ impl SceneFixture {
             .entity()
     }
 
+    /// Whether `document` has unsaved changes, after delivering what its `App` reported.
     pub fn unsaved(&mut self, document: Entity) -> bool {
         self.deliver();
         self.world
@@ -777,10 +847,12 @@ impl SceneFixture {
             .is_some()
     }
 
+    /// Every [`SceneOpened`] written so far.
     pub fn opened(&self) -> Vec<SceneOpened> {
         self.written()
     }
 
+    /// Every [`SceneOpenFailed`] written so far.
     pub fn open_failures(&self) -> Vec<SceneOpenFailed> {
         self.written()
     }
@@ -799,6 +871,11 @@ impl SceneFixture {
             .collect()
     }
 
+    /// The status text `document` shows.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `document` is not an open document.
     pub fn status(&self, document: Entity) -> String {
         self.document(document).status.clone()
     }
@@ -825,6 +902,11 @@ impl SceneFixture {
         bincode::deserialize(payload).unwrap()
     }
 
+    /// The names of the nodes in the first scene's file on disk.
+    ///
+    /// # Panics
+    ///
+    /// Panics as [`Self::saved_scene`] does.
     pub fn saved_scene_names(&self) -> Vec<String> {
         self.saved_scene()
             .nodes
@@ -873,6 +955,7 @@ impl SceneFixture {
         resource && server
     }
 
+    /// The play state of `document`, or `None` when it holds no scene.
     pub fn play_state(&self, document: Entity) -> Option<PlayState> {
         play_state(&self.world, document)
     }
@@ -903,6 +986,7 @@ impl SceneFixture {
             .is_editing()
     }
 
+    /// The id of the world of the play `App` building on `document`, once it is built and settling.
     pub fn starting_world(&self, document: Entity) -> Option<WorldId> {
         self.world
             .get_component_for_entity::<PendingPlayApp>(document)
@@ -939,6 +1023,11 @@ impl SceneFixture {
         }
     }
 
+    /// Runs frames until the game on `document` plays.
+    ///
+    /// # Panics
+    ///
+    /// Panics if it does not within 20 seconds.
     pub fn frames_until_playing(&mut self, document: Entity) {
         self.frames_until("the game never started", |f| {
             f.play_state(document) == Some(PlayState::Playing)
@@ -946,6 +1035,7 @@ impl SceneFixture {
     }
 }
 
+/// A loadable asset kind for tests that hold a load open, so an `App` does not settle.
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct GatedAsset;
 

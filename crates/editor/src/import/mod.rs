@@ -72,9 +72,11 @@ pub fn settings_text(
 
 /// A file chosen for import, and where it will be copied to.
 pub struct StagedImport {
+    /// The file to import.
     pub source: PathBuf,
     /// Project-relative, e.g. `assets/hero.glb`.
     pub destination: String,
+    /// What importing the row would do.
     pub state: RowState,
     /// The settings importing to `destination` would use unedited, or why they cannot be read; `None` until [`stage_row`].
     pub staged: Option<Result<StagedSettings, String>>,
@@ -87,8 +89,11 @@ pub struct StagedImport {
 /// What importing a row would do, or why it cannot be imported.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RowState {
+    /// Writes a new file in the project.
     New,
+    /// Replaces a file that is already in the project.
     Replaces,
+    /// Cannot be imported; the text says why.
     Rejected(String),
 }
 
@@ -212,7 +217,9 @@ fn extension_of(path: &Path) -> String {
 /// Rows awaiting the user's confirmation, and whether the dialog is shown.
 #[derive(Resource, Default)]
 pub struct ImportStaging {
+    /// The files chosen for import, one row each.
     pub rows: Vec<StagedImport>,
+    /// Whether the Import… dialog is shown.
     pub visible: bool,
     pub(crate) scan: Option<anyhow::Result<ContentScan>>,
 }
@@ -220,9 +227,11 @@ pub struct ImportStaging {
 /// A queued import ended: what it wrote to `destination`, or why it failed.
 #[derive(Event, Clone, Debug, PartialEq)]
 pub struct ImportFinished {
+    /// The project-relative path the import wrote to.
     pub destination: String,
     /// The settings the import used, as [`settings_text`] writes them; empty when they could not be read.
     pub settings: String,
+    /// What the import wrote, or why it failed.
     pub result: Result<ImportedSource, String>,
 }
 
