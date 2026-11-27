@@ -56,5 +56,7 @@ pub trait ErasedEditor: Send + Sync {
     /// Returns [`EditError::TypeMismatch`] when `value` is not the editor's value type.
     fn edit_to(&self, value: &dyn Reflect)
     -> Result<Option<Arc<dyn Any + Send + Sync>>, EditError>;
+    /// Whether the editor's widgets keep themselves current from the row's snapshot, as
+    /// [`PropertyEditor::follows_snapshot`](super::PropertyEditor::follows_snapshot) says.
     fn follows_snapshot(&self) -> bool;
 }

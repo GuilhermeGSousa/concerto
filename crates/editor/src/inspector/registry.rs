@@ -128,6 +128,7 @@ impl Default for InspectorRegistry {
 }
 
 impl InspectorRegistry {
+    /// Makes `E` the editor of every property of type `T`, replacing any editor `T` had.
     pub fn register_property_editor<T: Reflect, E: PropertyEditor<T>>(&mut self) {
         self.editors.insert(
             TypeId::of::<T>(),
@@ -359,7 +360,13 @@ impl SystemInput for InspectionSource<'_> {
 }
 impl ReadOnlySystemInput for InspectionSource<'_> {}
 
+/// Registers property editors on the editor's `App`.
 pub trait EditableApp {
+    /// Makes `E` the inspector's editor of every property of type `T`.
+    ///
+    /// # Panics
+    ///
+    /// Panics when [`InspectorPlugin`](super::InspectorPlugin) is not registered yet.
     fn register_property_editor<T: Reflect, E: PropertyEditor<T>>(&mut self) -> &mut Self;
 }
 

@@ -20,12 +20,20 @@ use super::target::{PropertyAddress, PropertyTarget, TargetWorld};
 /// A rejected edit leaves the target unchanged.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EditError {
+    /// The editor refused the value, such as an asset of the wrong kind or a number that is not
+    /// finite.
     Rejected,
+    /// The value or the edit is not of the types the editor handles.
     TypeMismatch,
+    /// No property is at the edit's path.
     NotFound,
+    /// The editor registered for the property changed since its row was built.
     StaleEditor,
+    /// The edited entity, component or document no longer exists.
     MissingTarget,
+    /// The edited component's type is not in the type registry.
     UnregisteredComponent,
+    /// The target world has no asset server or asset registry.
     MissingAssets,
 }
 
@@ -46,13 +54,16 @@ impl std::error::Error for EditError {}
 
 /// What an edit can read from the world it changes.
 pub struct EditContext<'w> {
+    /// The asset server of the world being edited.
     pub assets: &'w AssetServer,
+    /// The asset registry of the world being edited, for looking up assets by id.
     pub registry: &'w AssetRegistry,
 }
 
 /// A row an editor built.
 #[derive(Component, Clone)]
 pub struct PropertyRow {
+    /// The property the row shows and edits.
     pub address: PropertyAddress,
     pub(crate) editor_type: TypeId,
     pub(crate) registry_tick: Tick,
@@ -76,9 +87,12 @@ pub fn standard_row_node(theme: &UITheme) -> UINode {
 
 /// Presentation and validated editing for a concrete Rust type.
 pub trait PropertyEditor<T: Reflect>: Default + Send + Sync + 'static {
+    /// What the editor reads from a value to build and refresh its widgets.
     type Snapshot: Clone + PartialEq + Send + Sync + 'static;
+    /// One change the editor's widgets queue, applied by [`Self::apply`].
     type Edit: Send + Sync + 'static;
 
+    /// Reads `value` into the snapshot its widgets show.
     fn snapshot(&self, value: &T) -> Self::Snapshot;
     /// The layout node of the row that holds this editor's widgets.
     ///
@@ -87,6 +101,7 @@ pub trait PropertyEditor<T: Reflect>: Default + Send + Sync + 'static {
     fn row_node(&self, _snapshot: &Self::Snapshot, theme: &UITheme) -> UINode {
         standard_row_node(theme)
     }
+    /// Spawns the editor's widgets under `row`, showing `snapshot`.
     fn build(&self, row: &mut EntityCommandQueue, snapshot: &Self::Snapshot, theme: &UITheme);
     /// Applies `edit` to `value`, validating it before mutating.
     ///
@@ -168,8 +183,11 @@ impl PartialEq for PropertyRowValue {
 /// One inspector row, selected by consulting adapters before visiting children.
 #[derive(Clone)]
 pub struct Property {
+    /// The property's path inside its target.
     pub path: PropertyPath,
+    /// The type of the value at `path`.
     pub type_id: TypeId,
+    /// What the row shows.
     pub kind: PropertyKind,
 }
 
@@ -216,12 +234,15 @@ impl Property {
 /// A row with no value of its own: a heading, or a value no editor claims.
 #[derive(Component, Clone)]
 pub struct PlainRow {
+    /// The property's path inside its target.
     pub path: PropertyPath,
+    /// The type of the value at `path`.
     pub type_id: TypeId,
 }
 
 /// An owned edit and its captured target. Construct through [`Self::new`].
 pub struct PropertyCommit {
+    /// The row the edit came from, which names the property it changes.
     pub row: PropertyRow,
     pub(crate) edit: Arc<dyn Any + Send + Sync>,
 }

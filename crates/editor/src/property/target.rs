@@ -57,7 +57,9 @@ pub enum TargetWorld {
 /// A component on an entity in the edit target's world.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ComponentTarget {
+    /// The entity in the edit target's world.
     pub entity: Entity,
+    /// The type of the component on `entity`.
     pub component: TypeId,
 }
 
@@ -106,8 +108,11 @@ impl PropertyTarget for ComponentTarget {
 /// One property of a target, captured at rebuild, so a queued edit always addresses its original target.
 #[derive(Clone)]
 pub struct PropertyAddress {
+    /// The value the property is in.
     pub target: Arc<dyn PropertyTarget>,
+    /// The property's path inside the target.
     pub path: PropertyPath,
+    /// The type of the value at `path`.
     pub type_id: TypeId,
 }
 

@@ -15,7 +15,9 @@ const EMPTY: &str = "No settings";
 /// Their edits change `value`, so `Changed<ReflectRows>` tells the owner.
 #[derive(Component)]
 pub struct ReflectRows {
+    /// The value the rows show, written in place by their edits.
     pub value: Box<dyn Reflect>,
+    /// The registry `value`'s type and the types of its fields are found in.
     pub types: AppTypeRegistry,
 }
 
