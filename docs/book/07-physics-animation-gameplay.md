@@ -657,7 +657,7 @@ interrupted mid-fade holds a command's target and muscle but drops its force
 and torque, which `MotorCommand::frozen` returns, so a held fade does not keep
 pushing.
 
-`RagdollPlugin` registers three nodes that write them. Each takes the pose to act
+`RagdollPlugin` registers five nodes that write them. Each takes the pose to act
 on as its input, passes it through, and reads the character's body through a
 `BodyInput` query, its typed drive input, as a `BodyView`. A character without
 a ragdoll has no view, and the node only passes its pose through.
@@ -687,6 +687,55 @@ player.set_float_param(name!("leg_hurt"), 0.5);
 with a torque limit of 0, keeping the stiffness its input asked for so a motor
 taking hold again does not jump. Cross-fading into a state with it and back
 out blends the body down and up again without a cut.
+
+`FlinchNode` is the graph's flinch. A blow, a `BodyHit` of `HitKind::Blow`, on
+a character in this mode reaches its graph as a `Hit` message, from
+`concerto::ragdoll::messages`, and the impulse of any hit waits, for up to ten
+steps, until the struck part is dynamic. On
+each `Hit` the node powers the parts of its `profile`, `flinch` by default,
+drops the struck part's strength to `dip` and its neighbours' to
+`neighbour_dip`, and draws them from physics in full for `hold` seconds after
+the last hit, then over `settle` seconds back to the animation, when it raises
+`Recovered`. Play it from a slot entry that starts on one and ends on the
+other:
+
+```rust
+let flinch = SlotNode::new().with_entry(
+    SlotEntry::new(name!("flinch"), FlinchNode::default())
+        .with_on(MessageType::of::<Hit>())
+        .with_out(MessageType::of::<Recovered>()),
+);
+graph.result_node().input(flinch).input(AnimationClipNode::new(walk));
+```
+
+`DyingNode` drains the body as `Dying` does below. A `Die` on a graph-mode
+character reaches its graph as a `Death { seconds }` message; from then on the
+node draws every part from physics, powers it with its `profile`, `braced` by
+default, a part the profile leaves kinematic starting at a stiffness of 400 and
+a torque of 120, and drains that strength from the outside in. When nothing is
+left it raises `BodyDead`, so the graph moves on with `OnMessage` into a state
+with a `LimpNode`. Every character ragdoll carries a `Listener<BodyDead>` that
+inserts the `Dead` component, and the dead body settles as below. An entity
+holds one listener per type, so a `Listener<BodyDead>` of your own on the
+character replaces the ragdoll's and the corpse never settles; react to the
+`Dead` it inserts with a global `On<Add<Dead>>` instead (issue #1093). Every
+state the character can die from needs its own `OnMessage` transition for
+`Death`. `Death` and `BodyDead` live in `concerto_ragdoll::messages`.
+
+```rust
+let mut dying = AnimationGraph::new();
+dying.result_node().input(DyingNode::default()).input(AnimationClipNode::new(idle.clone()));
+let mut dead = AnimationGraph::new();
+dead.result_node().input(LimpNode::default()).input(AnimationClipNode::new(idle));
+let machine = AnimationStateMachine::from_initial_state(name!("alive"), alive, |to| {
+    to.to(name!("dying"), AnimationFSMTrigger::on_message::<Death>(), 0.0);
+})
+.state(name!("dying"), server.add(dying), |to| {
+    to.to(name!("dead"), AnimationFSMTrigger::on_message::<BodyDead>(), 0.0);
+})
+.state(name!("dead"), server.add(dead), |_| {})
+.build();
+```
 
 `BalanceNode` keeps the body on its own feet, as the `Balance` behaviour below
 does, from the graph's drive pass: it holds every part with its `profile`, the
@@ -1048,13 +1097,14 @@ it. While it is on the character:
   its forces, so a behaviour still running loses its grip and a fall that
   began braced ends limp. A character that was following its animation is
   simulated in full from the first step;
-- when nothing is left the ragdoll is limp, `PhysicalState` is `Dead`, and
-  `Balance`, `Stagger`, `Shot`, `Fall` and `Flinch` are removed. Nothing the
-  engine does moves a character out of `Dead`;
+- when nothing is left the ragdoll is limp, `PhysicalState` is `Dead`, the
+  character gets the `Dead` component, and `Balance`, `Stagger`, `Shot`, `Fall`
+  and `Flinch` are removed. Nothing the engine does moves a character out of
+  `Dead`;
 - `Die` with zero seconds does all of that at once, which a head shot wants. A
   second `Die` never slows a death down.
 
-When a dead body lies at rest it settles: its parts become static where they
+When a `Dead` body lies at rest it settles: its parts become static where they
 lie (`PhysicsState::set_ragdoll_frozen`), it gets a `Settled` component, and
 `BodySettled { character }` is triggered. A settled body is no longer driven
 or sensed and its capsule is no longer carried, so it costs its static shapes
