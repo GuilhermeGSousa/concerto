@@ -455,8 +455,10 @@ impl AdditiveSetting {
     /// Returns a message when `range` is set and is not finite with
     /// `0 <= start < end <= duration`.
     pub fn additive(&self, duration: f32, roots: Vec<Uuid>) -> Result<Additive, String> {
-        if self.range.is_some() {
-            ClipRange::checked(self.range, duration, "range").map_err(|err| err.to_string())?;
+        if let Some(range) = self.range {
+            range
+                .check(duration, "range")
+                .map_err(|err| err.to_string())?;
         }
         Ok(Additive::LocalSpace(AdditiveBase {
             clip: AssetHandle::weak(self.base),
@@ -598,8 +600,12 @@ impl AnimationChannel {
 }
 
 impl ClipRange {
-    fn checked(range: Option<Self>, duration: f32, name: &str) -> anyhow::Result<Self> {
-        let range = range.unwrap_or(Self::new(0.0, duration));
+    fn whole(duration: f32) -> Self {
+        Self::new(0.0, duration)
+    }
+
+    fn check(self, duration: f32, name: &str) -> anyhow::Result<Self> {
+        let range = self;
         let fits = range.start.is_finite()
             && range.end.is_finite()
             && (0.0..range.end).contains(&range.start)
@@ -847,8 +853,14 @@ impl AnimationClip {
 
     fn delta_against(&self, base: &AnimationClip) -> anyhow::Result<AdditiveDelta> {
         let additive = self.additive_base()?;
-        let range = ClipRange::checked(additive.range, self.duration, "range")?;
-        let base_range = ClipRange::checked(additive.base_range, base.duration, "base_range")?;
+        let range = additive
+            .range
+            .unwrap_or_else(|| ClipRange::whole(self.duration))
+            .check(self.duration, "range")?;
+        let base_range = additive
+            .base_range
+            .unwrap_or_else(|| ClipRange::whole(base.duration))
+            .check(base.duration, "base_range")?;
         let rate = self
             .frame_rate
             .or_else(|| self.detected_frame_rate())
