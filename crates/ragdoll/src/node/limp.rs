@@ -33,7 +33,7 @@ impl AnimationNode for LimpNode {
 
     fn create_state(&self, _: &(), _: &AnimationGraphContext<'_>) {}
 
-    fn update(&self, _: &mut (), _: f32, _: &(), _: &AnimationGraphContext<'_>) {}
+    fn update(&self, _: &mut (), _: f32, _: &(), _: &mut AnimationGraphContext<'_>) {}
 
     fn evaluate(
         &self,
@@ -54,7 +54,7 @@ impl AnimationNode for LimpNode {
         &self,
         _: &mut (),
         bodies: &SystemInputData<'_, '_, BodyInput>,
-        context: &DriveContext<'_>,
+        context: &mut DriveContext<'_>,
         _: &[Uuid],
         inputs: &[EvaluatedFrame],
         _: &mut FramePool,

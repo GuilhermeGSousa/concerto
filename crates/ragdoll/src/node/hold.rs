@@ -218,7 +218,7 @@ impl AnimationNode for HoldNode {
         state: &mut HoldState,
         delta_time: f32,
         _: &(),
-        context: &AnimationGraphContext<'_>,
+        context: &mut AnimationGraphContext<'_>,
     ) {
         let blackboard = context.blackboard();
         state.weight =
@@ -246,7 +246,7 @@ impl AnimationNode for HoldNode {
         &self,
         state: &mut HoldState,
         input: &SystemInputData<'_, '_, Self::DriveInput>,
-        context: &DriveContext<'_>,
+        context: &mut DriveContext<'_>,
         _: &[Uuid],
         inputs: &[EvaluatedFrame],
         _: &mut FramePool,
