@@ -20,10 +20,17 @@ use crate::{
     transform::UIValue,
 };
 
+/// A vertically scrolling area: the mouse wheel over it moves its content up and down.
+///
+/// The content is pinned to the area's top, left and right edges and moved up by `offset`. A list
+/// or tree sets `content_extent` itself; any other owner sets it.
 #[derive(Component)]
 pub struct UIScrollArea {
+    /// How far the content is scrolled down, in logical pixels, from 0 to the content's overflow.
     pub offset: f32,
+    /// The height of the content, in logical pixels.
     pub content_extent: f32,
+    /// The node scrolled, laid out with absolute position; `None` scrolls nothing.
     pub content: Option<Entity>,
 }
 
@@ -37,24 +44,40 @@ impl Default for UIScrollArea {
     }
 }
 
+/// The axis along which a [`UISplitPane`] or a splitter divides its space.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum UISplitAxis {
+    /// The parts sit side by side, divided by a vertical line.
     Horizontal,
+    /// The parts sit one above the other, divided by a horizontal line.
     Vertical,
 }
 
+/// Divides a node between two child nodes along `axis`, sizing them from `ratio`.
+///
+/// The pane sets the two nodes' size, grow, shrink, overflow and visibility every frame; a
+/// [`UISplitHandle`] lets the user drag the boundary.
 #[derive(Component)]
 pub struct UISplitPane {
+    /// The axis the space is divided along.
     pub axis: UISplitAxis,
+    /// The first part's share of the space left after the handles, from 0 to 1.
     pub ratio: f32,
+    /// The least extent of the first part, in logical pixels.
     pub minimum_first: f32,
+    /// The least extent of the second part, in logical pixels.
     pub minimum_second: f32,
+    /// The part hidden, 0 for the first or 1 for the second, giving the other all the space; `None`
+    /// hides neither. A collapsed pane ignores drags.
     pub collapsed: Option<usize>,
+    /// The first part's node; the pane does nothing while either part is `None`.
     pub first: Option<Entity>,
+    /// The second part's node.
     pub second: Option<Entity>,
 }
 
 impl UISplitPane {
+    /// A pane split half and half between `first` and `second`, each at least 120 logical pixels.
     pub fn new(axis: UISplitAxis, first: Entity, second: Entity) -> Self {
         Self {
             axis,
@@ -68,8 +91,13 @@ impl UISplitPane {
     }
 }
 
+/// Makes a node the drag handle of a [`UISplitPane`], with [`drag_split_handle`] as its drag
+/// listener.
+///
+/// Its extent along the pane's axis is taken from the space the parts share.
 #[derive(Component)]
 pub struct UISplitHandle {
+    /// The pane the handle resizes.
     pub pane: Entity,
 }
 
@@ -254,6 +282,11 @@ fn apply_second_split(pane: &UISplitPane, second: &mut UINode) {
     }
 }
 
+/// Scrolls `area` the least distance that shows the span from `min` to `max`, in content
+/// coordinates, in a viewport `viewport_extent` high.
+///
+/// When the span is taller than the viewport, its end is shown. The offset stays within the
+/// content.
 pub fn scroll_to_rect(area: &mut UIScrollArea, viewport_extent: f32, min: f32, max: f32) {
     if min < area.offset {
         area.offset = min;
@@ -387,7 +420,9 @@ pub(crate) struct UIScrollThumb {
 /// Where a scrollbar thumb sits within its track, in logical pixels.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ThumbGeometry {
+    /// The thumb's distance from the top of the track.
     pub offset: f32,
+    /// The thumb's height.
     pub height: f32,
 }
 

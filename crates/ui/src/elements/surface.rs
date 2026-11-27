@@ -95,6 +95,7 @@ impl UITheme {
 }
 
 impl Surface {
+    /// Sets the surface's background colour.
     pub fn fill(mut self, color: Color) -> Self {
         self.material.color = color.to_linear();
         self
@@ -102,6 +103,7 @@ impl Surface {
 }
 
 impl Divider {
+    /// Makes the divider a vertical line, 1 logical pixel wide, for a row.
     pub fn vertical(mut self) -> Self {
         self.node.width = UIValue::Px(1.0);
         self.node.height = UIValue::Auto;

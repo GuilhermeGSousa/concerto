@@ -36,16 +36,24 @@ pub const UI_PANEL_LAYER: i32 = 200;
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum UIAnchorTarget {
     /// Another UI entity, whose rect the panel tracks as it moves or resizes.
-    Node { entity: Entity },
+    Node {
+        /// The UI entity anchored to.
+        entity: Entity,
+    },
     /// A fixed screen point in logical pixels, such as the cursor for a context menu.
-    Point { position: Vec2 },
+    Point {
+        /// The point, in logical pixels.
+        position: Vec2,
+    },
 }
 
 impl UIAnchorTarget {
+    /// Anchors to the UI entity `entity`.
     pub fn from_node(entity: Entity) -> Self {
         Self::Node { entity }
     }
 
+    /// Anchors to the point `position`, in logical pixels.
     pub fn from_point(position: Vec2) -> Self {
         Self::Point { position }
     }
@@ -65,9 +73,13 @@ impl UIAnchorTarget {
 /// The side of the anchor the panel prefers to sit on.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum UIAnchorSide {
+    /// Below the anchor, the default.
     Below,
+    /// Above the anchor.
     Above,
+    /// Right of the anchor.
     Right,
+    /// Left of the anchor.
     Left,
 }
 
@@ -89,8 +101,11 @@ impl UIAnchorSide {
 /// How the panel lines up along the anchor's other axis.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum UIAnchorAlign {
+    /// The panel's left or top edge lines up with the anchor's; the default.
     Start,
+    /// The panel is centred on the anchor.
     Center,
+    /// The panel's right or bottom edge lines up with the anchor's.
     End,
 }
 
@@ -103,7 +118,10 @@ pub struct UIAnchoredPanel {
     pub target: UIAnchorTarget,
     /// The row, button or item this panel was opened for.
     pub owner: Option<Entity>,
+    /// The side of the anchor the panel prefers; it flips to the opposite side when only that one
+    /// fits in the window.
     pub side: UIAnchorSide,
+    /// How the panel lines up with the anchor across `side`.
     pub align: UIAnchorAlign,
     /// Gap between the anchor edge and the panel, in logical pixels.
     pub gap: f32,
@@ -138,6 +156,7 @@ impl Default for UIAnchoredPanel {
 }
 
 impl UIAnchoredPanel {
+    /// A closed panel anchored to `target`, below it, start-aligned, 4 logical pixels away.
     pub fn new(target: UIAnchorTarget) -> Self {
         Self {
             target,
@@ -145,11 +164,13 @@ impl UIAnchoredPanel {
         }
     }
 
+    /// Sets `target`.
     pub fn with_target(mut self, target: UIAnchorTarget) -> Self {
         self.target = target;
         self
     }
 
+    /// Sets `owner`.
     pub fn with_owner(mut self, owner: Entity) -> Self {
         self.owner = Some(owner);
         self
@@ -164,16 +185,19 @@ impl UIAnchoredPanel {
         self
     }
 
+    /// Sets `align`.
     pub fn with_align(mut self, align: UIAnchorAlign) -> Self {
         self.align = align;
         self
     }
 
+    /// Sets `gap`, in logical pixels.
     pub fn with_gap(mut self, gap: f32) -> Self {
         self.gap = gap;
         self
     }
 
+    /// Sets `open`.
     pub fn with_open(mut self, open: bool) -> Self {
         self.open = open;
         self
@@ -209,6 +233,7 @@ impl UIAnchoredPanel {
 /// Where a panel ended up.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Placement {
+    /// The panel's top-left corner, in logical pixels.
     pub origin: Vec2,
     /// The side actually used, after flipping.
     pub side: UIAnchorSide,
@@ -291,7 +316,9 @@ fn clamp(origin: &mut Vec2, panel: Vec2, window: Vec2) {
 
 /// One open panel's geometry, for deciding what a press dismisses.
 pub struct PanelRects {
+    /// The panel's entity.
     pub panel: Entity,
+    /// The panel's box.
     pub rect: UIBox,
     /// The owner's rect, when it has one and it has been laid out.
     pub owner_rect: Option<UIBox>,
@@ -315,6 +342,7 @@ pub struct UIPanelStack {
 }
 
 impl UIPanelStack {
+    /// The open panels' entities, outermost first.
     pub fn open(&self) -> &[Entity] {
         &self.open
     }

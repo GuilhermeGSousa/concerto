@@ -108,6 +108,7 @@ impl TextField {
         self
     }
 
+    /// Sets the field's background colour.
     pub fn fill(mut self, color: Color) -> Self {
         self.material.color = color.to_linear();
         self

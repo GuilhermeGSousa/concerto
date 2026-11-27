@@ -6,41 +6,63 @@ use crate::{interaction::UIInteractionStyle, text::FontFamily};
 /// Semantic colors and metrics for the Concerto editor's Nocturne UI.
 #[derive(Resource, Clone)]
 pub struct UITheme {
+    /// The backdrop behind every panel.
     pub canvas: Color,
+    /// The translucent fill of panels.
     pub surface: Color,
+    /// The fill of controls and cards that sit on a panel.
     pub surface_raised: Color,
     /// The opaque fill of popups and menus.
     pub surface_overlay: Color,
+    /// The fill of a row or control under the pointer.
     pub surface_hovered: Color,
+    /// Body text.
     pub text: Color,
+    /// Secondary text, hints and inactive marks.
     pub text_muted: Color,
+    /// Outlines and dividers.
     pub border: Color,
+    /// The mark of what is selected or primary.
     pub accent: Color,
+    /// The accent under the pointer.
     pub accent_hovered: Color,
     /// The palette's second accent, for marks that must read as a different kind of thing.
     pub accent_secondary: Color,
     /// The mark of what is playing or running now, apart from the accent of what is selected.
     pub active: Color,
+    /// The ring around the widget with keyboard focus.
     pub focus: Color,
+    /// The mark of an error.
     pub error: Color,
+    /// The mark of a warning.
     pub warning: Color,
     /// The fill behind selected text in a text field.
     pub text_selection: Color,
     /// A text field's caret.
     pub caret: Color,
+    /// The smallest gap, in logical pixels.
     pub spacing_xs: f32,
+    /// A small gap, in logical pixels.
     pub spacing_sm: f32,
+    /// The usual gap, in logical pixels.
     pub spacing_md: f32,
+    /// A large gap, in logical pixels.
     pub spacing_lg: f32,
+    /// The height of a list or tree row, in logical pixels.
     pub row_height: f32,
+    /// The height of a button or field, in logical pixels.
     pub control_height: f32,
-    /// Nocturne's radius scale, in logical pixels.
+    /// The small corner radius, in logical pixels.
     pub radius_sm: f32,
+    /// The medium corner radius, in logical pixels.
     pub radius_md: f32,
+    /// The large corner radius, in logical pixels.
     pub radius_lg: f32,
-    /// Type scale.
+    /// The small font size, for secondary text, in logical pixels.
     pub font_size_sm: f32,
+    /// The body font size, in logical pixels.
     pub font_size_md: f32,
+    /// The large font size, for headings, in logical pixels.
     pub font_size_lg: f32,
     /// Space before a top-level tree item's caret, in logical pixels.
     pub tree_inset: f32,
@@ -72,8 +94,11 @@ pub enum ButtonVariant {
 /// A chip's fill, outline and text colour.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ChipColors {
+    /// The fill.
     pub fill: Color,
+    /// The outline.
     pub border: Color,
+    /// The text colour.
     pub text: Color,
 }
 

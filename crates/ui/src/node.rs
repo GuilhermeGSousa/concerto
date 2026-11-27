@@ -62,9 +62,13 @@ use crate::{
 /// A uniform padding/margin value for one or all sides of a UI node (in pixels).
 #[derive(Default, Clone, Copy, Debug, PartialEq)]
 pub struct UIRect {
+    /// The top side, in logical pixels.
     pub top: f32,
+    /// The right side, in logical pixels.
     pub right: f32,
+    /// The bottom side, in logical pixels.
     pub bottom: f32,
+    /// The left side, in logical pixels.
     pub left: f32,
 }
 
@@ -127,9 +131,13 @@ impl From<f32> for UIRect {
 /// Offsets of a positioned node from its parent's edges.
 #[derive(Default, Clone, Copy, Debug, PartialEq)]
 pub struct UIInset {
+    /// The offset from the parent's top edge; `Auto` leaves it free.
     pub top: UIValue,
+    /// The offset from the parent's right edge; `Auto` leaves it free.
     pub right: UIValue,
+    /// The offset from the parent's bottom edge; `Auto` leaves it free.
     pub bottom: UIValue,
+    /// The offset from the parent's left edge; `Auto` leaves it free.
     pub left: UIValue,
 }
 
@@ -154,15 +162,19 @@ impl UIInset {
 /// An axis-aligned rectangle in logical pixels, relative to the window origin.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct UIBox {
+    /// The top-left corner.
     pub min: Vec2,
+    /// The width and height.
     pub size: Vec2,
 }
 
 impl UIBox {
+    /// The bottom-right corner.
     pub fn max(self) -> Vec2 {
         self.min + self.size
     }
 
+    /// Whether `point` is inside the box or on its edge.
     pub fn contains(self, point: Vec2) -> bool {
         let max = self.max();
         point.x >= self.min.x && point.y >= self.min.y && point.x <= max.x && point.y <= max.y
@@ -173,6 +185,7 @@ impl UIBox {
         self.size.x > 0.0 && self.size.y > 0.0
     }
 
+    /// The overlap of the two boxes, with zero size on an axis where they do not overlap.
     pub fn intersection(self, other: Self) -> Self {
         let min = self.min.max(other.min);
         let max = self.max().min(other.max()).max(min);
@@ -183,30 +196,56 @@ impl UIBox {
     }
 }
 
+/// A box of the UI's flex layout, sized and placed among its parent's children.
+///
+/// The layout writes the result to the node's [`UILayout`]. Set the fields through the `with_`
+/// builders, which start from [`Default`]: an auto-sized, visible flex row that does not grow and
+/// may shrink.
 #[derive(Component, Clone, Debug, PartialEq)]
 pub struct UINode {
+    /// The width; `Auto` sizes it to its content.
     pub width: UIValue,
+    /// The height; `Auto` sizes it to its content.
     pub height: UIValue,
+    /// The least width the layout gives the node.
     pub min_width: UIValue,
+    /// The least height the layout gives the node.
     pub min_height: UIValue,
+    /// The most width the layout gives the node.
     pub max_width: UIValue,
+    /// The most height the layout gives the node.
     pub max_height: UIValue,
+    /// The axis children are laid out along.
     pub flex_direction: FlexDirection,
     /// Whether children that do not fit move onto further lines.
     pub flex_wrap: FlexWrap,
+    /// The share of the parent's free space along its main axis the node takes; 0 takes none.
     pub flex_grow: f32,
+    /// The share of the parent's overflow along its main axis the node gives up; 0 keeps its size.
     pub flex_shrink: f32,
     /// Horizontal and vertical space between children, in logical pixels.
     pub gap: Vec2,
+    /// How children are aligned across the main axis; `None` stretches them.
     pub align_items: Option<AlignItems>,
+    /// How this node is aligned across its parent's main axis; `None` follows the parent's
+    /// `align_items`.
     pub align_self: Option<AlignItems>,
+    /// How children are distributed along the main axis; `None` packs them at the start.
     pub justify_content: Option<AlignContent>,
+    /// Space between the node's edges and its children.
     pub padding: UIRect,
+    /// Space around the node, outside its edges.
     pub margin: UIRect,
+    /// `Relative` lays the node out among its siblings; `Absolute` takes it out of the flow and
+    /// places it by `inset`.
     pub position: Position,
+    /// The offsets from the parent's edges of a node with `Absolute` position.
     pub inset: UIInset,
+    /// Whether the node and its subtree are laid out and drawn; a hidden node takes no space.
     pub visible: bool,
+    /// Whether children are clipped to the node's box horizontally.
     pub overflow_x: Overflow,
+    /// Whether children are clipped to the node's box vertically.
     pub overflow_y: Overflow,
     /// Explicit paint offset. Tree order remains the deterministic tie-breaker.
     pub z_index: i32,
@@ -220,123 +259,148 @@ impl UINode {
         self
     }
 
+    /// Sets `width`.
     pub fn with_width(mut self, width: UIValue) -> Self {
         self.width = width;
         self
     }
 
+    /// Sets `height`.
     pub fn with_height(mut self, height: UIValue) -> Self {
         self.height = height;
         self
     }
 
+    /// Sets `width` and `height`.
     pub fn with_size(self, width: UIValue, height: UIValue) -> Self {
         self.with_width(width).with_height(height)
     }
 
+    /// Sets `min_width`.
     pub fn with_min_width(mut self, min_width: UIValue) -> Self {
         self.min_width = min_width;
         self
     }
 
+    /// Sets `min_height`.
     pub fn with_min_height(mut self, min_height: UIValue) -> Self {
         self.min_height = min_height;
         self
     }
 
+    /// Sets `min_width` and `min_height`.
     pub fn with_min_size(self, min_width: UIValue, min_height: UIValue) -> Self {
         self.with_min_width(min_width).with_min_height(min_height)
     }
 
+    /// Sets `max_width`.
     pub fn with_max_width(mut self, max_width: UIValue) -> Self {
         self.max_width = max_width;
         self
     }
 
+    /// Sets `max_height`.
     pub fn with_max_height(mut self, max_height: UIValue) -> Self {
         self.max_height = max_height;
         self
     }
 
+    /// Sets `max_width` and `max_height`.
     pub fn with_max_size(self, max_width: UIValue, max_height: UIValue) -> Self {
         self.with_max_width(max_width).with_max_height(max_height)
     }
 
+    /// Sets `flex_direction`.
     pub fn with_flex_direction(mut self, flex_direction: FlexDirection) -> Self {
         self.flex_direction = flex_direction;
         self
     }
 
+    /// Sets `flex_wrap`.
     pub fn with_flex_wrap(mut self, flex_wrap: FlexWrap) -> Self {
         self.flex_wrap = flex_wrap;
         self
     }
 
+    /// Sets `flex_grow`.
     pub fn with_flex_grow(mut self, flex_grow: f32) -> Self {
         self.flex_grow = flex_grow;
         self
     }
 
+    /// Sets `flex_shrink`.
     pub fn with_flex_shrink(mut self, flex_shrink: f32) -> Self {
         self.flex_shrink = flex_shrink;
         self
     }
 
+    /// Sets `gap`, in logical pixels.
     pub fn with_gap(mut self, gap: Vec2) -> Self {
         self.gap = gap;
         self
     }
 
+    /// Sets `align_items`.
     pub fn with_align_items(mut self, align_items: AlignItems) -> Self {
         self.align_items = Some(align_items);
         self
     }
 
+    /// Sets `align_self`.
     pub fn with_align_self(mut self, align_self: AlignItems) -> Self {
         self.align_self = Some(align_self);
         self
     }
 
+    /// Sets `justify_content`.
     pub fn with_justify_content(mut self, justify_content: AlignContent) -> Self {
         self.justify_content = Some(justify_content);
         self
     }
 
+    /// Sets `padding`.
     pub fn with_padding(mut self, padding: UIRect) -> Self {
         self.padding = padding;
         self
     }
 
+    /// Sets `margin`.
     pub fn with_margin(mut self, margin: UIRect) -> Self {
         self.margin = margin;
         self
     }
 
+    /// Sets `position`.
     pub fn with_position(mut self, position: Position) -> Self {
         self.position = position;
         self
     }
 
+    /// Sets `inset`.
     pub fn with_inset(mut self, inset: UIInset) -> Self {
         self.inset = inset;
         self
     }
 
+    /// Sets `visible`.
     pub fn with_visible(mut self, visible: bool) -> Self {
         self.visible = visible;
         self
     }
 
+    /// Sets `overflow_x`.
     pub fn with_overflow_x(mut self, overflow_x: Overflow) -> Self {
         self.overflow_x = overflow_x;
         self
     }
 
+    /// Sets `overflow_y`.
     pub fn with_overflow_y(mut self, overflow_y: Overflow) -> Self {
         self.overflow_y = overflow_y;
         self
     }
 
+    /// Sets `z_index`.
     pub fn with_z_index(mut self, z_index: i32) -> Self {
         self.z_index = z_index;
         self
@@ -435,9 +499,14 @@ pub struct UITargetCamera(pub Entity);
 #[derive(Component, Clone, PartialEq)]
 #[require(SyncWithRenderWorld)]
 pub struct UILayout {
+    /// The node's border box.
     pub rect: UIBox,
+    /// The node's box inside its padding.
     pub content_rect: UIBox,
+    /// The part of the node left visible by its clipping ancestors; empty for a culled node.
     pub clip_rect: UIBox,
+    /// The order the node is painted and hit in: higher is on top. The `z_index` layer, inherited
+    /// from the parent, is the high 32 bits and the tree order the low ones.
     pub paint_order: i64,
 }
 
@@ -473,6 +542,7 @@ pub(crate) fn blank_culled_layouts(
 /// Layout instrumentation consumed by the showcase and profilers.
 #[derive(Resource, Default)]
 pub struct UILayoutDiagnostics {
+    /// How many layout runs have had anything to look at since the start.
     pub layout_passes: u64,
     /// How many Taffy nodes had their style, measure context or children set by the last layout run that had anything to look at.
     pub nodes_updated: u64,
@@ -740,10 +810,12 @@ fn revisit_on_uncull(
 }
 
 impl UILayout {
+    /// The top-left corner of the node's box.
     pub fn location(&self) -> Vec2 {
         self.rect.min
     }
 
+    /// The width and height of the node's box.
     pub fn size(&self) -> Vec2 {
         self.rect.size
     }
@@ -1705,6 +1777,7 @@ pub(crate) fn sync_material_params(
 /// Shows a camera's render target on this node.
 #[derive(Component)]
 pub struct UIViewport {
+    /// The texture the camera renders into.
     pub texture: AssetHandle<Texture>,
 }
 
@@ -1724,11 +1797,14 @@ pub(crate) fn sync_viewport_textures(mut viewports: Query<(&UIViewport, &mut UIM
 /// Shows the picture another `App` draws into a [`SharedTexture`].
 #[derive(Component)]
 pub struct UISharedViewport {
+    /// The picture shown; the node shows its material without a texture while it is `None` or not
+    /// yet drawn.
     pub picture: Option<SharedTexture>,
     id: AssetId,
 }
 
 impl UISharedViewport {
+    /// A viewport with no picture yet.
     pub fn new() -> Self {
         Self {
             picture: None,

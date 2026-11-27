@@ -41,36 +41,43 @@ impl UITheme {
 }
 
 impl Popup {
+    /// Sets the popup's background colour.
     pub fn fill(mut self, color: Color) -> Self {
         self.surface = self.surface.fill(color);
         self
     }
 
+    /// Sets the side of the anchor the popup prefers.
     pub fn anchor_side(mut self, side: UIAnchorSide) -> Self {
         self.panel = self.panel.with_side(side);
         self
     }
 
+    /// Sets how the popup lines up with its anchor.
     pub fn anchor_align(mut self, align: UIAnchorAlign) -> Self {
         self.panel = self.panel.with_align(align);
         self
     }
 
+    /// Sets the gap between the anchor and the popup, in logical pixels.
     pub fn anchor_gap(mut self, gap: f32) -> Self {
         self.panel = self.panel.with_gap(gap);
         self
     }
 
+    /// Sets what the popup anchors to.
     pub fn anchor_target(mut self, target: UIAnchorTarget) -> Self {
         self.panel = self.panel.with_target(target);
         self
     }
 
+    /// Focuses `widget` whenever the popup opens.
     pub fn focus_on_open(mut self, widget: Entity) -> Self {
         self.panel = self.panel.with_focus_on_open(widget);
         self
     }
 
+    /// Sets whether the popup starts open.
     pub fn open(mut self, open: bool) -> Self {
         self.panel = self.panel.with_open(open);
         self

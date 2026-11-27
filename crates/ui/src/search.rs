@@ -39,6 +39,7 @@ use crate::{
 /// drives that list from the keyboard while focused.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct UISearchField {
+    /// The [`UIList`] or [`UITree`] searched.
     pub target: Entity,
 }
 
