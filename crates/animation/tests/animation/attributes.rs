@@ -8,8 +8,8 @@ use concerto_animation::{
     graph::{AnimationGraph, AnimationNodeIndex},
     mask::{BoneMask, BoneMaskBranch},
     node::{
-        AdditiveNode, AnimationClipNode, AnimationNode, BlendNode, InputSlots, LayerNode,
-        ReflectAnimationNode,
+        AdditiveNode, AnimationClipNode, AnimationNode, BlendNode, EditorAnimationNode, InputSlots,
+        LayerNode, ReflectAnimationNode,
         state_machine::{AnimationFSMTrigger, AnimationStateMachine},
     },
     player::{AnimationHandleComponent, AnimationPlayer},
@@ -124,7 +124,9 @@ impl AnimationNode for SetAmount {
     fn reset(&self, elapsed: &mut f32) {
         *elapsed = 0.0;
     }
+}
 
+impl EditorAnimationNode for SetAmount {
     fn input_slots(&self) -> InputSlots {
         InputSlots::Fixed(vec![name!("pose")])
     }

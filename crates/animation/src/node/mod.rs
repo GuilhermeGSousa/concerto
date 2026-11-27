@@ -37,9 +37,9 @@ pub mod two_bone_ik;
 pub use additive::{AdditiveNode, AdditiveNodeState};
 pub use aim_offset::{AimOffsetNode, AimOffsetState, AimPoint};
 pub use definition::{
-    AnimationNode, CreateNodeInputs, ErasedAnimationNode, EvaluateNodeInputs, InputSlots,
-    NodeReport, NodeState, PlaceholderNode, ReflectAnimationNode, StateMachineReport,
-    TransitionReport, UpdateNodeInputs, register_node_inputs,
+    AnimationNode, CreateNodeInputs, EditorAnimationNode, ErasedAnimationNode, EvaluateNodeInputs,
+    InputSlots, NodeState, PlaceholderNode, ReflectAnimationNode, UpdateNodeInputs,
+    register_node_inputs,
 };
 pub use layer::{LayerNode, LayerSpace};
 pub use two_bone_ik::{IkGoal, IkTarget, TipRotation, TwoBoneIkNode, TwoBoneIkState};
@@ -112,10 +112,6 @@ impl AnimationNode for ResultNode {
     type UpdateInput = ();
     type EvaluateInput = ();
 
-    fn input_slots(&self) -> InputSlots {
-        InputSlots::Fixed(vec![name!("pose")])
-    }
-
     fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) {}
 
     fn update(&self, _: &mut (), _: f32, _: &(), _: &AnimationGraphContext<'_>) {}
@@ -136,15 +132,17 @@ impl AnimationNode for ResultNode {
     fn reset(&self, _: &mut ()) {}
 }
 
+impl EditorAnimationNode for ResultNode {
+    fn input_slots(&self) -> InputSlots {
+        InputSlots::Fixed(vec![name!("pose")])
+    }
+}
+
 impl AnimationNode for BlendNode {
     type State = ();
     type CreateInput = ();
     type UpdateInput = ();
     type EvaluateInput = ();
-
-    fn input_slots(&self) -> InputSlots {
-        InputSlots::Variable
-    }
 
     fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) {}
 
@@ -194,6 +192,12 @@ impl AnimationNode for BlendNode {
     }
 
     fn reset(&self, _: &mut ()) {}
+}
+
+impl EditorAnimationNode for BlendNode {
+    fn input_slots(&self) -> InputSlots {
+        InputSlots::Variable
+    }
 }
 
 pub(crate) struct ClipClock {
@@ -363,10 +367,6 @@ impl AnimationNode for AnimationClipNode {
     type UpdateInput = Res<'static, AssetStore<AnimationClip>>;
     type EvaluateInput = Res<'static, AssetStore<AnimationClip>>;
 
-    fn input_slots(&self) -> InputSlots {
-        InputSlots::None
-    }
-
     fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) -> AnimationClipNodeState {
         AnimationClipNodeState::new().with_start_time(self.start_time)
     }
@@ -461,19 +461,18 @@ impl AnimationNode for AnimationClipNode {
         })
     }
 
-    fn report(&self, state: &AnimationClipNodeState) -> NodeReport {
-        NodeReport {
-            clip_time: Some(state.current_time()),
-            state_machine: None,
-        }
-    }
-
     fn reset(&self, state: &mut AnimationClipNodeState) {
         state.clock.reset();
     }
 
     fn is_finished(&self, state: &AnimationClipNodeState) -> bool {
         state.clock.is_finished
+    }
+}
+
+impl EditorAnimationNode for AnimationClipNode {
+    fn describe(&self, state: &AnimationClipNodeState) -> Option<String> {
+        Some(format!("time {:.2} s", state.current_time()))
     }
 }
 

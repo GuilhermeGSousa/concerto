@@ -4,7 +4,9 @@ use concerto_animation::{
     blackboard::AnimationBlackboard,
     evaluation::AnimationGraphContext,
     mask::{BoneMask, MaskResolution, resolve_mask},
-    node::{AnimationNode, InputSlots, ReflectAnimationNode, model_space::parent},
+    node::{
+        AnimationNode, EditorAnimationNode, InputSlots, ReflectAnimationNode, model_space::parent,
+    },
     param::Param,
     pose::{AnimationFrame, EvaluatedFrame, FramePool},
 };
@@ -410,10 +412,6 @@ impl AnimationNode for ProceduralMotionNode {
     type UpdateInput = ();
     type EvaluateInput = Res<'static, AssetStore<BoneMask>>;
 
-    fn input_slots(&self) -> InputSlots {
-        InputSlots::Fixed(vec![name!("pose")])
-    }
-
     fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) -> ProceduralMotionState {
         let mut state = ProceduralMotionState::default();
         state.keep_up(self);
@@ -463,6 +461,12 @@ impl AnimationNode for ProceduralMotionNode {
     }
 }
 
+impl EditorAnimationNode for ProceduralMotionNode {
+    fn input_slots(&self) -> InputSlots {
+        InputSlots::Fixed(vec![name!("pose")])
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::f32::consts::TAU;
@@ -470,7 +474,7 @@ mod tests {
     use concerto_animation::{
         evaluation::AnimationGraphContext,
         mask::{BoneMask, BoneMaskBranch},
-        node::{AnimationNode, InputSlots, ReflectAnimationNode},
+        node::{AnimationNode, EditorAnimationNode, ReflectAnimationNode},
         player::AnimationPlayer,
         pose::{AnimationFrame, EvaluatedFrame, FramePool, JointPose},
         root::AnimationRootBone,
@@ -572,10 +576,6 @@ mod tests {
         type UpdateInput = ();
         type EvaluateInput = ();
 
-        fn input_slots(&self) -> InputSlots {
-            InputSlots::None
-        }
-
         fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) {}
 
         fn update(&self, _: &mut (), _: f32, _: &(), _: &AnimationGraphContext<'_>) {}
@@ -600,6 +600,8 @@ mod tests {
 
         fn reset(&self, _: &mut ()) {}
     }
+
+    impl EditorAnimationNode for InputPose {}
 
     struct NamedMask {
         path: &'static str,

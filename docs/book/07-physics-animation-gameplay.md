@@ -1400,8 +1400,8 @@ covers that node.
 ### Your own nodes
 
 The node set is open: any crate can define a node. Derive `Reflect` and
-`Default`, mark it `#[reflect(AnimationNode)]`, implement `AnimationNode`, and
-register it in your plugin with `app.register_animation_node::<MyNode>()` (from
+`Default`, mark it `#[reflect(AnimationNode)]`, implement `AnimationNode` and
+`EditorAnimationNode`, and register it in your plugin with `app.register_animation_node::<MyNode>()` (from
 `AnimationAppExt`), which registers the type and its inputs.
 
 ```rust
@@ -1416,8 +1416,10 @@ impl AnimationNode for Gain {
     type CreateInput = ();
     type UpdateInput = Res<'static, Tuning>;
     type EvaluateInput = ();
-    // input_slots, create_state, update, evaluate, reset; is_finished defaults to true
+    // create_state, update, evaluate, reset; is_finished defaults to true
 }
+
+impl EditorAnimationNode for Gain {}
 ```
 
 The node's fields are its data and are stored with the graph. `State` is the
@@ -1428,12 +1430,15 @@ a node restarts on `play` by resetting its state there. A node that plays graphs
 inside itself, as the state machine and the retarget node do, reports them
 through `inner_graphs` and their states through `inner_states`, each with the
 state that plays it when the node is a state machine, and, under `cfg(test)` or
-the `test-support` feature, mutably through `inner_states_mut`. `report` says
-what the node shows an editor of its state as it plays, a `NodeReport`; it is
-empty unless the node overrides it, as a clip does with its time and the state
-machine with its current state and transition.
+the `test-support` feature, mutably through `inner_states_mut`. What a tool asks
+of a node beyond running it lives on `EditorAnimationNode`, which
+`register_animation_node` requires; a node with nothing to add writes
+`impl EditorAnimationNode for X {}`. Its `describe` returns one line saying what
+the node does now, shown by the editor; it is none unless the node overrides it,
+as a clip does with its time and the state machine with its current state and
+transition.
 
-`input_slots` says which inputs the node takes, in the order `evaluate`
+`input_slots`, on `EditorAnimationNode`, says which inputs the node takes, in the order `evaluate`
 receives them in `evaluated_inputs`: `InputSlots::None` for a node that reads
 none, as a clip does; `InputSlots::Fixed` with a name for each, as a layer's
 `base` and `overlay`; or `InputSlots::Variable` for any number, as a blend

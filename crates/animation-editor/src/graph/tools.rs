@@ -1,4 +1,4 @@
-use concerto_animation::node::{StateMachineReport, state_machine::AnimationStateMachine};
+use concerto_animation::node::state_machine::AnimationStateMachine;
 use concerto_app::{App, schedule_groups::LateUpdate};
 use concerto_ecs::{
     Component, Entity, Query, Res, command::CommandQueue, events::event_reader::EventReader,
@@ -27,11 +27,11 @@ use super::{
     },
     panels::{subtitle, time_text, weight_text},
     params::{FoundParam, short_type},
-    preview::GraphPreviewState,
+    preview::{GraphPreviewState, MachineView},
     stage::{GraphLive, LiveView, SentPreview},
 };
 
-/// Reads what the front animation graph tab shows: the breadcrumb, then for a pose graph one line per node, `id · type · parent#slot · subtitle`, with the result node and loose nodes marked, and for a state machine one line per state, `name · initial · graph`, then one per transition, `from → to #index · trigger · blend`. When the graph names parameters, a `parameters:` line follows, then one line per parameter, `name · type · value`. Once the preview has reported what it plays, a `live:` line follows: for a pose graph one line per playing node, `id · weight · time` for a clip and `in state · from → to progress` for a state machine, and for a state machine that one part alone.
+/// Reads what the front animation graph tab shows: the breadcrumb, then for a pose graph one line per node, `id · type · parent#slot · subtitle`, with the result node and loose nodes marked, and for a state machine one line per state, `name · initial · graph`, then one per transition, `from → to #index · trigger · blend`. When the graph names parameters, a `parameters:` line follows, then one line per parameter, `name · type · value`. Once the preview has reported what it plays, a `live:` line follows: for a pose graph one line per playing node, `id · weight · time` for a clip and `in state · from → to progress` for a state machine, and for a state machine that one part alone. A node that describes itself, other than a clip or a state machine, has its indented describe line under its own.
 #[derive(Deserialize, JsonSchema)]
 pub struct GraphInspect {}
 
@@ -784,7 +784,7 @@ fn graph_set_param(
     }
 }
 
-fn machine_part(machine: &StateMachineReport) -> String {
+fn machine_part(machine: &MachineView) -> String {
     let mut part = match machine.current {
         Some(current) => format!("in {current}"),
         None => "in no state".to_owned(),
@@ -803,7 +803,7 @@ fn machine_part(machine: &StateMachineReport) -> String {
 fn live_block(state: &GraphDocument, live: LiveView) -> Option<String> {
     let mut lines = Vec::new();
     if let Some(node) = state.shown_machine() {
-        let machine = live.node(node)?.report.state_machine?;
+        let machine = live.node(node)?.machine?;
         lines.push(machine_part(&machine));
     } else {
         for node in state.graph()?.nodes() {
@@ -811,13 +811,17 @@ fn live_block(state: &GraphDocument, live: LiveView) -> Option<String> {
                 continue;
             };
             let mut line = format!("{} · weight {}", node.id, weight_text(playing.weight));
-            if let Some(time) = playing.report.clip_time {
+            let shown_inline = playing.clip_time.is_some() || playing.machine.is_some();
+            if let Some(time) = playing.clip_time {
                 line.push_str(&format!(" · time {}", time_text(time)));
             }
-            if let Some(machine) = &playing.report.state_machine {
+            if let Some(machine) = &playing.machine {
                 line.push_str(&format!(" · {}", machine_part(machine)));
             }
             lines.push(line);
+            if !shown_inline {
+                lines.extend(playing.describe.as_ref().map(|line| format!("  {line}")));
+            }
         }
     }
     (!lines.is_empty()).then(|| format!("live:\n{}", lines.join("\n")))

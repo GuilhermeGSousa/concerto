@@ -20,7 +20,7 @@ use crate::{
     evaluation::{AnimationGraphContext, RootBone},
     graph::{AnimationGraph, AnimationGraphState},
     ik::{Hinge, TwoBoneChain, solve_two_bone},
-    node::{AnimationNode, InputSlots, ReflectAnimationNode},
+    node::{AnimationNode, EditorAnimationNode, ReflectAnimationNode},
     pose::{AnimationFrame, EvaluatedFrame, FramePool, RootMotion, WeightedMotion, twist_about},
 };
 
@@ -1400,10 +1400,6 @@ impl AnimationNode for RetargetNode {
         Res<'static, AssetStore<Skeleton>>,
     );
 
-    fn input_slots(&self) -> InputSlots {
-        InputSlots::None
-    }
-
     fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) -> RetargetNodeState {
         RetargetNodeState {
             stage: Stage::Pending,
@@ -1545,6 +1541,8 @@ impl AnimationNode for RetargetNode {
         }
     }
 }
+
+impl EditorAnimationNode for RetargetNode {}
 
 fn rig_fits(rig: &ResolvedRig, skeleton: &Skeleton) -> bool {
     let count = skeleton.bone_count();

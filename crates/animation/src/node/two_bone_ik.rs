@@ -10,7 +10,7 @@ use crate::{
     evaluation::AnimationGraphContext,
     ik::{Hinge, TwoBoneChain, solve_two_bone},
     node::{
-        AnimationNode, InputSlots, ReflectAnimationNode, effective_weight,
+        AnimationNode, EditorAnimationNode, InputSlots, ReflectAnimationNode, effective_weight,
         model_space::{ModelJoint, WorldToModel, bone_under_first, model_joint, parent},
         pass_through,
     },
@@ -282,10 +282,6 @@ impl AnimationNode for TwoBoneIkNode {
     type UpdateInput = ();
     type EvaluateInput = ();
 
-    fn input_slots(&self) -> InputSlots {
-        InputSlots::Fixed(vec![name!("pose")])
-    }
-
     fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) -> TwoBoneIkState {
         TwoBoneIkState::default()
     }
@@ -327,6 +323,12 @@ impl AnimationNode for TwoBoneIkNode {
     }
 
     fn reset(&self, _: &mut TwoBoneIkState) {}
+}
+
+impl EditorAnimationNode for TwoBoneIkNode {
+    fn input_slots(&self) -> InputSlots {
+        InputSlots::Fixed(vec![name!("pose")])
+    }
 }
 
 #[cfg(test)]

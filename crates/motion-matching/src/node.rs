@@ -1,7 +1,7 @@
 use concerto_animation::{
     clip::AnimationClip,
     evaluation::AnimationGraphContext,
-    node::{effective_play_rate, AnimationNode, InputSlots, ReflectAnimationNode},
+    node::{effective_play_rate, AnimationNode, EditorAnimationNode, ReflectAnimationNode},
     param::Param,
     pose::{AnimationFrame, EvaluatedFrame, FramePool, RootMotion, WeightedMotion},
 };
@@ -187,10 +187,6 @@ impl AnimationNode for MotionMatchingNode {
     );
     type EvaluateInput = ();
 
-    fn input_slots(&self) -> InputSlots {
-        InputSlots::None
-    }
-
     fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) -> MotionMatchingState {
         MotionMatchingState::new(self.search_period)
     }
@@ -252,6 +248,8 @@ impl AnimationNode for MotionMatchingNode {
         *state = MotionMatchingState::new(self.search_period);
     }
 }
+
+impl EditorAnimationNode for MotionMatchingNode {}
 
 #[cfg(test)]
 mod tests {

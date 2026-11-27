@@ -91,15 +91,6 @@ pub trait AnimationNode: Reflect + Send + Sync + 'static {
         true
     }
 
-    /// The inputs this node takes, in the order `evaluate` receives them.
-    fn input_slots(&self) -> InputSlots;
-
-    /// Called when an editor gives the node an input at `index`.
-    fn input_added(&mut self, _index: usize) {}
-
-    /// Called when an editor takes the node's input at `index` away.
-    fn input_removed(&mut self, _index: usize) {}
-
     /// Visits the graph assets this node plays inside itself.
     fn inner_graphs(&self, _visit: &mut dyn FnMut(&AssetHandle<AnimationGraph>)) {}
 
@@ -113,11 +104,6 @@ pub trait AnimationNode: Reflect + Send + Sync + 'static {
     ) {
     }
 
-    /// What the node shows an editor of its state as it plays; nothing unless the node says otherwise.
-    fn report(&self, _state: &Self::State) -> NodeReport {
-        NodeReport::default()
-    }
-
     /// Visits, mutably, the graph states this node's state holds for the graphs it plays inside itself.
     #[cfg(any(test, feature = "test-support"))]
     #[doc(hidden)]
@@ -129,33 +115,23 @@ pub trait AnimationNode: Reflect + Send + Sync + 'static {
     }
 }
 
-/// What a playing node shows an editor beyond its weight.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct NodeReport {
-    /// The time a clip node plays at, in seconds.
-    pub clip_time: Option<f32>,
-    /// A state machine's current state and transition.
-    pub state_machine: Option<StateMachineReport>,
-}
+/// What an editor or a tool asks of a node beyond running it: its input pins and a line saying what it does now; every method has a default, so a node with nothing to add writes `impl EditorAnimationNode for X {}`.
+pub trait EditorAnimationNode: AnimationNode {
+    /// The inputs this node takes, in the order `evaluate` receives them.
+    fn input_slots(&self) -> InputSlots {
+        InputSlots::None
+    }
 
-/// The state a playing state machine is in and the transition it is blending through.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct StateMachineReport {
-    /// The state the machine is in, or `None` before it has entered one.
-    pub current: Option<Name>,
-    /// The transition it is blending through, if any.
-    pub transition: Option<TransitionReport>,
-}
+    /// Called when an editor gives the node an input at `index`.
+    fn input_added(&mut self, _index: usize) {}
 
-/// A transition in flight; `progress` runs from 0 to 1.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct TransitionReport {
-    /// The state the transition leaves.
-    pub from: Name,
-    /// The state the transition enters.
-    pub to: Name,
-    /// How far the blend has run, from 0 to 1.
-    pub progress: f32,
+    /// Called when an editor takes the node's input at `index` away.
+    fn input_removed(&mut self, _index: usize) {}
+
+    /// One line saying what the node does now, shown by tools beside it; none by default.
+    fn describe(&self, _state: &Self::State) -> Option<String> {
+        None
+    }
 }
 
 /// The inputs a kind of node takes.
@@ -185,7 +161,7 @@ pub fn register_node_inputs<N: AnimationNode>(world: &mut World) {
     register_input::<EvaluateNodeInputs, N::EvaluateInput>(world);
 }
 
-/// An [`AnimationNode`] with its state type erased; implemented for every node.
+/// An [`EditorAnimationNode`] with its state type erased; implemented for every one.
 pub trait ErasedAnimationNode: Send + Sync {
     /// The node as a reflected value.
     fn as_reflect(&self) -> &dyn Reflect;
@@ -245,8 +221,8 @@ pub trait ErasedAnimationNode: Send + Sync {
         visit: &mut dyn FnMut(Option<Name>, &AnimationGraphState),
     );
 
-    /// What the node shows an editor of its state.
-    fn report(&self, state: &NodeState) -> NodeReport;
+    /// One line saying what the node does now; see [`EditorAnimationNode::describe`].
+    fn describe(&self, state: &NodeState) -> Option<String>;
 
     /// Visits, mutably, the graph states this node's state holds.
     #[cfg(any(test, feature = "test-support"))]
@@ -263,7 +239,7 @@ pub trait ErasedAnimationNode: Send + Sync {
     fn state_as_any_mut<'a>(&self, state: &'a mut NodeState) -> &'a mut dyn Any;
 }
 
-impl<T: AnimationNode> ErasedAnimationNode for T {
+impl<T: EditorAnimationNode> ErasedAnimationNode for T {
     fn as_reflect(&self) -> &dyn Reflect {
         self
     }
@@ -343,15 +319,15 @@ impl<T: AnimationNode> ErasedAnimationNode for T {
     }
 
     fn input_slots(&self) -> InputSlots {
-        AnimationNode::input_slots(self)
+        EditorAnimationNode::input_slots(self)
     }
 
     fn input_added(&mut self, index: usize) {
-        AnimationNode::input_added(self, index);
+        EditorAnimationNode::input_added(self, index);
     }
 
     fn input_removed(&mut self, index: usize) {
-        AnimationNode::input_removed(self, index);
+        EditorAnimationNode::input_removed(self, index);
     }
 
     fn inner_states(
@@ -364,12 +340,10 @@ impl<T: AnimationNode> ErasedAnimationNode for T {
         }
     }
 
-    fn report(&self, state: &NodeState) -> NodeReport {
+    fn describe(&self, state: &NodeState) -> Option<String> {
         state
             .downcast_ref::<T::State>()
-            .map_or_else(NodeReport::default, |state| {
-                AnimationNode::report(self, state)
-            })
+            .and_then(|state| EditorAnimationNode::describe(self, state))
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -414,7 +388,7 @@ pub struct ReflectAnimationNode {
 
 impl TypeData for ReflectAnimationNode {}
 
-impl<T: AnimationNode + Default> FromType<T> for ReflectAnimationNode {
+impl<T: EditorAnimationNode + Default> FromType<T> for ReflectAnimationNode {
     fn from_type() -> Self {
         Self {
             from_value: from_value::<T>,
@@ -423,7 +397,7 @@ impl<T: AnimationNode + Default> FromType<T> for ReflectAnimationNode {
     }
 }
 
-fn from_value<T: AnimationNode + Default>(
+fn from_value<T: EditorAnimationNode + Default>(
     stored: &ReflectedValue,
     leaves: &mut LiveLeaves,
 ) -> (Box<dyn ErasedAnimationNode>, Vec<ValueWarning>) {
@@ -450,10 +424,6 @@ impl AnimationNode for PlaceholderNode {
     type UpdateInput = ();
     type EvaluateInput = ();
 
-    fn input_slots(&self) -> InputSlots {
-        InputSlots::Fixed(vec![name!("pose")])
-    }
-
     fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) {}
 
     fn update(&self, _: &mut (), _: f32, _: &(), _: &AnimationGraphContext<'_>) {}
@@ -474,6 +444,12 @@ impl AnimationNode for PlaceholderNode {
     }
 
     fn reset(&self, _: &mut ()) {}
+}
+
+impl EditorAnimationNode for PlaceholderNode {
+    fn input_slots(&self) -> InputSlots {
+        InputSlots::Fixed(vec![name!("pose")])
+    }
 }
 
 #[cfg(test)]
@@ -504,10 +480,6 @@ mod tests {
         type CreateInput = ();
         type UpdateInput = Res<'static, Step>;
         type EvaluateInput = ();
-
-        fn input_slots(&self) -> InputSlots {
-            InputSlots::None
-        }
 
         fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) -> GainState {
             GainState::default()
@@ -546,6 +518,8 @@ mod tests {
             state.updates >= 2
         }
     }
+
+    impl EditorAnimationNode for Gain {}
 
     fn gain_walks(register: impl FnOnce(&mut concerto_ecs::World)) -> Walks {
         Walks::with(AssetStore::new(), AssetStore::new(), register)

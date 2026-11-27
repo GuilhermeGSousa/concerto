@@ -1,6 +1,4 @@
-use concerto_animation::node::{
-    InputSlots, StateMachineReport, state_machine::AnimationStateMachine,
-};
+use concerto_animation::node::{InputSlots, state_machine::AnimationStateMachine};
 use concerto_ecs::{
     Added, Component, Entity, Query, Res, ResMut, With,
     command::{CommandQueue, EntityCommandQueue},
@@ -51,6 +49,7 @@ use super::{
         EditGraph, GraphDocument, GraphEdit, GraphLevel, GraphSelection, OpenTarget, node_types,
         shown_transitions,
     },
+    preview::MachineView,
     stage::{GraphLive, LiveView, SentPreview},
     tools::param_line,
 };
@@ -301,7 +300,7 @@ fn state_id(index: usize) -> CanvasNodeId {
 fn shown_diagram(
     machine: &AnimationStateMachine,
     selection: Option<GraphSelection>,
-    playing: Option<StateMachineReport>,
+    playing: Option<MachineView>,
     assets: &AssetRegistry,
 ) -> GraphCanvas {
     let mut canvas = GraphCanvas::new(CanvasMode::Diagram);
@@ -369,7 +368,7 @@ fn shown_canvas(
     if let Some(machine) = state.machine() {
         let playing = state
             .shown_machine()
-            .and_then(|node| live?.node(node)?.report.state_machine);
+            .and_then(|node| live?.node(node)?.machine);
         return shown_diagram(machine, state.selection, playing, assets);
     }
     let mut canvas = GraphCanvas::new(CanvasMode::Flow);
@@ -383,11 +382,10 @@ fn shown_canvas(
             shown = shown.with_badge(weight_text(playing.weight));
         }
         if let Some(subtitle) = subtitle(node, types, assets) {
-            shown =
-                shown.with_subtitle(match playing.and_then(|playing| playing.report.clip_time) {
-                    Some(time) => format!("{subtitle} · {}", time_text(time)),
-                    None => subtitle,
-                });
+            shown = shown.with_subtitle(match playing.and_then(|playing| playing.clip_time) {
+                Some(time) => format!("{subtitle} · {}", time_text(time)),
+                None => subtitle,
+            });
         }
         for pin in pins(node) {
             shown = shown.with_input(pin);

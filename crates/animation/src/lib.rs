@@ -77,7 +77,8 @@ mod tests {
         AnimationFSMTrigger, AnimationStateMachine, AnimationStateMachineState,
     };
     use crate::node::{
-        AnimationClipNode, AnimationClipNodeState, AnimationNode, ErasedAnimationNode, NodeState,
+        AnimationClipNode, AnimationClipNodeState, EditorAnimationNode, ErasedAnimationNode,
+        NodeState,
     };
     use crate::pose::{FiredEvent, FramePool, JointPose, RootMotion};
     use crate::testing::{Walks, made_live};
@@ -97,7 +98,7 @@ mod tests {
         clip
     }
 
-    fn erased<T: AnimationNode>(node: T) -> Box<dyn ErasedAnimationNode> {
+    fn erased<T: EditorAnimationNode>(node: T) -> Box<dyn ErasedAnimationNode> {
         Box::new(node)
     }
 

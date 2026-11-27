@@ -2,7 +2,7 @@ use std::{collections::HashMap, fmt};
 
 use concerto_animation::{
     graph::{AnimationGraph, AnimationNodeData, AnimationNodeIndex},
-    node::{AnimationNode, ErasedAnimationNode, InputSlots, PlaceholderNode},
+    node::{EditorAnimationNode, ErasedAnimationNode, InputSlots, PlaceholderNode},
 };
 use concerto_reflect::{ReflectedValue, to_value};
 
@@ -59,7 +59,7 @@ impl HeldNode {
     /// The inputs the node takes; a node held as its stored value takes what a placeholder takes.
     pub fn slots(&self) -> InputSlots {
         self.live().map_or_else(
-            || AnimationNode::input_slots(&PlaceholderNode {}),
+            || EditorAnimationNode::input_slots(&PlaceholderNode {}),
             ErasedAnimationNode::input_slots,
         )
     }
