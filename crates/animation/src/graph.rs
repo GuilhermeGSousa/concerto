@@ -7,7 +7,10 @@ use concerto_foundation::assets::{
     handle::{AssetHandle, LiveLeaves},
 };
 use concerto_name::Name;
-use concerto_reflect::{EncodeError, ReflectedValue, TypeRegistry, ValueWarning, to_value};
+use concerto_reflect::{
+    EncodeError, JsonLeaf, Reflect, ReflectJson, ReflectedValue, TypeRegistration, TypeRegistry,
+    ValueWarning, json_to_value, to_json, to_value,
+};
 use glam::Vec2;
 use log::warn;
 use petgraph::{
@@ -40,6 +43,11 @@ static PLACEHOLDER: PlaceholderNode = PlaceholderNode {};
 ///
 /// A node is `Stored` until built and `Live` once built. One that could not be built becomes a
 /// `Placeholder`, which plays as [`PlaceholderNode`] and keeps the value it could not build.
+///
+/// It reflects as a leaf, so a node can hold another, as a slot's entry does. Its JSON form is
+/// `{ "type": <type path>, "value": { ...fields } }`, read and written with the registry.
+#[derive(Reflect)]
+#[reflect(opaque, Json)]
 pub enum AnimationNodeData {
     /// Read from a file, not yet built into the node's type.
     Stored {
@@ -108,6 +116,65 @@ impl AnimationNodeData {
         }
     }
 
+    /// Builds the node from its stored value, or from a placeholder's kept value, loading handles through `leaves`.
+    ///
+    /// A node that cannot be built becomes a placeholder. `label` names the node in the warnings
+    /// returned, such as `node 3`. A live node is left alone.
+    pub fn make_live(
+        &mut self,
+        registry: &TypeRegistry,
+        leaves: &mut LiveLeaves,
+        label: &str,
+    ) -> Vec<ValueWarning> {
+        let (Self::Stored { type_name, value } | Self::Placeholder { type_name, value }) = self
+        else {
+            return Vec::new();
+        };
+        let failure = match registry
+            .get_by_name(type_name)
+            .and_then(|registration| registration.data::<ReflectAnimationNode>().copied())
+        {
+            Some(data) => {
+                let (mut built, node_warnings) = (data.from_value)(value, leaves);
+                if node_warnings.is_empty() {
+                    let checked = resolve_message_types(built.as_reflect_mut(), registry)
+                        .into_iter()
+                        .chain(built.make_live(registry, leaves));
+                    let warnings = checked
+                        .map(|warning| ValueWarning {
+                            path: type_name.clone(),
+                            reason: format!("{label} {}: {}", warning.path, warning.reason),
+                        })
+                        .collect();
+                    *self = Self::Live {
+                        type_name: std::mem::take(type_name),
+                        node: built,
+                    };
+                    return warnings;
+                }
+                node_warnings
+                    .into_iter()
+                    .map(|warning| format!("{label} replaced by a placeholder: {warning}"))
+                    .collect()
+            }
+            None => vec![format!(
+                "{label} replaced by a placeholder: type is not registered as an animation node"
+            )],
+        };
+        let warnings = failure
+            .into_iter()
+            .map(|reason: String| ValueWarning {
+                path: type_name.clone(),
+                reason,
+            })
+            .collect();
+        *self = Self::Placeholder {
+            type_name: std::mem::take(type_name),
+            value: std::mem::replace(value, ReflectedValue::List(Vec::new())),
+        };
+        warnings
+    }
+
     /// The node that plays: the live one, the placeholder, or none before the graph is made live.
     pub fn live(&self) -> Option<&dyn ErasedAnimationNode> {
         match self {
@@ -123,6 +190,49 @@ impl AnimationNodeData {
             Self::Live { node, .. } => Some(node.as_mut()),
             Self::Stored { .. } | Self::Placeholder { .. } => None,
         }
+    }
+}
+
+impl JsonLeaf for AnimationNodeData {
+    fn to_json(&self) -> serde_json::Value {
+        serde_json::Value::Null
+    }
+
+    fn from_json(_: &serde_json::Value) -> Result<Self, String> {
+        Err("a node's JSON form needs the type registry".to_owned())
+    }
+
+    fn to_json_with(&self, registry: &TypeRegistry) -> serde_json::Value {
+        let value = match self {
+            Self::Live { node, .. } => to_json(node.as_reflect(), registry),
+            Self::Stored { type_name, value } => registry
+                .get_by_name(type_name)
+                .and_then(|registration| registration.data::<ReflectAnimationNode>().copied())
+                .map_or(serde_json::Value::Null, |data| {
+                    let (built, _) =
+                        (data.from_value)(value, &mut LiveLeaves::from_parts(registry, None));
+                    to_json(built.as_reflect(), registry)
+                }),
+            Self::Placeholder { .. } => serde_json::Value::Null,
+        };
+        serde_json::json!({ "type": self.type_name(), "value": value })
+    }
+
+    fn from_json_with(value: &serde_json::Value, registry: &TypeRegistry) -> Result<Self, String> {
+        let type_name = value
+            .get("type")
+            .and_then(serde_json::Value::as_str)
+            .ok_or("expected an object with the node's type path under \"type\" and its fields under \"value\"")?;
+        let registration = registry
+            .get_by_name(type_name)
+            .filter(|registration| registration.data::<ReflectAnimationNode>().is_some())
+            .ok_or_else(|| format!("{type_name} is not registered as an animation node"))?;
+        let fields = value.get("value").cloned().unwrap_or_default();
+        let value = json_to_value(&fields, TypeRegistration::type_id(&registration), registry)?;
+        Ok(Self::Stored {
+            type_name: registration.type_path().to_owned(),
+            value,
+        })
     }
 }
 
@@ -306,48 +416,7 @@ impl AnimationGraph {
         let mut warnings = Vec::new();
 
         for (index, node) in self.nodes.node_weights_mut().enumerate() {
-            let (AnimationNodeData::Stored { type_name, value }
-            | AnimationNodeData::Placeholder { type_name, value }) = node
-            else {
-                continue;
-            };
-            let failure = match registry
-                .get_by_name(type_name)
-                .and_then(|registration| registration.data::<ReflectAnimationNode>().copied())
-            {
-                Some(data) => {
-                    let (mut built, node_warnings) = (data.from_value)(value, &mut leaves);
-                    if node_warnings.is_empty() {
-                        let checked = resolve_message_types(built.as_reflect_mut(), registry)
-                            .into_iter()
-                            .chain(built.make_live(registry, &mut leaves));
-                        warnings.extend(checked.map(|warning| ValueWarning {
-                            path: type_name.clone(),
-                            reason: format!("node {index} {}: {}", warning.path, warning.reason),
-                        }));
-                        *node = AnimationNodeData::Live {
-                            type_name: std::mem::take(type_name),
-                            node: built,
-                        };
-                        continue;
-                    }
-                    node_warnings
-                        .into_iter()
-                        .map(|warning| format!("node {index} replaced by a placeholder: {warning}"))
-                        .collect()
-                }
-                None => vec![format!(
-                    "node {index} replaced by a placeholder: type is not registered as an animation node"
-                )],
-            };
-            warnings.extend(failure.into_iter().map(|reason| ValueWarning {
-                path: type_name.clone(),
-                reason,
-            }));
-            *node = AnimationNodeData::Placeholder {
-                type_name: std::mem::take(type_name),
-                value: std::mem::replace(value, ReflectedValue::List(Vec::new())),
-            };
+            warnings.extend(node.make_live(registry, &mut leaves, &format!("node {index}")));
         }
 
         self.load_warnings = warnings;

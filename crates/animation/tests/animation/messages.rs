@@ -1,4 +1,4 @@
-use std::{thread, time::Duration};
+use std::{any::TypeId, thread, time::Duration};
 
 use concerto_animation::{
     TransitionBlender,
@@ -11,13 +11,14 @@ use concerto_animation::{
     },
     node::{
         AnimationClipNode, AnimationNode, AnimationPlayMode, BlendNode, EditorAnimationNode,
-        ReflectAnimationNode,
+        PlayInSlot, ReflectAnimationNode, SlotEntry, SlotNode,
         state_machine::{AnimationFSMTrigger, AnimationStateMachine},
     },
     player::{AnimationHandleComponent, AnimationPlayer},
     plugin::{AnimationAppExt, AnimationPlugin},
     pose::{AnimationFrame, EvaluatedFrame, FramePool},
     retarget::{RetargetChain, RetargetNode, RetargetRig},
+    root::AnimationRootBone,
 };
 use concerto_app::{
     App,
@@ -40,9 +41,13 @@ use concerto_foundation::{
 };
 use concerto_mesh::skeleton::{JointPose, Skeleton, SkeletonComponent};
 use concerto_name::{Name, name};
-use concerto_reflect::{Reflect, ReflectDefault, ReflectedValue, to_value};
+use concerto_reflect::{
+    Reflect, ReflectDefault, ReflectedValue, apply_value, json_to_value, to_json, to_value,
+};
 use glam::{Mat4, Vec3};
 use uuid::Uuid;
+
+use crate::attributes::Amount;
 
 const LONGEST_FRAME: Duration = Duration::from_millis(250);
 
@@ -113,6 +118,26 @@ impl AnimationNode for Counter {
     type EvaluateInput = ();
     type DriveInput = ();
 
+    fn drive(
+        &self,
+        _: &mut Count,
+        _: &(),
+        _: &mut DriveContext<'_>,
+        _: &[Uuid],
+        inputs: &[EvaluatedFrame],
+        _: &mut FramePool,
+        output: &mut AnimationFrame,
+    ) {
+        if let Some(input) = inputs.first() {
+            output.attributes_mut().copy_from(input.frame.attributes());
+        }
+        let bone_count = output.len();
+        output
+            .attributes_mut()
+            .channel_mut::<Amount>(bone_count)
+            .fill(Amount(1.0));
+    }
+
     fn create_state(&self, _: &(), _: &AnimationGraphContext<'_>) -> Count {
         Count::default()
     }
@@ -152,6 +177,14 @@ impl AnimationNode for Counter {
         if let Some(input) = evaluated_inputs.first() {
             output.copy_from(&input.frame);
         }
+        if let Some(joint) = output.joint_mut(0) {
+            joint.translation.y = 2.0;
+        }
+        let bone_count = output.len();
+        output
+            .attributes_mut()
+            .channel_mut::<Amount>(bone_count)
+            .fill(Amount(1.0));
     }
 
     fn reset(&self, state: &mut Count) {
@@ -354,12 +387,42 @@ struct Stage {
     app: App,
     character: Entity,
     bodiless: Entity,
+    slotted: Entity,
+    slot_bone: Entity,
+    jsoned: Entity,
     retargeted: Entity,
     nested: Entity,
     fading: Entity,
     restarted: Entity,
     ordered: Entity,
     planner: Entity,
+}
+
+fn slot_node() -> SlotNode {
+    SlotNode::new()
+        .with_entry(
+            SlotEntry::new(name!("count"), Counter {})
+                .with_fade_in(0.2)
+                .with_fade_out(0.2)
+                .with_on(MessageType::of::<Poke>())
+                .with_out(MessageType::of::<Twice>()),
+        )
+        .with_entry(
+            SlotEntry::new(name!("snap"), Counter {})
+                .with_fade_in(0.0)
+                .with_fade_out(0.0)
+                .with_on(MessageType::of::<Other>())
+                .with_out(MessageType::of::<Rang>()),
+        )
+}
+
+fn slot_graph(clip: AssetHandle<AnimationClip>, slot: SlotNode) -> AnimationGraph {
+    let mut graph = AnimationGraph::new();
+    graph
+        .result_node()
+        .input(slot)
+        .add_input(AnimationClipNode::new(clip));
+    stored(graph)
 }
 
 impl Stage {
@@ -550,6 +613,26 @@ impl Stage {
             .state(name!("Acting"), idle.clone(), |_| {})
             .build();
         let planner = graph(&mut app, stored(AnimationGraph::from_node(planner)));
+        let clip = insert(&mut app, AnimationClip::default());
+        let json = {
+            let registry = app.get_resource::<AppTypeRegistry>().unwrap().read();
+            let json = to_json(&slot_node(), &registry);
+            assert_eq!(
+                json["entries"][0]["node"],
+                serde_json::json!({ "type": std::any::type_name::<Counter>(), "value": {} })
+            );
+            let stored = json_to_value(&json, TypeId::of::<SlotNode>(), &registry).unwrap();
+            let mut rebuilt = SlotNode::new();
+            assert!(apply_value(&mut rebuilt, &stored).is_empty());
+            assert_eq!(
+                to_json(&rebuilt, &registry),
+                json,
+                "a slot's JSON form, its entries' out types included, reads back as written"
+            );
+            rebuilt
+        };
+        let jsoned = graph(&mut app, slot_graph(clip.clone(), json));
+        let slotted = graph(&mut app, slot_graph(clip, slot_node()));
         let skeleton = insert(
             &mut app,
             Skeleton::new(
@@ -600,6 +683,28 @@ impl Stage {
             AnimationHandleComponent::new(poked),
             hear_counted.into_listener(),
         ));
+        let slot_bone = world.spawn((Transform::IDENTITY, AnimationRootBone::default()));
+        let slotted = world.spawn((
+            AnimationPlayer::new(1),
+            AnimationHandleComponent::new(slotted),
+            SkeletonComponent::new(
+                skeleton.clone(),
+                vec![SceneEntityRef::Entity(slot_bone)],
+                None,
+            ),
+            hear_counted.into_listener(),
+        ));
+        let json_bone = world.spawn((Transform::IDENTITY, AnimationRootBone::default()));
+        let jsoned = world.spawn((
+            AnimationPlayer::new(1),
+            AnimationHandleComponent::new(jsoned),
+            SkeletonComponent::new(
+                skeleton.clone(),
+                vec![SceneEntityRef::Entity(json_bone)],
+                None,
+            ),
+            hear_counted.into_listener(),
+        ));
         let standing_bone = world.spawn(Transform::IDENTITY);
         let retargeted = world.spawn((
             AnimationPlayer::new(1),
@@ -642,6 +747,9 @@ impl Stage {
             app,
             character,
             bodiless,
+            slotted,
+            slot_bone,
+            jsoned,
             retargeted,
             nested,
             fading,
@@ -693,6 +801,51 @@ impl Stage {
         self.world()
             .get_component_for_entity_mut::<AnimationPlayer>(entity)
             .unwrap()
+    }
+
+    fn slot_player(&mut self) -> &mut AnimationPlayer {
+        let slotted = self.slotted;
+        self.player_of(slotted)
+    }
+
+    fn slot_amount(&mut self) -> f32 {
+        self.slot_player().attributes().get::<Amount>(0).0
+    }
+
+    fn amount_of(&mut self, entity: Entity) -> f32 {
+        self.player_of(entity).attributes().get::<Amount>(0).0
+    }
+
+    fn driven_amount(&mut self) -> f32 {
+        self.step();
+        self.slot_player().drive_attributes().get::<Amount>(0).0
+    }
+
+    fn slot_behaviour(&mut self) -> String {
+        let slotted = self.slotted;
+        let world = self.world();
+        let graphs = world.get_resource::<AssetStore<AnimationGraph>>().unwrap();
+        let mut reported = String::new();
+        world
+            .get_component_for_entity::<AnimationPlayer>(slotted)
+            .unwrap()
+            .for_each_node(graphs, |visit| {
+                if let Some(described) = visit.node.describe(visit.state)
+                    && visit.node.as_reflect().downcast_ref::<SlotNode>().is_some()
+                {
+                    reported = described;
+                }
+            });
+        reported
+    }
+
+    fn slot_lift(&mut self) -> f32 {
+        let bone = self.slot_bone;
+        self.world()
+            .get_component_for_entity::<Transform>(bone)
+            .unwrap()
+            .translation
+            .y
     }
 
     fn player(&mut self) -> &mut AnimationPlayer {
@@ -919,6 +1072,108 @@ fn messages_move_the_graph_and_nodes_answer_with_raised_messages_and_signals() {
     assert!(
         stage.in_state_of(restarted, name!("Recovered")),
         "a machine left on the frame after its clip ended plays that clip again when re-entered and moves on"
+    );
+
+    let slotted = stage.slotted;
+    stage.advance(0.0);
+    assert_eq!(stage.slot_amount(), 0.0);
+
+    let jsoned = stage.jsoned;
+    stage.slot_player().send(Poke { strength: 1.0 });
+    stage.player_of(jsoned).send(Poke { strength: 1.0 });
+    stage.advance(0.1);
+    let fading_in = stage.slot_amount();
+    assert_eq!(
+        stage.amount_of(jsoned),
+        fading_in,
+        "an entry made from its JSON form plays like one built in code"
+    );
+    assert_eq!(stage.heard_by(jsoned), [1]);
+    assert_eq!(
+        stage.driven_amount(),
+        fading_in,
+        "the drive pass fades an entry's attributes like the pose"
+    );
+    assert!(
+        (fading_in - 0.5).abs() < 0.05,
+        "half way through a 0.2 s fade in the amount is {fading_in}"
+    );
+    assert_eq!(stage.heard_by(slotted), [1]);
+    assert!(
+        stage.slot_behaviour().starts_with("playing count 0.5")
+            && stage.slot_behaviour().ends_with(" · heard 1"),
+        "the slot reports its playing entry with its fade and the entry's own line: {}",
+        stage.slot_behaviour()
+    );
+
+    stage.slot_player().send(Poke { strength: 1.0 });
+    stage.advance(0.1);
+    assert_eq!(
+        stage.heard_by(slotted),
+        [1, 1],
+        "a repeat poke restarts the entry"
+    );
+    assert!((stage.slot_amount() - 1.0).abs() < 0.05);
+    assert!(
+        (stage.slot_lift() - 2.0).abs() < 0.05,
+        "an entry's root joint shows through the slot"
+    );
+
+    stage.slot_player().send(Poke { strength: 1.0 });
+    stage.slot_player().send(Poke { strength: 1.0 });
+    stage.advance(0.1);
+    assert_eq!(
+        stage.heard_by(slotted),
+        [1, 1, 1, 2],
+        "two pokes in one frame restart the entry once and both reach it"
+    );
+    let fading_out = stage.slot_amount();
+    assert!(
+        (fading_out - 0.5).abs() < 0.05,
+        "half way through a 0.2 s fade out the amount is {fading_out}"
+    );
+
+    stage.advance(0.1);
+    assert_eq!(stage.slot_amount(), 0.0);
+    assert_eq!(
+        stage.slot_behaviour(),
+        "no entry playing",
+        "a faded out entry leaves the report"
+    );
+    stage.advance(0.1);
+    assert_eq!(stage.slot_amount(), 0.0);
+    assert_eq!(stage.heard_by(slotted), [1, 1, 1, 2]);
+
+    stage.slot_player().send(PlayInSlot {
+        entry: name!("count"),
+    });
+    stage.advance(0.1);
+    let played = stage.slot_amount();
+    assert!(
+        (played - 0.5).abs() < 0.05,
+        "a play message starts the entry, and the amount is {played}"
+    );
+
+    stage.slot_player().send(Other {});
+    stage.advance(0.0);
+    assert_eq!(
+        stage.slot_amount(),
+        1.0,
+        "an entry with no fade in is at full weight at once"
+    );
+
+    stage.slot_player().send(Ring {});
+    stage.advance(0.0);
+    assert!(
+        (stage.slot_amount() - played).abs() < 0.05,
+        "an entry fades out when its node raises one of its out types"
+    );
+    stage.slot_player().send(Other {});
+    stage.advance(0.0);
+    assert_eq!(
+        stage.slot_amount(),
+        1.0,
+        "an entry that faded out on its out type starts again on its next message"
     );
 
     let heard = stage.heard_by(bodiless).len();

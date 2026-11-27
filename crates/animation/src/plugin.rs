@@ -20,7 +20,7 @@ use crate::{
     clip::AnimationClip,
     drive::{AnimationDriveSet, drive_animation_players},
     event::{AnimationEvent, ClipEvent},
-    graph::AnimationGraph,
+    graph::{AnimationGraph, AnimationNodeData},
     mask::BoneMask,
     message::{
         AnimationMessage, ClipEnded, ReflectAnimationMessage, queue_message,
@@ -28,8 +28,8 @@ use crate::{
     },
     node::{
         AdditiveNode, AimOffsetNode, AnimationClipNode, BlendNode, EditorAnimationNode, IkTarget,
-        LayerNode, PlaceholderNode, ResultNode, TwoBoneIkNode, blend_space::BlendSpace2DNode,
-        register_node_inputs, state_machine::AnimationStateMachine,
+        LayerNode, PlaceholderNode, PlayInSlot, ResultNode, SlotEntry, SlotNode, TwoBoneIkNode,
+        blend_space::BlendSpace2DNode, register_node_inputs, state_machine::AnimationStateMachine,
     },
     param::Param,
     retarget::{RetargetNode, RetargetRig},
@@ -45,6 +45,7 @@ pub fn register_animation_types(registry: &mut TypeRegistry) {
     registry.register::<BlendNode>();
     registry.register::<TwoBoneIkNode>();
     registry.register::<LayerNode>();
+    registry.register::<SlotNode>();
     registry.register::<AdditiveNode>();
     registry.register::<AimOffsetNode>();
     registry.register::<AnimationClipNode>();
@@ -58,6 +59,11 @@ pub fn register_animation_types(registry: &mut TypeRegistry) {
     let mut ended = ClipEnded::get_type_registration();
     ended.insert(ReflectAnimationMessage);
     registry.add(ended);
+    let mut play = PlayInSlot::get_type_registration();
+    play.insert(ReflectAnimationMessage);
+    registry.add(play);
+    registry.register::<AnimationNodeData>();
+    registry.register::<SlotEntry>();
     registry.register::<AssetHandle<AnimationClip>>();
     registry.register::<AssetHandle<AnimationGraph>>();
     registry.register::<AssetHandle<BoneMask>>();
@@ -77,6 +83,7 @@ pub fn register_animation_node_inputs(world: &mut World) {
     register_node_inputs::<BlendNode>(world);
     register_node_inputs::<TwoBoneIkNode>(world);
     register_node_inputs::<LayerNode>(world);
+    register_node_inputs::<SlotNode>(world);
     register_node_inputs::<AdditiveNode>(world);
     register_node_inputs::<AimOffsetNode>(world);
     register_node_inputs::<AnimationClipNode>(world);
@@ -163,6 +170,7 @@ impl Plugin for AnimationPlugin {
         }
         register_animation_node_inputs(app.main_mut().world_mut());
         app.register_animation_message::<ClipEnded>();
+        app.register_animation_message::<PlayInSlot>();
         app.register_animation_message::<AnimationEvent>();
         app.add_listener(queue_reflected_message.at_preview_time());
 

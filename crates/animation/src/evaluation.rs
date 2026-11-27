@@ -135,9 +135,9 @@ impl<'a> AnimationGraphContext<'a> {
             .filter_map(|message| message.downcast_ref::<M>())
     }
 
-    /// In `update`, queues `message` for every state machine and retarget this node plays in,
-    /// which can act on it, and, once it leaves the player's graph, triggers it on the player's
-    /// entity.
+    /// In `update`, queues `message` for every state machine, slot and retarget this node plays
+    /// in, which can act on it, and, once it leaves the player's graph, triggers it on the
+    /// player's entity.
     pub fn raise<M: AnimationMessage + EntitySignal>(&mut self, message: M) {
         self.pass_up(RaisedMessage {
             message: Box::new(message),
