@@ -6,6 +6,8 @@ use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+/// The persistent identity of an asset, a UUID that stays the same when its file is moved or
+/// renamed.
 pub struct AssetId(Uuid);
 
 /// Fixed namespace for deriving AssetIds from asset paths, so the same
@@ -27,6 +29,7 @@ impl AssetId {
         *self.0.as_bytes()
     }
 
+    /// Mints a new random id, distinct from every other.
     pub fn new() -> Self {
         AssetId(Uuid::new_v4())
     }
@@ -36,6 +39,7 @@ impl AssetId {
         AssetId(Uuid::nil())
     }
 
+    /// Whether this is the [`nil`](Self::nil) id, which names no asset.
     pub fn is_nil(&self) -> bool {
         self.0.is_nil()
     }
@@ -84,6 +88,8 @@ pub const CONTENT_ASSET_MAGIC: [u8; 4] = *b"GRDY";
 pub const CONTENT_FORMAT_VERSION: u32 = 8;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// The header of a content asset file: its identity, kind, references and provenance, read without
+/// decoding the payload.
 pub struct ContentAssetHeader {
     /// The asset's identity, minted when it is first written and carried here from then on.
     ///
@@ -1143,16 +1149,20 @@ pub fn read_content_asset_header(path: &Path) -> anyhow::Result<ContentAssetHead
 /// Where an embedded asset is stored: the asset whose file holds it, and its name there.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EmbeddedIn {
+    /// The id of the asset whose file holds the embedded asset.
     pub host: AssetId,
+    /// The embedded asset's name within the host's file.
     pub name: String,
 }
 
 /// One content asset: what a scan reads from its header, or a registry line holds.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScannedEntry {
+    /// The asset's id.
     pub id: AssetId,
     /// The path relative to the scan's base, `/`-separated (`"content/hero/body.gasset"`).
     pub address: String,
+    /// The asset kind, as the header's `kind` tags it.
     pub kind: String,
     /// The header's `kind_version`; `None` for a registry line.
     pub kind_version: Option<u32>,
