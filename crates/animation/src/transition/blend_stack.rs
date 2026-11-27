@@ -115,7 +115,9 @@ impl BlendStack {
         }
         self.snapshot_pose.copy_from(&self.last_pose);
         self.snapshot_pose.events.clear();
+        self.snapshot_pose.attributes_mut().freeze();
         self.snapshot_drive.copy_from(&self.last_drive);
+        self.snapshot_drive.freeze();
         self.entries.clear();
         self.entries.push(BlendStackEntry {
             source: Source::Snapshot(from),

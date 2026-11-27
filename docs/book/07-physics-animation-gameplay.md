@@ -1491,9 +1491,15 @@ per bone by its mask weight times its layer weight, in either space; additive
 and aim offset nodes keep their base's; the inertialization blender keeps the
 source's attributes and blends them over the destination's as the destination
 changes, the source's share halving every halflife; a retarget node drops
-them, since they belong to the skeleton that set them. The player keeps the
-last evaluated frame's, read with `AnimationPlayer::attributes`, and none once
-its graph gives no frame.
+them, since they belong to the skeleton that set them. A transition that holds
+attributes after their source stopped playing, the snapshot of a cross-fade
+interrupted mid-fade and the source attributes an inertialization fades out,
+holds each value's `PoseAttribute::frozen`. The default is the value unchanged,
+which suits a target; an attribute carrying closed-loop output, such as a
+force a balance controller computed for the body as it was, returns it with
+that output dropped to neutral, so the held value stops pushing. The player
+keeps the last evaluated frame's, read with `AnimationPlayer::attributes`, and
+none once its graph gives no frame.
 
 A second walk of the graph, the drive pass, gives the attributes a physics step
 reads. `drive_animation_players`, the animation crate's system, runs it each

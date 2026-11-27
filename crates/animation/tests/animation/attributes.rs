@@ -94,6 +94,36 @@ impl PoseAttribute for DriveWeight {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Push {
+    target: f32,
+    force: f32,
+}
+
+impl PoseAttribute for Push {
+    fn neutral() -> Self {
+        Push {
+            target: 0.0,
+            force: 0.0,
+        }
+    }
+
+    fn blend(&mut self, self_weight: f32, other: &Self, other_weight: f32) {
+        let total = self_weight + other_weight;
+        if total > 0.0 {
+            self.target = (self.target * self_weight + other.target * other_weight) / total;
+            self.force = (self.force * self_weight + other.force * other_weight) / total;
+        }
+    }
+
+    fn frozen(&self) -> Self {
+        Push {
+            target: self.target,
+            force: 0.0,
+        }
+    }
+}
+
 #[derive(Default, Reflect)]
 #[reflect(AnimationNode)]
 struct SetAmount {
@@ -129,6 +159,13 @@ impl SetAmount {
         let amounts = output.attributes_mut().channel_mut::<Amount>(bone_count);
         for bone in &self.bones {
             amounts[*bone] = Amount(value);
+        }
+        let pushes = output.attributes_mut().channel_mut::<Push>(bone_count);
+        for bone in &self.bones {
+            pushes[*bone] = Push {
+                target: value,
+                force: value,
+            };
         }
     }
 }
@@ -621,11 +658,17 @@ fn attributes_travel_with_the_pose_through_every_blend() {
     let blend_time = 2.0;
     let there = stage.turned_clip(0.8, Some(0.45));
     let back = stage.turned_clip(-0.8, None);
-    let interrupted = stage.there_and_back(
-        single(AnimationClipNode::new(there)),
-        single(AnimationClipNode::new(back)),
-        blend_time,
-    );
+    let mut there_graph = AnimationGraph::new();
+    there_graph
+        .result_node()
+        .input(SetAmount::on(1.0, &ALL_BONES))
+        .add_input(AnimationClipNode::new(there));
+    let mut back_graph = AnimationGraph::new();
+    back_graph
+        .result_node()
+        .input(SetAmount::on(1.0, &ALL_BONES))
+        .add_input(AnimationClipNode::new(back));
+    let interrupted = stage.there_and_back(there_graph, back_graph, blend_time);
     stage.hear_events(interrupted);
     stage.advance(0.0);
     stage.set_param(interrupted, name!("go"), true);
@@ -633,6 +676,7 @@ fn attributes_travel_with_the_pose_through_every_blend() {
     for _ in 0..5 {
         stage.advance(0.1);
     }
+    stage.drive(interrupted);
     stage.set_param(interrupted, name!("go"), false);
     let mut before = stage.rotation(interrupted, 2);
     for _ in 0..3 {
@@ -645,6 +689,11 @@ fn attributes_travel_with_the_pose_through_every_blend() {
         );
         before = now;
     }
+    let push = stage.drive(interrupted).get::<Push>(0);
+    assert!(
+        (push.target - 1.0).abs() < 1e-5 && push.force < 0.2,
+        "the snapshot of an interrupted fade drives with its frozen values, its target held and its force dropped to neutral: {push:?}"
+    );
     assert_eq!(
         stage.heard(),
         1,

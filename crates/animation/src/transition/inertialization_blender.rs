@@ -153,7 +153,9 @@ impl AnimationTransitionBlender for InertializationBlender {
                     .get_or_insert_with(|| Inertializer::new(bone_count))
                     .transition(source, &source_velocity, output.pose(), &zero_velocity);
                 self.halflife = halflife;
-                self.source_attributes = Some(std::mem::take(&mut self.last_attributes));
+                let mut source_attributes = std::mem::take(&mut self.last_attributes);
+                source_attributes.freeze();
+                self.source_attributes = Some(source_attributes);
                 self.source_share = 1.0;
                 true
             }
