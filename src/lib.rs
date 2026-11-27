@@ -70,7 +70,7 @@ pub fn run(
 ) {
     #[cfg(not(target_arch = "wasm32"))]
     {
-        match cook_arg(std::env::args().skip(1)) {
+        match CookArg::parse(std::env::args().skip(1)) {
             CookArg::Absent => {}
             CookArg::Dir(out) => std::process::exit(report_cook(cook(build, content, &out))),
             CookArg::Missing => std::process::exit(report_cook(Err(anyhow::anyhow!(
@@ -98,15 +98,17 @@ enum CookArg {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn cook_arg(args: impl IntoIterator<Item = String>) -> CookArg {
-    let mut args = args.into_iter();
-    if !args.any(|arg| arg == "--cook") {
-        return CookArg::Absent;
-    }
-    match args.next() {
-        None => CookArg::Missing,
-        Some(out) if out.starts_with('-') => CookArg::Flag(out),
-        Some(out) => CookArg::Dir(out.into()),
+impl CookArg {
+    fn parse(args: impl IntoIterator<Item = String>) -> Self {
+        let mut args = args.into_iter();
+        if !args.any(|arg| arg == "--cook") {
+            return Self::Absent;
+        }
+        match args.next() {
+            None => Self::Missing,
+            Some(out) if out.starts_with('-') => Self::Flag(out),
+            Some(out) => Self::Dir(out.into()),
+        }
     }
 }
 
@@ -428,7 +430,7 @@ mod cook_tests {
         ];
         for row in rows {
             let args = row.args.iter().map(|arg| arg.to_string());
-            assert_eq!(super::cook_arg(args), row.cook, "{:?}", row.args);
+            assert_eq!(super::CookArg::parse(args), row.cook, "{:?}", row.args);
         }
     }
 }
