@@ -14,6 +14,36 @@ pub enum ReflectedValue {
     List(Vec<ReflectedValue>),
 }
 
+impl ReflectedValue {
+    /// Whether `wanted` is found here: every field it names is present and contains its value, and a variant has the same name.
+    pub fn contains(&self, wanted: &ReflectedValue) -> bool {
+        match (self, wanted) {
+            (ReflectedValue::Struct(fields), ReflectedValue::Struct(wanted)) => {
+                has_wanted_fields(fields, wanted)
+            }
+            (
+                ReflectedValue::Variant { name, fields },
+                ReflectedValue::Variant {
+                    name: wanted_name,
+                    fields: wanted,
+                },
+            ) => name == wanted_name && has_wanted_fields(fields, wanted),
+            _ => self == wanted,
+        }
+    }
+}
+
+fn has_wanted_fields(
+    fields: &[(String, ReflectedValue)],
+    wanted: &[(String, ReflectedValue)],
+) -> bool {
+    wanted.iter().all(|(name, value)| {
+        fields
+            .iter()
+            .any(|(field, stored)| field == name && stored.contains(value))
+    })
+}
+
 /// Sees each leaf before its own encoding does; `None` leaves the leaf to encode itself.
 pub trait LeafHook {
     fn encode(&mut self, leaf: &dyn Reflect) -> Option<Result<Vec<u8>, LeafError>>;

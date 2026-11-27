@@ -101,6 +101,79 @@ fn field(name: &str, value: ReflectedValue) -> ReflectedValue {
     ReflectedValue::Struct(vec![(name.into(), value)])
 }
 
+struct Lookup {
+    name: &'static str,
+    wanted: ReflectedValue,
+    found: bool,
+}
+
+#[test]
+fn contains_matches_a_wanted_subset_field_by_field() {
+    let stored = to_value(&everything()).unwrap();
+    let cases = [
+        Lookup {
+            name: "a struct subset is found",
+            wanted: field("shape", to_value(&Shape::Sphere(2.0)).unwrap()),
+            found: true,
+        },
+        Lookup {
+            name: "a struct equal to the stored value is found",
+            wanted: stored.clone(),
+            found: true,
+        },
+        Lookup {
+            name: "a missing field is not found",
+            wanted: field("added", to_value(&1.0_f32).unwrap()),
+            found: false,
+        },
+        Lookup {
+            name: "an unequal leaf is not found",
+            wanted: field("position", to_value(&Vec3::new(9.0, 2.0, 3.0)).unwrap()),
+            found: false,
+        },
+        Lookup {
+            name: "a variant with another name is not found",
+            wanted: field(
+                "shape",
+                ReflectedValue::Variant {
+                    name: "Point".into(),
+                    fields: Vec::new(),
+                },
+            ),
+            found: false,
+        },
+        Lookup {
+            name: "a variant subset is found",
+            wanted: field(
+                "other",
+                ReflectedValue::Variant {
+                    name: "Cone".into(),
+                    fields: vec![("angle".into(), to_value(&0.25_f32).unwrap())],
+                },
+            ),
+            found: true,
+        },
+        Lookup {
+            name: "an equal list is found",
+            wanted: field("list", to_value(&everything().list).unwrap()),
+            found: true,
+        },
+        Lookup {
+            name: "a list of another length is not found",
+            wanted: field("list", to_value(&everything().list[..1].to_vec()).unwrap()),
+            found: false,
+        },
+        Lookup {
+            name: "a nested struct subset is found",
+            wanted: field("inner", field("weight", to_value(&0.5_f32).unwrap())),
+            found: true,
+        },
+    ];
+    for case in cases {
+        assert_eq!(stored.contains(&case.wanted), case.found, "{}", case.name);
+    }
+}
+
 #[test]
 fn a_stored_tree_writes_what_matches_and_warns_at_the_path_of_what_does_not() {
     let label = |text: &str| to_value(&text.to_string()).unwrap();
