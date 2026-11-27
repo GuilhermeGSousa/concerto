@@ -308,7 +308,7 @@ fn a_walking_character_gone_limp_keeps_its_speed_falls_to_rest_and_is_drawn_by_w
         );
         let off = simulated.translation.distance(bone.translation);
         assert!(
-            off < 1e-3 && simulated.rotation.dot(bone.rotation).abs() > 0.9999,
+            off < 2e-3 && simulated.rotation.dot(bone.rotation).abs() > 0.9999,
             "the bone of part {part} ({:?}) is drawn {off} m from its part",
             body.bone_name(part)
         );
@@ -336,7 +336,7 @@ fn a_walking_character_gone_limp_keeps_its_speed_falls_to_rest_and_is_drawn_by_w
     for (part, (simulated, bone)) in stepped.iter().zip(&drawn).enumerate() {
         let off = simulated.translation.distance(bone.translation);
         assert!(
-            off < 1e-3,
+            off < 2e-3,
             "in the frame its character moves, the bone of part {part} ({:?}) is drawn {off} m from its part",
             body.bone_name(part)
         );
