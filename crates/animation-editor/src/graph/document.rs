@@ -53,8 +53,12 @@ const IN_FLOW: &str =
 /// A transition of the state machine in view: its two states and its place among the transitions between that pair.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TransitionRef {
+    /// The state the transition leaves.
     pub from: Name,
+    /// The state the transition enters.
     pub to: Name,
+    /// The transition's index among those from `from` to `to`, in the order the machine tries
+    /// them.
     pub index: usize,
 }
 
@@ -67,9 +71,16 @@ impl fmt::Display for TransitionRef {
 /// What a graph tab has selected: a node, the link that makes `child` an input, or in a state machine a state or a transition.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GraphSelection {
+    /// A node of the graph in view.
     Node(GraphNodeId),
-    Link { child: GraphNodeId },
+    /// The link into a node's parent.
+    Link {
+        /// The node the link makes an input.
+        child: GraphNodeId,
+    },
+    /// A state of the machine in view, by name.
     State(Name),
+    /// A transition of the machine in view.
     Transition(TransitionRef),
 }
 
@@ -77,8 +88,11 @@ pub enum GraphSelection {
 #[derive(Clone, Default, Reflect)]
 #[reflect(Default)]
 pub struct StateValue {
+    /// The state's name, unique in its machine.
     pub name: Name,
+    /// The graph asset the state plays.
     pub graph: AssetHandle<AnimationGraph>,
+    /// Whether the machine starts in this state.
     pub initial: bool,
 }
 
@@ -86,16 +100,22 @@ pub struct StateValue {
 #[derive(Clone, Default, Reflect)]
 #[reflect(Default)]
 pub struct TransitionValue {
+    /// When the transition fires.
     pub trigger: AnimationFSMTrigger,
+    /// The cross-fade time or inertialization halflife, in seconds.
     pub blend_time: f32,
 }
 
 /// One transition of a state machine as a graph tab lists it; `place` is its index among those out of its source state.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ShownTransition {
+    /// The transition by its two states and its index between them.
     pub named: TransitionRef,
+    /// The transition's index among those out of its source state.
     pub place: usize,
+    /// The trigger as a label, such as `Instant` or `crouch = true`.
     pub trigger: String,
+    /// The cross-fade time or inertialization halflife, in seconds.
     pub blend_time: f32,
 }
 
@@ -186,8 +206,11 @@ fn transition_value(
 
 /// The working copy of one graph asset a tab has drilled through, kept until the tab reloads.
 pub struct HeldGraph {
+    /// The graph asset the copy was read from, which a save writes over.
     pub asset: AssetEntry,
+    /// The graph as edited so far.
     pub copy: GraphCopy,
+    /// Whether the copy has edits since it was read or saved; a save writes only these.
     pub changed: bool,
 }
 
@@ -195,9 +218,17 @@ pub struct HeldGraph {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GraphLevel {
     /// A graph asset, shown as a pose graph; `state` names the state of the machine above that plays it.
-    Graph { asset: AssetId, state: Option<Name> },
+    Graph {
+        /// The graph asset.
+        asset: AssetId,
+        /// The state of the machine above that plays the graph, if it was reached through one.
+        state: Option<Name>,
+    },
     /// A state machine node of the graph above, shown as a state diagram and edited in that graph's working copy.
-    Machine { node: GraphNodeId },
+    Machine {
+        /// The state machine node in the graph above.
+        node: GraphNodeId,
+    },
 }
 
 struct CreatingState {
@@ -210,6 +241,7 @@ struct CreatingState {
 pub struct GraphDocument {
     graphs: Vec<HeldGraph>,
     levels: Vec<GraphLevel>,
+    /// What is selected in the graph in view, if anything.
     pub selection: Option<GraphSelection>,
     /// How the preview shows and plays the graph, the document value `Preview`.
     pub preview: GraphPreview,
@@ -772,15 +804,20 @@ struct Opened {
 
 /// What reading a graph's nested graphs needs: the preview's types, the project's assets and its root.
 pub struct Sources<'a> {
+    /// The preview's type registry, or `None` while the preview is not running.
     pub types: Option<&'a AppTypeRegistry>,
+    /// The project's asset registry.
     pub assets: &'a AssetRegistry,
+    /// The project's root, or `None` with no project open.
     pub root: Option<&'a Path>,
 }
 
 /// What a graph tab drills into: a node that plays a graph inside itself, or a state of the machine in view.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OpenTarget {
+    /// A node of the graph in view: a state machine, or a node that plays a graph asset.
     Node(GraphNodeId),
+    /// A state of the machine in view, whose graph opens.
     State(Name),
 }
 
@@ -789,29 +826,50 @@ pub enum OpenTarget {
 pub enum GraphEdit {
     /// Adds a node of the type named by its short name or full path, loose or as an input of `parent`.
     AddNode {
+        /// The node type's short name or full path.
         type_name: String,
+        /// The node the new one becomes an input of, or `None` to leave it loose.
         parent: Option<GraphNodeId>,
+        /// The parent's slot to fill, or `None` for its first empty slot.
         slot: Option<usize>,
     },
     /// Adds a node of the type named by its short name or full path and makes `child` its first input.
     AddParent {
+        /// The node type's short name or full path.
         type_name: String,
+        /// The node that becomes the new node's first input.
         child: GraphNodeId,
     },
     /// Makes `child` an input of `parent`, at `slot` or at its first empty slot.
     Connect {
+        /// The node that becomes an input.
         child: GraphNodeId,
+        /// The node that takes it.
         parent: GraphNodeId,
+        /// The parent's slot to fill, or `None` for its first empty slot.
         slot: Option<usize>,
     },
     /// Removes a node, leaving its inputs loose.
     RemoveNode(GraphNodeId),
     /// Takes `child` out of its parent's inputs.
-    RemoveLink { child: GraphNodeId },
+    RemoveLink {
+        /// The node to take out, which stays as a loose node.
+        child: GraphNodeId,
+    },
     /// Adds a state playing `graph`, or without one a new graph asset named as the state, created beside the graph in view.
-    AddState { name: Name, graph: Option<AssetId> },
+    AddState {
+        /// The new state's name.
+        name: Name,
+        /// The graph asset the state plays, or `None` to create one.
+        graph: Option<AssetId>,
+    },
     /// Adds a transition with an `Instant` trigger and no blend time, and selects it; `from` may equal `to`.
-    AddTransition { from: Name, to: Name },
+    AddTransition {
+        /// The state the transition leaves.
+        from: Name,
+        /// The state the transition enters.
+        to: Name,
+    },
     /// Removes a state with every transition to or from it; its graph asset stays.
     RemoveState(Name),
     /// Removes a transition.
@@ -844,8 +902,12 @@ impl GraphEdit {
 }
 
 /// Applies `edit` to what the tab `document` has in view; the outcome is a [`GraphEdited`].
+///
+/// The graph tab's canvas and the graph MCP tools send it.
 pub struct EditGraph {
+    /// The graph tab's document.
     pub document: Entity,
+    /// The edit to apply.
     pub edit: GraphEdit,
 }
 
@@ -854,18 +916,26 @@ impl Signal for EditGraph {}
 /// What an applied [`GraphEdit`] changed: the node it added, the slot a connection took, the input it displaced, the transition it added, and the graph a new state plays.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct GraphChange {
+    /// The node the edit added.
     pub node: Option<GraphNodeId>,
+    /// The slot a connection took.
     pub slot: Option<usize>,
+    /// The input a connection displaced, now loose.
     pub loose: Option<GraphNodeId>,
+    /// The transition the edit added.
     pub transition: Option<TransitionRef>,
+    /// The graph asset a new state plays.
     pub graph: Option<AssetId>,
 }
 
 /// The outcome of one [`EditGraph`]; a refusal carries the reason the tab's status shows.
 #[derive(Event, Clone, Debug, PartialEq)]
 pub struct GraphEdited {
+    /// The graph tab's document.
     pub document: Entity,
+    /// The edit that was asked for.
     pub edit: GraphEdit,
+    /// What the edit changed, or why it was refused.
     pub result: Result<GraphChange, String>,
 }
 

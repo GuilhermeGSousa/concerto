@@ -10,7 +10,9 @@ use concerto_reflect::{
 /// A parameter a node names: its name and what its `Param<T>` says of the value.
 #[derive(Clone, Copy)]
 pub struct FoundParam {
+    /// The parameter's name.
     pub name: Name,
+    /// The `Param<T>`'s type data, which names and builds a value of `T`.
     pub data: ReflectParam,
 }
 
@@ -64,7 +66,9 @@ pub fn short_type(type_name: &str) -> &str {
 
 /// One parameter of a graph tab and the value its preview plays it at.
 pub struct GraphParam {
+    /// The parameter's name.
     pub name: Name,
+    /// The type name of the parameter's value.
     pub type_name: &'static str,
     /// Whether another parameter in view has this name and another type.
     pub shared: bool,
