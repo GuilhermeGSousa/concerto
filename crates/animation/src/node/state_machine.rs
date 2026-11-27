@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::fmt;
 
 use crate::graph::{AnimationGraph, AnimationGraphState, AnimationGraphStates, GraphId};
+use crate::message::{AnimationMessage, MessageType};
 use crate::param::Param;
 use crate::pose::{AnimationFrame, EvaluatedFrame, FramePool, RootMotion, WeightedMotion};
 use crate::transition::{
@@ -9,14 +10,18 @@ use crate::transition::{
     inertialization_blender::InertializationBlender,
 };
 use crate::{
-    evaluation::{AnimationGraphContext, DriveContext},
+    evaluation::{AnimationGraphContext, DriveContext, RaisedMessage},
     node::{AnimationNode, EditorAnimationNode, ReflectAnimationNode},
 };
 
 use concerto_ecs::Res;
+use concerto_foundation::assets::handle::LiveLeaves;
 use concerto_foundation::assets::{asset_store::AssetStore, handle::AssetHandle};
 use concerto_name::Name;
-use concerto_reflect::Reflect;
+use concerto_reflect::{
+    EncodeError, Reflect, ReflectDefault, ReflectedValue, TypeRegistry, ValueWarning,
+    apply_value_with, to_value,
+};
 use derive_more::Deref;
 use glam::Vec2;
 use uuid::Uuid;
@@ -42,8 +47,6 @@ pub enum AnimationFSMTrigger {
     /// At once, on the first update in the state.
     #[default]
     Instant,
-    /// When every node of the state's graph reports itself finished.
-    OnAnimationEnd,
     /// When a `bool` blackboard param holds a value.
     BoolEquals {
         /// The param to read; a missing param never fires.
@@ -55,6 +58,20 @@ pub enum AnimationFSMTrigger {
     Vec2NonZero {
         /// The param to read; a missing param never fires.
         param: Param<Vec2>,
+    },
+    /// On a message of the type `message` and, with a `value`, only on one that holds every
+    /// field the value names.
+    ///
+    /// A message the game sent the player this frame is tried before the state's other
+    /// transitions. A message the current state raised is tried after that state's update,
+    /// and its transition is taken at the start of the next update unless a transition the
+    /// game drives fires there first.
+    OnMessage {
+        /// The type of message the transition waits for.
+        message: MessageType,
+        /// The fields the message must hold, compared with [`ReflectedValue::contains`]; any
+        /// message of the type when `None`.
+        value: Option<ReflectedValue>,
     },
 }
 
@@ -72,6 +89,27 @@ impl AnimationFSMTrigger {
         Self::Vec2NonZero {
             param: param.into(),
         }
+    }
+
+    /// A trigger that fires on a message of type `M`.
+    pub fn on_message<M: AnimationMessage>() -> Self {
+        Self::OnMessage {
+            message: MessageType::of::<M>(),
+            value: None,
+        }
+    }
+
+    /// A trigger that fires on a message of type `M` whose every field equals the one in
+    /// `message`, defaults included.
+    ///
+    /// # Errors
+    ///
+    /// Returns an [`EncodeError`] when `message` cannot be encoded through reflection.
+    pub fn on_message_value<M: AnimationMessage>(message: &M) -> Result<Self, EncodeError> {
+        Ok(Self::OnMessage {
+            message: MessageType::of::<M>(),
+            value: Some(to_value(message)?),
+        })
     }
 }
 
@@ -515,6 +553,19 @@ pub struct AnimationStateMachineState {
     current_state: StateId,
     state_names: Vec<Name>,
     blender: Box<dyn AnimationTransitionBlender>,
+    reset_pending: bool,
+    pending: Option<usize>,
+}
+
+fn blender_from(
+    blender: TransitionBlender,
+    initial_state: StateId,
+) -> Box<dyn AnimationTransitionBlender> {
+    let initial_graph = initial_state.as_graph_id();
+    match blender {
+        TransitionBlender::CrossFade => Box::new(BlendStack::new(initial_graph)),
+        TransitionBlender::Inertialization => Box::new(InertializationBlender::new(initial_graph)),
+    }
 }
 
 impl AnimationStateMachineState {
@@ -524,19 +575,21 @@ impl AnimationStateMachineState {
         state_names: Vec<Name>,
         blender: TransitionBlender,
     ) -> Self {
-        let initial_graph = initial_state.as_graph_id();
-        let blender: Box<dyn AnimationTransitionBlender> = match blender {
-            TransitionBlender::CrossFade => Box::new(BlendStack::new(initial_graph)),
-            TransitionBlender::Inertialization => {
-                Box::new(InertializationBlender::new(initial_graph))
-            }
-        };
         Self {
             state_graphs: AnimationGraphStates::new(state_graphs),
             current_state: initial_state,
             state_names,
-            blender,
+            blender: blender_from(blender, initial_state),
+            reset_pending: false,
+            pending: None,
         }
+    }
+
+    fn restart(&mut self, initial_state: StateId, blender: TransitionBlender) {
+        self.current_state = initial_state;
+        self.blender = blender_from(blender, initial_state);
+        self.reset_pending = true;
+        self.pending = None;
     }
 
     /// The name of the state the machine is in, or `None` for a machine without states.
@@ -554,6 +607,10 @@ impl AnimationStateMachineState {
                 progress: blend.progress,
             })
         })
+    }
+
+    pub(crate) fn current_graph(&self) -> Option<&AnimationGraphState> {
+        self.state_graphs.get(self.current_state.as_graph_id())
     }
 
     fn begin_transition(
@@ -586,6 +643,39 @@ impl AnimationNode for AnimationStateMachine {
     type EvaluateInput = Res<'static, AssetStore<AnimationGraph>>;
     type DriveInput = Res<'static, AssetStore<AnimationGraph>>;
 
+    fn make_live(&mut self, registry: &TypeRegistry, leaves: &mut LiveLeaves) -> Vec<ValueWarning> {
+        let mut warnings = Vec::new();
+        for transition in self.transitions.iter().flatten() {
+            let AnimationFSMTrigger::OnMessage {
+                message,
+                value: Some(wanted),
+            } = &transition.trigger
+            else {
+                continue;
+            };
+            let Some(mut probe) = registry
+                .get_by_name(message.path())
+                .filter(|registration| registration.type_path() == message.path())
+                .and_then(|registration| {
+                    registration
+                        .data::<ReflectDefault>()
+                        .map(ReflectDefault::default)
+                })
+            else {
+                continue;
+            };
+            warnings.extend(
+                apply_value_with(probe.as_mut(), wanted, leaves)
+                    .into_iter()
+                    .map(|warning| ValueWarning {
+                        path: message.path().to_owned(),
+                        reason: format!("OnMessage value {}: {}", warning.path, warning.reason),
+                    }),
+            );
+        }
+        warnings
+    }
+
     fn create_state(
         &self,
         graphs: &Res<AssetStore<AnimationGraph>>,
@@ -608,50 +698,54 @@ impl AnimationNode for AnimationStateMachine {
         state: &mut AnimationStateMachineState,
         delta_time: f32,
         graphs: &Res<AssetStore<AnimationGraph>>,
-        context: &AnimationGraphContext<'_>,
+        context: &mut AnimationGraphContext<'_>,
     ) {
-        let Some(transitions) = self.get_state_transitions(state.current_state) else {
-            return;
+        if std::mem::take(&mut state.reset_pending) {
+            state
+                .state_graphs
+                .iter_mut()
+                .for_each(|state_graph| state_graph.reset(graphs));
+        }
+        let transitions = self
+            .get_state_transitions(state.current_state)
+            .map_or(&[][..], Vec::as_slice);
+        let fired =
+            |transition: &&AnimationStateMachineTransition| fires(&transition.trigger, context);
+        let on_message = |transition: &&AnimationStateMachineTransition| {
+            matches!(transition.trigger, AnimationFSMTrigger::OnMessage { .. })
         };
-
-        for transition in transitions {
-            match &transition.trigger {
-                AnimationFSMTrigger::Instant => {
-                    state.begin_transition(graphs, transition);
-                    break;
-                }
-                AnimationFSMTrigger::BoolEquals { param, value } => {
-                    if context.blackboard().read(param).is_some_and(|v| v == value) {
-                        state.begin_transition(graphs, transition);
-                        break;
-                    }
-                }
-                AnimationFSMTrigger::Vec2NonZero { param } => {
-                    if context
-                        .blackboard()
-                        .read(param)
-                        .is_some_and(|v| v.length_squared() > f32::EPSILON)
-                    {
-                        state.begin_transition(graphs, transition);
-                        break;
-                    }
-                }
-                AnimationFSMTrigger::OnAnimationEnd => {
-                    if state
-                        .state_graphs
-                        .get(state.current_state.as_graph_id())
-                        .is_some_and(|current_graph| current_graph.is_finished(graphs))
-                    {
-                        state.begin_transition(graphs, transition);
-                        break;
-                    }
-                }
-            }
+        let pending = state.pending.take();
+        let next = transitions
+            .iter()
+            .filter(on_message)
+            .find(fired)
+            .or_else(|| {
+                transitions
+                    .iter()
+                    .filter(|transition| !on_message(transition))
+                    .find(fired)
+            })
+            .or_else(|| pending.and_then(|index| transitions.get(index)));
+        if let Some(transition) = next {
+            state.begin_transition(graphs, transition);
         }
 
-        state
+        let raised = state
             .blender
             .update(delta_time, &mut state.state_graphs, graphs, context);
+        state.pending = self
+            .get_state_transitions(state.current_state)
+            .and_then(|transitions| {
+                transitions.iter().position(|transition| {
+                    heard(
+                        &transition.trigger,
+                        raised.iter().map(RaisedMessage::message),
+                    )
+                })
+            });
+        for message in raised {
+            context.pass_up(message);
+        }
     }
 
     fn evaluate(
@@ -678,7 +772,7 @@ impl AnimationNode for AnimationStateMachine {
         &self,
         state: &mut AnimationStateMachineState,
         graphs: &Res<AssetStore<AnimationGraph>>,
-        context: &DriveContext<'_>,
+        context: &mut DriveContext<'_>,
         bone_ids: &[Uuid],
         _inputs: &[EvaluatedFrame],
         pool: &mut FramePool,
@@ -707,7 +801,9 @@ impl AnimationNode for AnimationStateMachine {
             .root_motion(bone_ids, &mut state.state_graphs, graphs, context)
     }
 
-    fn reset(&self, _state: &mut AnimationStateMachineState) {}
+    fn reset(&self, state: &mut AnimationStateMachineState) {
+        state.restart(self.initial_state, self.blender);
+    }
 
     fn inner_graphs(&self, visit: &mut dyn FnMut(&AssetHandle<AnimationGraph>)) {
         self.state_graphs().for_each(visit);
@@ -747,6 +843,39 @@ impl EditorAnimationNode for AnimationStateMachine {
         }
         Some(line)
     }
+}
+
+fn fires(trigger: &AnimationFSMTrigger, context: &AnimationGraphContext<'_>) -> bool {
+    match trigger {
+        AnimationFSMTrigger::Instant => true,
+        AnimationFSMTrigger::BoolEquals { param, value } => {
+            context.blackboard().read(param).is_some_and(|v| v == value)
+        }
+        AnimationFSMTrigger::Vec2NonZero { param } => context
+            .blackboard()
+            .read(param)
+            .is_some_and(|v| v.length_squared() > f32::EPSILON),
+        AnimationFSMTrigger::OnMessage { .. } => heard(trigger, context.messages()),
+    }
+}
+
+fn heard<'m>(
+    trigger: &AnimationFSMTrigger,
+    mut messages: impl Iterator<Item = &'m dyn Reflect>,
+) -> bool {
+    let AnimationFSMTrigger::OnMessage {
+        message: wanted,
+        value,
+    } = trigger
+    else {
+        return false;
+    };
+    messages.any(|message| {
+        wanted.matches(message)
+            && value.as_ref().is_none_or(|wanted| {
+                to_value(message).is_ok_and(|encoded| encoded.contains(wanted))
+            })
+    })
 }
 
 struct FSMStateEntry {
@@ -875,6 +1004,7 @@ mod tests {
         clip::{AnimationChanelOutput, AnimationChannel, AnimationClip},
         evaluation::AnimationGraphContext,
         graph::AnimationGraph,
+        message::ClipEnded,
         node::{
             AnimationClipNode, AnimationNode, EditorAnimationNode, ReflectAnimationNode,
             register_node_inputs,
@@ -900,7 +1030,7 @@ mod tests {
             0
         }
 
-        fn update(&self, updates: &mut u32, _: f32, _: &(), _: &AnimationGraphContext<'_>) {
+        fn update(&self, updates: &mut u32, _: f32, _: &(), _: &mut AnimationGraphContext<'_>) {
             *updates += 1;
         }
 
@@ -994,9 +1124,9 @@ mod tests {
                     .map(|transition| {
                         let trigger = match transition.trigger {
                             AnimationFSMTrigger::Instant => "instant",
-                            AnimationFSMTrigger::OnAnimationEnd => "end",
                             AnimationFSMTrigger::BoolEquals { .. } => "bool",
                             AnimationFSMTrigger::Vec2NonZero { .. } => "vec2",
+                            AnimationFSMTrigger::OnMessage { .. } => "message",
                         };
                         format!(
                             "{}:{} {trigger} {}",
@@ -1015,7 +1145,7 @@ mod tests {
 
     #[test]
     fn edits_keep_states_and_transitions_consistent() {
-        use AnimationFSMTrigger::{Instant, OnAnimationEnd};
+        use AnimationFSMTrigger::Instant;
         use Edit::*;
 
         let mut server = AssetServer::new();
@@ -1079,12 +1209,12 @@ mod tests {
                 edit: AddTransition {
                     from: "idle",
                     to: "run",
-                    trigger: OnAnimationEnd,
+                    trigger: AnimationFSMTrigger::on_message::<ClipEnded>(),
                     blend_time: 0.3,
                 },
                 refused: None,
                 machine: &[
-                    "idle* a -> 0:walk instant 0.2, 1:run end 0.3",
+                    "idle* a -> 0:walk instant 0.2, 1:run message 0.3",
                     "walk b -> ",
                     "run a -> ",
                 ],
@@ -1098,7 +1228,7 @@ mod tests {
                 },
                 refused: unknown("gone"),
                 machine: &[
-                    "idle* a -> 0:walk instant 0.2, 1:run end 0.3",
+                    "idle* a -> 0:walk instant 0.2, 1:run message 0.3",
                     "walk b -> ",
                     "run a -> ",
                 ],
@@ -1112,7 +1242,7 @@ mod tests {
                 },
                 refused: None,
                 machine: &[
-                    "idle* a -> 0:walk instant 0.2, 1:run end 0.3",
+                    "idle* a -> 0:walk instant 0.2, 1:run message 0.3",
                     "walk b -> 0:run instant 0.4",
                     "run a -> ",
                 ],
@@ -1126,7 +1256,7 @@ mod tests {
                 },
                 refused: None,
                 machine: &[
-                    "idle* a -> 0:walk instant 0.2, 1:run end 0.3",
+                    "idle* a -> 0:walk instant 0.2, 1:run message 0.3",
                     "walk b -> 0:run instant 0.4",
                     "run a -> 0:idle instant 0.1",
                 ],
@@ -1135,28 +1265,28 @@ mod tests {
                 edit: AddTransition {
                     from: "run",
                     to: "walk",
-                    trigger: OnAnimationEnd,
+                    trigger: AnimationFSMTrigger::on_message::<ClipEnded>(),
                     blend_time: 0.6,
                 },
                 refused: None,
                 machine: &[
-                    "idle* a -> 0:walk instant 0.2, 1:run end 0.3",
+                    "idle* a -> 0:walk instant 0.2, 1:run message 0.3",
                     "walk b -> 0:run instant 0.4",
-                    "run a -> 0:idle instant 0.1, 1:walk end 0.6",
+                    "run a -> 0:idle instant 0.1, 1:walk message 0.6",
                 ],
             },
             EditCase {
                 edit: AddTransition {
                     from: "run",
                     to: "idle",
-                    trigger: OnAnimationEnd,
+                    trigger: AnimationFSMTrigger::on_message::<ClipEnded>(),
                     blend_time: 0.7,
                 },
                 refused: None,
                 machine: &[
-                    "idle* a -> 0:walk instant 0.2, 1:run end 0.3",
+                    "idle* a -> 0:walk instant 0.2, 1:run message 0.3",
                     "walk b -> 0:run instant 0.4",
-                    "run a -> 0:idle instant 0.1, 1:walk end 0.6, 2:idle end 0.7",
+                    "run a -> 0:idle instant 0.1, 1:walk message 0.6, 2:idle message 0.7",
                 ],
             },
             EditCase {
@@ -1170,7 +1300,7 @@ mod tests {
                 machine: &[
                     "idle* a -> 0:walk instant 0.2, 1:run instant 0.5",
                     "walk b -> 0:run instant 0.4",
-                    "run a -> 0:idle instant 0.1, 1:walk end 0.6, 2:idle end 0.7",
+                    "run a -> 0:idle instant 0.1, 1:walk message 0.6, 2:idle message 0.7",
                 ],
             },
             EditCase {
@@ -1184,7 +1314,7 @@ mod tests {
                 machine: &[
                     "idle* a -> 0:walk instant 0.2, 1:run instant 0.5",
                     "walk b -> 0:run instant 0.4",
-                    "run a -> 0:idle instant 0.1, 1:walk end 0.6, 2:idle end 0.7",
+                    "run a -> 0:idle instant 0.1, 1:walk message 0.6, 2:idle message 0.7",
                 ],
             },
             EditCase {
@@ -1196,7 +1326,7 @@ mod tests {
                 machine: &[
                     "idle* a -> 0:walk instant 0.2, 1:sprint instant 0.5",
                     "walk b -> 0:sprint instant 0.4",
-                    "sprint a -> 0:idle instant 0.1, 1:walk end 0.6, 2:idle end 0.7",
+                    "sprint a -> 0:idle instant 0.1, 1:walk message 0.6, 2:idle message 0.7",
                 ],
             },
             EditCase {
@@ -1208,7 +1338,7 @@ mod tests {
                 machine: &[
                     "idle* a -> 0:walk instant 0.2, 1:sprint instant 0.5",
                     "walk b -> 0:sprint instant 0.4",
-                    "sprint b -> 0:idle instant 0.1, 1:walk end 0.6, 2:idle end 0.7",
+                    "sprint b -> 0:idle instant 0.1, 1:walk message 0.6, 2:idle message 0.7",
                 ],
             },
             EditCase {
@@ -1217,7 +1347,7 @@ mod tests {
                 machine: &[
                     "idle a -> 0:walk instant 0.2, 1:sprint instant 0.5",
                     "walk* b -> 0:sprint instant 0.4",
-                    "sprint b -> 0:idle instant 0.1, 1:walk end 0.6, 2:idle end 0.7",
+                    "sprint b -> 0:idle instant 0.1, 1:walk message 0.6, 2:idle message 0.7",
                 ],
             },
             EditCase {
@@ -1229,7 +1359,7 @@ mod tests {
                 machine: &[
                     "idle a -> 0:walk instant 0.2, 1:sprint instant 0.5",
                     "walk* b -> 0:sprint instant 0.4",
-                    "sprint b -> 0:walk end 0.6, 1:idle end 0.7",
+                    "sprint b -> 0:walk message 0.6, 1:idle message 0.7",
                 ],
             },
             EditCase {
@@ -1237,7 +1367,7 @@ mod tests {
                 refused: None,
                 machine: &[
                     "idle* a -> 0:sprint instant 0.5",
-                    "sprint b -> 0:idle end 0.7",
+                    "sprint b -> 0:idle message 0.7",
                 ],
             },
             EditCase {

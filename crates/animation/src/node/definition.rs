@@ -2,13 +2,13 @@ use std::any::Any;
 
 use concerto_ecs::{
     World,
-    system::input::{ReadOnlySystemInput, SystemInputData, register_input},
+    system::input::{Inputs, ReadOnlySystemInput, SystemInputData, register_input},
 };
 use concerto_foundation::assets::handle::{AssetHandle, LiveLeaves};
 use concerto_name::{Name, name};
 use concerto_reflect::{
-    EncodeError, FromType, Reflect, ReflectedValue, TypeData, ValueWarning, apply_value_with,
-    to_value,
+    EncodeError, FromType, Reflect, ReflectedValue, TypeData, TypeRegistry, ValueWarning,
+    apply_value_with, to_value,
 };
 use log::warn;
 use uuid::Uuid;
@@ -43,12 +43,15 @@ pub trait AnimationNode: Reflect + Send + Sync + 'static {
     ) -> Self::State;
 
     /// Advances the node's state by `delta_time` seconds, before the frame is evaluated.
+    ///
+    /// `context` holds the messages the game sent the player this frame, and takes the messages
+    /// the node raises.
     fn update(
         &self,
         state: &mut Self::State,
         delta_time: f32,
         input: &SystemInputData<'_, '_, Self::UpdateInput>,
-        context: &AnimationGraphContext<'_>,
+        context: &mut AnimationGraphContext<'_>,
     );
 
     /// Writes the node's pose and the clip events it crossed into `output`.
@@ -90,11 +93,15 @@ pub trait AnimationNode: Reflect + Send + Sync + 'static {
     /// attributes of the inputs with a positive weight by those weights, as
     /// [`Self::drive_shares`] shares them out. Override it, with `drive_shares`, in a node that
     /// computes its own blend, like a blend space or a layer.
+    ///
+    /// A node that decides something in the physics step raises it with
+    /// [`DriveContext::raise`]; the graph acts on it at the player's next update, as on a message
+    /// the game sent.
     fn drive(
         &self,
         _state: &mut Self::State,
         _input: &SystemInputData<'_, '_, Self::DriveInput>,
-        _context: &DriveContext<'_>,
+        _context: &mut DriveContext<'_>,
         _bone_ids: &[Uuid],
         inputs: &[EvaluatedFrame],
         _pool: &mut FramePool,
@@ -132,10 +139,14 @@ pub trait AnimationNode: Reflect + Send + Sync + 'static {
     /// enters the node's state again.
     fn reset(&self, state: &mut Self::State);
 
-    /// Whether the node has played to its end, which a state machine's on-finish transition waits
-    /// for; `true` unless the node says otherwise.
-    fn is_finished(&self, _state: &Self::State) -> bool {
-        true
+    /// Checks what the node holds against the registered types, once, when the graph holding it
+    /// is made live; returns what could not be applied.
+    fn make_live(
+        &mut self,
+        _registry: &TypeRegistry,
+        _leaves: &mut LiveLeaves,
+    ) -> Vec<ValueWarning> {
+        Vec::new()
     }
 
     /// Visits the graph assets this node plays inside itself.
@@ -224,7 +235,12 @@ pub trait ErasedAnimationNode: Send + Sync {
     fn create_state(&self, context: &AnimationGraphContext<'_>) -> Option<NodeState>;
 
     /// Advances the state by `delta_time` seconds; see [`AnimationNode::update`].
-    fn update(&self, state: &mut NodeState, delta_time: f32, context: &AnimationGraphContext<'_>);
+    fn update(
+        &self,
+        state: &mut NodeState,
+        delta_time: f32,
+        context: &mut AnimationGraphContext<'_>,
+    );
 
     /// Writes the node's pose into `output`; see [`AnimationNode::evaluate`].
     fn evaluate(
@@ -250,7 +266,7 @@ pub trait ErasedAnimationNode: Send + Sync {
     fn drive(
         &self,
         state: &mut NodeState,
-        context: &DriveContext<'_>,
+        context: &mut DriveContext<'_>,
         bone_ids: &[Uuid],
         inputs: &[EvaluatedFrame],
         pool: &mut FramePool,
@@ -263,8 +279,8 @@ pub trait ErasedAnimationNode: Send + Sync {
     /// Resets the state; see [`AnimationNode::reset`].
     fn reset(&self, state: &mut NodeState);
 
-    /// Whether the node has played to its end; `true` for a state of another node's type.
-    fn is_finished(&self, state: &NodeState) -> bool;
+    /// Checks what the node holds against the registered types; see [`AnimationNode::make_live`].
+    fn make_live(&mut self, registry: &TypeRegistry, leaves: &mut LiveLeaves) -> Vec<ValueWarning>;
 
     /// Visits the graph assets this node plays inside itself.
     fn inner_graphs(&self, visit: &mut dyn FnMut(&AssetHandle<AnimationGraph>));
@@ -314,13 +330,18 @@ impl<T: EditorAnimationNode> ErasedAnimationNode for T {
     }
 
     fn create_state(&self, context: &AnimationGraphContext<'_>) -> Option<NodeState> {
-        let input = fetched::<T, T::CreateInput>(context)?;
+        let input = fetched::<T, T::CreateInput>(context.inputs)?;
         Some(Box::new(AnimationNode::create_state(self, input, context)))
     }
 
-    fn update(&self, state: &mut NodeState, delta_time: f32, context: &AnimationGraphContext<'_>) {
+    fn update(
+        &self,
+        state: &mut NodeState,
+        delta_time: f32,
+        context: &mut AnimationGraphContext<'_>,
+    ) {
         if let Some(state) = state.downcast_mut::<T::State>()
-            && let Some(input) = fetched::<T, T::UpdateInput>(context)
+            && let Some(input) = fetched::<T, T::UpdateInput>(context.inputs)
         {
             AnimationNode::update(self, state, delta_time, input, context);
         }
@@ -336,7 +357,7 @@ impl<T: EditorAnimationNode> ErasedAnimationNode for T {
         output: &mut AnimationFrame,
     ) {
         if let Some(state) = state.downcast_mut::<T::State>()
-            && let Some(input) = fetched::<T, T::EvaluateInput>(context)
+            && let Some(input) = fetched::<T, T::EvaluateInput>(context.inputs)
         {
             AnimationNode::evaluate(
                 self,
@@ -359,7 +380,7 @@ impl<T: EditorAnimationNode> ErasedAnimationNode for T {
         inputs: &[WeightedMotion],
     ) -> RootMotion {
         if let Some(state) = state.downcast_mut::<T::State>()
-            && let Some(input) = fetched::<T, T::UpdateInput>(context)
+            && let Some(input) = fetched::<T, T::UpdateInput>(context.inputs)
         {
             AnimationNode::root_motion(self, state, input, context, bone_ids, inputs)
         } else {
@@ -370,14 +391,14 @@ impl<T: EditorAnimationNode> ErasedAnimationNode for T {
     fn drive(
         &self,
         state: &mut NodeState,
-        context: &DriveContext<'_>,
+        context: &mut DriveContext<'_>,
         bone_ids: &[Uuid],
         inputs: &[EvaluatedFrame],
         pool: &mut FramePool,
         output: &mut AnimationFrame,
     ) {
         if let Some(state) = state.downcast_mut::<T::State>()
-            && let Some(input) = fetched::<T, T::DriveInput>(context.graph)
+            && let Some(input) = fetched::<T, T::DriveInput>(context.graph.inputs)
         {
             AnimationNode::drive(self, state, input, context, bone_ids, inputs, pool, output);
         }
@@ -396,10 +417,8 @@ impl<T: EditorAnimationNode> ErasedAnimationNode for T {
         }
     }
 
-    fn is_finished(&self, state: &NodeState) -> bool {
-        state
-            .downcast_ref::<T::State>()
-            .is_none_or(|state| AnimationNode::is_finished(self, state))
+    fn make_live(&mut self, registry: &TypeRegistry, leaves: &mut LiveLeaves) -> Vec<ValueWarning> {
+        AnimationNode::make_live(self, registry, leaves)
     }
 
     fn inner_graphs(&self, visit: &mut dyn FnMut(&AssetHandle<AnimationGraph>)) {
@@ -455,10 +474,9 @@ impl<T: EditorAnimationNode> ErasedAnimationNode for T {
 }
 
 fn fetched<'a, T: AnimationNode, P: ReadOnlySystemInput + 'static>(
-    context: &'a AnimationGraphContext<'a>,
+    inputs: &'a Inputs<'a, 'a>,
 ) -> Option<&'a SystemInputData<'a, 'a, P>> {
-    context
-        .inputs
+    inputs
         .get::<P>()
         .inspect_err(|error| warn!("{} skipped: {error}", std::any::type_name::<T>()))
         .ok()
@@ -515,7 +533,7 @@ impl AnimationNode for PlaceholderNode {
 
     fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) {}
 
-    fn update(&self, _: &mut (), _: f32, _: &(), _: &AnimationGraphContext<'_>) {}
+    fn update(&self, _: &mut (), _: f32, _: &(), _: &mut AnimationGraphContext<'_>) {}
 
     fn evaluate(
         &self,
@@ -580,7 +598,7 @@ mod tests {
             state: &mut GainState,
             _delta_time: f32,
             step: &Res<Step>,
-            _context: &AnimationGraphContext<'_>,
+            _context: &mut AnimationGraphContext<'_>,
         ) {
             state.updates += step.0;
         }
@@ -602,10 +620,6 @@ mod tests {
 
         fn reset(&self, state: &mut GainState) {
             state.resets += 1;
-        }
-
-        fn is_finished(&self, state: &GainState) -> bool {
-            state.updates >= 2
         }
     }
 

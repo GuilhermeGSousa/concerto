@@ -1,9 +1,11 @@
-use concerto_ecs::{Entity, system::input::Inputs};
+use concerto_ecs::{CommandQueue, Entity, signal::EntitySignal, system::input::Inputs};
 use concerto_mesh::Skeleton;
+use concerto_reflect::Reflect;
 use glam::{Affine3A, Vec3};
 
 use crate::{
     blackboard::AnimationBlackboard,
+    message::AnimationMessage,
     pose::{EvaluatedFrame, JointPose},
 };
 
@@ -65,6 +67,35 @@ pub struct RootBone {
     pub up: Vec3,
 }
 
+type TriggerFn = fn(&dyn Reflect, Entity, &mut CommandQueue);
+
+fn trigger_message<M: AnimationMessage + EntitySignal>(
+    message: &dyn Reflect,
+    entity: Entity,
+    cmd: &mut CommandQueue,
+) {
+    if let Some(message) = message.downcast_ref::<M>() {
+        cmd.entity(entity).trigger(message.clone());
+    }
+}
+
+pub(crate) struct RaisedMessage {
+    message: Box<dyn Reflect>,
+    trigger: Option<TriggerFn>,
+}
+
+impl RaisedMessage {
+    pub(crate) fn message(&self) -> &dyn Reflect {
+        self.message.as_ref()
+    }
+
+    pub(crate) fn trigger(&self, entity: Entity, cmd: &mut CommandQueue) {
+        if let Some(trigger) = self.trigger {
+            trigger(self.message.as_ref(), entity, cmd);
+        }
+    }
+}
+
 /// What every node of one player's graph is walked with: the player's own data and the walk's node inputs.
 pub struct AnimationGraphContext<'a> {
     pub(crate) blackboard: &'a AnimationBlackboard,
@@ -72,6 +103,9 @@ pub struct AnimationGraphContext<'a> {
     pub(crate) skeleton: Option<&'a Skeleton>,
     pub(crate) model_to_world: Option<Affine3A>,
     pub(crate) inputs: &'a Inputs<'a, 'a>,
+    pub(crate) messages: &'a [Box<dyn Reflect>],
+    pub(crate) drive_raised: &'a [RaisedMessage],
+    pub(crate) raised: Vec<RaisedMessage>,
     pub(crate) entity: Entity,
 }
 
@@ -79,6 +113,65 @@ impl<'a> AnimationGraphContext<'a> {
     /// The blackboard of the player being walked.
     pub fn blackboard(&self) -> &AnimationBlackboard {
         self.blackboard
+    }
+
+    /// In `update`, the messages the game sent the player since its last update, in the order
+    /// sent, then those the graph raised in [`DriveContext::raise`] since then, in the order
+    /// raised; empty in every other walk.
+    ///
+    /// The game sends them with [`AnimationPlayer::send`](crate::player::AnimationPlayer::send)
+    /// or [`SendAnimationMessage`](crate::message::SendAnimationMessage). A message a node raised
+    /// in `update` is never among them.
+    pub fn messages(&self) -> impl Iterator<Item = &'a dyn Reflect> + use<'a> {
+        self.messages
+            .iter()
+            .map(|message| message.as_ref())
+            .chain(self.drive_raised.iter().map(RaisedMessage::message))
+    }
+
+    /// The messages of type `M` among [`Self::messages`], in their order there.
+    pub fn message<M: AnimationMessage>(&self) -> impl Iterator<Item = &'a M> + use<'a, M> {
+        self.messages()
+            .filter_map(|message| message.downcast_ref::<M>())
+    }
+
+    /// In `update`, queues `message` for every state machine and retarget this node plays in,
+    /// which can act on it, and, once it leaves the player's graph, triggers it on the player's
+    /// entity.
+    pub fn raise<M: AnimationMessage + EntitySignal>(&mut self, message: M) {
+        self.pass_up(RaisedMessage {
+            message: Box::new(message),
+            trigger: Some(trigger_message::<M>),
+        });
+    }
+
+    pub(crate) fn raise_boxed(&mut self, message: Box<dyn Reflect>) {
+        self.pass_up(RaisedMessage {
+            message,
+            trigger: None,
+        });
+    }
+
+    pub(crate) fn pass_up(&mut self, message: RaisedMessage) {
+        self.raised.push(message);
+    }
+
+    pub(crate) fn child(&self) -> AnimationGraphContext<'a> {
+        AnimationGraphContext {
+            blackboard: self.blackboard,
+            root: self.root.clone(),
+            skeleton: self.skeleton,
+            model_to_world: self.model_to_world,
+            inputs: self.inputs,
+            messages: self.messages,
+            drive_raised: self.drive_raised,
+            raised: Vec::new(),
+            entity: self.entity,
+        }
+    }
+
+    pub(crate) fn into_raised(self) -> Vec<RaisedMessage> {
+        self.raised
     }
 
     /// The entity of the player being walked.
@@ -105,11 +198,12 @@ impl<'a> AnimationGraphContext<'a> {
     }
 }
 
-/// What every node of one player's graph is driven with in one physics step: the step's length, the node's weight, and the player's blackboard, root, skeleton and entity.
+/// What every node of one player's graph is driven with in one physics step: the step's length, the node's weight, the player's blackboard, root, skeleton and entity, and the messages the node raises.
 pub struct DriveContext<'a> {
     pub(crate) delta_time: f32,
     pub(crate) weight: f32,
     pub(crate) graph: &'a AnimationGraphContext<'a>,
+    pub(crate) raised: Vec<RaisedMessage>,
 }
 
 impl<'a> DriveContext<'a> {
@@ -129,11 +223,38 @@ impl<'a> DriveContext<'a> {
         self.weight
     }
 
+    /// Raises `message` from this physics step for the graph and the player's entity.
+    ///
+    /// Reach for it in a controller that decides in the physics step, such as one that sees its
+    /// balance lost, so the graph can act on the decision without waiting a frame for `update`
+    /// to notice it. The message is not seen during the drive pass. At the player's next update
+    /// it joins the messages the game sent: every node reads it from
+    /// [`AnimationGraphContext::messages`], every state machine takes an `OnMessage`
+    /// transition on it at the start of that update, so the next physics step drives the new
+    /// state, and it is triggered once on the player's entity. A paused player does not drive,
+    /// so it raises nothing.
+    pub fn raise<M: AnimationMessage + EntitySignal>(&mut self, message: M) {
+        self.raised.push(RaisedMessage {
+            message: Box::new(message),
+            trigger: Some(trigger_message::<M>),
+        });
+    }
+
     pub(crate) fn scaled(&self, share: f32) -> DriveContext<'a> {
         DriveContext {
+            delta_time: self.delta_time,
             weight: self.weight * share,
-            ..*self
+            graph: self.graph,
+            raised: Vec::new(),
         }
+    }
+
+    pub(crate) fn pass_up(&mut self, mut child: DriveContext<'a>) {
+        self.raised.append(&mut child.raised);
+    }
+
+    pub(crate) fn into_raised(self) -> Vec<RaisedMessage> {
+        self.raised
     }
 
     /// The player's blackboard.

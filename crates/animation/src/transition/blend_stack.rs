@@ -3,7 +3,7 @@ use uuid::Uuid;
 
 use crate::{
     attribute::PoseAttributes,
-    evaluation::{AnimationGraphContext, DriveContext},
+    evaluation::{AnimationGraphContext, DriveContext, RaisedMessage},
     graph::{AnimationGraph, AnimationGraphStates, GraphId},
     pose::{AnimationFrame, FramePool, RootMotion},
     transition::{AnimationTransitionBlender, BlendInFlight},
@@ -186,7 +186,7 @@ impl AnimationTransitionBlender for BlendStack {
         bone_ids: &[Uuid],
         graph_states: &mut AnimationGraphStates,
         graphs: &AssetStore<AnimationGraph>,
-        context: &DriveContext<'_>,
+        context: &mut DriveContext<'_>,
         pool: &mut FramePool,
         output: &mut AnimationFrame,
     ) {
@@ -197,7 +197,9 @@ impl AnimationTransitionBlender for BlendStack {
             |source, share, pool, frame| match source {
                 Source::Graph(graph_id) => {
                     if let Some(graph_state) = graph_states.get_mut(graph_id) {
-                        graph_state.drive(graphs, &context.scaled(share), bone_ids, pool, frame);
+                        let mut walk = context.scaled(share);
+                        graph_state.drive(graphs, &mut walk, bone_ids, pool, frame);
+                        context.pass_up(walk);
                     }
                 }
                 Source::Snapshot(_) => frame.attributes_mut().copy_from(snapshot),
@@ -239,20 +241,29 @@ impl AnimationTransitionBlender for BlendStack {
         delta_time: f32,
         graph_states: &mut AnimationGraphStates,
         graphs: &AssetStore<AnimationGraph>,
-        context: &AnimationGraphContext<'_>,
-    ) {
-        for entry in &self.entries {
-            if let Some(graph_state) = entry
+        context: &mut AnimationGraphContext<'_>,
+    ) -> Vec<RaisedMessage> {
+        let newest = self.entries.len().saturating_sub(1);
+        let mut raised = Vec::new();
+        for (index, entry) in self.entries.iter().enumerate() {
+            let Some(graph_state) = entry
                 .source
                 .playing()
                 .and_then(|graph_id| graph_states.get_mut(graph_id))
-            {
+            else {
+                continue;
+            };
+            if index == newest {
+                let mut walk = context.child();
+                graph_state.update(delta_time, graphs, &mut walk);
+                raised = walk.into_raised();
+            } else {
                 graph_state.update(delta_time, graphs, context);
             }
         }
 
         let Some(top) = self.entries.last_mut() else {
-            return;
+            return raised;
         };
         top.weight = (top.weight + top.fade_speed * delta_time).min(1.0);
 
@@ -260,6 +271,7 @@ impl AnimationTransitionBlender for BlendStack {
             let last = self.entries.len() - 1;
             self.entries.drain(..last);
         }
+        raised
     }
 
     fn transition(
@@ -286,7 +298,7 @@ impl AnimationTransitionBlender for BlendStack {
             }
         }
 
-        // Anchor the target's clip (and OnAnimationEnd) to the moment of entry (invariant 3).
+        // Anchor the target's clip (and its ClipEnded) to the moment of entry (invariant 3).
         if let Some(graph_state) = graph_states.get_mut(next_graph) {
             graph_state.reset(graphs);
         }

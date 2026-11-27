@@ -142,7 +142,7 @@ impl AnimationNode for AdditiveNode {
         state: &mut AdditiveNodeState,
         delta_time: f32,
         clips: &Res<AssetStore<AnimationClip>>,
-        context: &AnimationGraphContext<'_>,
+        context: &mut AnimationGraphContext<'_>,
     ) {
         if state.clock.begin_step() {
             return;
@@ -238,7 +238,7 @@ impl EditorAnimationNode for AdditiveNode {
 
 #[cfg(test)]
 mod tests {
-    use concerto_ecs::Res;
+    use concerto_ecs::{Res, system::input::Inputs};
     use concerto_foundation::assets::{AssetId, asset_store::AssetStore, handle::AssetHandle};
     use concerto_name::name;
     use glam::{Quat, Vec3};
@@ -251,7 +251,7 @@ mod tests {
             Additive, AdditiveBase, AnimationChanelOutput, AnimationChannel, AnimationClip,
             ClipRange,
         },
-        evaluation::{AnimationGraphContext, RootBone},
+        evaluation::RootBone,
         event::AnimationEvent,
         node::AnimationNode,
         pose::{AnimationFrame, EvaluatedFrame, FiredEvent, FramePool, JointPose, Pose},
@@ -441,9 +441,8 @@ mod tests {
         }
     }
 
-    fn clips<'a>(context: &'a AnimationGraphContext<'a>) -> &'a Res<'a, AssetStore<AnimationClip>> {
-        context
-            .inputs
+    fn clips<'a>(inputs: &'a Inputs<'a, 'a>) -> &'a Res<'a, AssetStore<AnimationClip>> {
+        inputs
             .get::<Res<'static, AssetStore<AnimationClip>>>()
             .unwrap()
     }
@@ -478,7 +477,7 @@ mod tests {
 
         fn step(&self, node: &AdditiveNode, state: &mut AdditiveNodeState, delta_time: f32) {
             self.walks.update(&self.blackboard, |context| {
-                node.update(state, delta_time, clips(context), context)
+                node.update(state, delta_time, clips(context.inputs), context)
             });
         }
 
@@ -495,7 +494,7 @@ mod tests {
                 .evaluate(&self.blackboard, Some(root_bone()), |context| {
                     node.evaluate(
                         state,
-                        clips(context),
+                        clips(context.inputs),
                         context,
                         &BONES,
                         inputs,

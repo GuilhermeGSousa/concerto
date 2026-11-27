@@ -107,7 +107,7 @@ impl AnimationNode for LayerNode {
         LayerState::default()
     }
 
-    fn update(&self, _: &mut LayerState, _: f32, _: &(), _: &AnimationGraphContext<'_>) {}
+    fn update(&self, _: &mut LayerState, _: f32, _: &(), _: &mut AnimationGraphContext<'_>) {}
 
     fn evaluate(
         &self,
@@ -186,7 +186,7 @@ impl AnimationNode for LayerNode {
         &self,
         state: &mut LayerState,
         _: &(),
-        context: &DriveContext<'_>,
+        context: &mut DriveContext<'_>,
         _: &[Uuid],
         inputs: &[EvaluatedFrame],
         _: &mut FramePool,

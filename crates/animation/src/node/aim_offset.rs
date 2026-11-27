@@ -371,7 +371,7 @@ impl AnimationNode for AimOffsetNode {
         state: &mut AimOffsetState,
         delta_time: f32,
         _: &(),
-        _: &AnimationGraphContext<'_>,
+        _: &mut AnimationGraphContext<'_>,
     ) {
         if delta_time.is_finite() && delta_time > 0.0 {
             state.elapsed += delta_time;

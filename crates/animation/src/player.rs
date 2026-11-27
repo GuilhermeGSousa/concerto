@@ -13,14 +13,15 @@ use concerto_foundation::{
 };
 use concerto_mesh::skeleton::Skeleton;
 use concerto_name::Name;
-use concerto_reflect::Reflect;
+use concerto_reflect::{Reflect, TypeRegistry};
 use glam::{Affine3A, Vec2, Vec3};
 
 use crate::{
     attribute::PoseAttributes,
     blackboard::AnimationBlackboard,
-    evaluation::{AnimationGraphContext, DriveContext, RootBone},
+    evaluation::{AnimationGraphContext, DriveContext, RaisedMessage, RootBone},
     graph::{AnimationGraph, AnimationGraphState, AnimationNodeIndex, NodeVisit},
+    message::{AnimationMessage, is_animation_message},
     node::{AnimationNode, ErasedAnimationNode, NodeState},
     pose::{FiredEvent, FramePool, RootMotion},
     root::AnimationRootBone,
@@ -38,7 +39,7 @@ impl ActiveNodeState {
         &mut self,
         node: &dyn ErasedAnimationNode,
         delta_time: f32,
-        context: &AnimationGraphContext<'_>,
+        context: &mut AnimationGraphContext<'_>,
     ) {
         node.update(&mut self.node_state, delta_time, context);
     }
@@ -60,6 +61,9 @@ pub struct AnimationPlayer {
     event_threshold: f32,
     pub(crate) fired: Vec<FiredEvent>,
     attributes: PoseAttributes,
+    messages: Vec<Box<dyn Reflect>>,
+    raised: Vec<RaisedMessage>,
+    drive_raised: Vec<RaisedMessage>,
     drive_attributes: PoseAttributes,
 }
 
@@ -75,8 +79,36 @@ impl AnimationPlayer {
             event_threshold: 0.0,
             fired: Vec::new(),
             attributes: PoseAttributes::default(),
+            messages: Vec::new(),
+            raised: Vec::new(),
+            drive_raised: Vec::new(),
             drive_attributes: PoseAttributes::default(),
         }
+    }
+
+    /// Queues `message` for the player's next update, where every node reads it from its
+    /// context with [`AnimationGraphContext::messages`].
+    ///
+    /// A paused player keeps its queue until it resumes. The message reaches the graph only;
+    /// listeners on the player's entity do not hear it.
+    pub fn send(&mut self, message: impl AnimationMessage) {
+        self.messages.push(Box::new(message));
+    }
+
+    /// Queues `message` as [`Self::send`] does when its type is registered with
+    /// [`register_animation_message`](crate::plugin::AnimationAppExt::register_animation_message)
+    /// in `registry`; returns false and queues nothing otherwise.
+    pub fn send_reflected(&mut self, message: Box<dyn Reflect>, registry: &TypeRegistry) -> bool {
+        let registered = is_animation_message(registry, message.as_ref());
+        if registered {
+            self.messages.push(message);
+        }
+        registered
+    }
+
+    /// Whether a state machine playing in the player's graph, at any depth, is in the state named `name`.
+    pub fn in_state(&self, graphs: &AssetStore<AnimationGraph>, name: &Name) -> bool {
+        self.graph_state.in_state(graphs, name)
     }
 
     /// The per-bone attributes of the frame the player last evaluated; none once its graph gives no frame.
@@ -90,6 +122,7 @@ impl AnimationPlayer {
     /// Walks the graph once for a physics step of `delta_time` seconds, each node saying through [`AnimationNode::drive`]
     /// what it asks of physics with `skeleton`'s bone ids, and keeps the attributes it gives; the graph does not advance.
     /// A paused player, or one whose graph gives no frame, keeps no attributes, so every bone reads neutral.
+    /// The messages its nodes raise wait for the player's next update.
     pub(crate) fn drive(
         &mut self,
         entity: Entity,
@@ -108,18 +141,22 @@ impl AnimationPlayer {
             skeleton,
             model_to_world: None,
             inputs,
+            messages: &[],
+            drive_raised: &[],
+            raised: Vec::new(),
             entity,
         };
         let bone_ids = skeleton.map_or(&[][..], |skeleton| &skeleton.bone_ids);
-        let context = DriveContext {
+        let mut context = DriveContext {
             delta_time,
             weight: 1.0,
             graph: &graph,
+            raised: Vec::new(),
         };
         let mut output = self.frame_pool.acquire();
         if self.graph_state.drive(
             graphs,
-            &context,
+            &mut context,
             bone_ids,
             &mut self.frame_pool,
             &mut output,
@@ -128,6 +165,7 @@ impl AnimationPlayer {
         } else {
             self.drive_attributes.clear();
         }
+        self.drive_raised.append(&mut context.into_raised());
         self.frame_pool.release(output);
         &self.drive_attributes
     }
@@ -265,10 +303,15 @@ impl AnimationPlayer {
             skeleton: None,
             model_to_world: None,
             inputs,
+            messages: &[],
+            drive_raised: &[],
+            raised: Vec::new(),
             entity,
         };
         self.graph_state
             .initialize(animation_graph, graphs, &context);
+        self.raised.clear();
+        self.drive_raised.clear();
     }
 
     pub(crate) fn update(
@@ -281,15 +324,26 @@ impl AnimationPlayer {
         inputs: &Inputs<'_, '_>,
     ) {
         self.root = root;
-        let context = AnimationGraphContext {
+        let mut context = AnimationGraphContext {
             blackboard: &self.blackboard,
             root: self.root.clone(),
             skeleton,
             model_to_world: None,
             inputs,
+            messages: &self.messages,
+            drive_raised: &self.drive_raised,
+            raised: Vec::new(),
             entity,
         };
-        self.graph_state.update(delta_time, graphs, &context);
+        self.graph_state.update(delta_time, graphs, &mut context);
+        let mut raised = context.into_raised();
+        self.raised = std::mem::take(&mut self.drive_raised);
+        self.raised.append(&mut raised);
+        self.messages.clear();
+    }
+
+    pub(crate) fn take_raised(&mut self) -> Vec<RaisedMessage> {
+        std::mem::take(&mut self.raised)
     }
 
     pub(crate) fn root_motion(
@@ -305,6 +359,9 @@ impl AnimationPlayer {
             skeleton: Some(skeleton),
             model_to_world: None,
             inputs,
+            messages: &[],
+            drive_raised: &[],
+            raised: Vec::new(),
             entity,
         };
         self.graph_state
@@ -342,6 +399,9 @@ impl AnimationPlayer {
             skeleton: Some(skeleton),
             model_to_world: Some(model_to_world),
             inputs,
+            messages: &[],
+            drive_raised: &[],
+            raised: Vec::new(),
             entity,
         };
 
@@ -478,7 +538,7 @@ mod tests {
             0
         }
 
-        fn update(&self, _: &mut u32, _: f32, _: &(), _: &AnimationGraphContext<'_>) {}
+        fn update(&self, _: &mut u32, _: f32, _: &(), _: &mut AnimationGraphContext<'_>) {}
 
         fn evaluate(
             &self,

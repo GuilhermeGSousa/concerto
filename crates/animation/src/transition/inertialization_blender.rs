@@ -3,7 +3,7 @@ use uuid::Uuid;
 
 use crate::{
     attribute::PoseAttributes,
-    evaluation::{AnimationGraphContext, DriveContext},
+    evaluation::{AnimationGraphContext, DriveContext, RaisedMessage},
     graph::{AnimationGraph, AnimationGraphStates, GraphId},
     inertialization::{Inertializer, PoseVelocity},
     pose::{AnimationFrame, FramePool, Pose, RootMotion},
@@ -190,7 +190,7 @@ impl AnimationTransitionBlender for InertializationBlender {
         bone_ids: &[Uuid],
         graph_states: &mut AnimationGraphStates,
         graphs: &AssetStore<AnimationGraph>,
-        context: &DriveContext<'_>,
+        context: &mut DriveContext<'_>,
         pool: &mut FramePool,
         output: &mut AnimationFrame,
     ) {
@@ -214,11 +214,11 @@ impl AnimationTransitionBlender for InertializationBlender {
         delta_time: f32,
         graph_states: &mut AnimationGraphStates,
         graphs: &AssetStore<AnimationGraph>,
-        context: &AnimationGraphContext<'_>,
-    ) {
+        context: &mut AnimationGraphContext<'_>,
+    ) -> Vec<RaisedMessage> {
         self.delta_time += delta_time;
         self.elapsed += delta_time;
-        self.stack.update(delta_time, graph_states, graphs, context);
+        self.stack.update(delta_time, graph_states, graphs, context)
     }
 
     fn transition(

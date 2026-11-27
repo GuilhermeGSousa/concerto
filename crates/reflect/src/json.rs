@@ -20,6 +20,20 @@ pub trait JsonLeaf: Reflect + Sized {
     ///
     /// Returns a message naming the expected shape when `value` does not have it.
     fn from_json(value: &Value) -> Result<Self, String>;
+
+    /// [`JsonLeaf::to_json`] for a leaf whose form depends on the registered types.
+    fn to_json_with(&self, _registry: &TypeRegistry) -> Value {
+        self.to_json()
+    }
+
+    /// [`JsonLeaf::from_json`] for a leaf whose form depends on the registered types.
+    ///
+    /// # Errors
+    ///
+    /// Returns a message naming the expected shape when `value` does not have it.
+    fn from_json_with(value: &Value, _registry: &TypeRegistry) -> Result<Self, String> {
+        Self::from_json(value)
+    }
 }
 
 /// Writes a leaf as JSON and reads it back.
@@ -30,6 +44,10 @@ pub struct ReflectJson {
     /// Reads a value of the registered type from JSON, or returns a message naming the expected
     /// shape.
     pub from_json: fn(&Value) -> Result<Box<dyn Reflect>, String>,
+    /// [`Self::to_json`] for a leaf whose form depends on the registered types.
+    pub to_json_with: fn(&dyn Reflect, &TypeRegistry) -> Value,
+    /// [`Self::from_json`] for a leaf whose form depends on the registered types.
+    pub from_json_with: fn(&Value, &TypeRegistry) -> Result<Box<dyn Reflect>, String>,
 }
 
 impl TypeData for ReflectJson {}
@@ -43,6 +61,14 @@ impl<T: JsonLeaf> FromType<T> for ReflectJson {
                     .map_or(Value::Null, T::to_json)
             },
             from_json: |value| T::from_json(value).map(|value| Box::new(value) as Box<dyn Reflect>),
+            to_json_with: |value, registry| {
+                (value as &dyn Any)
+                    .downcast_ref::<T>()
+                    .map_or(Value::Null, |value| value.to_json_with(registry))
+            },
+            from_json_with: |value, registry| {
+                T::from_json_with(value, registry).map(|value| Box::new(value) as Box<dyn Reflect>)
+            },
         }
     }
 }
@@ -70,7 +96,7 @@ pub fn to_json(value: &dyn Reflect, registry: &TypeRegistry) -> Value {
         ),
         ReflectRef::Leaf(_) => {
             match registry.get_type_data::<ReflectJson>((value as &dyn Any).type_id()) {
-                Some(codec) => (codec.to_json)(value),
+                Some(codec) => (codec.to_json_with)(value, registry),
                 None => {
                     let mut object = Map::new();
                     object.insert(
@@ -186,7 +212,8 @@ impl Decoder<'_> {
     }
 
     fn leaf(&mut self, codec: &ReflectJson, value: &Value) -> Result<ReflectedValue, String> {
-        let decoded = (codec.from_json)(value).map_err(|reason| self.error(reason))?;
+        let decoded =
+            (codec.from_json_with)(value, self.registry).map_err(|reason| self.error(reason))?;
         let encoded = match decoded.reflect_ref() {
             ReflectRef::Leaf(leaf) => self
                 .hook

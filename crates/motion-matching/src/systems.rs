@@ -565,7 +565,14 @@ mod tests {
             None
         }
 
-        fn update(&self, _: &mut Option<Affine3A>, _: f32, _: &(), _: &AnimationGraphContext<'_>) {}
+        fn update(
+            &self,
+            _: &mut Option<Affine3A>,
+            _: f32,
+            _: &(),
+            _: &mut AnimationGraphContext<'_>,
+        ) {
+        }
 
         fn evaluate(
             &self,

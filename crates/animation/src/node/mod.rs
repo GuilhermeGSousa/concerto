@@ -6,8 +6,9 @@ use uuid::Uuid;
 
 use crate::{
     blackboard::AnimationBlackboard,
-    clip::{AnimationChannel, AnimationClip, KeyCursor},
+    clip::{AnimationChannel, AnimationClip, ClipEventData, KeyCursor},
     evaluation::{AnimationGraphContext, RootBone},
+    message::ClipEnded,
     param::Param,
     pose::{
         AnimationFrame, EvaluatedFrame, FiredEvent, FramePool, JointPose, RootMotion,
@@ -86,7 +87,7 @@ pub enum AnimationPlayMode {
     /// Starts again from its start time.
     #[default]
     Loop,
-    /// Holds its last pose and reports itself finished.
+    /// Holds its last pose once it reaches its end.
     PlayOnce,
 }
 
@@ -115,7 +116,7 @@ impl AnimationNode for ResultNode {
 
     fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) {}
 
-    fn update(&self, _: &mut (), _: f32, _: &(), _: &AnimationGraphContext<'_>) {}
+    fn update(&self, _: &mut (), _: f32, _: &(), _: &mut AnimationGraphContext<'_>) {}
 
     fn evaluate(
         &self,
@@ -148,7 +149,7 @@ impl AnimationNode for BlendNode {
 
     fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) {}
 
-    fn update(&self, _: &mut (), _: f32, _: &(), _: &AnimationGraphContext<'_>) {}
+    fn update(&self, _: &mut (), _: f32, _: &(), _: &mut AnimationGraphContext<'_>) {}
 
     fn evaluate(
         &self,
@@ -379,7 +380,7 @@ impl AnimationNode for AnimationClipNode {
         state: &mut AnimationClipNodeState,
         delta_time: f32,
         clips: &Res<AssetStore<AnimationClip>>,
-        context: &AnimationGraphContext<'_>,
+        context: &mut AnimationGraphContext<'_>,
     ) {
         if state.clock.begin_step() {
             return;
@@ -397,6 +398,21 @@ impl AnimationNode for AnimationClipNode {
         state
             .clock
             .advance(clip, span, delta_time, rate, &self.play_mode);
+        for crossed in &state.clock.fired {
+            if let Some(ClipEventData::Live { value, data, .. }) = clip
+                .events()
+                .get(crossed.key as usize)
+                .map(|key| &key.event)
+                && let Some(event) = (data.boxed)(value.as_ref())
+            {
+                context.raise_boxed(event);
+            }
+        }
+        if state.clock.is_finished {
+            context.raise_boxed(Box::new(ClipEnded {
+                clip: self.clip.clone(),
+            }));
+        }
     }
 
     fn evaluate(
@@ -467,10 +483,6 @@ impl AnimationNode for AnimationClipNode {
     fn reset(&self, state: &mut AnimationClipNodeState) {
         state.clock.reset();
     }
-
-    fn is_finished(&self, state: &AnimationClipNodeState) -> bool {
-        state.clock.is_finished
-    }
 }
 
 impl EditorAnimationNode for AnimationClipNode {
@@ -525,6 +537,12 @@ fn sample_root(channels: &[AnimationChannel], rest: &JointPose, time: f32) -> Jo
 /// Plays one clip, looping or once, at a rate a blackboard param can scale.
 ///
 /// A loop that passes the clip's end goes back to the start time, dropping the overshoot.
+///
+/// In `update` it raises a [`ClipEnded`] naming its clip on each frame the clip wraps or,
+/// played once, stops, and raises each clip event it crosses, whatever its weight; a state
+/// machine above it can transition on either with
+/// [`OnMessage`](state_machine::AnimationFSMTrigger::OnMessage). Neither reaches the
+/// character as a raised message.
 #[derive(Clone, Reflect, serde::Serialize, serde::Deserialize)]
 #[reflect(AnimationNode, Default)]
 pub struct AnimationClipNode {
@@ -586,7 +604,7 @@ impl AnimationClipNode {
 
 #[cfg(test)]
 mod tests {
-    use concerto_ecs::Res;
+    use concerto_ecs::{Res, system::input::Inputs};
     use concerto_foundation::assets::{
         AssetId, asset_server::AssetServer, asset_store::AssetStore, handle::AssetHandle,
     };
@@ -601,7 +619,7 @@ mod tests {
     use crate::{
         blackboard::AnimationBlackboard,
         clip::{AnimationChanelOutput, AnimationChannel, AnimationClip},
-        evaluation::{AnimationGraphContext, RootBone},
+        evaluation::RootBone,
         event::AnimationEvent,
         pose::{
             AnimationFrame, EvaluatedFrame, FiredEvent, FramePool, JointPose, Pose, RootMotion,
@@ -612,9 +630,8 @@ mod tests {
 
     const ROOT: Uuid = Uuid::from_u128(1);
 
-    fn clips<'a>(context: &'a AnimationGraphContext<'a>) -> &'a Res<'a, AssetStore<AnimationClip>> {
-        context
-            .inputs
+    fn clips<'a>(inputs: &'a Inputs<'a, 'a>) -> &'a Res<'a, AssetStore<AnimationClip>> {
+        inputs
             .get::<Res<'static, AssetStore<AnimationClip>>>()
             .unwrap()
     }
@@ -674,7 +691,15 @@ mod tests {
         ) {
             self.walks
                 .evaluate(&self.blackboard, Some(self.root()), |context| {
-                    node.evaluate(state, clips(context), context, bones, &[], pool, output)
+                    node.evaluate(
+                        state,
+                        clips(context.inputs),
+                        context,
+                        bones,
+                        &[],
+                        pool,
+                        output,
+                    )
                 });
         }
 
@@ -699,7 +724,14 @@ mod tests {
         ) -> RootMotion {
             self.walks
                 .pass(&self.blackboard, Some(self.root()), |context| {
-                    AnimationNode::root_motion(node, state, clips(context), context, &[ROOT], &[])
+                    AnimationNode::root_motion(
+                        node,
+                        state,
+                        clips(context.inputs),
+                        context,
+                        &[ROOT],
+                        &[],
+                    )
                 })
         }
 
@@ -710,7 +742,7 @@ mod tests {
             delta_time: f32,
         ) -> RootMotion {
             self.walks.update(&self.blackboard, |context| {
-                node.update(state, delta_time, clips(context), context)
+                node.update(state, delta_time, clips(context.inputs), context)
             });
             self.motion(node, state)
         }
@@ -722,7 +754,7 @@ mod tests {
             delta_time: f32,
         ) -> Vec<f32> {
             self.walks.update(&self.blackboard, |context| {
-                node.update(state, delta_time, clips(context), context)
+                node.update(state, delta_time, clips(context.inputs), context)
             });
             let mut pool = FramePool::new(1);
             let mut output = pool.acquire();

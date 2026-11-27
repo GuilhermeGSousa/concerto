@@ -1058,8 +1058,8 @@ A graph is a tree of nodes under a result node:
   are added at the node's weight. A plain clip passes the base through with
   one warning; an additive clip whose delta isn't built, such as one added in
   code, passes it through with none. `AnimationPlayer::play(node, graphs)`
-  restarts the delta, and the node never holds back `OnAnimationEnd`: it always counts
-  as finished. The node has no mask: it layers the delta on every bone the
+  restarts the delta, and the node raises no `ClipEnded`: a state that waits
+  on one leaves when its base's clip ends. The node has no mask: it layers the delta on every bone the
   delta covers. `AdditiveNode::new(clip)` starts at weight 1, looping from 0
   at rate 1, and every other field has a `with_<field>`:
   ```rust
@@ -1122,7 +1122,12 @@ A graph is a tree of nodes under a result node:
   parameter: the classic locomotion setup.
 - **State machine** switches between sub-graphs on triggers such as
   `AnimationFSMTrigger::on_bool(name!("is_grounded"), false)` or
-  `AnimationFSMTrigger::OnAnimationEnd`. Each transition takes a
+  `AnimationFSMTrigger::on_message::<M>()`, which fires on a message of type
+  `M` that the game sent the player this frame or that the current state
+  raised (see [Messages and signals](#messages-and-signals));
+  `on_message::<ClipEnded>()` leaves a state once any clip in it ends, and
+  `on_message_value(&ClipEnded { clip })` once that clip ends. Each
+  transition takes a
   `blend_time`, and the machine's `TransitionBlender` (set with
   `.blender(..)` on the builder) decides what it means: `CrossFade`, the
   default, fades the old state out over `blend_time` seconds (a transition
@@ -1417,7 +1422,7 @@ impl AnimationNode for Gain {
     type UpdateInput = Res<'static, Tuning>;
     type EvaluateInput = ();
     type DriveInput = ();
-    // create_state, update, evaluate, reset; is_finished, root_motion and drive have defaults
+    // create_state, update, evaluate, reset; root_motion and drive have defaults
 }
 
 impl EditorAnimationNode for Gain {}
@@ -1425,8 +1430,9 @@ impl EditorAnimationNode for Gain {}
 
 The node's fields are its data and are stored with the graph. `State` is the
 per-player runtime state (a playhead, say): `create_state` makes one for each
-player that uses the graph, and `update`, `evaluate`, `reset` and `is_finished`
-receive it. `AnimationPlayer::play(node, graphs)` calls the node's `reset`, so
+player that uses the graph, and `update`, `evaluate` and `reset` receive it.
+A node that comes to an end says so by raising a message (see [Messages and
+signals](#messages-and-signals)). `AnimationPlayer::play(node, graphs)` calls the node's `reset`, so
 a node restarts on `play` by resetting its state there. A node that plays graphs
 inside itself, as the state machine and the retarget node do, reports them
 through `inner_graphs` and their states through `inner_states`, each with the
@@ -1467,7 +1473,9 @@ and, in `evaluate`, `model_to_world`: the transform of bone 0's parent, or
 identity when it has none. It is this frame's: the character has already moved by
 this frame's root motion when `evaluate` runs, so a node that reads the world
 reads where the character is now. `entity()` is the entity of the player being walked, which a node passes to a
-typed input, such as a `Query`, to read the character's other components.
+typed input, such as a `Query`, to read the character's other components. In
+`update` the context also holds the messages the game sent the player and takes
+the messages the node raises (see [Messages and signals](#messages-and-signals)).
 
 `evaluate` writes an `AnimationFrame`: a `Pose`, the joints in bone order, with
 the clip events its sources fired this frame. Its inputs
@@ -1520,7 +1528,11 @@ physics-side state in `drive` at the step's `DriveContext::delta_time`; the
 context also gives the player's `blackboard()`, `root()`, `skeleton()` and
 `entity()`, and `bone_ids` are the skeleton's, as in `evaluate`. A `DriveInput`
 may not name what the drive writes, the `AnimationPlayer`; one that does panics
-when `drive_animation_players` is initialized.
+when `drive_animation_players` is initialized. The context is mutable, and a
+controller that decides something in the physics step, such as giving up on a
+balance it cannot hold, says so with `context.raise(message)`: the graph acts
+on it at the player's next update, as on a sent message, and the character
+hears it once (see [Messages and signals](#messages-and-signals)).
 
 `DriveContext::weight` is how much of the node's drive frame reaches the
 player's: the product of the shares every combiner above it gives it, 1 at the
@@ -1601,6 +1613,133 @@ Handles inside a node (the clip of an `AnimationClipNode`, the state graphs of
 an `AnimationStateMachine`) are stored as asset ids and loaded again by
 `make_live`. Keep the clip and state graph handles you give to a builder alive
 until `assets.add(graph)` has run.
+
+#### Messages and signals
+
+A message is a value a graph reacts to: a type that derives `Reflect` and
+`Clone`, implements the marker trait `AnimationMessage`, and is registered
+with `app.register_animation_message::<M>()`, which registers the type as a
+message. Call it before anything else registers `M`; a type registered
+earlier is not marked as a message, which the call warns about. A message a
+node raises also implements `Signal` and `EntitySignal`, because what a graph
+raises reaches the character as one.
+
+```rust
+use concerto::animation::message::AnimationMessage;
+use concerto::ecs::signal::{EntitySignal, Signal};
+
+#[derive(Clone, Default, Reflect)]
+struct Hit {
+    strength: f32,
+}
+
+impl Signal for Hit {}
+impl EntitySignal for Hit {}
+impl AnimationMessage for Hit {}
+
+app.register_animation_message::<Hit>();
+```
+
+`AnimationPlayer::send(message)` queues it, and so does the signal
+`SendAnimationMessage { character, message }`, for code that holds no player:
+a listener the registration adds queues it on the character's player, and
+does nothing when the character has none. `SendReflectedMessage` does the same
+for a message given by its type path and stored value, as the editor's
+`send_animation_message` tool sends it. A sent message reaches the graph only:
+it is not triggered on the character, and triggering a message on the
+character yourself, with `cmd.trigger`, does not reach the graph. The player's
+next update walks its graph with the whole queue in the context:
+`context.messages()` gives every queued message in the order sent, then every
+message the drive pass raised since the last update in the order raised, and
+`context.message::<M>()` those of type `M`. Every node that updates reads
+them there, in the graph, in a state machine's playing states and in a
+retarget's inner graph; in `evaluate` and `root_motion` the list is empty, so
+a node that acts on a message later keeps what it needs in its state. The
+queue empties after the update. A paused player keeps its queue until it
+resumes. An `OnMessage` trigger stores the message's full type path and finds
+the type by that exact path when its graph is made live, with no fallback to a
+short name; a path that names no type registered as a message leaves a load
+warning, and that trigger never fires. A stored state machine that names a
+trigger the engine no longer has, such as `OnAnimationEnd`, does not apply: it
+loads as a `Placeholder` with a warning naming the unknown variant, and plays
+as a `PlaceholderNode`, so none of its states play. Re-author each such
+transition's trigger, usually as `OnMessage` of `ClipEnded`, and save the graph
+again.
+
+A node tells the containers above it, and through them the character, what
+happened with `context.raise(message)`, in `update` or in `drive`, the two
+walks that hand a node a mutable context; `evaluate` and `root_motion` have no
+`raise`, so a raise from them does not compile. A node raises once, on the
+frame or step its condition becomes true, not on every one it holds. Each
+state machine and retarget the node plays in reads what each of its states or
+its inner graph raised in this update and passes it on to its own container,
+so the message reaches every ancestor and is never consumed, and a node never
+sees a message raised in `update` in `context.messages()`. At the root,
+`animate_targets` triggers each message the graph raised in its last update on
+the player's entity, as its own type, in the order raised and after the clip
+events, so a `Listener<M>` on the character hears what the state machines
+heard. `animate_targets` takes the list as it triggers it, so each message is
+triggered once, and it does so for every player, one paused or without a
+`SkeletonComponent` included. The clip
+events a clip raises stop at the root: they reach the game once, as their
+weighted `AnimationSignal`. `ClipEnded` stops there too and is not a signal,
+so nothing on the character hears it: game code follows the machine's states,
+with `in_state`, rather than the ends of its clips.
+
+What a node raises in `drive` waits on the player, in the order raised, across
+the physics steps until its next update. That update sees it as it sees what
+the game sent: every node reads it in `context.messages()`, and every state
+machine matches it in its check before the update, so a transition it moves
+begins at the start of that update and the next physics step drives the new
+state. The same update hands it to `animate_targets`, ahead of what the update
+raised, which triggers it once on the player's entity. A paused player does
+not drive, so it raises nothing from `drive`.
+
+A state machine checks its transitions twice in each update. Before it updates
+its states, it tries every transition of its current state, its `OnMessage`
+transitions first, with `OnMessage` matching only what the game sent this
+frame and what the drive pass raised since the last update, and takes at most
+one. The state it enters then updates in the same walk and reads the message
+on that frame. After the update, it tries the
+current state's `OnMessage` transitions against what that state raised in it,
+and keeps the one that matches without taking it, so the frame is sampled from
+the state that raised. The next update starts with the check before: a
+transition the game drives that fires there is taken and the kept one is
+dropped; otherwise the kept one is taken. A raise therefore moves its machine
+at the start of the next update, and a machine takes at most one transition
+per update. What the game drives, a sent message, a param or `Instant`, and a
+message raised in `drive`, so win over what the state raised in the same frame, whatever the list order;
+within one check, the matching transition that comes first in the state's
+list wins. A state that is fading out still raises to the machine's
+container, but not to the machine's own triggers. Resetting a state machine,
+which entering the state that holds it does, puts it back in its entry state
+and resets every one of its states, nested machines included, so a machine
+inside a state starts from its entry state, with its clips from the start,
+each time that state is entered. `AnimationClipNode` raises
+`ClipEnded { clip }`, naming the clip it plays, on each frame that clip wraps,
+or, played once, stops. `on_message::<ClipEnded>()` leaves a state when any
+clip below it ends, a looping clip's wrap or a clip at weight 0 included, which
+suits a state that plays one clip. A state that plays several waits on the one
+that matters with `on_message_value(&ClipEnded { clip: attack.clone() })`: a
+state that plays a one-shot attack beside a looping breath then stays through
+every wrap of the breath and leaves when the attack ends. The clip is matched
+by its asset id, so a strong or weak handle to it does the same.
+
+`AnimationClipNode` also raises each clip event its clock crosses, in key
+order, whatever the clip's weight; the value is the one that later reaches the
+game as an `AnimationSignal`. `AnimationEvent` is an animation message, so a
+transition can wait for one. `AnimationFSMTrigger::on_message::<M>()` fires on
+any message of type `M`; `on_message_value(&message)`, which returns an error
+when the message cannot be encoded, encodes every field of the message it is
+given, defaults included, so it fires only on a message whose fields all
+equal that one's: `on_message_value(&AnimationEvent { name: name!("jump_apex") })?`
+moves on that event and ignores other names. To match on some fields only,
+build `AnimationFSMTrigger::OnMessage { message, value: Some(ReflectedValue::Struct(..)) }`
+by hand with just those fields; the match uses `ReflectedValue::contains`. A
+value naming a field its type lacks leaves a load warning.
+
+`AnimationPlayer::in_state(graphs, name)` says whether a state machine playing
+in the player's graph, at any depth, is in the state `name`.
 
 ### Reading node state
 
@@ -1733,6 +1872,14 @@ impl ClipEvent for Footstep {}
 
 A clip that loads an event whose type is not registered logs a warning naming
 the clip and the type, and drops it.
+
+The clip node also raises each event its clock crosses as a message to the
+state machines above it, whatever its weight, so a transition can wait for one
+with `on_message_value` (see [Messages and signals](#messages-and-signals)). A
+game's event type that a transition waits for, or that `send_animation_message`
+sends, also implements `AnimationMessage` and is registered with
+`register_animation_message`, as `AnimationEvent` is. The raised copy stops at
+the graph's root; the game hears the event only as its `AnimationSignal`.
 
 `AnimationSignal<S>` holds the event as `signal`, the clip time it sits at as
 `time`, the `weight` of its source in the final frame, and `mirrored`, set when
@@ -2060,8 +2207,8 @@ skeleton's root, netted against the source rig's reference root joint (see
 root motion against the target reference, and the node's root motion is the
 inner graph's, with its translation multiplied by `scale()` and its rotation
 unchanged. Clip events fired in the inner graph reach the player as its own,
-and the node is finished when the inner graph is, so a state machine's
-`OnAnimationEnd` follows it. `AnimationPlayer::for_each_state` also visits
+and what the inner graph raises, its clips' `ClipEnded` among it, goes on up
+to the containers above the node. `AnimationPlayer::for_each_state` also visits
 the nodes inside the inner graph, which is how motion matching's gizmos find a
 matcher under a retarget node.
 
@@ -2085,8 +2232,8 @@ goals when it starts, so an edit to a rig's goals reaches a node that is
 already playing only once the node restarts.
 
 Until the player's skeleton, both rigs, their skeletons, a `ClipFrame`
-reference clip and the inner graph have loaded, the node gives the rest pose,
-and its `is_finished` is false. The inner graph also sees the player's
+reference clip and the inner graph have loaded, the node gives the rest pose
+and raises nothing. The inner graph also sees the player's
 `model_to_world`, but at the source's scale, so nodes that read the world, such
 as foot placement, IK and look-at, go above the retarget node, on the target
 skeleton, not inside its inner graph.
@@ -2101,8 +2248,8 @@ The node refuses:
   `CreateInput` is not also an update input, which would get no state inside
   the node's update, and gives the target rig's reference pose.
 
-Each refusal logs one warning naming it, and the node then counts as
-finished. It stays refused until the player's graph changes: fixing or
+Each refusal logs one warning naming it, and the node then raises nothing, so
+a state that waits on `ClipEnded` above it never leaves on it. It stays refused until the player's graph changes: fixing or
 reloading the inner graph or a rig does not bring it back. A player skeleton
 whose bones change while the node plays fails it the same way, at the rest
 pose. A pose the solve rejects while playing gives the rest pose with no root

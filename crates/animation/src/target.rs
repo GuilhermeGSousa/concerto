@@ -41,8 +41,11 @@ pub(crate) fn initialize_skeletons(
 
 /// Evaluates every unpaused [`AnimationPlayer`], writes the pose to its bones' [`Transform`]s and
 /// triggers the clip events it fired.
+///
+/// It also triggers on the player's entity, paused or not and with a skeleton or not, each
+/// message the player's graph raised in its last update and nothing above it consumed, once.
 pub fn animate_targets(
-    mut animation_players: Query<(Entity, &mut AnimationPlayer, &SkeletonComponent)>,
+    mut animation_players: Query<(Entity, &mut AnimationPlayer, Option<&SkeletonComponent>)>,
     mut transforms: Query<&mut Transform>,
     parents: Query<&ChildOf>,
     globals: Query<&GlobalTransform>,
@@ -54,28 +57,31 @@ pub fn animate_targets(
 ) {
     for (entity, mut animation_player, skeleton_component) in animation_players.iter_mut() {
         let evaluated = !animation_player.is_paused()
-            && skeletons
-                .get(skeleton_component.skeleton())
-                .is_some_and(|skeleton| {
-                    animation_player.evaluate(
-                        entity,
-                        &animation_graphs,
-                        &inputs,
-                        skeleton,
-                        skeleton_component.bones(),
-                        &mut transforms,
-                        &parents,
-                        &globals,
-                    )
-                });
+            && skeleton_component.is_some_and(|skeleton_component| {
+                skeletons
+                    .get(skeleton_component.skeleton())
+                    .is_some_and(|skeleton| {
+                        animation_player.evaluate(
+                            entity,
+                            &animation_graphs,
+                            &inputs,
+                            skeleton,
+                            skeleton_component.bones(),
+                            &mut transforms,
+                            &parents,
+                            &globals,
+                        )
+                    })
+            });
         if evaluated {
             for event in animation_player.fired.drain(..) {
                 trigger(&clips, event, entity, &mut cmd);
             }
-            continue;
-        }
-        if !animation_player.fired.is_empty() {
+        } else if !animation_player.fired.is_empty() {
             animation_player.fired.clear();
+        }
+        for raised in animation_player.take_raised() {
+            raised.trigger(entity, &mut cmd);
         }
     }
 }

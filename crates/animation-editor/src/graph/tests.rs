@@ -6,10 +6,12 @@ use std::{
 
 use concerto_animation::{
     graph::{AnimationGraph, AnimationNodeData},
+    message::{AnimationMessage, ClipEnded},
     node::{
         AnimationClipNode, LayerNode,
         state_machine::{AnimationFSMTrigger, AnimationStateMachine},
     },
+    plugin::AnimationAppExt,
     retarget::RetargetNode,
 };
 use concerto_app::App;
@@ -39,6 +41,7 @@ use concerto_foundation::{
 use concerto_mcp::host::run_with;
 use concerto_mesh::skeleton::{JointPose, Skeleton, SkeletonComponent};
 use concerto_name::Name;
+use concerto_reflect::{Reflect, ReflectDefault};
 use concerto_render::gpu::Gpu;
 use concerto_scene::node_id::NodeId;
 use concerto_scene::scene::{Scene, SceneNode};
@@ -73,6 +76,18 @@ where
     T: Send + 'static,
     F: Future<Output = T>,
 {
+    serve_with(game, root, scenario)
+}
+
+fn serve_with<T, F>(
+    recipe: fn(&mut App),
+    root: &Path,
+    scenario: impl FnOnce(Client) -> F + Send + 'static,
+) -> Option<T>
+where
+    T: Send + 'static,
+    F: Future<Output = T>,
+{
     let gpu = Gpu::request_for_test()?;
     let (client_io, server_io) = tokio::io::duplex(64 * 1024);
     let client = std::thread::spawn(move || {
@@ -88,7 +103,7 @@ where
     run_with(
         server_io,
         gpu,
-        concerto_editor::mcp::editor(game, root.to_path_buf(), vec![crate::install]),
+        concerto_editor::mcp::editor(recipe, root.to_path_buf(), vec![crate::install]),
         SIZE,
     );
     Some(
@@ -1231,4 +1246,150 @@ fn nodes_added_and_connected_by_edit_graph_are_saved_into_the_graphs_file() {
     assert_eq!(clips.len(), 2);
     assert!(clips.iter().all(|clip| clip.ends_with("AnimationClipNode")));
     assert!(!f.unsaved(document));
+}
+
+#[derive(Clone, Default, Reflect)]
+#[reflect(Default)]
+struct Poke {
+    strength: f32,
+}
+
+impl AnimationMessage for Poke {}
+
+fn poking_game(app: &mut App) {
+    game(app);
+    app.register_animation_message::<Poke>();
+}
+
+struct Told {
+    sent: String,
+    ended: String,
+    refused: Value,
+    bad_id: Value,
+    idle: Value,
+}
+
+#[test]
+fn send_animation_message_moves_a_playing_graph_and_says_where_it_is() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().to_path_buf();
+    write_stage(&root);
+    let Some(told) = serve_with(poking_game, &root, move |client| async move {
+        until_idle(&client).await;
+        ok(
+            &client,
+            "create_asset",
+            json!({ "kind": "AnimationGraph", "name": "Locomotion" }),
+        )
+        .await;
+        ok(&client, "open_asset", json!({ "asset": GRAPH })).await;
+        ok(
+            &client,
+            "graph_add_node",
+            json!({ "type": "AnimationStateMachine", "parent": 0 }),
+        )
+        .await;
+        ok(&client, "graph_open", json!({ "node": 1 })).await;
+        ok(&client, "graph_add_state", json!({ "name": "Idle" })).await;
+        ok(&client, "graph_add_state", json!({ "name": "Poked" })).await;
+        ok(&client, "graph_add_state", json!({ "name": "Ended" })).await;
+        ok(
+            &client,
+            "graph_connect",
+            json!({ "from": "Idle", "to": "Poked" }),
+        )
+        .await;
+        ok(
+            &client,
+            "set_property",
+            json!({
+                "target": "Transition",
+                "path": "trigger",
+                "value": { "OnMessage": { "message": { "path": std::any::type_name::<Poke>() } } }
+            }),
+        )
+        .await;
+        ok(
+            &client,
+            "graph_connect",
+            json!({ "from": "Poked", "to": "Ended" }),
+        )
+        .await;
+        ok(
+            &client,
+            "set_property",
+            json!({
+                "target": "Transition",
+                "path": "trigger",
+                "value": { "OnMessage": { "message": { "path": std::any::type_name::<ClipEnded>() } } }
+            }),
+        )
+        .await;
+        ok(&client, "graph_up", json!({})).await;
+        let refused = error(
+            &client,
+            "send_animation_message",
+            json!({ "message": { "type": "nope", "value": {} } }),
+        )
+        .await;
+        let bad_id = error(
+            &client,
+            "send_animation_message",
+            json!({ "entity": "character", "message": { "type": "nope" } }),
+        )
+        .await;
+        let idle = error(
+            &client,
+            "send_animation_message",
+            json!({ "entity": "1v1", "message": { "type": "nope" } }),
+        )
+        .await;
+        let mut sent = String::new();
+        for _ in 0..10 {
+            sent = ok(
+                &client,
+                "send_animation_message",
+                json!({ "message": { "type": std::any::type_name::<Poke>(), "value": { "strength": 1.0 } } }),
+            )
+            .await;
+            if sent.contains("Poked") {
+                break;
+            }
+        }
+        let mut ended = String::new();
+        for _ in 0..10 {
+            ended = ok(
+                &client,
+                "send_animation_message",
+                json!({ "message": { "type": std::any::type_name::<ClipEnded>(), "value": {} } }),
+            )
+            .await;
+            if ended.contains("States: Ended.") {
+                break;
+            }
+        }
+        client.cancel().await.unwrap();
+        Told {
+            sent,
+            ended,
+            refused,
+            bad_id,
+            idle,
+        }
+    }) else {
+        return;
+    };
+
+    assert!(told.sent.contains("Poked"), "{}", told.sent);
+    assert!(
+        told.ended.contains("States: Ended."),
+        "a raised type sent as a message moves the machine: {}",
+        told.ended
+    );
+    assert_eq!(told.bad_id["code"], "unknown_entity", "{}", told.bad_id);
+    assert_eq!(told.idle["code"], "not_playing", "{}", told.idle);
+    assert_eq!(told.refused["code"], "refused", "{}", told.refused);
+    let listed = told.refused["message"].as_str().unwrap();
+    assert!(listed.contains(std::any::type_name::<Poke>()), "{listed}");
+    assert!(listed.contains("ClipEnded"), "{listed}");
 }

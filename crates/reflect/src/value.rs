@@ -20,6 +20,14 @@ pub enum ReflectedValue {
     List(Vec<ReflectedValue>),
 }
 
+impl Default for ReflectedValue {
+    fn default() -> Self {
+        Self::Struct(Vec::new())
+    }
+}
+
+crate::impl_reflect_leaf!(ReflectedValue);
+
 impl ReflectedValue {
     /// Whether `wanted` is found here: every field it names is present and contains its value, and a variant has the same name.
     pub fn contains(&self, wanted: &ReflectedValue) -> bool {

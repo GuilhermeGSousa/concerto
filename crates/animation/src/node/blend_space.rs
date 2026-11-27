@@ -107,7 +107,7 @@ impl AnimationNode for BlendSpace2DNode {
         state: &mut BlendSpace2DInstanceNode,
         _delta_time: f32,
         _: &(),
-        context: &AnimationGraphContext<'_>,
+        context: &mut AnimationGraphContext<'_>,
     ) {
         let sample = context
             .blackboard()
@@ -153,7 +153,7 @@ impl AnimationNode for BlendSpace2DNode {
         &self,
         state: &mut BlendSpace2DInstanceNode,
         _: &(),
-        _: &DriveContext<'_>,
+        _: &mut DriveContext<'_>,
         _: &[uuid::Uuid],
         inputs: &[EvaluatedFrame],
         _: &mut FramePool,
@@ -341,7 +341,7 @@ mod tests {
         let walks = Walks::new(AssetStore::new(), AssetStore::new());
 
         let motion = walks.evaluate(&AnimationBlackboard::default(), None, |context| {
-            space.update(&mut state, 0.0, &(), context);
+            space.update(&mut state, 0.0, &(), &mut context.child());
             space.root_motion(
                 &mut state,
                 &(),

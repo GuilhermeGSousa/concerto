@@ -424,7 +424,7 @@ impl AnimationNode for ProceduralMotionNode {
         state: &mut ProceduralMotionState,
         delta_time: f32,
         _: &(),
-        _: &AnimationGraphContext<'_>,
+        _: &mut AnimationGraphContext<'_>,
     ) {
         state.advance(self, delta_time);
     }
@@ -580,7 +580,7 @@ mod tests {
 
         fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) {}
 
-        fn update(&self, _: &mut (), _: f32, _: &(), _: &AnimationGraphContext<'_>) {}
+        fn update(&self, _: &mut (), _: f32, _: &(), _: &mut AnimationGraphContext<'_>) {}
 
         fn evaluate(
             &self,
