@@ -160,33 +160,6 @@ pub(crate) fn read_texture_payload(root: &Path, asset: &AssetEntry) -> anyhow::R
     Ok(texture)
 }
 
-pub(crate) fn read_texture(root: &Path, asset: &AssetEntry) -> anyhow::Result<OpenedTexture> {
-    let texture = read_texture_payload(root, asset)?;
-    let source = read_uncooked::<TextureSource>(root, asset)
-        .with_context(|| format!("Cannot read the source image of {}", asset.location()))?
-        .with_context(|| {
-            format!(
-                "{} holds no source image; import its source again",
-                asset.address
-            )
-        })?;
-    Ok(OpenedTexture { texture, source })
-}
-
-pub(crate) fn hold_document(tab: &mut TextureTab, texture: &Texture) {
-    let value = TextureDocument::of(texture);
-    if tab.value != Some(value) {
-        tab.derive_wanted = true;
-    }
-    tab.value = Some(value);
-    tab.loaded = Some(value);
-}
-
-pub(crate) fn hold_texture(tab: &mut TextureTab, opened: OpenedTexture) {
-    hold_document(tab, &opened.texture);
-    tab.source = Some(opened.source);
-}
-
 pub(crate) fn load_textures(
     mut documents: Query<(Entity, &mut EditorDocument, &mut TextureTab)>,
     project: Res<ProjectState>,
@@ -199,9 +172,9 @@ pub(crate) fn load_textures(
         let Some(asset) = document.pending.clone() else {
             continue;
         };
-        match read_texture(&root, &asset) {
+        match OpenedTexture::read(&root, &asset) {
             Ok(opened) => {
-                hold_texture(&mut tab, opened);
+                tab.hold_texture(opened);
                 tab.derive_wanted = true;
                 cmd.remove::<Unsaved>(entity);
                 cmd.trigger(RefreshInspector);
@@ -252,5 +225,36 @@ pub(crate) fn restore_discarded_edits(
         tab.value = tab.loaded;
         tab.derive_wanted = true;
         cmd.trigger(RefreshInspector);
+    }
+}
+
+impl OpenedTexture {
+    pub(crate) fn read(root: &Path, asset: &AssetEntry) -> anyhow::Result<Self> {
+        let texture = read_texture_payload(root, asset)?;
+        let source = read_uncooked::<TextureSource>(root, asset)
+            .with_context(|| format!("Cannot read the source image of {}", asset.location()))?
+            .with_context(|| {
+                format!(
+                    "{} holds no source image; import its source again",
+                    asset.address
+                )
+            })?;
+        Ok(Self { texture, source })
+    }
+}
+
+impl TextureTab {
+    pub(crate) fn hold_document(&mut self, texture: &Texture) {
+        let value = TextureDocument::of(texture);
+        if self.value != Some(value) {
+            self.derive_wanted = true;
+        }
+        self.value = Some(value);
+        self.loaded = Some(value);
+    }
+
+    pub(crate) fn hold_texture(&mut self, opened: OpenedTexture) {
+        self.hold_document(&opened.texture);
+        self.source = Some(opened.source);
     }
 }
