@@ -23,6 +23,7 @@ pub(crate) const CROSS_SIZE: f32 = 0.04;
 #[derive(Component, Reflect, Clone, Debug, PartialEq)]
 #[reflect(Component, Default)]
 pub struct FootLockGizmos {
+    /// Draws each foot lock, coloured by whether it is locked, releasing or free.
     pub locks: bool,
 }
 
