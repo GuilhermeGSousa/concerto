@@ -208,12 +208,12 @@ owner next comments or reviews.
 
 ### Checks
 
-- Cloud: `python3 .github/scripts/dependencies.py`, `cargo fmt --all -- --check`
-  and `python3 .github/scripts/test_budget.py` when Rust changed, and
+- Cloud: `cargo fmt --all -- --check`, `python3 .github/scripts/test_budget.py`
+  and `python3 .github/scripts/dependencies.py`, plus
   `cargo metadata --format-version 1 > /dev/null` when a `Cargo.toml` changed,
-  committing the `Cargo.lock` it rewrites. Clippy, tests and the wasm build are
-  CI's; when CI does not run them, they are reported as not run, as "When CI
-  does not run" says.
+  committing the `Cargo.lock` it rewrites. Clippy, rustdoc, `cargo deny`, tests
+  and the wasm build are CI's; when CI does not run them, they are reported as
+  not run, as "When CI does not run" says.
 - Local: the per-task gate from `AGENTS.md` after each plan task, the full
   done gate once before review, and
   `visual-verification` where `AGENTS.md` asks for a look at the running

@@ -149,7 +149,7 @@ touched: `cargo fmt --all -- --check`, the test budget and the dependency
 layers, then the clippy and test lines above
 with `-p <crate>` for each crate in place of `--workspace` (and the Rapier
 lines when physics is one of them), and
-`RUSTDOCFLAGS="-D warnings" cargo doc --locked --no-deps -p <crate>` for each
+`RUSTDOCFLAGS="-D warnings" CARGO_BUILD_WARNINGS=deny cargo doc --locked --no-deps -p <crate>` for each
 crate. The full gate runs once, after the last
 task and before the branch review.
 

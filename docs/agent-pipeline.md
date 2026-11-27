@@ -75,7 +75,7 @@ stop the agent. It removes `agent` from the issue and leaves the branch. Add
 
 Cloud agents run only `cargo fmt`, the test budget check and the dependency
 layers check, plus
-`cargo metadata` to update `Cargo.lock` when a `Cargo.toml` changed, and leave clippy, tests and the wasm build to CI.
+`cargo metadata` to update `Cargo.lock` when a `Cargo.toml` changed, and leave clippy, rustdoc, `cargo deny`, tests and the wasm build to CI.
 For rendering, UI and editor changes they list the visual checks left for you
 in the review comment.
 

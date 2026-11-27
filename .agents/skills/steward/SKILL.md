@@ -24,7 +24,7 @@ how to act on a PR event.
   `python3 .github/scripts/test_budget.py` and
   `python3 .github/scripts/dependencies.py` only, plus
   `cargo metadata --format-version 1 > /dev/null` when a `Cargo.toml` changed,
-  and leaves clippy, tests and wasm to CI.
+  and leaves clippy, rustdoc, `cargo deny`, tests and wasm to CI.
 - A CI job that failed without starting, with an annotation about billing or
   the spending limit, did not run. It is not red: do not fix it, retry it or
   wait for it. Go on, and name it in the review comment with the done gate
