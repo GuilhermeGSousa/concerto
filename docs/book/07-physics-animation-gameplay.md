@@ -601,6 +601,93 @@ from its animated place for `lost_seconds`, the character is sent `PoseLost`,
 once, until it is back: it can no longer hold the pose, and something should
 catch it or let it fall.
 
+#### Driving the body from the graph
+
+`RagdollMode::Graph` hands the body to the character's animation graph, bone by
+bone. Two pose attributes, in `concerto::ragdoll`, travel through the graph
+with the pose and blend with it as rotations do (see Your own nodes under
+Animation):
+
+- `PhysicsAmount`: how much of the bone is drawn from physics, from 0, the
+  animated pose, to 1, the ragdoll's;
+- `MotorCommand`: what the graph asks of the bone's motor in each physics
+  step, a target rotation, a stiffness, a damping, a torque limit, a force and
+  a torque, and a `cover` from 0 to 1 saying how much of the bone it holds.
+  Two commands blend by their covers, so a state that holds nothing does not
+  weaken one that does.
+
+```rust
+cmd.insert(
+    (
+        CharacterRagdoll::new(ragdoll)
+            .with_capsule(capsule)
+            .with_mode(RagdollMode::Graph)
+            .with_profile("braced"),
+        AnimationHandleComponent::new(graph),
+    ),
+    skeleton_entity,
+);
+```
+
+Nodes write both attributes in their `drive`, and physics reads only
+`AnimationPlayer::drive_attributes`, so every part of one physics step is
+decided by one walk of the graph. Each fixed step, after the drive pass and
+before physics steps, `drive_from_graph` drives each part from what the graph
+gave its bone:
+
+- a part whose bone has neither an amount nor a cover is kinematic, driven to
+  its bone's pose as in `RagdollMode::FollowsAnimation`. The root part, the
+  pelvis, is kinematic while it has no cover, whatever its amount;
+- any other part is dynamic, and its joint's motor is aimed by the command
+  and, for the share of the bone the command does not cover, by the animation
+  at the strength of the character's `profile`. The pelvis gets no such share,
+  nor does a part the profile leaves kinematic or limp; its command is the
+  graph's alone. A command's force and torque are scaled by its cover.
+
+Each frame the bones are drawn by their amount in the drive attributes, as the
+other modes draw by `weight`, and the capsule is carried while the pelvis has
+any amount. The character's `weight`, `part_weights` and `blend` are unused, and
+the behaviour components below, from `HitReaction` to `Dying`, do not drive a
+character in this mode. A character with no `AnimationPlayer`, or whose player
+is paused, asks for nothing and its body follows its bones. Since the amount
+blends with the pose, a graph blends animation and physics the way it blends
+clips: a cross-fade into a state that holds the body leads it in from the
+animation over the blend time and back out again, with no cut. A cross-fade
+interrupted mid-fade holds a command's target and muscle but drops its force
+and torque, which `MotorCommand::frozen` returns, so a held fade does not keep
+pushing.
+
+`RagdollPlugin` registers two nodes that write them. Each takes the pose to act
+on as its input, passes it through, and reads the character's body through a
+`BodyInput` query, its typed drive input, as a `BodyView`. A character without
+a ragdoll has no view, and the node only passes its pose through.
+
+`HoldNode` holds the parts on a mask's bones with the muscles of a strength
+`profile`, `braced` by default, and acts on every part that profile does not
+leave kinematic; with no mask it holds all of them. Its `weight` is both how
+much of the parts is drawn from physics and how much of them its muscles hold,
+the rest being held by the character's `profile`; its `strength` multiplies the
+profile's stiffness, damping and torque limit, and the character's `Wounds`, if
+it has them, scale each part's further. Both are `f32` blackboard params that
+read 1 while the blackboard has no such value, and both move towards a new
+value over `fade` seconds, so a game that sets a hurt leg's weight from a wound
+in one frame does not snap it. A bone of the mask with no part, a toe, keeps
+its animated pose under its parent.
+
+```rust
+let hurt_leg = HoldNode::new("braced")
+    .with_mask(left_leg)
+    .with_weight(name!("leg_hurt"))
+    .with_fade(0.3);
+graph.result_node().input(hurt_leg).input(AnimationClipNode::new(walk));
+player.set_float_param(name!("leg_hurt"), 0.5);
+```
+
+`LimpNode` lets the whole body go: every part is drawn from physics and held
+with a torque limit of 0, keeping the stiffness its input asked for so a motor
+taking hold again does not jump. Cross-fading into a state with it and back
+out blends the body down and up again without a cut.
+
 #### A hit
 
 `BodyHit { character, part, point, impulse, kind }` says a character's body was hit:
