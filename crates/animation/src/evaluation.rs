@@ -1,6 +1,6 @@
 use std::{cell::RefCell, sync::Arc};
 
-use concerto_ecs::{CommandQueue, Entity, system::input::Inputs};
+use concerto_ecs::{CommandQueue, Entity, signal::EntitySignal, system::input::Inputs};
 use concerto_mesh::Skeleton;
 use concerto_reflect::Reflect;
 use glam::{Affine3A, Vec3};
@@ -55,7 +55,7 @@ pub struct RootBone {
 
 type TriggerFn = fn(&dyn Reflect, Entity, &mut CommandQueue);
 
-fn trigger_message<M: AnimationMessage>(
+fn trigger_message<M: AnimationMessage + EntitySignal>(
     message: &dyn Reflect,
     entity: Entity,
     cmd: &mut CommandQueue,
@@ -128,7 +128,7 @@ impl<'a> AnimationGraphContext<'a> {
     }
 
     /// In `update`, queues `message` for every state machine, slot and retarget this node plays in, which can act on it, and, once it leaves the player's graph, triggers it on the player's entity; dropped in every other walk.
-    pub fn raise<M: AnimationMessage>(&self, message: M) {
+    pub fn raise<M: AnimationMessage + EntitySignal>(&self, message: M) {
         self.raise_shared(RaisedMessage {
             message: Arc::new(message),
             trigger: Some(trigger_message::<M>),

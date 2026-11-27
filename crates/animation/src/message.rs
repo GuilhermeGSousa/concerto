@@ -13,7 +13,7 @@ use concerto_reflect::{
 use crate::player::AnimationPlayer;
 
 /// A value an animation graph can receive, queued with `AnimationPlayer::send`; register it with `register_animation_message`.
-pub trait AnimationMessage: Reflect + Clone + EntitySignal {}
+pub trait AnimationMessage: Reflect + Clone {}
 
 /// Raised by a clip node on each frame its clip wraps, or, played once, stops.
 #[derive(Clone, Default, Reflect)]

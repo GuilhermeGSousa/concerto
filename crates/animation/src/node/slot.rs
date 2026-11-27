@@ -1,7 +1,4 @@
-use concerto_ecs::{
-    Res,
-    signal::{EntitySignal, Signal},
-};
+use concerto_ecs::Res;
 use concerto_foundation::assets::handle::LiveLeaves;
 use concerto_foundation::assets::{asset_store::AssetStore, handle::AssetHandle};
 use concerto_name::{Name, name};
@@ -27,10 +24,6 @@ use crate::{
 pub struct PlayInSlot {
     pub entry: Name,
 }
-
-impl Signal for PlayInSlot {}
-
-impl EntitySignal for PlayInSlot {}
 
 impl AnimationMessage for PlayInSlot {}
 

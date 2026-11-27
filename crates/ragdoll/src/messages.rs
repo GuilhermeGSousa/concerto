@@ -26,10 +26,6 @@ pub struct Hit {
     pub impulse: Vec3,
 }
 
-impl Signal for Hit {}
-
-impl EntitySignal for Hit {}
-
 impl AnimationMessage for Hit {}
 
 /// A gunshot on `part` of a character's ragdoll at the world `point`, with `impulse` in N·s, sent to its animation graph.
@@ -41,10 +37,6 @@ pub struct Shot {
     pub impulse: Vec3,
 }
 
-impl Signal for Shot {}
-
-impl EntitySignal for Shot {}
-
 impl AnimationMessage for Shot {}
 
 /// Tells a graph to stagger towards `direction`, with `severity` from 0 to 1.
@@ -55,10 +47,6 @@ pub struct Stagger {
     pub severity: f32,
 }
 
-impl Signal for Stagger {}
-
-impl EntitySignal for Stagger {}
-
 impl AnimationMessage for Stagger {}
 
 /// Tells a graph its character is dying, its strength draining over `seconds`.
@@ -67,10 +55,6 @@ impl AnimationMessage for Stagger {}
 pub struct Death {
     pub seconds: f32,
 }
-
-impl Signal for Death {}
-
-impl EntitySignal for Death {}
 
 impl AnimationMessage for Death {}
 

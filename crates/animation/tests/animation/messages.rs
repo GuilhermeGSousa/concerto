@@ -54,27 +54,15 @@ struct Poke {
     strength: f32,
 }
 
-impl Signal for Poke {}
-
-impl EntitySignal for Poke {}
-
 impl AnimationMessage for Poke {}
 
 #[derive(Clone, Default, Reflect)]
 struct Other {}
 
-impl Signal for Other {}
-
-impl EntitySignal for Other {}
-
 impl AnimationMessage for Other {}
 
 #[derive(Clone, Default, Reflect)]
 struct Ring {}
-
-impl Signal for Ring {}
-
-impl EntitySignal for Ring {}
 
 impl AnimationMessage for Ring {}
 
