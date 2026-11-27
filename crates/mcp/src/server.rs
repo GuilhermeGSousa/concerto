@@ -20,10 +20,6 @@ struct Handler {
     inbox: Sender<McpCall>,
 }
 
-fn stopped() -> ToolError {
-    ToolError::new("internal", "The app stopped before answering.")
-}
-
 impl ServerHandler for Handler {
     fn get_info(&self) -> ServerConfig {
         ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
@@ -56,8 +52,10 @@ impl ServerHandler for Handler {
             reply,
         };
         let answer = match self.inbox.send(call) {
-            Ok(()) => answer.await.unwrap_or_else(|_| Answer::Error(stopped())),
-            Err(_) => Answer::Error(stopped()),
+            Ok(()) => answer
+                .await
+                .unwrap_or_else(|_| Answer::Error(ToolError::stopped())),
+            Err(_) => Answer::Error(ToolError::stopped()),
         };
         Ok(match answer {
             Answer::Content(content) => CallToolResult::success(content),

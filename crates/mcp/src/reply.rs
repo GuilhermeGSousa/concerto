@@ -23,6 +23,10 @@ impl ToolError {
         }
     }
 
+    pub(crate) fn stopped() -> Self {
+        Self::new("internal", "The app stopped before answering.")
+    }
+
     pub(crate) fn content(&self) -> ContentBlock {
         ContentBlock::text(json!({ "code": self.code, "message": self.message }).to_string())
     }
