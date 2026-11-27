@@ -657,7 +657,7 @@ interrupted mid-fade holds a command's target and muscle but drops its force
 and torque, which `MotorCommand::frozen` returns, so a held fade does not keep
 pushing.
 
-`RagdollPlugin` registers two nodes that write them. Each takes the pose to act
+`RagdollPlugin` registers three nodes that write them. Each takes the pose to act
 on as its input, passes it through, and reads the character's body through a
 `BodyInput` query, its typed drive input, as a `BodyView`. A character without
 a ragdoll has no view, and the node only passes its pose through.
@@ -687,6 +687,27 @@ player.set_float_param(name!("leg_hurt"), 0.5);
 with a torque limit of 0, keeping the stiffness its input asked for so a motor
 taking hold again does not jump. Cross-fading into a state with it and back
 out blends the body down and up again without a cut.
+
+`BalanceNode` keeps the body on its own feet, as the `Balance` behaviour below
+does, from the graph's drive pass: it holds every part with its `profile`, the
+legs with the muscles of its `BalanceSettings`, assists the pelvis, and steps
+to catch the body. It raises `Steadied` once the body has stood still for
+`settle_seconds` and `Toppled` when it gives up, both in
+`concerto::ragdoll::messages`, so a state machine moves on with `OnMessage`.
+The character needs a `BodySense`.
+
+```rust
+let mut balancing = AnimationGraph::new();
+balancing
+    .result_node()
+    .input(BalanceNode::default())
+    .input(AnimationClipNode::new(stand));
+let machine =
+    AnimationStateMachine::from_initial_state(name!("balance"), assets.add(balancing), |to| {
+        to.to(name!("steady"), AnimationFSMTrigger::on_message::<Steadied>(), 0.2)
+            .to(name!("fallen"), AnimationFSMTrigger::on_message::<Toppled>(), 0.2);
+    });
+```
 
 #### A hit
 
@@ -948,7 +969,7 @@ before. While the shot runs:
   - thigh, shin or foot: that leg keeps `lame_leg` of its strength through
     `Hindrance::left_leg` or `right_leg`. Balance sags the knee of a leg under
     a half, so its foot leaves the ground, and never stands on it. With both
-    legs shot the knees fold, the pelvis sinks under `Balance::min_height` of
+    legs shot the knees fold, the pelvis sinks under `BalanceSettings::min_height` of
     its standing height and balance gives up;
   - head: nothing but the impulse. A game that kills on a head shot sends the
     dying signal.

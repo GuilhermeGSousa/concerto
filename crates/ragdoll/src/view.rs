@@ -5,16 +5,18 @@ use concerto_physics::ragdoll::{BodyPose, RagdollId};
 use glam::Quat;
 
 use crate::{
-    asset::StrengthProfile, character::RagdollBody, resolve::ResolvedRagdoll, shot::Wounds,
+    asset::StrengthProfile, character::RagdollBody, resolve::ResolvedRagdoll, sensing::BodySense,
+    shot::Wounds,
 };
 
-/// What a node reads of a character's body: its ragdoll id and body, and its wounds when it has them.
+/// What a node reads of a character's body: its ragdoll id and body, and its sense and wounds when it has them.
 pub type BodyInput = Query<
     'static,
     'static,
     (
         &'static RagdollId,
         &'static RagdollBody,
+        Option<&'static BodySense>,
         Option<&'static Wounds>,
     ),
 >;
@@ -25,6 +27,7 @@ pub struct BodyView<'a> {
     entity: Entity,
     ragdoll_id: RagdollId,
     body: &'a RagdollBody,
+    sense: Option<&'a BodySense>,
     wounds: &'a Wounds,
 }
 
@@ -34,13 +37,24 @@ impl<'a> BodyView<'a> {
         entity: Entity,
         input: &'a SystemInputData<'_, '_, BodyInput>,
     ) -> Option<BodyView<'a>> {
-        let (id, body, wounds) = input.get_entity(entity)?;
-        Some(Self {
+        let (id, body, sense, wounds) = input.get_entity(entity)?;
+        Some(Self::new(entity, *id, body, sense, wounds))
+    }
+
+    pub(crate) fn new(
+        entity: Entity,
+        ragdoll_id: RagdollId,
+        body: &'a RagdollBody,
+        sense: Option<&'a BodySense>,
+        wounds: Option<&'a Wounds>,
+    ) -> Self {
+        Self {
             entity,
-            ragdoll_id: *id,
+            ragdoll_id,
             body,
+            sense,
             wounds: wounds.unwrap_or(Wounds::none()),
-        })
+        }
     }
 
     /// The character.
@@ -70,6 +84,11 @@ impl<'a> BodyView<'a> {
             .find(|profile| &*profile.name == name)
     }
 
+    /// The world pose of every part after the last physics step, in part order.
+    pub fn pose(self) -> &'a [BodyPose] {
+        self.body.simulated_pose()
+    }
+
     /// The world pose the animation asked of every part on the last frame, in part order.
     pub fn animated(self) -> &'a [BodyPose] {
         self.body.animated_pose()
@@ -95,6 +114,11 @@ impl<'a> BodyView<'a> {
 
     pub(crate) fn shared_resolved(self) -> &'a Arc<ResolvedRagdoll> {
         self.body.shared_resolved()
+    }
+
+    /// What the body knows about itself, when the character keeps a `BodySense`.
+    pub fn sense(self) -> Option<&'a BodySense> {
+        self.sense
     }
 
     /// The share of its strength each part keeps.
