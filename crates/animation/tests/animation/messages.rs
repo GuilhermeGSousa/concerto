@@ -21,8 +21,8 @@ use concerto_animation::{
 };
 use concerto_app::{App, plugins::AssetManagerPlugin, schedule_groups::LateUpdate};
 use concerto_ecs::{
-    Entity, ResMut,
-    component::scene::SceneEntityRef,
+    Entity, Query, ResMut,
+    component::{Component, scene::SceneEntityRef},
     reflect::AppTypeRegistry,
     resource::Resource,
     signal::{EntitySignal, On, Signal, listener::IntoListener},
@@ -78,6 +78,9 @@ impl EntitySignal for Twice {}
 
 impl AnimationMessage for Twice {}
 
+#[derive(Component)]
+struct Marker(u32);
+
 #[derive(Clone, Default, Reflect)]
 struct Counted {
     count: u32,
@@ -96,21 +99,30 @@ struct Counter {}
 #[derive(Default)]
 struct Count {
     received: u32,
+    marker: Option<u32>,
 }
 
 impl AnimationNode for Counter {
     type State = Count;
     type CreateInput = ();
-    type UpdateInput = ();
+    type UpdateInput = Query<'static, 'static, &'static Marker>;
     type EvaluateInput = ();
+    type DriveInput = ();
 
     fn create_state(&self, _: &(), _: &AnimationGraphContext<'_>) -> Count {
         Count::default()
     }
 
-    fn update(&self, state: &mut Count, _: f32, _: &(), context: &mut AnimationGraphContext<'_>) {
+    fn update(
+        &self,
+        state: &mut Count,
+        _: f32,
+        markers: &Query<'_, '_, &Marker>,
+        context: &mut AnimationGraphContext<'_>,
+    ) {
         for _ in context.message::<Poke>().filter(|poke| poke.strength > 0.0) {
             state.received += 1;
+            state.marker = markers.get_entity(context.entity()).map(|marker| marker.0);
             context.raise(Counted {
                 count: state.received,
             });
@@ -246,6 +258,19 @@ fn hear_counted(on: On<Counted>, mut heard: ResMut<HeardCounts>) {
         entity: on.entity(),
         count: on.signal().count,
     });
+}
+
+#[derive(Debug, PartialEq)]
+struct CounterSaw {
+    received: u32,
+    marker: Option<u32>,
+}
+
+fn saw(received: u32) -> CounterSaw {
+    CounterSaw {
+        received,
+        marker: Some(7),
+    }
 }
 
 struct Stage {
@@ -473,6 +498,7 @@ impl Stage {
         let character = world.spawn((
             AnimationPlayer::new(1),
             AnimationHandleComponent::new(machine),
+            Marker(7),
             SkeletonComponent::new(skeleton.clone(), vec![SceneEntityRef::Entity(bone)], None),
             hear_counted.into_listener(),
         ));
@@ -485,6 +511,7 @@ impl Stage {
         let retargeted = world.spawn((
             AnimationPlayer::new(1),
             AnimationHandleComponent::new(retarget),
+            Marker(7),
             SkeletonComponent::new(standing, vec![SceneEntityRef::Entity(standing_bone)], None),
             hear_counted.into_listener(),
         ));
@@ -499,6 +526,7 @@ impl Stage {
         let ordered = world.spawn((
             AnimationPlayer::new(1),
             AnimationHandleComponent::new(ordered),
+            Marker(7),
         ));
         let fading_bone = world.spawn(Transform::IDENTITY);
         let fading = world.spawn((
@@ -579,19 +607,24 @@ impl Stage {
             .in_state(graphs, &state)
     }
 
-    fn counters(&mut self) -> Vec<u32> {
+    fn counters(&mut self) -> Vec<CounterSaw> {
         let character = self.character;
         self.counters_of(character)
     }
 
-    fn counters_of(&mut self, character: Entity) -> Vec<u32> {
+    fn counters_of(&mut self, character: Entity) -> Vec<CounterSaw> {
         let world = self.world();
         let graphs = world.get_resource::<AssetStore<AnimationGraph>>().unwrap();
         let mut counts = Vec::new();
         world
             .get_component_for_entity::<AnimationPlayer>(character)
             .unwrap()
-            .for_each_state::<Counter>(graphs, |_, state, _| counts.push(state.received));
+            .for_each_state::<Counter>(graphs, |_, state, _| {
+                counts.push(CounterSaw {
+                    received: state.received,
+                    marker: state.marker,
+                });
+            });
         counts
     }
 
@@ -616,11 +649,11 @@ fn messages_move_the_graph_and_nodes_answer_with_raised_messages_and_signals() {
     stage.frame();
     assert!(stage.in_state(name!("Poked")));
     assert!(!stage.in_state(name!("Elsewhere")));
-    assert_eq!(stage.counters(), [1]);
+    assert_eq!(stage.counters(), [saw(1)]);
 
     stage.player().send(Poke { strength: 1.0 });
     stage.frame();
-    assert_eq!(stage.counters(), [2]);
+    assert_eq!(stage.counters(), [saw(2)]);
     stage.frame();
     assert!(stage.in_state(name!("Idle")));
     let character = stage.character;
@@ -632,7 +665,7 @@ fn messages_move_the_graph_and_nodes_answer_with_raised_messages_and_signals() {
     });
     stage.frame();
     assert!(stage.in_state(name!("Poked")));
-    assert_eq!(stage.counters(), [1]);
+    assert_eq!(stage.counters(), [saw(1)]);
     assert_eq!(stage.heard_by(character), [1, 2, 1]);
 
     let bodiless = stage.bodiless;
@@ -664,7 +697,11 @@ fn messages_move_the_graph_and_nodes_answer_with_raised_messages_and_signals() {
         [1],
         "a message reaches a node inside a retarget"
     );
-    assert_eq!(stage.counters_of(retargeted), [1]);
+    assert_eq!(
+        stage.counters_of(retargeted),
+        [saw(1)],
+        "a node inside a retarget reads its player's entity"
+    );
 
     let nested = stage.nested;
     stage.player_of(nested).send(Ring {});
@@ -705,7 +742,7 @@ fn messages_move_the_graph_and_nodes_answer_with_raised_messages_and_signals() {
     stage.frame();
     assert_eq!(
         stage.counters_of(ordered).last(),
-        Some(&2),
+        Some(&saw(2)),
         "a self-transition on a raised message leaves the state playing as it was"
     );
 

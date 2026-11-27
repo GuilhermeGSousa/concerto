@@ -38,9 +38,9 @@ pub mod two_bone_ik;
 pub use additive::{AdditiveNode, AdditiveNodeState};
 pub use aim_offset::{AimOffsetNode, AimOffsetState, AimPoint};
 pub use definition::{
-    AnimationNode, CreateNodeInputs, EditorAnimationNode, ErasedAnimationNode, EvaluateNodeInputs,
-    InputSlots, NodeState, PlaceholderNode, ReflectAnimationNode, UpdateNodeInputs,
-    register_node_inputs,
+    AnimationNode, CreateNodeInputs, DriveNodeInputs, EditorAnimationNode, ErasedAnimationNode,
+    EvaluateNodeInputs, InputSlots, NodeState, PlaceholderNode, ReflectAnimationNode,
+    UpdateNodeInputs, register_node_inputs,
 };
 pub use layer::{LayerNode, LayerSpace};
 pub use two_bone_ik::{IkGoal, IkTarget, TipRotation, TwoBoneIkNode, TwoBoneIkState};
@@ -112,6 +112,7 @@ impl AnimationNode for ResultNode {
     type CreateInput = ();
     type UpdateInput = ();
     type EvaluateInput = ();
+    type DriveInput = ();
 
     fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) {}
 
@@ -144,6 +145,7 @@ impl AnimationNode for BlendNode {
     type CreateInput = ();
     type UpdateInput = ();
     type EvaluateInput = ();
+    type DriveInput = ();
 
     fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) {}
 
@@ -367,6 +369,7 @@ impl AnimationNode for AnimationClipNode {
     type CreateInput = ();
     type UpdateInput = Res<'static, AssetStore<AnimationClip>>;
     type EvaluateInput = Res<'static, AssetStore<AnimationClip>>;
+    type DriveInput = ();
 
     fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) -> AnimationClipNodeState {
         AnimationClipNodeState::new().with_start_time(self.start_time)

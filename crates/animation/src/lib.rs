@@ -13,6 +13,8 @@ pub mod attribute;
 pub mod blackboard;
 /// Animation clips: keyed joint channels, clip events and additive settings.
 pub mod clip;
+/// The fixed-step pass that walks every player's graph for what it asks of physics.
+pub mod drive;
 /// What a graph walk hands each node: the evaluation stack and the player's context.
 pub mod evaluation;
 /// Clip events: values a clip triggers as signals on the player's entity when playback crosses
@@ -55,6 +57,7 @@ pub mod target;
 /// How a state machine blends from one state to the next.
 pub mod transition;
 
+pub use drive::{AnimationDriveSet, drive_animation_players};
 pub use target::{animate_targets, update_animation_players};
 pub use transition::TransitionBlender;
 

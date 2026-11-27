@@ -3,7 +3,8 @@ use std::{thread, time::Duration};
 use concerto_animation::{
     attribute::{PoseAttribute, PoseAttributes},
     clip::{AnimationChanelOutput, AnimationChannel, AnimationClip},
-    evaluation::AnimationGraphContext,
+    drive::drive_animation_players,
+    evaluation::{AnimationGraphContext, DriveContext},
     event::{AnimationEvent, AnimationSignal},
     graph::{AnimationGraph, AnimationNodeIndex},
     mask::{BoneMask, BoneMaskBranch},
@@ -19,7 +20,7 @@ use concerto_animation::{
 };
 use concerto_app::{App, plugins::AssetManagerPlugin, schedule_groups::LateUpdate};
 use concerto_ecs::{
-    Entity,
+    Entity, IntoSystem, System,
     component::scene::SceneEntityRef,
     reflect::AppTypeRegistry,
     resource::{ResMut, Resource},
@@ -64,12 +65,72 @@ impl PoseAttribute for Amount {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct SeenBones(f32);
+
+impl PoseAttribute for SeenBones {
+    fn neutral() -> Self {
+        SeenBones(0.0)
+    }
+
+    fn blend(&mut self, self_weight: f32, other: &Self, other_weight: f32) {
+        let total = self_weight + other_weight;
+        if total > 0.0 {
+            self.0 = (self.0 * self_weight + other.0 * other_weight) / total;
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct DriveWeight(f32);
+
+impl PoseAttribute for DriveWeight {
+    fn neutral() -> Self {
+        DriveWeight(0.0)
+    }
+
+    fn blend(&mut self, _: f32, other: &Self, _: f32) {
+        self.0 = self.0.max(other.0);
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Push {
+    target: f32,
+    force: f32,
+}
+
+impl PoseAttribute for Push {
+    fn neutral() -> Self {
+        Push {
+            target: 0.0,
+            force: 0.0,
+        }
+    }
+
+    fn blend(&mut self, self_weight: f32, other: &Self, other_weight: f32) {
+        let total = self_weight + other_weight;
+        if total > 0.0 {
+            self.target = (self.target * self_weight + other.target * other_weight) / total;
+            self.force = (self.force * self_weight + other.force * other_weight) / total;
+        }
+    }
+
+    fn frozen(&self) -> Self {
+        Push {
+            target: self.target,
+            force: 0.0,
+        }
+    }
+}
+
 #[derive(Default, Reflect)]
 #[reflect(AnimationNode)]
 struct SetAmount {
     value: f32,
     rate: f32,
     bones: Vec<usize>,
+    weight_on: Option<usize>,
 }
 
 impl SetAmount {
@@ -78,12 +139,34 @@ impl SetAmount {
             value,
             rate: 0.0,
             bones: bones.to_vec(),
+            weight_on: None,
         }
     }
 
     fn rising(mut self, rate: f32) -> Self {
         self.rate = rate;
         self
+    }
+
+    fn reporting_weight_on(mut self, bone: usize) -> Self {
+        self.weight_on = Some(bone);
+        self
+    }
+
+    fn write(&self, elapsed: f32, output: &mut AnimationFrame) {
+        let bone_count = output.len();
+        let value = self.value + self.rate * elapsed;
+        let amounts = output.attributes_mut().channel_mut::<Amount>(bone_count);
+        for bone in &self.bones {
+            amounts[*bone] = Amount(value);
+        }
+        let pushes = output.attributes_mut().channel_mut::<Push>(bone_count);
+        for bone in &self.bones {
+            pushes[*bone] = Push {
+                target: value,
+                force: value,
+            };
+        }
     }
 }
 
@@ -92,6 +175,7 @@ impl AnimationNode for SetAmount {
     type CreateInput = ();
     type UpdateInput = ();
     type EvaluateInput = ();
+    type DriveInput = ();
 
     fn create_state(&self, _: &(), _: &AnimationGraphContext<'_>) -> f32 {
         0.0
@@ -120,10 +204,36 @@ impl AnimationNode for SetAmount {
         if let Some(input) = evaluated_inputs.first() {
             output.copy_from(&input.frame);
         }
+        self.write(*elapsed, output);
+    }
+
+    fn drive(
+        &self,
+        elapsed: &mut f32,
+        _: &(),
+        context: &DriveContext<'_>,
+        bone_ids: &[Uuid],
+        inputs: &[EvaluatedFrame],
+        _: &mut FramePool,
+        output: &mut AnimationFrame,
+    ) {
+        if let Some(input) = inputs.first() {
+            output.attributes_mut().copy_from(input.frame.attributes());
+        }
+        self.write(*elapsed, output);
+        let seen = context
+            .skeleton()
+            .filter(|skeleton| *skeleton.bone_ids == *bone_ids)
+            .map_or(0.0, |_| bone_ids.len() as f32);
         let bone_count = output.len();
-        let amounts = output.attributes_mut().channel_mut::<Amount>(bone_count);
-        for bone in &self.bones {
-            amounts[*bone] = Amount(self.value + self.rate * *elapsed);
+        output
+            .attributes_mut()
+            .channel_mut::<SeenBones>(bone_count)
+            .fill(SeenBones(seen));
+        if let Some(bone) = self.weight_on {
+            output
+                .attributes_mut()
+                .channel_mut::<DriveWeight>(bone_count)[bone] = DriveWeight(context.weight());
         }
     }
 
@@ -386,6 +496,21 @@ impl Stage {
             .attributes();
         per_bone(attributes)
     }
+
+    fn driven(&mut self, player: Entity) -> Vec<f32> {
+        per_bone(self.drive(player))
+    }
+
+    fn drive(&mut self, player: Entity) -> &PoseAttributes {
+        let world = self.world();
+        let mut system = drive_animation_players.into_system();
+        system.initialize(world);
+        system.run_and_apply((), world);
+        world
+            .get_component_for_entity::<AnimationPlayer>(player)
+            .unwrap()
+            .drive_attributes()
+    }
 }
 
 fn per_bone(attributes: &PoseAttributes) -> Vec<f32> {
@@ -405,7 +530,9 @@ fn attributes_travel_with_the_pose_through_every_blend() {
 
     let mut blended = AnimationGraph::new();
     let blend = blended.result_node().input(BlendNode {}).index();
-    let set = blended.add_node(SetAmount::on(1.0, &[1]), blend).index();
+    let set = blended
+        .add_node(SetAmount::on(1.0, &[1]).reporting_weight_on(1), blend)
+        .index();
     let clip = blended.add_node(stage.clip_node(), blend).index();
     let blend_player = stage.player(blended);
 
@@ -415,13 +542,12 @@ fn attributes_travel_with_the_pose_through_every_blend() {
     layered.result_node().add_layer_input(
         LayerNode::new(mask).with_weight(0.5),
         clip_node,
-        SetAmount::on(1.0, &ALL_BONES),
+        SetAmount::on(1.0, &ALL_BONES).reporting_weight_on(2),
     );
     let layer_player = stage.player(layered);
 
-    let clip_graph = single(stage.clip_node());
     let cross_fade = stage.machine(
-        clip_graph,
+        single(SetAmount::on(0.0, &[0]).reporting_weight_on(0)),
         single(SetAmount::on(1.0, &ALL_BONES)),
         TransitionBlender::CrossFade,
         1.0,
@@ -456,6 +582,23 @@ fn attributes_travel_with_the_pose_through_every_blend() {
     assert_eq!(stage.amounts(blend_player), [0.0, 0.25, 0.0]);
     assert_eq!(stage.amounts(layer_player), [0.0, 0.0, 0.5]);
     assert_eq!(stage.amounts(additive_player), [1.0; BONES]);
+    assert_eq!(stage.driven(blend_player), [0.0, 0.25, 0.0]);
+    assert_eq!(stage.driven(layer_player), [0.0, 0.0, 0.5]);
+    assert_eq!(
+        stage.drive(blend_player).get::<DriveWeight>(1),
+        DriveWeight(0.25),
+        "a node a blend gives a quarter of its frame drives at weight 0.25"
+    );
+    assert_eq!(
+        stage.drive(layer_player).get::<DriveWeight>(2),
+        DriveWeight(0.5),
+        "a layer's overlay drives at the layer's weight"
+    );
+    assert_eq!(
+        stage.drive(additive_player).get::<SeenBones>(0),
+        SeenBones(BONES as f32),
+        "a node's drive sees the player's skeleton and its bone ids"
+    );
 
     stage.set_param(cross_fade, name!("go"), true);
     stage.set_param(inertialized, name!("go"), true);
@@ -469,12 +612,19 @@ fn attributes_travel_with_the_pose_through_every_blend() {
         right_after > 0.9 && right_after < 1.0,
         "right after the transition the source's amount is {right_after}"
     );
+    assert_eq!(stage.driven(inertialized), [0.0; BONES]);
 
     stage.advance(0.49);
     let halfway = stage.amounts(cross_fade)[0];
     assert!(
         (halfway - 0.5).abs() < 0.02,
         "halfway through the cross-fade the amount is {halfway}"
+    );
+    assert_eq!(stage.driven(cross_fade), stage.amounts(cross_fade));
+    let fading_out = stage.drive(cross_fade).get::<DriveWeight>(0).0;
+    assert!(
+        (fading_out + halfway - 1.0).abs() < 1e-5,
+        "the state a cross-fade leaves drives at the weight it has left, {fading_out} with the fade at {halfway}"
     );
 
     stage.advance(0.5);
@@ -497,8 +647,14 @@ fn attributes_travel_with_the_pose_through_every_blend() {
         [0.0; BONES],
         "a player swapped to a graph that is not loaded keeps no attributes"
     );
+    assert_eq!(stage.driven(blend_player), [0.0; BONES]);
     stage.pause(layer_player);
     stage.advance(0.0);
+    assert_eq!(
+        stage.driven(layer_player),
+        [0.0; BONES],
+        "a paused player is not driven"
+    );
     assert_eq!(
         stage.amounts(layer_player),
         [0.0, 0.0, 0.5],
@@ -508,11 +664,17 @@ fn attributes_travel_with_the_pose_through_every_blend() {
     let blend_time = 2.0;
     let there = stage.turned_clip(0.8, Some(0.45));
     let back = stage.turned_clip(-0.8, None);
-    let interrupted = stage.there_and_back(
-        single(AnimationClipNode::new(there)),
-        single(AnimationClipNode::new(back)),
-        blend_time,
-    );
+    let mut there_graph = AnimationGraph::new();
+    there_graph
+        .result_node()
+        .input(SetAmount::on(1.0, &ALL_BONES))
+        .add_input(AnimationClipNode::new(there));
+    let mut back_graph = AnimationGraph::new();
+    back_graph
+        .result_node()
+        .input(SetAmount::on(1.0, &ALL_BONES))
+        .add_input(AnimationClipNode::new(back));
+    let interrupted = stage.there_and_back(there_graph, back_graph, blend_time);
     stage.hear_events(interrupted);
     stage.advance(0.0);
     stage.set_param(interrupted, name!("go"), true);
@@ -520,6 +682,7 @@ fn attributes_travel_with_the_pose_through_every_blend() {
     for _ in 0..5 {
         stage.advance(0.1);
     }
+    stage.drive(interrupted);
     stage.set_param(interrupted, name!("go"), false);
     let mut before = stage.rotation(interrupted, 2);
     for _ in 0..3 {
@@ -532,6 +695,11 @@ fn attributes_travel_with_the_pose_through_every_blend() {
         );
         before = now;
     }
+    let push = stage.drive(interrupted).get::<Push>(0);
+    assert!(
+        (push.target - 1.0).abs() < 1e-5 && push.force < 0.2,
+        "the snapshot of an interrupted fade drives with its frozen values, its target held and its force dropped to neutral: {push:?}"
+    );
     assert_eq!(
         stage.heard(),
         1,

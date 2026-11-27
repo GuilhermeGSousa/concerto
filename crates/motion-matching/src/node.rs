@@ -186,6 +186,7 @@ impl AnimationNode for MotionMatchingNode {
         Res<'static, AssetStore<AnimationClip>>,
     );
     type EvaluateInput = ();
+    type DriveInput = ();
 
     fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) -> MotionMatchingState {
         MotionMatchingState::new(self.search_period)

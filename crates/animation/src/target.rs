@@ -62,6 +62,7 @@ pub fn animate_targets(
                     .get(skeleton_component.skeleton())
                     .is_some_and(|skeleton| {
                         animation_player.evaluate(
+                            entity,
                             &animation_graphs,
                             &inputs,
                             skeleton,
@@ -110,7 +111,7 @@ fn trigger(
 /// Advances every unpaused [`AnimationPlayer`] by the frame's delta time and writes the root
 /// motion it produced to the skeleton's [`AnimationRootBone`].
 pub fn update_animation_players(
-    mut animation_players: Query<(&mut AnimationPlayer, Option<&SkeletonComponent>)>,
+    mut animation_players: Query<(Entity, &mut AnimationPlayer, Option<&SkeletonComponent>)>,
     mut root_bones: Query<&mut AnimationRootBone>,
     parents: Query<&ChildOf>,
     transforms: Query<&Transform>,
@@ -121,7 +122,7 @@ pub fn update_animation_players(
     inputs: InputSet<UpdateNodeInputs>,
 ) {
     let delta_time = time.delta().as_secs_f32();
-    for (mut animation_player, component) in animation_players.iter_mut() {
+    for (entity, mut animation_player, component) in animation_players.iter_mut() {
         let mut root_motion = RootMotion::IDENTITY;
         if !animation_player.is_paused() {
             let skeleton = component.and_then(|component| skeletons.get(component.skeleton()));
@@ -135,9 +136,17 @@ pub fn update_animation_players(
                     &globals,
                 )
             });
-            animation_player.update(delta_time, &animation_graphs, skeleton, root, &inputs);
+            animation_player.update(
+                entity,
+                delta_time,
+                &animation_graphs,
+                skeleton,
+                root,
+                &inputs,
+            );
             if let Some(skeleton) = skeleton {
-                root_motion = animation_player.root_motion(&animation_graphs, skeleton, &inputs);
+                root_motion =
+                    animation_player.root_motion(entity, &animation_graphs, skeleton, &inputs);
             }
         }
         for bone in component.iter().flat_map(|component| component.bones()) {
@@ -153,14 +162,19 @@ pub fn update_animation_players(
 
 pub(crate) fn initialize_animation_players(
     mut animation_players: Query<
-        (&mut AnimationPlayer, &AnimationHandleComponent),
+        (Entity, &mut AnimationPlayer, &AnimationHandleComponent),
         Changed<AnimationHandleComponent>,
     >,
     animation_graphs: Res<AssetStore<AnimationGraph>>,
     inputs: InputSet<CreateNodeInputs>,
 ) {
-    for (mut animation_player, graph_handle) in animation_players.iter_mut() {
-        animation_player.initialize_graph((*graph_handle).clone(), &animation_graphs, &inputs);
+    for (entity, mut animation_player, graph_handle) in animation_players.iter_mut() {
+        animation_player.initialize_graph(
+            entity,
+            (*graph_handle).clone(),
+            &animation_graphs,
+            &inputs,
+        );
     }
 }
 

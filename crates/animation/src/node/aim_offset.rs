@@ -349,6 +349,7 @@ impl AnimationNode for AimOffsetNode {
     type CreateInput = ();
     type UpdateInput = ();
     type EvaluateInput = Res<'static, AssetStore<AnimationClip>>;
+    type DriveInput = ();
 
     fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) -> AimOffsetState {
         AimOffsetState {

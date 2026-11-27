@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 
 use concerto_ecs::{
-    World,
+    Entity, World,
     system::input::{InputSet, InputState},
 };
 use concerto_foundation::assets::{asset_store::AssetStore, handle::AssetHandle};
@@ -26,6 +26,7 @@ type Walk<K> = RefCell<InputState<InputSet<'static, 'static, K>>>;
 
 pub(crate) struct Walks {
     world: World,
+    entity: Entity,
     create: Walk<CreateNodeInputs>,
     update: Walk<UpdateNodeInputs>,
     evaluate: Walk<EvaluateNodeInputs>,
@@ -52,7 +53,9 @@ impl Walks {
         world.insert_resource(AssetStore::<RetargetRig>::new());
         register_animation_node_inputs(&mut world);
         register(&mut world);
+        let entity = world.spawn(());
         Self {
+            entity,
             create: RefCell::new(InputState::new(&mut world)),
             update: RefCell::new(InputState::new(&mut world)),
             evaluate: RefCell::new(InputState::new(&mut world)),
@@ -109,7 +112,7 @@ impl Walks {
         let inputs = state
             .get(&self.world)
             .expect("a test walk fetches its inputs");
-        player.initialize_graph(graph, self.graphs(), &inputs);
+        player.initialize_graph(self.entity, graph, self.graphs(), &inputs);
     }
 
     pub(crate) fn advance(&self, player: &mut AnimationPlayer, delta_time: f32) {
@@ -117,7 +120,7 @@ impl Walks {
         let inputs = state
             .get(&self.world)
             .expect("a test walk fetches its inputs");
-        player.update(delta_time, self.graphs(), None, None, &inputs);
+        player.update(self.entity, delta_time, self.graphs(), None, None, &inputs);
     }
 
     pub(crate) fn advance_with(
@@ -131,7 +134,14 @@ impl Walks {
         let inputs = state
             .get(&self.world)
             .expect("a test walk fetches its inputs");
-        player.update(delta_time, self.graphs(), Some(skeleton), root, &inputs);
+        player.update(
+            self.entity,
+            delta_time,
+            self.graphs(),
+            Some(skeleton),
+            root,
+            &inputs,
+        );
     }
 
     pub(crate) fn root_motion(
@@ -143,7 +153,7 @@ impl Walks {
         let inputs = state
             .get(&self.world)
             .expect("a test walk fetches its inputs");
-        player.root_motion(self.graphs(), skeleton, &inputs)
+        player.root_motion(self.entity, self.graphs(), skeleton, &inputs)
     }
 
     pub(crate) fn create<R>(
@@ -153,6 +163,7 @@ impl Walks {
     ) -> R {
         walk(
             &self.world,
+            self.entity,
             &self.create,
             blackboard,
             None,
@@ -167,7 +178,16 @@ impl Walks {
         blackboard: &AnimationBlackboard,
         f: impl FnOnce(&mut AnimationGraphContext<'_>) -> R,
     ) -> R {
-        walk(&self.world, &self.update, blackboard, None, None, None, f)
+        walk(
+            &self.world,
+            self.entity,
+            &self.update,
+            blackboard,
+            None,
+            None,
+            None,
+            f,
+        )
     }
 
     pub(crate) fn pass<R>(
@@ -178,6 +198,7 @@ impl Walks {
     ) -> R {
         walk(
             &self.world,
+            self.entity,
             &self.update,
             blackboard,
             root,
@@ -195,6 +216,7 @@ impl Walks {
     ) -> R {
         walk(
             &self.world,
+            self.entity,
             &self.evaluate,
             blackboard,
             root,
@@ -213,6 +235,7 @@ impl Walks {
     ) -> R {
         walk(
             &self.world,
+            self.entity,
             &self.evaluate,
             blackboard,
             root,
@@ -231,6 +254,7 @@ impl Walks {
     ) -> R {
         walk(
             &self.world,
+            self.entity,
             &self.evaluate,
             blackboard,
             None,
@@ -243,6 +267,7 @@ impl Walks {
 
 fn walk<K: 'static, R>(
     world: &World,
+    entity: Entity,
     state: &Walk<K>,
     blackboard: &AnimationBlackboard,
     root: Option<RootBone>,
@@ -260,6 +285,7 @@ fn walk<K: 'static, R>(
         inputs: &inputs,
         messages: &[],
         raised: Vec::new(),
+        entity,
     };
     f(&mut context)
 }

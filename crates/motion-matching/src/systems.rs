@@ -559,6 +559,7 @@ mod tests {
         type CreateInput = ();
         type UpdateInput = ();
         type EvaluateInput = ();
+        type DriveInput = ();
 
         fn create_state(&self, _: &(), _: &AnimationGraphContext<'_>) -> Option<Affine3A> {
             None

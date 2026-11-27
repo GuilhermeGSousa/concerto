@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{
-    evaluation::AnimationGraphContext,
+    evaluation::{AnimationGraphContext, DriveContext},
     mask::{BoneMask, MaskResolution, resolve_mask},
     node::{
         AnimationNode, EditorAnimationNode, InputSlots, ReflectAnimationNode, effective_weight,
@@ -101,6 +101,7 @@ impl AnimationNode for LayerNode {
     type CreateInput = ();
     type UpdateInput = ();
     type EvaluateInput = Res<'static, AssetStore<BoneMask>>;
+    type DriveInput = ();
 
     fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) -> LayerState {
         LayerState::default()
@@ -179,6 +180,40 @@ impl AnimationNode for LayerNode {
             }
         }
         blend_attributes(&state.mask.weights, weight, &overlay.frame, output);
+    }
+
+    fn drive(
+        &self,
+        state: &mut LayerState,
+        _: &(),
+        context: &DriveContext<'_>,
+        _: &[Uuid],
+        inputs: &[EvaluatedFrame],
+        _: &mut FramePool,
+        output: &mut AnimationFrame,
+    ) {
+        let Some(base) = inputs.first() else {
+            return;
+        };
+        output.attributes_mut().copy_from(base.frame.attributes());
+        let Some(overlay) = inputs.get(1) else {
+            return;
+        };
+        let weight = effective_weight(self.weight, self.weight_param, context.blackboard());
+        if weight > 0.0 {
+            blend_attributes(&state.mask.weights, weight, &overlay.frame, output);
+        }
+    }
+
+    fn drive_shares(&self, _: &LayerState, context: &DriveContext<'_>, shares: &mut [f32]) {
+        let weight = effective_weight(self.weight, self.weight_param, context.blackboard());
+        for (slot, share) in shares.iter_mut().enumerate() {
+            *share = match slot {
+                0 => 1.0,
+                1 => weight,
+                _ => 0.0,
+            };
+        }
     }
 
     fn reset(&self, _: &mut LayerState) {}

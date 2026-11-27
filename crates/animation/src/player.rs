@@ -1,6 +1,7 @@
 use std::ops::Deref;
 
 use concerto_ecs::{
+    Entity,
     component::{Component, scene::SceneEntityRef},
     entity::hierarchy::ChildOf,
     query::Query,
@@ -18,7 +19,7 @@ use glam::{Affine3A, Vec2, Vec3};
 use crate::{
     attribute::PoseAttributes,
     blackboard::AnimationBlackboard,
-    evaluation::{AnimationGraphContext, RaisedMessage, RootBone},
+    evaluation::{AnimationGraphContext, DriveContext, RaisedMessage, RootBone},
     graph::{AnimationGraph, AnimationGraphState, AnimationNodeIndex, NodeVisit},
     message::{AnimationMessage, is_animation_message},
     node::{AnimationNode, ErasedAnimationNode, NodeState},
@@ -62,6 +63,7 @@ pub struct AnimationPlayer {
     attributes: PoseAttributes,
     messages: Vec<Box<dyn Reflect>>,
     raised: Vec<RaisedMessage>,
+    drive_attributes: PoseAttributes,
 }
 
 impl AnimationPlayer {
@@ -78,6 +80,7 @@ impl AnimationPlayer {
             attributes: PoseAttributes::default(),
             messages: Vec::new(),
             raised: Vec::new(),
+            drive_attributes: PoseAttributes::default(),
         }
     }
 
@@ -107,8 +110,67 @@ impl AnimationPlayer {
     }
 
     /// The per-bone attributes of the frame the player last evaluated; none once its graph gives no frame.
+    ///
+    /// They are written once a frame, so they are for consumers that run at frame rate. Whatever
+    /// acts on physics reads [`Self::drive_attributes`] instead.
     pub fn attributes(&self) -> &PoseAttributes {
         &self.attributes
+    }
+
+    /// Walks the graph once for a physics step of `delta_time` seconds, each node saying through [`AnimationNode::drive`]
+    /// what it asks of physics with `skeleton`'s bone ids, and keeps the attributes it gives; the graph does not advance.
+    /// A paused player, or one whose graph gives no frame, keeps no attributes, so every bone reads neutral.
+    pub(crate) fn drive(
+        &mut self,
+        entity: Entity,
+        graphs: &AssetStore<AnimationGraph>,
+        skeleton: Option<&Skeleton>,
+        inputs: &Inputs<'_, '_>,
+        delta_time: f32,
+    ) -> &PoseAttributes {
+        if self.paused {
+            self.drive_attributes.clear();
+            return &self.drive_attributes;
+        }
+        let graph = AnimationGraphContext {
+            blackboard: &self.blackboard,
+            root: self.root.clone(),
+            skeleton,
+            model_to_world: None,
+            inputs,
+            messages: &[],
+            raised: Vec::new(),
+            entity,
+        };
+        let bone_ids = skeleton.map_or(&[][..], |skeleton| &skeleton.bone_ids);
+        let context = DriveContext {
+            delta_time,
+            weight: 1.0,
+            graph: &graph,
+        };
+        let mut output = self.frame_pool.acquire();
+        if self.graph_state.drive(
+            graphs,
+            &context,
+            bone_ids,
+            &mut self.frame_pool,
+            &mut output,
+        ) {
+            std::mem::swap(&mut self.drive_attributes, output.attributes_mut());
+        } else {
+            self.drive_attributes.clear();
+        }
+        self.frame_pool.release(output);
+        &self.drive_attributes
+    }
+
+    /// The per-bone attributes of the last physics step's drive.
+    ///
+    /// They are written each fixed step by [`AnimationNode::drive`], and are the only attributes
+    /// whatever acts on physics reads, so every decision a step makes comes from one blend.
+    /// [`Self::attributes`] are written by the frame's evaluate, at another rate.
+    pub fn drive_attributes(&self) -> &PoseAttributes {
+        &self.drive_attributes
     }
 
     /// Drops clip events whose source weighs no more than `threshold` in the final frame; 0 by default.
@@ -224,6 +286,7 @@ impl AnimationPlayer {
 
     pub(crate) fn initialize_graph(
         &mut self,
+        entity: Entity,
         animation_graph: AssetHandle<AnimationGraph>,
         graphs: &AssetStore<AnimationGraph>,
         inputs: &Inputs<'_, '_>,
@@ -236,6 +299,7 @@ impl AnimationPlayer {
             inputs,
             messages: &[],
             raised: Vec::new(),
+            entity,
         };
         self.graph_state
             .initialize(animation_graph, graphs, &context);
@@ -244,6 +308,7 @@ impl AnimationPlayer {
 
     pub(crate) fn update(
         &mut self,
+        entity: Entity,
         delta_time: f32,
         graphs: &AssetStore<AnimationGraph>,
         skeleton: Option<&Skeleton>,
@@ -259,6 +324,7 @@ impl AnimationPlayer {
             inputs,
             messages: &self.messages,
             raised: Vec::new(),
+            entity,
         };
         self.graph_state.update(delta_time, graphs, &mut context);
         self.raised = context.into_raised();
@@ -271,6 +337,7 @@ impl AnimationPlayer {
 
     pub(crate) fn root_motion(
         &mut self,
+        entity: Entity,
         graphs: &AssetStore<AnimationGraph>,
         skeleton: &Skeleton,
         inputs: &Inputs<'_, '_>,
@@ -283,6 +350,7 @@ impl AnimationPlayer {
             inputs,
             messages: &[],
             raised: Vec::new(),
+            entity,
         };
         self.graph_state
             .root_motion(graphs, &context, &skeleton.bone_ids)
@@ -290,6 +358,7 @@ impl AnimationPlayer {
 
     pub(crate) fn evaluate(
         &mut self,
+        entity: Entity,
         graphs: &AssetStore<AnimationGraph>,
         inputs: &Inputs<'_, '_>,
         skeleton: &Skeleton,
@@ -320,6 +389,7 @@ impl AnimationPlayer {
             inputs,
             messages: &[],
             raised: Vec::new(),
+            entity,
         };
 
         self.frame_pool.set_rest(rest_pose);
@@ -449,6 +519,7 @@ mod tests {
         type CreateInput = ();
         type UpdateInput = ();
         type EvaluateInput = ();
+        type DriveInput = ();
 
         fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) -> u32 {
             0

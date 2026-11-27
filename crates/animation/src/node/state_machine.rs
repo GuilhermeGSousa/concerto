@@ -10,7 +10,7 @@ use crate::transition::{
     inertialization_blender::InertializationBlender,
 };
 use crate::{
-    evaluation::{AnimationGraphContext, RaisedMessage},
+    evaluation::{AnimationGraphContext, DriveContext, RaisedMessage},
     node::{AnimationNode, EditorAnimationNode, ReflectAnimationNode},
 };
 
@@ -641,6 +641,7 @@ impl AnimationNode for AnimationStateMachine {
     type CreateInput = Res<'static, AssetStore<AnimationGraph>>;
     type UpdateInput = Res<'static, AssetStore<AnimationGraph>>;
     type EvaluateInput = Res<'static, AssetStore<AnimationGraph>>;
+    type DriveInput = Res<'static, AssetStore<AnimationGraph>>;
 
     fn make_live(&mut self, registry: &TypeRegistry, leaves: &mut LiveLeaves) -> Vec<ValueWarning> {
         let mut warnings = Vec::new();
@@ -758,6 +759,26 @@ impl AnimationNode for AnimationStateMachine {
         output: &mut AnimationFrame,
     ) {
         state.blender.sample(
+            bone_ids,
+            &mut state.state_graphs,
+            graphs,
+            context,
+            pool,
+            output,
+        );
+    }
+
+    fn drive(
+        &self,
+        state: &mut AnimationStateMachineState,
+        graphs: &Res<AssetStore<AnimationGraph>>,
+        context: &DriveContext<'_>,
+        bone_ids: &[Uuid],
+        _inputs: &[EvaluatedFrame],
+        pool: &mut FramePool,
+        output: &mut AnimationFrame,
+    ) {
+        state.blender.drive(
             bone_ids,
             &mut state.state_graphs,
             graphs,
@@ -1003,6 +1024,7 @@ mod tests {
         type CreateInput = ();
         type UpdateInput = ();
         type EvaluateInput = ();
+        type DriveInput = ();
 
         fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) -> u32 {
             0

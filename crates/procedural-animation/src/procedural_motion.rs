@@ -411,6 +411,7 @@ impl AnimationNode for ProceduralMotionNode {
     type CreateInput = ();
     type UpdateInput = ();
     type EvaluateInput = Res<'static, AssetStore<BoneMask>>;
+    type DriveInput = ();
 
     fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) -> ProceduralMotionState {
         let mut state = ProceduralMotionState::default();
@@ -575,6 +576,7 @@ mod tests {
         type CreateInput = ();
         type UpdateInput = ();
         type EvaluateInput = ();
+        type DriveInput = ();
 
         fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) {}
 

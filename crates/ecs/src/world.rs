@@ -1,5 +1,6 @@
 use log::warn;
 use std::collections::hash_map::Entry::{Occupied, Vacant};
+use std::mem::DropGuard;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::{any::TypeId, cell::UnsafeCell, collections::HashMap, marker::PhantomData, ptr};
@@ -886,21 +887,17 @@ impl World {
             return;
         }
 
-        struct FlushGuard<'w> {
+        struct FlushWorld<'w> {
             world: &'w mut World,
             start: usize,
         }
 
-        impl Drop for FlushGuard<'_> {
-            fn drop(&mut self) {
-                self.world.command_queue_start = self.start;
-                self.world.command_queue.truncate(self.start);
-            }
-        }
-
         let start = self.command_queue_start;
         let end = self.command_queue.len();
-        let guard = FlushGuard { world: self, start };
+        let mut guard = DropGuard::new(FlushWorld { world: self, start }, |flush| {
+            flush.world.command_queue_start = flush.start;
+            flush.world.command_queue.truncate(flush.start);
+        });
         guard.world.command_queue_start = end;
 
         for cursor in start..end {
