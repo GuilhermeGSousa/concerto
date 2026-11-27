@@ -40,6 +40,26 @@ impl LookFrame {
     pub fn side(&self) -> Vec3 {
         self.up.cross(self.forward)
     }
+
+    /// The yaw and pitch that turn the frame's forward onto `direction`, both in the frame's space; zero for a zero direction.
+    pub fn yaw_pitch_to(&self, direction: Vec3) -> YawPitch {
+        let Some(t) = direction.try_normalize() else {
+            return YawPitch::default();
+        };
+        let along = t.dot(self.forward());
+        let across = t.dot(self.side());
+        let rise = t.dot(self.up());
+        YawPitch {
+            yaw: across.atan2(along),
+            pitch: rise.atan2((along * along + across * across).sqrt()),
+        }
+    }
+
+    /// The rotation, in the frame's space, that turns its forward by `angles`.
+    pub fn rotation_by(&self, angles: YawPitch) -> Quat {
+        Quat::from_axis_angle(self.up(), angles.yaw)
+            * Quat::from_axis_angle(self.side(), -angles.pitch)
+    }
 }
 
 /// A turn of a `LookFrame`, in radians: yaw about its up toward its side, then pitch toward its up.
@@ -51,32 +71,12 @@ pub struct YawPitch {
     pub pitch: f32,
 }
 
-/// The yaw and pitch that turn `frame`'s forward onto `direction`, both in the frame's space; zero for a zero direction.
-pub fn yaw_pitch_to(frame: &LookFrame, direction: Vec3) -> YawPitch {
-    let Some(t) = direction.try_normalize() else {
-        return YawPitch::default();
-    };
-    let along = t.dot(frame.forward());
-    let across = t.dot(frame.side());
-    let rise = t.dot(frame.up());
-    YawPitch {
-        yaw: across.atan2(along),
-        pitch: rise.atan2((along * along + across * across).sqrt()),
-    }
-}
-
-/// The rotation, in the frame's space, that turns its forward by `angles`.
-pub fn look_rotation(frame: &LookFrame, angles: YawPitch) -> Quat {
-    Quat::from_axis_angle(frame.up(), angles.yaw)
-        * Quat::from_axis_angle(frame.side(), -angles.pitch)
-}
-
 #[cfg(test)]
 mod tests {
     use glam::Vec3;
     use proptest::prelude::*;
 
-    use super::{LookFrame, look_rotation, yaw_pitch_to};
+    use super::LookFrame;
 
     fn any_vec3() -> impl Strategy<Value = Vec3> {
         prop::array::uniform3(-2.0f32..2.0).prop_map(Vec3::from_array)
@@ -98,7 +98,7 @@ mod tests {
             prop_assert!(frame.up().dot(frame.forward()).abs() < 1e-4);
             prop_assert!(frame.up().dot(forward.cross(up).normalize()).abs() < 1e-4);
             prop_assert!(frame.up().dot(up) > 0.0);
-            let turned = look_rotation(&frame, yaw_pitch_to(&frame, direction)) * frame.forward();
+            let turned = frame.rotation_by(frame.yaw_pitch_to(direction)) * frame.forward();
             prop_assert!(
                 turned.distance(direction.normalize()) < 1e-4,
                 "{direction}: turned {turned}"

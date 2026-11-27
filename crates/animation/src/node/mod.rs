@@ -476,7 +476,7 @@ impl AnimationNode for AnimationClipNode {
         _inputs: &[WeightedMotion],
     ) -> RootMotion {
         clips.get(&self.clip).map_or(RootMotion::IDENTITY, |clip| {
-            root_motion(&state.clock, clip, context.root(), bone_ids)
+            state.clock.root_motion(clip, context.root(), bone_ids)
         })
     }
 
@@ -498,31 +498,33 @@ fn net_of_root_motion(joint: &mut JointPose, root: &RootBone) {
     joint.translation = root.rest.translation + root.up * lifted;
 }
 
-fn root_motion(
-    clock: &ClipClock,
-    clip: &AnimationClip,
-    root: Option<&RootBone>,
-    bone_ids: &[Uuid],
-) -> RootMotion {
-    let Some((root, channels)) = root.and_then(|root| {
-        let channels = clip.get_channels(bone_ids.get(root.index)?)?;
-        Some((root, channels))
-    }) else {
-        return RootMotion::IDENTITY;
-    };
+impl ClipClock {
+    fn root_motion(
+        &self,
+        clip: &AnimationClip,
+        root: Option<&RootBone>,
+        bone_ids: &[Uuid],
+    ) -> RootMotion {
+        let Some((root, channels)) = root.and_then(|root| {
+            let channels = clip.get_channels(bone_ids.get(root.index)?)?;
+            Some((root, channels))
+        }) else {
+            return RootMotion::IDENTITY;
+        };
 
-    let stretch = |from: f32, to: f32| {
-        RootMotion::between(
-            &sample_root(channels, &root.rest, from),
-            &sample_root(channels, &root.rest, to),
-            root.rest.rotation,
-        )
-    };
+        let stretch = |from: f32, to: f32| {
+            RootMotion::between(
+                &sample_root(channels, &root.rest, from),
+                &sample_root(channels, &root.rest, to),
+                root.rest.rotation,
+            )
+        };
 
-    if clock.wrapped {
-        stretch(clock.previous_time, clip.duration()).then(stretch(clock.start_time, clock.time))
-    } else {
-        stretch(clock.previous_time, clock.time)
+        if self.wrapped {
+            stretch(self.previous_time, clip.duration()).then(stretch(self.start_time, self.time))
+        } else {
+            stretch(self.previous_time, self.time)
+        }
     }
 }
 

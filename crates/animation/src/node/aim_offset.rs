@@ -17,7 +17,7 @@ use crate::{
     blackboard::AnimationBlackboard,
     clip::{Additive, AnimationClip},
     evaluation::AnimationGraphContext,
-    look_at::{LookFrame, yaw_pitch_to},
+    look_at::LookFrame,
     node::{
         AnimationNode, EditorAnimationNode, InputSlots, ReflectAnimationNode,
         model_space::{WorldToModel, bone_under_first, model_joint},
@@ -270,7 +270,7 @@ impl AimFrame<'_> {
         if direction.length_squared() <= 0.0 {
             return None;
         }
-        let angles = yaw_pitch_to(&self.frame, direction);
+        let angles = self.frame.yaw_pitch_to(direction);
         let angles = Vec2::new(angles.yaw, angles.pitch);
         angles.is_finite().then_some(angles)
     }

@@ -19,7 +19,7 @@ use glam::{Affine3A, Quat, Vec3};
 use log::warn;
 use uuid::Uuid;
 
-use crate::leg::{ResolvedLeg, bend_leg, ease, elapsed_after, horizontal, resolve_leg};
+use crate::leg::{ResolvedLeg, ease, elapsed_after, horizontal};
 
 const MIN_TOE_DISTANCE: f32 = 0.01;
 const MIN_NORMAL_LENGTH: f32 = 1.0e-3;
@@ -307,7 +307,7 @@ impl FootPlacementNode {
         let pelvis = bone_under_first(skeleton, self.pelvis)?;
         let mut legs = Vec::with_capacity(self.legs.len());
         for leg in &self.legs {
-            let resolved = resolve_leg(skeleton, leg.foot, leg.toe, &leg.hinge)?;
+            let resolved = ResolvedLeg::resolve(skeleton, leg.foot, leg.toe, &leg.hinge)?;
             if !descends_from(skeleton, resolved.hip, pelvis) {
                 return Err(format!(
                     "the hip of foot `{}` does not descend from pelvis `{}`",
@@ -391,7 +391,7 @@ impl FootPlacementNode {
         let toe_ground = toe.and_then(|toe| caster.ground(toe));
         let target = match (ankle_ground, toe, toe_ground) {
             (Some(ankle), Some(toe), Some(toe_ground)) => {
-                pitched(foot, toe, ankle, toe_ground, max_angle)
+                FootTarget::pitched(foot, toe, ankle, toe_ground, max_angle)
             }
             (Some(ankle), _, _) => FootTarget {
                 offset: ankle.height,
@@ -433,25 +433,27 @@ fn descends_from(skeleton: &Skeleton, bone: usize, ancestor: usize) -> bool {
         .any(|up| up == ancestor)
 }
 
-fn pitched(foot: Vec3, toe: Vec3, ankle: Ground, toe_ground: Ground, max_angle: f32) -> FootTarget {
-    let v = toe - foot;
-    let flat = horizontal(v);
-    let forward = flat / flat.length();
-    let side = forward.cross(Vec3::Y);
-    let pitch = (toe_ground.height - ankle.height)
-        .atan2(flat.length())
-        .clamp(-max_angle, max_angle);
-    let pitch_rotation = Quat::from_axis_angle(side, pitch);
-    let roll = ankle
-        .normal
-        .map_or(0.0, |normal| roll_about(forward, normal))
-        .clamp(-max_angle, max_angle);
-    let roll_rotation = Quat::from_axis_angle(forward, roll);
-    let tilt = limit_angle(pitch_rotation * roll_rotation, max_angle);
-    let rise = (tilt * v).y - v.y;
-    FootTarget {
-        offset: ankle.height.max(toe_ground.height - rise),
-        tilt,
+impl FootTarget {
+    fn pitched(foot: Vec3, toe: Vec3, ankle: Ground, toe_ground: Ground, max_angle: f32) -> Self {
+        let v = toe - foot;
+        let flat = horizontal(v);
+        let forward = flat / flat.length();
+        let side = forward.cross(Vec3::Y);
+        let pitch = (toe_ground.height - ankle.height)
+            .atan2(flat.length())
+            .clamp(-max_angle, max_angle);
+        let pitch_rotation = Quat::from_axis_angle(side, pitch);
+        let roll = ankle
+            .normal
+            .map_or(0.0, |normal| roll_about(forward, normal))
+            .clamp(-max_angle, max_angle);
+        let roll_rotation = Quat::from_axis_angle(forward, roll);
+        let tilt = limit_angle(pitch_rotation * roll_rotation, max_angle);
+        let rise = (tilt * v).y - v.y;
+        Self {
+            offset: ankle.height.max(toe_ground.height - rise),
+            tilt,
+        }
     }
 }
 
@@ -474,23 +476,20 @@ fn limit_angle(tilt: Quat, max_angle: f32) -> Quat {
     }
 }
 
-fn drop_pelvis(
-    resolved: &ResolvedLegs<'_>,
-    world_to_model: &WorldToModel,
-    drop: f32,
-    output: &mut AnimationFrame,
-) {
-    let skeleton = resolved.skeleton;
-    let in_model = world_to_model.transform.transform_vector3(Vec3::Y * drop);
-    let local = match parent(skeleton, resolved.pelvis) {
-        Some(up) => match model_joint(skeleton, output.joints(), up) {
-            Some(joint) => joint.transform.inverse().transform_vector3(in_model),
-            None => return,
-        },
-        None => in_model,
-    };
-    if let Some(joint) = output.joint_mut(resolved.pelvis) {
-        joint.translation += local;
+impl ResolvedLegs<'_> {
+    fn drop_pelvis(&self, world_to_model: &WorldToModel, drop: f32, output: &mut AnimationFrame) {
+        let skeleton = self.skeleton;
+        let in_model = world_to_model.transform.transform_vector3(Vec3::Y * drop);
+        let local = match parent(skeleton, self.pelvis) {
+            Some(up) => match model_joint(skeleton, output.joints(), up) {
+                Some(joint) => joint.transform.inverse().transform_vector3(in_model),
+                None => return,
+            },
+            None => in_model,
+        };
+        if let Some(joint) = output.joint_mut(self.pelvis) {
+            joint.translation += local;
+        }
     }
 }
 
@@ -615,11 +614,10 @@ impl AnimationNode for FootPlacementNode {
         if weight.is_nan() || weight < MIN_WEIGHT {
             return;
         }
-        drop_pelvis(&resolved, &world_to_model, pelvis, output);
+        resolved.drop_pelvis(&world_to_model, pelvis, output);
         for (leg, goal) in resolved.legs.iter().zip(&goals) {
-            bend_leg(
+            leg.bend(
                 resolved.skeleton,
-                leg,
                 goal.position,
                 goal.tilt,
                 self.softness,

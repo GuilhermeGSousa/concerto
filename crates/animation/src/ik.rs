@@ -41,9 +41,9 @@ impl Hinge {
         match self {
             Hinge::Off | Hinge::Axis { .. } => self.axis(),
             Hinge::Rest => {
-                let root_position = rest_model(skeleton, root).position;
-                let mid_model = rest_model(skeleton, mid);
-                let tip_position = rest_model(skeleton, tip).position;
+                let root_position = RestModel::of(skeleton, root).position;
+                let mid_model = RestModel::of(skeleton, mid);
+                let tip_position = RestModel::of(skeleton, tip).position;
                 let upper = mid_model.position - root_position;
                 let lower = tip_position - mid_model.position;
                 let bend = upper.angle_between(lower);
@@ -62,17 +62,19 @@ struct RestModel {
     position: Vec3,
 }
 
-fn rest_model(skeleton: &Skeleton, bone: usize) -> RestModel {
-    let mut rotation = Quat::IDENTITY;
-    let mut position = Vec3::ZERO;
-    let mut at = Some(bone);
-    while let Some(index) = at {
-        let local = &skeleton.rest_pose[index];
-        position = local.translation + local.rotation * (local.scale * position);
-        rotation = local.rotation * rotation;
-        at = skeleton.parents[index].map(usize::from);
+impl RestModel {
+    fn of(skeleton: &Skeleton, bone: usize) -> Self {
+        let mut rotation = Quat::IDENTITY;
+        let mut position = Vec3::ZERO;
+        let mut at = Some(bone);
+        while let Some(index) = at {
+            let local = &skeleton.rest_pose[index];
+            position = local.translation + local.rotation * (local.scale * position);
+            rotation = local.rotation * rotation;
+            at = skeleton.parents[index].map(usize::from);
+        }
+        Self { rotation, position }
     }
-    RestModel { rotation, position }
 }
 
 /// The positions of a two-bone chain's three joints, in one space.

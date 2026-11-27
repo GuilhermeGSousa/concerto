@@ -374,35 +374,33 @@ impl ProceduralMotionNode {
     }
 }
 
-fn apply_offsets(
-    state: &mut ProceduralMotionState,
-    skeleton: &Skeleton,
-    output: &mut AnimationFrame,
-) {
-    let bones = state.offsets.len().min(output.len());
-    state.input_model.clear();
-    state.output_model.clear();
-    for bone in 0..bones {
-        let up = parent_below(skeleton, bone);
-        let input_parent = up.map_or(Quat::IDENTITY, |up| state.input_model[up]);
-        let output_parent = up.map_or(Quat::IDENTITY, |up| state.output_model[up]);
-        let (input_model, output_model) = match output.joint_mut(bone) {
-            Some(joint) => {
-                let input_model = input_parent * joint.rotation;
-                let output_model = match state.offsets[bone] {
-                    Some(offset) => {
-                        let turned = offset * input_model;
-                        joint.rotation = (output_parent.inverse() * turned).normalize();
-                        turned
-                    }
-                    None => output_parent * joint.rotation,
-                };
-                (input_model, output_model)
-            }
-            None => (input_parent, output_parent),
-        };
-        state.input_model.push(input_model);
-        state.output_model.push(output_model);
+impl ProceduralMotionState {
+    fn apply_offsets(&mut self, skeleton: &Skeleton, output: &mut AnimationFrame) {
+        let bones = self.offsets.len().min(output.len());
+        self.input_model.clear();
+        self.output_model.clear();
+        for bone in 0..bones {
+            let up = parent_below(skeleton, bone);
+            let input_parent = up.map_or(Quat::IDENTITY, |up| self.input_model[up]);
+            let output_parent = up.map_or(Quat::IDENTITY, |up| self.output_model[up]);
+            let (input_model, output_model) = match output.joint_mut(bone) {
+                Some(joint) => {
+                    let input_model = input_parent * joint.rotation;
+                    let output_model = match self.offsets[bone] {
+                        Some(offset) => {
+                            let turned = offset * input_model;
+                            joint.rotation = (output_parent.inverse() * turned).normalize();
+                            turned
+                        }
+                        None => output_parent * joint.rotation,
+                    };
+                    (input_model, output_model)
+                }
+                None => (input_parent, output_parent),
+            };
+            self.input_model.push(input_model);
+            self.output_model.push(output_model);
+        }
     }
 }
 
@@ -449,7 +447,7 @@ impl AnimationNode for ProceduralMotionNode {
             return;
         };
         if self.gather_offsets(state, masks, context, skeleton, elapsed) {
-            apply_offsets(state, skeleton, output);
+            state.apply_offsets(skeleton, output);
         }
     }
 

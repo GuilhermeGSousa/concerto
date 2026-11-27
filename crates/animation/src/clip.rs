@@ -456,7 +456,7 @@ impl AdditiveSetting {
     /// `0 <= start < end <= duration`.
     pub fn additive(&self, duration: f32, roots: Vec<Uuid>) -> Result<Additive, String> {
         if self.range.is_some() {
-            checked_range(self.range, duration, "range").map_err(|err| err.to_string())?;
+            ClipRange::checked(self.range, duration, "range").map_err(|err| err.to_string())?;
         }
         Ok(Additive::LocalSpace(AdditiveBase {
             clip: AssetHandle::weak(self.base),
@@ -556,8 +556,8 @@ impl<'a> ChannelPair<'a> {
     fn rotations(&self, times: &[FrameTime]) -> Vec<Quat> {
         let mut keys: Vec<Quat> = Vec::with_capacity(times.len());
         for time in times {
-            let this = pose_at(self.this, time.this).rotation;
-            let base = pose_at(self.base, time.base).rotation;
+            let this = self.this.pose_at(time.this).rotation;
+            let base = self.base.pose_at(time.base).rotation;
             let mut key = (this * base.inverse()).normalize();
             if keys.last().is_some_and(|previous| previous.dot(key) < 0.0) {
                 key = -key;
@@ -571,8 +571,7 @@ impl<'a> ChannelPair<'a> {
         times
             .iter()
             .map(|time| {
-                pose_at(self.this, time.this).translation
-                    - pose_at(self.base, time.base).translation
+                self.this.pose_at(time.this).translation - self.base.pose_at(time.base).translation
             })
             .collect()
     }
@@ -588,27 +587,31 @@ fn last_channel(
         .find(|channel| channel.writes() == component && !channel.time_samples.is_empty())
 }
 
-fn pose_at(channel: &AnimationChannel, time: f32) -> JointPose {
-    let mut pose = JointPose::IDENTITY;
-    if !channel.constant(&mut pose) {
-        channel.sample_transform(time, &mut pose);
+impl AnimationChannel {
+    fn pose_at(&self, time: f32) -> JointPose {
+        let mut pose = JointPose::IDENTITY;
+        if !self.constant(&mut pose) {
+            self.sample_transform(time, &mut pose);
+        }
+        pose
     }
-    pose
 }
 
-fn checked_range(range: Option<ClipRange>, duration: f32, name: &str) -> anyhow::Result<ClipRange> {
-    let range = range.unwrap_or(ClipRange::new(0.0, duration));
-    let fits = range.start.is_finite()
-        && range.end.is_finite()
-        && (0.0..range.end).contains(&range.start)
-        && range.end <= duration;
-    anyhow::ensure!(
-        fits,
-        "{name} {} to {} must be finite with 0 <= start < end <= {duration}, the clip's length",
-        range.start,
-        range.end
-    );
-    Ok(range)
+impl ClipRange {
+    fn checked(range: Option<Self>, duration: f32, name: &str) -> anyhow::Result<Self> {
+        let range = range.unwrap_or(Self::new(0.0, duration));
+        let fits = range.start.is_finite()
+            && range.end.is_finite()
+            && (0.0..range.end).contains(&range.start)
+            && range.end <= duration;
+        anyhow::ensure!(
+            fits,
+            "{name} {} to {} must be finite with 0 <= start < end <= {duration}, the clip's length",
+            range.start,
+            range.end
+        );
+        Ok(range)
+    }
 }
 
 fn hash_float(hash: &mut Fnv1a, value: f32) {
@@ -844,8 +847,8 @@ impl AnimationClip {
 
     fn delta_against(&self, base: &AnimationClip) -> anyhow::Result<AdditiveDelta> {
         let additive = self.additive_base()?;
-        let range = checked_range(additive.range, self.duration, "range")?;
-        let base_range = checked_range(additive.base_range, base.duration, "base_range")?;
+        let range = ClipRange::checked(additive.range, self.duration, "range")?;
+        let base_range = ClipRange::checked(additive.base_range, base.duration, "base_range")?;
         let rate = self
             .frame_rate
             .or_else(|| self.detected_frame_rate())

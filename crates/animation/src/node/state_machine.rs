@@ -557,14 +557,15 @@ pub struct AnimationStateMachineState {
     pending: Option<usize>,
 }
 
-fn blender_from(
-    blender: TransitionBlender,
-    initial_state: StateId,
-) -> Box<dyn AnimationTransitionBlender> {
-    let initial_graph = initial_state.as_graph_id();
-    match blender {
-        TransitionBlender::CrossFade => Box::new(BlendStack::new(initial_graph)),
-        TransitionBlender::Inertialization => Box::new(InertializationBlender::new(initial_graph)),
+impl TransitionBlender {
+    fn into_blender(self, initial_state: StateId) -> Box<dyn AnimationTransitionBlender> {
+        let initial_graph = initial_state.as_graph_id();
+        match self {
+            TransitionBlender::CrossFade => Box::new(BlendStack::new(initial_graph)),
+            TransitionBlender::Inertialization => {
+                Box::new(InertializationBlender::new(initial_graph))
+            }
+        }
     }
 }
 
@@ -579,7 +580,7 @@ impl AnimationStateMachineState {
             state_graphs: AnimationGraphStates::new(state_graphs),
             current_state: initial_state,
             state_names,
-            blender: blender_from(blender, initial_state),
+            blender: blender.into_blender(initial_state),
             reset_pending: false,
             pending: None,
         }
@@ -587,7 +588,7 @@ impl AnimationStateMachineState {
 
     fn restart(&mut self, initial_state: StateId, blender: TransitionBlender) {
         self.current_state = initial_state;
-        self.blender = blender_from(blender, initial_state);
+        self.blender = blender.into_blender(initial_state);
         self.reset_pending = true;
         self.pending = None;
     }
@@ -710,7 +711,7 @@ impl AnimationNode for AnimationStateMachine {
             .get_state_transitions(state.current_state)
             .map_or(&[][..], Vec::as_slice);
         let fired =
-            |transition: &&AnimationStateMachineTransition| fires(&transition.trigger, context);
+            |transition: &&AnimationStateMachineTransition| transition.trigger.fires(context);
         let on_message = |transition: &&AnimationStateMachineTransition| {
             matches!(transition.trigger, AnimationFSMTrigger::OnMessage { .. })
         };
@@ -737,10 +738,9 @@ impl AnimationNode for AnimationStateMachine {
             .get_state_transitions(state.current_state)
             .and_then(|transitions| {
                 transitions.iter().position(|transition| {
-                    heard(
-                        &transition.trigger,
-                        raised.iter().map(RaisedMessage::message),
-                    )
+                    transition
+                        .trigger
+                        .heard(raised.iter().map(RaisedMessage::message))
                 })
             });
         for message in raised {
@@ -845,37 +845,38 @@ impl EditorAnimationNode for AnimationStateMachine {
     }
 }
 
-fn fires(trigger: &AnimationFSMTrigger, context: &AnimationGraphContext<'_>) -> bool {
-    match trigger {
-        AnimationFSMTrigger::Instant => true,
-        AnimationFSMTrigger::BoolEquals { param, value } => {
-            context.blackboard().read(param).is_some_and(|v| v == value)
+impl AnimationFSMTrigger {
+    fn fires(&self, context: &AnimationGraphContext<'_>) -> bool {
+        match self {
+            AnimationFSMTrigger::Instant => true,
+            AnimationFSMTrigger::BoolEquals { param, value } => {
+                context.blackboard().read(param).is_some_and(|v| v == value)
+            }
+            AnimationFSMTrigger::Vec2NonZero { param } => context
+                .blackboard()
+                .read(param)
+                .is_some_and(|v| v.length_squared() > f32::EPSILON),
+            AnimationFSMTrigger::OnMessage { .. } => self.heard(context.messages()),
         }
-        AnimationFSMTrigger::Vec2NonZero { param } => context
-            .blackboard()
-            .read(param)
-            .is_some_and(|v| v.length_squared() > f32::EPSILON),
-        AnimationFSMTrigger::OnMessage { .. } => heard(trigger, context.messages()),
     }
 }
 
-fn heard<'m>(
-    trigger: &AnimationFSMTrigger,
-    mut messages: impl Iterator<Item = &'m dyn Reflect>,
-) -> bool {
-    let AnimationFSMTrigger::OnMessage {
-        message: wanted,
-        value,
-    } = trigger
-    else {
-        return false;
-    };
-    messages.any(|message| {
-        wanted.matches(message)
-            && value.as_ref().is_none_or(|wanted| {
-                to_value(message).is_ok_and(|encoded| encoded.contains(wanted))
-            })
-    })
+impl AnimationFSMTrigger {
+    fn heard<'m>(&self, mut messages: impl Iterator<Item = &'m dyn Reflect>) -> bool {
+        let AnimationFSMTrigger::OnMessage {
+            message: wanted,
+            value,
+        } = self
+        else {
+            return false;
+        };
+        messages.any(|message| {
+            wanted.matches(message)
+                && value.as_ref().is_none_or(|wanted| {
+                    to_value(message).is_ok_and(|encoded| encoded.contains(wanted))
+                })
+        })
+    }
 }
 
 struct FSMStateEntry {

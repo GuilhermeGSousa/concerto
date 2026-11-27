@@ -148,11 +148,11 @@ impl TwoBoneIkNode {
             root,
             mid,
             tip,
-            target: resolve_goal(skeleton, &self.target)?,
+            target: self.target.resolve(skeleton)?,
             pole: self
                 .pole
                 .as_ref()
-                .map(|pole| resolve_goal(skeleton, pole))
+                .map(|pole| pole.resolve(skeleton))
                 .transpose()?,
             hinge: self.hinge.local(skeleton, root, mid, tip),
         })
@@ -261,19 +261,21 @@ impl ResolvedGoal {
     }
 }
 
-fn resolve_goal(skeleton: &Skeleton, goal: &IkGoal) -> Result<ResolvedGoal, String> {
-    Ok(match goal {
-        IkGoal::Bone {
-            bone,
-            translation,
-            rotation,
-        } => ResolvedGoal::Bone {
-            bone: bone_under_first(skeleton, *bone)?,
-            translation: *translation,
-            rotation: *rotation,
-        },
-        IkGoal::Param { param } => ResolvedGoal::Param(*param),
-    })
+impl IkGoal {
+    fn resolve(&self, skeleton: &Skeleton) -> Result<ResolvedGoal, String> {
+        Ok(match self {
+            IkGoal::Bone {
+                bone,
+                translation,
+                rotation,
+            } => ResolvedGoal::Bone {
+                bone: bone_under_first(skeleton, *bone)?,
+                translation: *translation,
+                rotation: *rotation,
+            },
+            IkGoal::Param { param } => ResolvedGoal::Param(*param),
+        })
+    }
 }
 
 impl AnimationNode for TwoBoneIkNode {

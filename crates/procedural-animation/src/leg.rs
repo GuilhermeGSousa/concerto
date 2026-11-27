@@ -15,25 +15,27 @@ pub(crate) struct ResolvedLeg {
     pub(crate) hinge: Option<Vec3>,
 }
 
-pub(crate) fn resolve_leg(
-    skeleton: &Skeleton,
-    foot: JointName,
-    toe: Option<JointName>,
-    hinge: &Hinge,
-) -> Result<ResolvedLeg, String> {
-    let foot_bone = bone_under_first(skeleton, foot)?;
-    let knee =
-        parent(skeleton, foot_bone).ok_or_else(|| format!("foot `{}` has no parent", &*foot))?;
-    let hip =
-        parent(skeleton, knee).ok_or_else(|| format!("foot `{}` has no grandparent", &*foot))?;
-    let toe = toe.map(|toe| bone_under_first(skeleton, toe)).transpose()?;
-    Ok(ResolvedLeg {
-        hip,
-        knee,
-        foot: foot_bone,
-        toe,
-        hinge: hinge.local(skeleton, hip, knee, foot_bone),
-    })
+impl ResolvedLeg {
+    pub(crate) fn resolve(
+        skeleton: &Skeleton,
+        foot: JointName,
+        toe: Option<JointName>,
+        hinge: &Hinge,
+    ) -> Result<ResolvedLeg, String> {
+        let foot_bone = bone_under_first(skeleton, foot)?;
+        let knee = parent(skeleton, foot_bone)
+            .ok_or_else(|| format!("foot `{}` has no parent", &*foot))?;
+        let hip = parent(skeleton, knee)
+            .ok_or_else(|| format!("foot `{}` has no grandparent", &*foot))?;
+        let toe = toe.map(|toe| bone_under_first(skeleton, toe)).transpose()?;
+        Ok(ResolvedLeg {
+            hip,
+            knee,
+            foot: foot_bone,
+            toe,
+            hinge: hinge.local(skeleton, hip, knee, foot_bone),
+        })
+    }
 }
 
 pub(crate) fn elapsed_after(elapsed: f32, delta_time: f32) -> f32 {
@@ -63,62 +65,64 @@ pub(crate) fn ease<T: SpringValue>(
     }
 }
 
-pub(crate) fn bend_leg(
-    skeleton: &Skeleton,
-    leg: &ResolvedLeg,
-    goal_position: Vec3,
-    goal_tilt: Quat,
-    softness: f32,
-    output: &mut AnimationFrame,
-) {
-    let joints = output.joints();
-    let Some(hip) = model_joint(skeleton, joints, leg.hip) else {
-        return;
-    };
-    let Some(knee) = model_joint(skeleton, joints, leg.knee) else {
-        return;
-    };
-    let Some(foot) = model_joint(skeleton, joints, leg.foot) else {
-        return;
-    };
-    let parent_rotation = match parent(skeleton, leg.hip) {
-        Some(up) => match model_joint(skeleton, joints, up) {
-            Some(joint) => joint.rotation,
-            None => return,
-        },
-        None => Quat::IDENTITY,
-    };
-    let solution = solve_two_bone(
-        &TwoBoneChain {
-            root: hip.transform.translation.into(),
-            mid: knee.transform.translation.into(),
-            tip: foot.transform.translation.into(),
-            hinge: leg.hinge.map(|axis| knee.rotation * axis),
-        },
-        goal_position,
-        None,
-        softness,
-    );
-    let hip_rotation = solution.root * hip.rotation;
-    let knee_rotation = solution.mid * knee.rotation;
-    let foot_rotation = goal_tilt * foot.rotation;
-    let locals = [
-        LocalRotation {
-            bone: leg.hip,
-            rotation: parent_rotation.inverse() * hip_rotation,
-        },
-        LocalRotation {
-            bone: leg.knee,
-            rotation: hip_rotation.inverse() * knee_rotation,
-        },
-        LocalRotation {
-            bone: leg.foot,
-            rotation: knee_rotation.inverse() * foot_rotation,
-        },
-    ];
-    for local in locals {
-        if let Some(joint) = output.joint_mut(local.bone) {
-            joint.rotation = local.rotation.normalize();
+impl ResolvedLeg {
+    pub(crate) fn bend(
+        &self,
+        skeleton: &Skeleton,
+        goal_position: Vec3,
+        goal_tilt: Quat,
+        softness: f32,
+        output: &mut AnimationFrame,
+    ) {
+        let joints = output.joints();
+        let Some(hip) = model_joint(skeleton, joints, self.hip) else {
+            return;
+        };
+        let Some(knee) = model_joint(skeleton, joints, self.knee) else {
+            return;
+        };
+        let Some(foot) = model_joint(skeleton, joints, self.foot) else {
+            return;
+        };
+        let parent_rotation = match parent(skeleton, self.hip) {
+            Some(up) => match model_joint(skeleton, joints, up) {
+                Some(joint) => joint.rotation,
+                None => return,
+            },
+            None => Quat::IDENTITY,
+        };
+        let solution = solve_two_bone(
+            &TwoBoneChain {
+                root: hip.transform.translation.into(),
+                mid: knee.transform.translation.into(),
+                tip: foot.transform.translation.into(),
+                hinge: self.hinge.map(|axis| knee.rotation * axis),
+            },
+            goal_position,
+            None,
+            softness,
+        );
+        let hip_rotation = solution.root * hip.rotation;
+        let knee_rotation = solution.mid * knee.rotation;
+        let foot_rotation = goal_tilt * foot.rotation;
+        let locals = [
+            LocalRotation {
+                bone: self.hip,
+                rotation: parent_rotation.inverse() * hip_rotation,
+            },
+            LocalRotation {
+                bone: self.knee,
+                rotation: hip_rotation.inverse() * knee_rotation,
+            },
+            LocalRotation {
+                bone: self.foot,
+                rotation: knee_rotation.inverse() * foot_rotation,
+            },
+        ];
+        for local in locals {
+            if let Some(joint) = output.joint_mut(local.bone) {
+                joint.rotation = local.rotation.normalize();
+            }
         }
     }
 }

@@ -74,17 +74,19 @@ struct Corners {
     c_share: f32,
 }
 
-fn corners(state: &BlendSpace2DInstanceNode) -> Option<Corners> {
-    let point = state.current_triangulated_point?;
-    let triangle = &state.triangulation.triangles()[point.triangle];
-    let ab_sum = point.lambda_a + point.lambda_b;
-    Some(Corners {
-        a: triangle.a,
-        b: triangle.b,
-        b_share: (ab_sum > 1e-6).then(|| point.lambda_b / ab_sum),
-        c: triangle.c,
-        c_share: point.lambda_c,
-    })
+impl BlendSpace2DInstanceNode {
+    fn corners(&self) -> Option<Corners> {
+        let point = self.current_triangulated_point?;
+        let triangle = &self.triangulation.triangles()[point.triangle];
+        let ab_sum = point.lambda_a + point.lambda_b;
+        Some(Corners {
+            a: triangle.a,
+            b: triangle.b,
+            b_share: (ab_sum > 1e-6).then(|| point.lambda_b / ab_sum),
+            c: triangle.c,
+            c_share: point.lambda_c,
+        })
+    }
 }
 
 impl AnimationNode for BlendSpace2DNode {
@@ -138,7 +140,7 @@ impl AnimationNode for BlendSpace2DNode {
             return;
         }
 
-        let Some(corners) = corners(state) else {
+        let Some(corners) = state.corners() else {
             return;
         };
 
@@ -162,7 +164,7 @@ impl AnimationNode for BlendSpace2DNode {
         if inputs.is_empty() || inputs.len() != self.points().len() {
             return;
         }
-        let Some(corners) = corners(state) else {
+        let Some(corners) = state.corners() else {
             return;
         };
         let attributes = output.attributes_mut();
@@ -179,7 +181,9 @@ impl AnimationNode for BlendSpace2DNode {
         _: &DriveContext<'_>,
         shares: &mut [f32],
     ) {
-        let corners = corners(state).filter(|_| shares.len() == self.points().len());
+        let corners = state
+            .corners()
+            .filter(|_| shares.len() == self.points().len());
         shares.fill(0.0);
         let Some(corners) = corners.filter(|_| !shares.is_empty()) else {
             return;

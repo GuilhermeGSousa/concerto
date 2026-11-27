@@ -17,7 +17,7 @@ use glam::{Quat, Vec3};
 use log::warn;
 use uuid::Uuid;
 
-use crate::leg::{ResolvedLeg, bend_leg, ease, elapsed_after, horizontal, resolve_leg};
+use crate::leg::{ResolvedLeg, ease, elapsed_after, horizontal};
 
 const MIN_WEIGHT: f32 = 1.0e-4;
 const RELEASED: f32 = 1.0e-3;
@@ -258,7 +258,7 @@ impl FootLockNode {
         let legs = self
             .legs
             .iter()
-            .map(|leg| resolve_leg(skeleton, leg.foot, leg.toe, &leg.hinge))
+            .map(|leg| ResolvedLeg::resolve(skeleton, leg.foot, leg.toe, &leg.hinge))
             .collect::<Result<Vec<_>, _>>()?;
         Ok(ResolvedLegs { skeleton, legs })
     }
@@ -346,21 +346,22 @@ struct LegPoints {
     foot: Vec3,
 }
 
-fn leg_points(resolved: &ResolvedLegs<'_>, output: &AnimationFrame) -> Option<Vec<LegPoints>> {
-    let position = |bone| {
-        model_joint(resolved.skeleton, output.joints(), bone)
-            .map(|joint| Vec3::from(joint.transform.translation))
-    };
-    resolved
-        .legs
-        .iter()
-        .map(|leg| {
-            Some(LegPoints {
-                contact: position(leg.toe.unwrap_or(leg.foot))?,
-                foot: position(leg.foot)?,
+impl ResolvedLegs<'_> {
+    fn leg_points(&self, output: &AnimationFrame) -> Option<Vec<LegPoints>> {
+        let position = |bone| {
+            model_joint(self.skeleton, output.joints(), bone)
+                .map(|joint| Vec3::from(joint.transform.translation))
+        };
+        self.legs
+            .iter()
+            .map(|leg| {
+                Some(LegPoints {
+                    contact: position(leg.toe.unwrap_or(leg.foot))?,
+                    foot: position(leg.foot)?,
+                })
             })
-        })
-        .collect()
+            .collect()
+    }
 }
 
 struct ModelMotion {
@@ -489,7 +490,7 @@ impl AnimationNode for FootLockNode {
             leg.release.set_halflife(self.release_halflife);
         }
 
-        let Some(points) = leg_points(&resolved, output) else {
+        let Some(points) = resolved.leg_points(output) else {
             return;
         };
         let motion = ModelMotion::of(context.root(), resolved.skeleton, output, state.motion);
@@ -522,9 +523,8 @@ impl AnimationNode for FootLockNode {
             let goal = world_to_model
                 .transform
                 .transform_point3(foot + lock.offset * weight);
-            bend_leg(
+            leg.bend(
                 resolved.skeleton,
-                leg,
                 goal,
                 Quat::IDENTITY,
                 self.softness,
