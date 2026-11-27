@@ -19,7 +19,7 @@ use glam::{Mat4, Quat, Vec3};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::parser::{self, Bvh, Channel};
+use crate::parser::{Bvh, Channel};
 
 const DEFAULT_SCALE: f32 = 0.01;
 
@@ -93,7 +93,7 @@ impl Importer for BvhImporter {
                 source_path: source_path.to_path_buf(),
                 message: err.to_string(),
             })?;
-        let bvh = parser::parse(&text).map_err(|err| malformed(err.to_string()))?;
+        let bvh = Bvh::parse(&text).map_err(|err| malformed(err.to_string()))?;
         if !settings.scale.is_finite() || settings.scale <= 0.0 {
             return Err(malformed(format!(
                 "scale must be finite and positive, got {}",
@@ -114,9 +114,9 @@ impl Importer for BvhImporter {
             ));
         }
 
-        let bone_ids = bone_ids(&bvh);
-        let skeleton = build_skeleton(&bvh, settings.scale, &bone_ids).map_err(malformed)?;
-        let mut clip = build_clip(&bvh, settings.scale, start..end, &bone_ids);
+        let bone_ids = bvh.bone_ids();
+        let skeleton = bvh.skeleton(settings.scale, &bone_ids).map_err(malformed)?;
+        let mut clip = bvh.clip(settings.scale, start..end, &bone_ids);
         let stem = source_path.file_stem().and_then(|stem| stem.to_str());
         let clip_name = clip_names(&[stem]).remove(0);
         for (name, events) in &settings.events {
@@ -151,67 +151,10 @@ impl Importer for BvhImporter {
             ctx.renamed_from(&format!("animation/{clip_name}"), "animation/0");
         }
         ctx.emit(&format!("animation/{clip_name}"), &clip)?;
-        let scene = build_scene(&bvh, &skeleton, ctx.sub_asset_id("skeleton/0"))?;
+        let scene = bvh.scene(&skeleton, ctx.sub_asset_id("skeleton/0"))?;
         ctx.emit("scene", &scene)?;
         Ok(())
     }
-}
-
-fn bone_ids(bvh: &Bvh) -> Vec<Uuid> {
-    let mut paths: Vec<String> = Vec::with_capacity(bvh.joints.len());
-    for joint in &bvh.joints {
-        let path = match joint.parent {
-            Some(parent) => format!("{}/{}", paths[parent], joint.name),
-            None => joint.name.clone(),
-        };
-        paths.push(path);
-    }
-    paths
-        .iter()
-        .map(|path| {
-            let mut hasher = DefaultHasher::new();
-            path.hash(&mut hasher);
-            Uuid::from_u128(hasher.finish() as u128)
-        })
-        .collect()
-}
-
-fn build_skeleton(bvh: &Bvh, scale: f32, bone_ids: &[Uuid]) -> Result<Skeleton, String> {
-    let mut parents = Vec::with_capacity(bvh.joints.len());
-    let mut rest_pose = Vec::with_capacity(bvh.joints.len());
-    let mut globals: Vec<Mat4> = Vec::with_capacity(bvh.joints.len());
-    for joint in &bvh.joints {
-        let parent = match joint.parent {
-            Some(parent) => Some(u16::try_from(parent).map_err(|_| {
-                format!(
-                    "more than {} joints are not supported",
-                    u16::MAX as usize + 1
-                )
-            })?),
-            None => None,
-        };
-        parents.push(parent);
-        let local = Mat4::from_translation(Vec3::from_array(joint.offset) * scale);
-        globals.push(match joint.parent {
-            Some(parent) => globals[parent] * local,
-            None => local,
-        });
-        rest_pose.push(JointPose {
-            translation: Vec3::from_array(joint.offset) * scale,
-            ..JointPose::IDENTITY
-        });
-    }
-    Skeleton::new(
-        globals.iter().map(Mat4::inverse).collect(),
-        parents,
-        bvh.joints
-            .iter()
-            .map(|joint| Name::new(&joint.name))
-            .collect(),
-        rest_pose,
-        bone_ids.to_vec(),
-    )
-    .map_err(|err| err.to_string())
 }
 
 fn push_node_component<T: Reflect>(node: &mut SceneNode, component: &T) -> Result<(), ImportError> {
@@ -222,114 +165,168 @@ fn push_node_component<T: Reflect>(node: &mut SceneNode, component: &T) -> Resul
         })
 }
 
-fn build_scene(bvh: &Bvh, skeleton: &Skeleton, skeleton_id: AssetId) -> Result<Scene, ImportError> {
-    let mut nodes: Vec<SceneNode> = Vec::with_capacity(bvh.joints.len());
-    for (index, joint) in bvh.joints.iter().enumerate() {
-        let mut node = SceneNode {
-            id: NodeId::default(),
-            name: joint.name.clone(),
-            children: Vec::new(),
-            components: Vec::new(),
-            link: None,
-        };
-        let pose = &skeleton.rest_pose[index];
-        push_node_component(
-            &mut node,
-            &Transform::from_translation_rotation_scale(
-                pose.translation,
-                pose.rotation,
-                pose.scale,
-            ),
-        )?;
-        if index == 0 {
+impl Bvh {
+    fn bone_ids(&self) -> Vec<Uuid> {
+        let mut paths: Vec<String> = Vec::with_capacity(self.joints.len());
+        for joint in &self.joints {
+            let path = match joint.parent {
+                Some(parent) => format!("{}/{}", paths[parent], joint.name),
+                None => joint.name.clone(),
+            };
+            paths.push(path);
+        }
+        paths
+            .iter()
+            .map(|path| {
+                let mut hasher = DefaultHasher::new();
+                path.hash(&mut hasher);
+                Uuid::from_u128(hasher.finish() as u128)
+            })
+            .collect()
+    }
+
+    fn skeleton(&self, scale: f32, bone_ids: &[Uuid]) -> Result<Skeleton, String> {
+        let mut parents = Vec::with_capacity(self.joints.len());
+        let mut rest_pose = Vec::with_capacity(self.joints.len());
+        let mut globals: Vec<Mat4> = Vec::with_capacity(self.joints.len());
+        for joint in &self.joints {
+            let parent = match joint.parent {
+                Some(parent) => Some(u16::try_from(parent).map_err(|_| {
+                    format!(
+                        "more than {} joints are not supported",
+                        u16::MAX as usize + 1
+                    )
+                })?),
+                None => None,
+            };
+            parents.push(parent);
+            let local = Mat4::from_translation(Vec3::from_array(joint.offset) * scale);
+            globals.push(match joint.parent {
+                Some(parent) => globals[parent] * local,
+                None => local,
+            });
+            rest_pose.push(JointPose {
+                translation: Vec3::from_array(joint.offset) * scale,
+                ..JointPose::IDENTITY
+            });
+        }
+        Skeleton::new(
+            globals.iter().map(Mat4::inverse).collect(),
+            parents,
+            self.joints
+                .iter()
+                .map(|joint| Name::new(&joint.name))
+                .collect(),
+            rest_pose,
+            bone_ids.to_vec(),
+        )
+        .map_err(|err| err.to_string())
+    }
+
+    fn scene(&self, skeleton: &Skeleton, skeleton_id: AssetId) -> Result<Scene, ImportError> {
+        let mut nodes: Vec<SceneNode> = Vec::with_capacity(self.joints.len());
+        for (index, joint) in self.joints.iter().enumerate() {
+            let mut node = SceneNode {
+                id: NodeId::default(),
+                name: joint.name.clone(),
+                children: Vec::new(),
+                components: Vec::new(),
+                link: None,
+            };
+            let pose = &skeleton.rest_pose[index];
             push_node_component(
                 &mut node,
-                &SkeletonComponent {
-                    skeleton: AssetHandle::weak(skeleton_id),
-                    bones: (0..bvh.joints.len()).map(SceneEntityRef::Index).collect(),
-                    root: Some(SceneEntityRef::Index(0)),
-                },
+                &Transform::from_translation_rotation_scale(
+                    pose.translation,
+                    pose.rotation,
+                    pose.scale,
+                ),
             )?;
+            if index == 0 {
+                push_node_component(
+                    &mut node,
+                    &SkeletonComponent {
+                        skeleton: AssetHandle::weak(skeleton_id),
+                        bones: (0..self.joints.len()).map(SceneEntityRef::Index).collect(),
+                        root: Some(SceneEntityRef::Index(0)),
+                    },
+                )?;
+            }
+            nodes.push(node);
+            if let Some(parent) = joint.parent {
+                nodes[parent].children.push(index);
+            }
         }
-        nodes.push(node);
-        if let Some(parent) = joint.parent {
-            nodes[parent].children.push(index);
-        }
+        derive_ids(&mut nodes);
+        Ok(Scene {
+            nodes,
+            referenced_assets: vec![skeleton_id],
+        })
     }
-    derive_ids(&mut nodes);
-    Ok(Scene {
-        nodes,
-        referenced_assets: vec![skeleton_id],
-    })
-}
 
-fn build_clip(
-    bvh: &Bvh,
-    scale: f32,
-    frames: std::ops::Range<usize>,
-    bone_ids: &[Uuid],
-) -> AnimationClip {
-    let times: Vec<f32> = (0..frames.len())
-        .map(|frame| frame as f32 * bvh.frame_time)
-        .collect();
-    let mut clip = AnimationClip::default();
-    clip.set_frame_rate(bvh.frame_time.recip());
-    for (joint, id) in bvh.joints.iter().zip(bone_ids) {
-        let has_position = joint.channels.iter().any(|channel| channel.is_position());
-        let has_rotation = joint.channels.iter().any(|channel| !channel.is_position());
+    fn clip(&self, scale: f32, frames: std::ops::Range<usize>, bone_ids: &[Uuid]) -> AnimationClip {
+        let times: Vec<f32> = (0..frames.len())
+            .map(|frame| frame as f32 * self.frame_time)
+            .collect();
+        let mut clip = AnimationClip::default();
+        clip.set_frame_rate(self.frame_time.recip());
+        for (joint, id) in self.joints.iter().zip(bone_ids) {
+            let has_position = joint.channels.iter().any(|channel| channel.is_position());
+            let has_rotation = joint.channels.iter().any(|channel| !channel.is_position());
 
-        if has_position {
-            let rest = Vec3::from_array(joint.offset) * scale;
-            let translations = bvh.frames[frames.clone()].iter().map(|row| {
-                let mut translation = rest;
-                for (index, channel) in joint.channels.iter().enumerate() {
-                    let value = row[joint.channel_start + index] * scale;
-                    match channel {
-                        Channel::XPosition => translation.x = value,
-                        Channel::YPosition => translation.y = value,
-                        Channel::ZPosition => translation.z = value,
-                        _ => {}
+            if has_position {
+                let rest = Vec3::from_array(joint.offset) * scale;
+                let translations = self.frames[frames.clone()].iter().map(|row| {
+                    let mut translation = rest;
+                    for (index, channel) in joint.channels.iter().enumerate() {
+                        let value = row[joint.channel_start + index] * scale;
+                        match channel {
+                            Channel::XPosition => translation.x = value,
+                            Channel::YPosition => translation.y = value,
+                            Channel::ZPosition => translation.z = value,
+                            _ => {}
+                        }
                     }
-                }
-                translation.to_array()
-            });
-            clip.add_channel(
-                *id,
-                AnimationChannel::new(
-                    times.clone(),
-                    AnimationChanelOutput::from_translation(translations),
-                ),
-            );
-        }
+                    translation.to_array()
+                });
+                clip.add_channel(
+                    *id,
+                    AnimationChannel::new(
+                        times.clone(),
+                        AnimationChanelOutput::from_translation(translations),
+                    ),
+                );
+            }
 
-        if has_rotation {
-            let mut previous: Option<Quat> = None;
-            let rotations = bvh.frames[frames.clone()].iter().map(|row| {
-                let mut rotation = Quat::IDENTITY;
-                for (index, channel) in joint.channels.iter().enumerate() {
-                    let angle = row[joint.channel_start + index].to_radians();
-                    match channel {
-                        Channel::XRotation => rotation *= Quat::from_rotation_x(angle),
-                        Channel::YRotation => rotation *= Quat::from_rotation_y(angle),
-                        Channel::ZRotation => rotation *= Quat::from_rotation_z(angle),
-                        _ => {}
+            if has_rotation {
+                let mut previous: Option<Quat> = None;
+                let rotations = self.frames[frames.clone()].iter().map(|row| {
+                    let mut rotation = Quat::IDENTITY;
+                    for (index, channel) in joint.channels.iter().enumerate() {
+                        let angle = row[joint.channel_start + index].to_radians();
+                        match channel {
+                            Channel::XRotation => rotation *= Quat::from_rotation_x(angle),
+                            Channel::YRotation => rotation *= Quat::from_rotation_y(angle),
+                            Channel::ZRotation => rotation *= Quat::from_rotation_z(angle),
+                            _ => {}
+                        }
                     }
-                }
-                let mut rotation = rotation.normalize();
-                if previous.is_some_and(|previous| previous.dot(rotation) < 0.0) {
-                    rotation = -rotation;
-                }
-                previous = Some(rotation);
-                rotation.to_array()
-            });
-            clip.add_channel(
-                *id,
-                AnimationChannel::new(
-                    times.clone(),
-                    AnimationChanelOutput::from_rotation(rotations),
-                ),
-            );
+                    let mut rotation = rotation.normalize();
+                    if previous.is_some_and(|previous| previous.dot(rotation) < 0.0) {
+                        rotation = -rotation;
+                    }
+                    previous = Some(rotation);
+                    rotation.to_array()
+                });
+                clip.add_channel(
+                    *id,
+                    AnimationChannel::new(
+                        times.clone(),
+                        AnimationChanelOutput::from_rotation(rotations),
+                    ),
+                );
+            }
         }
+        clip
     }
-    clip
 }
