@@ -1,6 +1,8 @@
 use std::ops::Mul;
 
 use concerto_ecs::component::{Component, ComponentLifecycleCallback};
+use concerto_ecs::entity::{hierarchy::ChildOf, Entity};
+use concerto_ecs::query::Query;
 use concerto_ecs::reflect::{ReflectComponent, ReflectSceneComponent};
 use concerto_reflect::{Reflect, ReflectDefault};
 use glam::{Affine3A, Mat4, Quat, Vec3};
@@ -335,4 +337,28 @@ impl GlobalTransform {
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct GlobalTransformRaw {
     matrix: [[f32; 4]; 4],
+}
+
+/// The world matrix of `entity`'s parent as of now, for code that runs before this frame's propagation: `local` gives each ancestor's current local matrix, and the first ancestor it gives none for contributes its `GlobalTransform`.
+pub fn parent_world_of(
+    entity: Entity,
+    parents: &Query<&ChildOf>,
+    globals: &Query<&GlobalTransform>,
+    mut local: impl FnMut(Entity) -> Option<Affine3A>,
+) -> Affine3A {
+    let mut world = Affine3A::IDENTITY;
+    let mut next = parents.get_entity(entity).map(ChildOf::parent);
+    while let Some(ancestor) = next {
+        let Some(matrix) = local(ancestor) else {
+            let global = globals
+                .get_entity(ancestor)
+                .map_or(Affine3A::IDENTITY, |global| {
+                    Affine3A::from_mat4(global.matrix())
+                });
+            return global * world;
+        };
+        world = matrix * world;
+        next = parents.get_entity(ancestor).map(ChildOf::parent);
+    }
+    world
 }

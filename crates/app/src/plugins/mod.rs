@@ -13,7 +13,7 @@ use concerto_foundation::transform::systems::{
 use concerto_foundation::transform::Transform;
 
 use crate::edit_time::AtEditTime;
-use crate::schedule_groups::{First, LateUpdate, Update};
+use crate::schedule_groups::{First, LateUpdate};
 use crate::App;
 
 /// Describes the current phase of plugin initialisation.
@@ -85,7 +85,7 @@ impl Plugin for TimePlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(Time::new());
         app.insert_resource(FrameStats::new());
-        app.add_system(Update, update_time.at_edit_time());
+        app.add_system(First, update_time.at_edit_time());
         app.add_system(LateUpdate, update_frame_stats.at_edit_time());
     }
 }
