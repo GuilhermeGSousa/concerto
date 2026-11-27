@@ -11,11 +11,13 @@ pub trait TypeData: Send + Sync + 'static {}
 
 /// Builds `Self` for the concrete type `T`.
 pub trait FromType<T> {
+    /// Builds the data for `T`.
     fn from_type() -> Self;
 }
 
 /// Implemented by the derive; produces `T`'s registration with its declared type data.
 pub trait GetTypeRegistration: Reflect {
+    /// Returns `T`'s registration, holding the type data its derive declared.
     fn get_type_registration() -> TypeRegistration;
 
     /// Registers the types this one holds.
@@ -42,6 +44,7 @@ impl TypeRegistration {
         }
     }
 
+    /// Returns the registered type's [`TypeId`].
     pub fn type_id(&self) -> TypeId {
         self.type_id
     }
@@ -56,12 +59,14 @@ impl TypeRegistration {
         self.short_name
     }
 
+    /// Returns the type data `D`, or `None` when the type was not registered with it.
     pub fn data<D: TypeData>(&self) -> Option<&D> {
         self.data
             .get(&TypeId::of::<D>())
             .and_then(|data| data.downcast_ref::<D>())
     }
 
+    /// Stores `data`, replacing any earlier type data of the same type.
     pub fn insert<D: TypeData>(&mut self, data: D) {
         self.data.insert(TypeId::of::<D>(), Box::new(data));
     }
@@ -148,6 +153,7 @@ impl TypeRegistry {
             .and_then(|registration| registration.data())
     }
 
+    /// Returns every registration, in no particular order.
     pub fn iter(&self) -> impl Iterator<Item = Arc<TypeRegistration>> + '_ {
         self.registrations.values().cloned()
     }
@@ -160,6 +166,7 @@ pub struct ReflectDefault {
 }
 
 impl ReflectDefault {
+    /// Returns a new boxed `Default` value of the registered type.
     pub fn default(&self) -> Box<dyn Reflect> {
         (self.default)()
     }
@@ -177,6 +184,7 @@ impl<T: Reflect + Default> FromType<T> for ReflectDefault {
 
 /// An enum's variant names, in declaration order; the derive registers it for every non-opaque enum.
 pub struct ReflectEnumInfo {
+    /// The variant names, in declaration order.
     pub variants: &'static [&'static str],
 }
 

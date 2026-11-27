@@ -22,13 +22,22 @@ use crate::{
 #[derive(Clone, Debug, PartialEq, Reflect, serde::Serialize, serde::Deserialize)]
 #[reflect(AnimationNode, Default)]
 pub struct TwoBoneIkNode {
+    /// The end bone of the chain; its parent is the mid joint and its grandparent the root.
     pub tip: JointName,
+    /// The point the tip reaches for.
     pub target: IkGoal,
+    /// The point the mid joint bends toward, when given.
     pub pole: Option<IkGoal>,
+    /// What rotation the tip ends with.
     pub tip_rotation: TipRotation,
+    /// How far short of full reach, in model-space units, the chain starts easing toward straight
+    /// instead of snapping; 0 for none.
     pub softness: f32,
+    /// The axis the mid joint bends about where the chain is too straight to show its own bend.
     pub hinge: Hinge,
+    /// How much of the solve is applied, before the param scales it; clamped to 0 to 1.
     pub weight: f32,
+    /// The `f32` blackboard param the weight is multiplied by, when it holds one.
     pub weight_param: Option<Param<f32>>,
 }
 
@@ -52,12 +61,20 @@ impl Default for TwoBoneIkNode {
 pub enum IkGoal {
     /// A point fixed to a bone of the input pose: `translation` in the bone's space, with the bone's rotation times `rotation`.
     Bone {
+        /// The bone the goal follows.
         bone: JointName,
+        /// The goal's offset in the bone's space.
         translation: Vec3,
+        /// The goal's rotation relative to the bone's.
         rotation: Quat,
     },
     /// The `IkTarget` the game set under `param`, in world space.
-    Param { param: Param<IkTarget> },
+    Param {
+        /// The blackboard param holding the target.
+        ///
+        /// When it is missing, a target leaves the chain as it is and a pole is ignored.
+        param: Param<IkTarget>,
+    },
 }
 
 impl Default for IkGoal {
@@ -74,7 +91,9 @@ impl Default for IkGoal {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Reflect)]
 #[reflect(Default)]
 pub struct IkTarget {
+    /// The goal's position in world space.
     pub position: Vec3,
+    /// The rotation the tip takes in world space under [`TipRotation::FromTarget`], if any.
     pub rotation: Option<Quat>,
 }
 

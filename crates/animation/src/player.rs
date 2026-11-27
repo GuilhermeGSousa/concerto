@@ -25,7 +25,9 @@ use crate::{
     root::AnimationRootBone,
 };
 
+/// The state a player keeps for one live node of its graph.
 pub struct ActiveNodeState {
+    /// The weight a blend node gives this node's pose among its inputs, from 0 to 1.
     pub weight: f32,
     pub(crate) node_state: NodeState,
 }
@@ -41,6 +43,12 @@ impl ActiveNodeState {
     }
 }
 
+/// Plays an [`AnimationGraph`] on a skeleton: the graph's state, the parameters its nodes read,
+/// and the root bone root motion is read from.
+///
+/// The [`AnimationPlugin`](crate::plugin::AnimationPlugin) inserts one on every entity that gets
+/// a [`SkeletonComponent`](concerto_mesh::skeleton::SkeletonComponent), and starts its graph when
+/// an [`AnimationHandleComponent`] is added or changed.
 #[derive(Component)]
 pub struct AnimationPlayer {
     graph_state: AnimationGraphState,
@@ -54,6 +62,7 @@ pub struct AnimationPlayer {
 }
 
 impl AnimationPlayer {
+    /// A player for a skeleton of `bone_count` bones, with no graph, unpaused.
     pub fn new(bone_count: usize) -> Self {
         Self {
             graph_state: AnimationGraphState::default(),
@@ -83,6 +92,7 @@ impl AnimationPlayer {
         self.paused = paused;
     }
 
+    /// Whether the player is paused; see [`Self::set_paused`].
     pub fn is_paused(&self) -> bool {
         self.paused
     }
@@ -97,6 +107,7 @@ impl AnimationPlayer {
         self.graph_state.set_node_weight(node_index, weight);
     }
 
+    /// Sets the blackboard parameter `key` to `value`, replacing any value of any type.
     pub fn set_param<T: Reflect>(&mut self, key: Name, value: T) {
         self.blackboard.set(key, value);
     }
@@ -106,38 +117,47 @@ impl AnimationPlayer {
         self.blackboard.set_boxed(key, value);
     }
 
+    /// Sets the `bool` parameter `key`.
     pub fn set_bool_param(&mut self, key: Name, value: bool) {
         self.set_param(key, value);
     }
 
+    /// Sets the `u32` parameter `key`.
     pub fn set_int_param(&mut self, key: Name, value: u32) {
         self.set_param(key, value);
     }
 
+    /// Sets the `f32` parameter `key`.
     pub fn set_float_param(&mut self, key: Name, value: f32) {
         self.set_param(key, value);
     }
 
+    /// Sets the [`Vec2`] parameter `key`.
     pub fn set_vec2_param(&mut self, key: Name, value: Vec2) {
         self.set_param(key, value);
     }
 
+    /// The parameter `key` as `T`, or `None` if it is missing or of another type.
     pub fn get_param<T: Reflect>(&self, key: Name) -> Option<&T> {
         self.blackboard.get::<T>(key)
     }
 
+    /// The `bool` parameter `key`, or `None` if it is missing or of another type.
     pub fn get_bool_param(&self, key: Name) -> Option<bool> {
         self.blackboard.get_bool(key)
     }
 
+    /// The `u32` parameter `key`, or `None` if it is missing or of another type.
     pub fn get_int_param(&self, key: Name) -> Option<u32> {
         self.blackboard.get_int(key)
     }
 
+    /// The `f32` parameter `key`, or `None` if it is missing or of another type.
     pub fn get_float_param(&self, key: Name) -> Option<f32> {
         self.blackboard.get_float(key)
     }
 
+    /// The [`Vec2`] parameter `key`, or `None` if it is missing or of another type.
     pub fn get_vec2_param(&self, key: Name) -> Option<Vec2> {
         self.blackboard.get_vec2(key)
     }
@@ -336,12 +356,15 @@ fn local_of(transform: &Transform) -> Affine3A {
     )
 }
 
+/// The animation graph an entity's [`AnimationPlayer`] plays.
 #[derive(Component)]
 pub struct AnimationHandleComponent {
+    /// The graph asset.
     pub handle: AssetHandle<AnimationGraph>,
 }
 
 impl AnimationHandleComponent {
+    /// Plays the graph `handle` names.
     pub fn new(handle: AssetHandle<AnimationGraph>) -> Self {
         Self { handle }
     }

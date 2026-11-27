@@ -11,6 +11,8 @@ use derive_more::{Deref, DerefMut};
 
 use crate::schedule_groups::Extract;
 
+/// The function that copies data from the main world, the first argument, into the render world,
+/// the second, between their frames.
 pub type ExtractFn = Box<dyn FnMut(&mut World, &mut World) + Send + Sync>;
 
 #[derive(Deref, Default, Resource)]
@@ -27,6 +29,11 @@ impl MainWorld {
 
 /// Moves `main` into `render` as the `MainWorld` resource, runs the
 /// [`Extract`] schedule, then swaps it back out.
+///
+/// # Panics
+///
+/// Panics if a system in the [`Extract`] schedule removes the `MainWorld` resource from
+/// `render`.
 pub fn extract(main: &mut World, render: &mut World) {
     let scratch = main
         .remove_resource::<ScratchMainWorld>()

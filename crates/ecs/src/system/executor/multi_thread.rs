@@ -24,6 +24,8 @@ use crate::{
     world::UnsafeWorldCell,
 };
 
+/// A resource holding the main thread's executor, on which the multi-threaded executor runs systems
+/// that must stay on the main thread.
 #[derive(Resource, Clone)]
 pub struct MainThreadExecutor(pub Arc<ThreadExecutor<'static>>);
 
@@ -150,6 +152,7 @@ impl Environment<'_> {
     fn apply_deferred(&self, systems: &FixedBitSet) {
         profiling::scope!("apply_deferred");
         for system_index in systems.ones() {
+            // SAFETY: no system runs while an exclusive system applies deferred work, so nothing else borrows this one.
             let sys = unsafe { &mut *self.systems[system_index].get() };
             // SAFETY: no system runs while an exclusive system applies deferred work.
             sys.apply(unsafe { self.world_cell.world_mut() });
@@ -183,6 +186,7 @@ impl<'scope, 'env> Context<'scope, 'env> {
     }
 
     fn run_system(self, system_index: usize) {
+        // SAFETY: the executor hands each system index to one thread at a time, so this is its only borrow.
         let sys = unsafe { &mut *self.environment.systems[system_index].get() };
         profiling::scope!(sys.name());
         // SAFETY: the executor starts a system only once no running system conflicts with its access.

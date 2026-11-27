@@ -1,3 +1,6 @@
+//! Tests of the renderer's public behaviour: materials, textures, cameras, shadows, post-processing
+//! and the encodings of render assets.
+
 mod alpha_to_coverage;
 mod ambient_occlusion;
 mod blended_materials;

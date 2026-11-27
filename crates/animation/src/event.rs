@@ -12,6 +12,7 @@ pub trait ClipEvent: Reflect + Clone + Default + Send + Sync + 'static {}
 #[derive(Clone, Debug, Default, PartialEq, Reflect)]
 #[reflect(ClipEvent)]
 pub struct AnimationEvent {
+    /// The name the import gave the event.
     pub name: Name,
 }
 
@@ -19,9 +20,13 @@ impl ClipEvent for AnimationEvent {}
 
 /// Triggered on the player's entity when playback crosses a `S` on a clip.
 pub struct AnimationSignal<S: ClipEvent> {
+    /// The event value on the clip.
     pub signal: S,
+    /// The weight the clip had in the evaluated pose, from 0 to 1.
     pub weight: f32,
+    /// The key's time on the clip, in seconds.
     pub time: f32,
+    /// Whether the pose was mirrored, so a left-side event plays on the right.
     pub mirrored: bool,
 }
 
@@ -32,21 +37,28 @@ impl<S: ClipEvent> EntitySignal for AnimationSignal<S> {}
 /// Where and how strongly a clip event fired.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Fired {
+    /// The weight the clip had in the evaluated pose, from 0 to 1.
     pub weight: f32,
+    /// The key's time on the clip, in seconds.
     pub time: f32,
+    /// Whether the pose was mirrored when the key was crossed.
     pub mirrored: bool,
 }
 
 /// A clip event built from stored data, with what could not be applied to it.
 pub struct BuiltClipEvent {
+    /// The event, of the type the stored data named.
     pub value: Box<dyn Reflect>,
+    /// The stored fields that did not apply to the event.
     pub warnings: Vec<ValueWarning>,
 }
 
 /// How a clip builds an event from stored data and triggers it on an entity.
 #[derive(Clone, Copy)]
 pub struct ReflectClipEvent {
+    /// Builds the event from its stored fields, resolving the asset handles in them.
     pub from_value: fn(&ReflectedValue, &mut LiveLeaves) -> BuiltClipEvent,
+    /// Triggers an [`AnimationSignal`] carrying the event on the entity.
     pub trigger: fn(&dyn Reflect, Fired, Entity, &mut CommandQueue),
 }
 

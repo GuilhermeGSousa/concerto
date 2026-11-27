@@ -46,9 +46,13 @@ impl ComponentSink for MergeRow<'_> {
     }
 }
 
+/// A set of components inserted together; implemented for every [`Component`] and for tuples of
+/// bundles.
 pub trait ComponentBundle: Send + Sync + Sized {
+    /// Returns the id of every component in the bundle.
     fn get_component_ids() -> Vec<ComponentId>;
 
+    /// Returns an empty table with a column for every component in the bundle.
     fn generate_empty_table() -> Table;
 
     /// Registers the requirement tables of every component in the bundle.
@@ -62,8 +66,10 @@ pub trait ComponentBundle: Send + Sync + Sized {
 
 /// Anything that can be spawned: a bundle, or a builder that produces one.
 pub trait IntoBundle: Send + Sync + Sized {
+    /// The bundle this value produces.
     type Bundle: ComponentBundle;
 
+    /// Produces the bundle to spawn or insert.
     fn into_bundle(self) -> Self::Bundle;
 }
 

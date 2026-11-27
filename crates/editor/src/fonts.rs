@@ -44,6 +44,8 @@ pub const ICON_SIZE: f32 = 16.0;
 /// Width of the column a row icon sits in, in logical pixels.
 pub const ICON_COLUMN: f32 = 20.0;
 
+/// Loads the editor's typefaces and icon font, and registers the icons of the engine's own asset
+/// kinds.
 pub struct FontsPlugin;
 
 impl Plugin for FontsPlugin {
@@ -81,6 +83,7 @@ impl AssetIcons {
     }
 }
 
+/// Registers the icon an asset kind shows.
 pub trait AssetIconsAppExt {
     /// Shows `glyph` for assets whose `Asset::name()` is `kind`, in the Asset Browser and on their tabs.
     fn register_asset_icon(&mut self, kind: &str, glyph: char) -> &mut Self;

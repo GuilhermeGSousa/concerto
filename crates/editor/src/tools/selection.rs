@@ -7,12 +7,15 @@ use concerto_ecs::{
     signal::{On, Signal},
 };
 
+/// The entity selected in the edit target's world, which the hierarchy, the inspector and the
+/// viewport all show.
 #[derive(Resource, Default)]
 pub struct Selection {
     current: Option<Entity>,
 }
 
 impl Selection {
+    /// The selected entity, or `None` when nothing is selected.
     pub fn entity(&self) -> Option<Entity> {
         self.current
     }

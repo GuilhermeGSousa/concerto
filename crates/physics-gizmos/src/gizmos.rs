@@ -36,9 +36,15 @@ pub(crate) const CAPTURE_CROSS: f32 = 0.1;
 /// Which physics layers are drawn: every collider, every ragdoll's parts and joint limits, contact points, and what each `BodySense` perceives.
 #[derive(Resource, Clone, Debug, Default, PartialEq)]
 pub struct PhysicsGizmos {
+    /// Draws every collider's shape, coloured by whether its body is static, kinematic, dynamic or
+    /// asleep.
     pub colliders: bool,
+    /// Draws every ragdoll's parts, joint frames, swing cones and twist ranges.
     pub ragdolls: bool,
+    /// Draws a cross at each listed contact point and a line along its normal.
     pub contacts: bool,
+    /// Draws each `BodySense`'s centre of mass, support outline, capture point, velocity and
+    /// impacts.
     pub sensing: bool,
 }
 

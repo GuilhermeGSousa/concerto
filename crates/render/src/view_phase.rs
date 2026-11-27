@@ -15,14 +15,19 @@ use crate::{
 
 /// The mesh one [`PhaseItem`] draws.
 pub struct PhaseMesh {
+    /// The vertex buffer, bound at slot 0.
     pub vertices: wgpu::Buffer,
+    /// The `u32` index buffer.
     pub indices: wgpu::Buffer,
+    /// The number of indices to draw.
     pub index_count: u32,
 }
 
 /// The instances one [`PhaseItem`] draws: a range of the vertex buffer bound at slot 1.
 pub struct PhaseInstances {
+    /// The instance buffer.
     pub buffer: wgpu::Buffer,
+    /// The instances to draw, as indices into the buffer.
     pub range: Range<u32>,
 }
 
@@ -43,8 +48,11 @@ pub struct PhaseItem {
     pub pipeline: wgpu::RenderPipeline,
     /// The bind group at group 0.
     pub bind_group: wgpu::BindGroup,
+    /// The engine bind groups the pipeline takes.
     pub bindings: PhaseBindings,
+    /// The mesh to draw.
     pub mesh: PhaseMesh,
+    /// The instances to draw it at.
     pub instances: PhaseInstances,
     /// How far the item is from the camera; the transparent phase draws the farthest first.
     pub view_distance: f32,

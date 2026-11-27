@@ -34,9 +34,13 @@ const HISTORY_SECONDS: f32 = 1.0;
 #[derive(Component, Reflect, Clone, Debug, PartialEq)]
 #[reflect(Component, Default)]
 pub struct MotionMatchingGizmos {
+    /// Draws the simulated character: its facing at the capsule, and a line to the character.
     pub simulation: bool,
+    /// Draws the features the last search looked for, per channel.
     pub query: bool,
+    /// Draws the features of the frame being played, per channel.
     pub matched: bool,
+    /// Draws the path the simulated character took over the last second.
     pub history: bool,
     #[reflect(skip)]
     trail: VecDeque<(f32, Vec3)>,

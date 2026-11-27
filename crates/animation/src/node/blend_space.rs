@@ -19,6 +19,7 @@ use crate::{
 /// `blackboard.read(&param).copied().unwrap_or(Vec2::ZERO)`.
 #[derive(Debug, Clone, Default, Reflect, serde::Serialize, serde::Deserialize)]
 pub struct BlendInput {
+    /// The blackboard param holding the point to sample at; zero when it is missing.
     pub param: Param<Vec2>,
 }
 
@@ -36,15 +37,19 @@ impl BlendSpace2DNode {
         Self { points, input }
     }
 
+    /// The sample points, one per input, in input order.
     pub fn points(&self) -> &[Vec2] {
         &self.points
     }
 
+    /// The param that drives sampling.
     pub fn input(&self) -> &BlendInput {
         &self.input
     }
 }
 
+/// The state of a [`BlendSpace2DNode`]: the triangulation of its points and the triangle the
+/// param last fell in.
 pub struct BlendSpace2DInstanceNode {
     triangulation: Triangulation2D,
     current_triangulated_point: Option<TriangulatedPoint2D>,
@@ -176,6 +181,8 @@ impl AnimationNode for BlendSpace2DNode {
     }
 }
 
+/// Adds the inputs of a blend space being built by
+/// [`AnimationNodeContext::add_blend_space_2d_input_with`].
 pub struct BlendSpace2DBuilderContext<'a> {
     pub(crate) graph: &'a mut AnimationGraph,
     pub(crate) output_node_index: AnimationNodeIndex,
@@ -203,12 +210,14 @@ impl<'a> BlendSpace2DBuilderContext<'a> {
         }
     }
 
+    /// Adds `node` as an input sampled at `point`.
     pub fn input<T: AnimationNode>(&mut self, node: T, point: Vec2) -> &mut Self {
         self.points.push(point);
         self.nodes.push(AnimationNodeData::of(&node));
         self
     }
 
+    /// Adds a clip node that loops `clip` as an input sampled at `point`.
     pub fn animation_clip_input(
         &mut self,
         clip: AssetHandle<AnimationClip>,

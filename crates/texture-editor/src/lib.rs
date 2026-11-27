@@ -1,3 +1,4 @@
+//! The asset editor of a [`Texture`], as an extension of `concerto-editor`.
 mod derive;
 mod document;
 mod save;

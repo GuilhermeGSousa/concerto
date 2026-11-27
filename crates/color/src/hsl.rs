@@ -6,23 +6,30 @@ use crate::{LinearRgba, Srgba};
 /// 0.0 to 1.0 and are not clamped.
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Hsla {
+    /// The hue in degrees.
     pub h: f32,
+    /// The saturation, nominally 0.0 to 1.0.
     pub s: f32,
+    /// The lightness, nominally 0.0 to 1.0.
     pub l: f32,
+    /// The alpha, 0.0 transparent to 1.0 opaque.
     pub a: f32,
 }
 
 impl Hsla {
+    /// Creates a color from a hue in degrees, saturation, lightness and alpha.
     #[inline]
     pub const fn new(h: f32, s: f32, l: f32, a: f32) -> Self {
         Self { h, s, l, a }
     }
 
+    /// Converts to linear light.
     #[inline]
     pub fn to_linear(self) -> LinearRgba {
         LinearRgba::from(self)
     }
 
+    /// Converts to sRGB-encoded values.
     #[inline]
     pub fn to_srgba(self) -> Srgba {
         Srgba::from(self)

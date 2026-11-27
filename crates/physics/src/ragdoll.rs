@@ -14,16 +14,20 @@ use crate::ActiveBackend;
 /// A rigid pose: where a body or a ragdoll part is, without scale.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct BodyPose {
+    /// World-space position, in metres.
     pub translation: Vec3,
+    /// World-space orientation.
     pub rotation: Quat,
 }
 
 impl BodyPose {
+    /// The pose at the origin with no rotation.
     pub const IDENTITY: Self = Self {
         translation: Vec3::ZERO,
         rotation: Quat::IDENTITY,
     };
 
+    /// Creates a pose from a translation and a rotation.
     pub fn new(translation: Vec3, rotation: Quat) -> Self {
         Self {
             translation,
@@ -31,6 +35,7 @@ impl BodyPose {
         }
     }
 
+    /// Creates a pose at `translation` with no rotation.
     pub fn from_translation(translation: Vec3) -> Self {
         Self::new(translation, Quat::IDENTITY)
     }
@@ -74,15 +79,21 @@ impl Default for BodyPose {
 /// The collision shape of one ragdoll part.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum PartShape {
+    /// A sphere centred on the part.
     Sphere {
+        /// The radius in metres.
         radius: f32,
     },
     /// A capsule along the part's local Y axis: `half_height` is half the length of the cylinder.
     Capsule {
+        /// Half the length of the cylinder between the end caps, in metres.
         half_height: f32,
+        /// The radius of the cylinder and its caps, in metres.
         radius: f32,
     },
+    /// A box centred on the part.
     Box {
+        /// Half the box's size along the part's local axes, in metres.
         half_extents: Vec3,
     },
 }
@@ -113,6 +124,7 @@ impl Default for MotorSettings {
 pub struct JointTarget {
     /// The rotation the part should have relative to its parent part.
     pub rotation: Quat,
+    /// The spring the motor pulls with.
     pub motor: MotorSettings,
 }
 
@@ -160,6 +172,7 @@ pub struct JointSettings {
     pub twist_max: f32,
     /// Friction torque applied while the joint's motor is off, in N·m.
     pub max_friction_torque: f32,
+    /// The spring the motor starts with, used by [`PhysicsBackend::drive_ragdoll_motors`].
     pub motor: MotorSettings,
 }
 
@@ -185,17 +198,20 @@ impl JointSettings {
         self
     }
 
+    /// Sets the lowest and highest twist angles, in radians.
     pub fn with_twist(mut self, twist_min: f32, twist_max: f32) -> Self {
         self.twist_min = twist_min;
         self.twist_max = twist_max;
         self
     }
 
+    /// Sets the friction torque, in N·m, applied while the motor is off.
     pub fn with_max_friction_torque(mut self, max_friction_torque: f32) -> Self {
         self.max_friction_torque = max_friction_torque;
         self
     }
 
+    /// Sets the spring the motor starts with.
     pub fn with_motor(mut self, motor: MotorSettings) -> Self {
         self.motor = motor;
         self
@@ -209,6 +225,7 @@ pub struct PartSettings {
     pub parent: Option<usize>,
     /// The part's pose in the reference pose, the one every part of the ragdoll is described in.
     pub pose: BodyPose,
+    /// The part's collision shape.
     pub shape: PartShape,
     /// The shape's pose relative to the part.
     pub shape_offset: BodyPose,
@@ -241,16 +258,19 @@ impl PartSettings {
         self
     }
 
+    /// Sets the shape's pose relative to the part.
     pub fn with_shape_offset(mut self, shape_offset: BodyPose) -> Self {
         self.shape_offset = shape_offset;
         self
     }
 
+    /// Sets the mass in kg.
     pub fn with_mass(mut self, mass: f32) -> Self {
         self.mass = mass;
         self
     }
 
+    /// Sets the friction coefficient.
     pub fn with_friction(mut self, friction: f32) -> Self {
         self.friction = friction;
         self
@@ -260,6 +280,7 @@ impl PartSettings {
 /// The parts of one ragdoll as plain data, built into a [`BuiltRagdoll`] before use.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RagdollSettings {
+    /// The parts, root first, each after its parent.
     pub parts: Vec<PartSettings>,
     /// The fastest any part may move, in m/s; a part hit harder is slowed to it.
     pub max_speed: f32,
@@ -288,15 +309,18 @@ impl Default for RagdollSettings {
 }
 
 impl RagdollSettings {
+    /// Creates settings with no parts and the default speed limit, layers and solver steps.
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Sets the fastest any part may move, in m/s.
     pub fn with_max_speed(mut self, max_speed: f32) -> Self {
         self.max_speed = max_speed;
         self
     }
 
+    /// Sets the collision layers of every part.
     pub fn with_layers(mut self, layers: CollisionLayers) -> Self {
         self.layers = layers;
         self
@@ -309,6 +333,7 @@ impl RagdollSettings {
         self
     }
 
+    /// Adds a part after the existing ones.
     pub fn with_part(mut self, part: PartSettings) -> Self {
         self.parts.push(part);
         self
@@ -349,12 +374,16 @@ impl RagdollSettings {
 /// Why [`RagdollSettings::build`] refused its settings.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RagdollBuildError {
+    /// The settings have no parts.
     NoParts,
     /// The first part must have no parent and every other part a parent earlier in the list.
     BadParent {
+        /// The index of the offending part.
         part: usize,
     },
+    /// A part's mass is not above zero.
     BadMass {
+        /// The index of the offending part.
         part: usize,
     },
     /// The backend refused the parts: a degenerate shape or joint axis.
@@ -387,6 +416,7 @@ pub struct BuiltRagdoll {
 }
 
 impl BuiltRagdoll {
+    /// The number of parts in each ragdoll created from this recipe.
     pub fn part_count(&self) -> usize {
         self.settings.parts.len()
     }

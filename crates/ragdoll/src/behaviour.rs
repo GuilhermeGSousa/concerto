@@ -52,11 +52,13 @@ impl PartCommand {
         self
     }
 
+    /// Sets a world-space force on the part at its centre of mass, in N.
     pub fn with_force(mut self, force: Vec3) -> Self {
         self.force = force;
         self
     }
 
+    /// Sets a world-space torque on the part, in N·m.
     pub fn with_torque(mut self, torque: Vec3) -> Self {
         self.torque = torque;
         self
@@ -66,7 +68,9 @@ impl PartCommand {
 /// One behaviour's claim on one part for this fixed step.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Claim {
+    /// The name of the claiming behaviour.
     pub behaviour: Name,
+    /// The index of the claimed part in the ragdoll.
     pub part: usize,
     /// The higher priority wins the part; the animated pose is below every claim.
     pub priority: i32,
@@ -74,14 +78,18 @@ pub struct Claim {
     ///
     /// A behaviour fading in or out blends by it.
     pub weight: f32,
+    /// What the behaviour asks of the part.
     pub command: PartCommand,
 }
 
 /// A behaviour that claimed parts in the last fixed step, for reports.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RunningBehaviour {
+    /// The behaviour's name.
     pub name: Name,
+    /// The priority of the behaviour's highest claim.
     pub priority: i32,
+    /// The indices of the parts it claimed, ascending.
     pub parts: Vec<usize>,
 }
 
@@ -178,6 +186,7 @@ pub enum BodyState {
 #[derive(Component, Reflect, Clone, Copy, Debug, Default, PartialEq)]
 #[reflect(Component, Default, SceneComponent)]
 pub struct PhysicalState {
+    /// What the character is doing now; changing it triggers [`BodyStateChanged`].
     pub state: BodyState,
     #[reflect(skip)]
     announced: BodyState,
@@ -186,6 +195,7 @@ pub struct PhysicalState {
 }
 
 impl PhysicalState {
+    /// A character starting in `state`, which triggers no [`BodyStateChanged`] for it.
     pub fn new(state: BodyState) -> Self {
         Self {
             state,
@@ -198,8 +208,11 @@ impl PhysicalState {
 /// A character's `PhysicalState` changed; triggered for every listener, with the character.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BodyStateChanged {
+    /// The character whose state changed.
     pub character: Entity,
+    /// The state before.
     pub from: BodyState,
+    /// The state now.
     pub to: BodyState,
 }
 
@@ -208,15 +221,20 @@ impl Signal for BodyStateChanged {}
 /// How a behaviour ended.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Outcome {
+    /// The behaviour reached its goal, such as a balance that settled.
     Succeeded,
+    /// The behaviour stopped without reaching its goal, such as a balance that lost its footing.
     GaveUp,
 }
 
 /// A behaviour on a character ended by itself; triggered for every listener, so the next behaviour can start.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BehaviourEnded {
+    /// The character the behaviour ran on.
     pub character: Entity,
+    /// The behaviour's name.
     pub behaviour: Name,
+    /// Whether it succeeded or gave up.
     pub outcome: Outcome,
 }
 

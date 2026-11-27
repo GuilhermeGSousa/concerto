@@ -37,23 +37,30 @@ use crate::preview::{ClipPlayback, clip_playback};
 /// Which side of the retarget a preview stage shows.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RigSide {
+    /// The side that plays the clip.
     Source,
+    /// The side posed from the source through the retarget.
     Target,
 }
 
 /// Whether the preview stands both characters in their reference poses or plays the clip through the retarget.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Reflect)]
 pub enum RigPreviewMode {
+    /// Both characters stand in their reference poses.
     #[default]
     Reference,
+    /// The source plays the clip and the target follows through the retarget.
     Clip,
 }
 
 /// What one side of the preview shows: a skeleton, and the scene that carries it when there is one.
 #[derive(Clone)]
 pub struct RigStage {
+    /// The scene that carries the skeleton, or `None` for bones alone.
     pub scene: Option<Scene>,
+    /// The skeleton the side poses.
     pub skeleton: Arc<Skeleton>,
+    /// The skeleton's asset id; the scene's skeleton is posed only when it is this one.
     pub skeleton_id: AssetId,
 }
 
@@ -76,23 +83,31 @@ impl RigStage {
 
 /// Replaces what one side of the preview shows; `None` leaves that side empty.
 pub struct ShowRigStage {
+    /// The side to replace.
     pub side: RigSide,
+    /// What the side shows, or `None` for nothing.
     pub stage: Option<RigStage>,
 }
 impl Signal for ShowRigStage {}
 
 /// Sets where along X each side stands, without spawning either again.
 pub struct PlaceRigSides {
+    /// The source's X position, in metres.
     pub source: f32,
+    /// The target's X position, in metres.
     pub target: f32,
 }
 impl Signal for PlaceRigSides {}
 
 /// Sets a side's reference pose, `None` being the rest pose, its root bone, and each bone's colour in skeleton order.
 pub struct SetRigSide {
+    /// The side to set.
     pub side: RigSide,
+    /// The reference pose in skeleton order, or `None` for the rest pose.
     pub reference: Option<Vec<JointPose>>,
+    /// The index of the root bone in the skeleton, if the rig names one.
     pub root: Option<usize>,
+    /// Each bone's colour in skeleton order; a bone past the end is grey.
     pub colors: Vec<Color>,
 }
 impl Signal for SetRigSide {}
@@ -133,8 +148,11 @@ impl Signal for SetPoseRetarget {}
 
 /// Sets what the preview poses, whether the characters' roots move, and whether their bones are drawn.
 pub struct SetRigPreview {
+    /// Whether the characters stand in their reference poses or play the clip.
     pub mode: RigPreviewMode,
+    /// Whether the characters' roots move.
     pub root_motion: bool,
+    /// Whether the bones are drawn.
     pub bones: bool,
 }
 impl Signal for SetRigPreview {}

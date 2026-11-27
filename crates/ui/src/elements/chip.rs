@@ -20,6 +20,7 @@ pub struct Chip {
 }
 
 impl UITheme {
+    /// A chip showing `label` in the small font size.
     pub fn chip(&self, label: impl Into<String>) -> Chip {
         Chip {
             theme: self.clone(),
@@ -42,6 +43,7 @@ impl UITheme {
 }
 
 impl Chip {
+    /// Marks the chip with the accent when `selected`.
     pub fn selected(mut self, selected: bool) -> Self {
         self.selected = selected;
         self

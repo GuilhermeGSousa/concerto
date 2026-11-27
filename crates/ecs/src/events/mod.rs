@@ -1,6 +1,11 @@
+/// [`EventChannel`](event_channel::EventChannel), the resource that holds one event type's double
+/// buffer.
 pub mod event_channel;
+/// [`EventCursor`](event_cursor::EventCursor), one reader's position in an event stream.
 pub mod event_cursor;
+/// [`EventReader`](event_reader::EventReader), the system parameter that reads events.
 pub mod event_reader;
+/// [`EventWriter`](event_writer::EventWriter), the system parameter that sends events.
 pub mod event_writer;
 
 pub use concerto_ecs_macros::Event;

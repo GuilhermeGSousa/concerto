@@ -1,3 +1,6 @@
+//! The `Reflect` derive macro; use it through `concerto_reflect::Reflect`, or
+//! `concerto::reflect::Reflect` from a crate that depends on `concerto`.
+
 use proc_macro::TokenStream;
 use proc_macro_crate::{FoundCrate, crate_name};
 use quote::{quote, quote_spanned};
@@ -36,6 +39,12 @@ fn caller_reflect_root() -> proc_macro2::TokenStream {
     reflect_root(&dependencies)
 }
 
+/// Derives `Reflect`, or `Leaf` encoded through serde under `#[reflect(opaque)]`.
+///
+/// # Panics
+///
+/// Panics if a field of a variant with named fields has no name, which syn rules out when it
+/// parses the input.
 #[proc_macro_derive(Reflect, attributes(reflect))]
 pub fn derive_reflect(input: TokenStream) -> TokenStream {
     let ast = syn::parse_macro_input!(input as DeriveInput);

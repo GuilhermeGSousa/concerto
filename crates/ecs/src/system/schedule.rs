@@ -76,6 +76,7 @@ pub struct Schedule {
 }
 
 impl Schedule {
+    /// Creates an empty schedule.
     pub fn new() -> Schedule {
         Self::default()
     }
@@ -584,6 +585,7 @@ define_label!(
     ScheduleLabel
 );
 
+/// A [`ScheduleLabel`] interned for cheap copying and comparison.
 pub type InternedScheduleLabel = Interned<dyn ScheduleLabel>;
 
 /// Every uncompiled [`Schedule`] of a world, keyed by [`ScheduleLabel`].
@@ -649,14 +651,17 @@ pub struct CompiledSchedules {
 }
 
 impl CompiledSchedules {
+    /// Returns the compiled schedule labelled `label`, or `None` when there is none.
     pub fn get(&self, label: impl ScheduleLabel) -> Option<&CompiledSchedule> {
         self.compiled_schedules.get(&label.intern())
     }
 
+    /// Returns the compiled schedule labelled `label` mutably, or `None` when there is none.
     pub fn get_mut(&mut self, label: impl ScheduleLabel) -> Option<&mut CompiledSchedule> {
         self.compiled_schedules.get_mut(&label.intern())
     }
 
+    /// Takes the compiled schedule labelled `label` out, or returns `None` when there is none.
     pub fn remove(&mut self, label: impl ScheduleLabel) -> Option<CompiledSchedule> {
         self.compiled_schedules.remove(&label.intern())
     }

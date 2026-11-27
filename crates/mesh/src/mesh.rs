@@ -8,24 +8,31 @@ use glam::{Mat4, Vec2, Vec3};
 
 use crate::vertex::Vertex;
 
+/// An indexed triangle mesh.
 #[derive(Asset, serde::Serialize, serde::Deserialize)]
 pub struct Mesh {
+    /// The vertices, in mesh-local space.
     pub vertices: Vec<Vertex>,
+    /// Three indices into `vertices` per triangle.
     pub indices: Vec<u32>,
 }
 
 /// An axis-aligned bounding box in mesh-local or world space.
 #[derive(Debug, Clone, Copy, PartialEq, Component)]
 pub struct Aabb {
+    /// The corner with the smallest coordinate on each axis.
     pub min: Vec3,
+    /// The corner with the largest coordinate on each axis.
     pub max: Vec3,
 }
 
 impl Aabb {
+    /// Returns the point midway between the corners.
     pub fn center(self) -> Vec3 {
         (self.min + self.max) * 0.5
     }
 
+    /// Returns the full size of the box on each axis.
     pub fn extent(self) -> Vec3 {
         self.max - self.min
     }
@@ -68,6 +75,13 @@ impl Mesh {
         Some(Aabb { min, max })
     }
 
+    /// Adds each triangle's face normal to its vertices' normals and normalizes the average.
+    ///
+    /// The normals should start at zero. Returns `self` for chaining.
+    ///
+    /// # Panics
+    ///
+    /// Panics if an index is out of range of `vertices`.
     pub fn compute_normals(&mut self) -> &mut Self {
         let mut triangles_included = vec![0u32; self.vertices.len()];
 
@@ -100,6 +114,15 @@ impl Mesh {
         self
     }
 
+    /// Sets each vertex's tangent and bitangent from the triangles' texture coordinates.
+    ///
+    /// When every UV is zero, it picks any tangent perpendicular to the normal instead. Otherwise
+    /// the tangents should start at zero; each vertex gets the average over its triangles.
+    /// Returns `self` for chaining.
+    ///
+    /// # Panics
+    ///
+    /// Panics if an index is out of range of `vertices`.
     pub fn compute_tangents(&mut self) -> &mut Self {
         let has_uvs = self.vertices.iter().any(|v| v.uv_coords != [0.0, 0.0]);
 
@@ -162,8 +185,10 @@ impl Mesh {
     }
 }
 
+/// Draws a [`Mesh`] at the entity's transform.
 #[derive(Component, Reflect, Default)]
 #[reflect(Component, Default, SceneComponent)]
 pub struct MeshComponent {
+    /// The mesh to draw.
     pub handle: AssetHandle<Mesh>,
 }

@@ -28,8 +28,11 @@ use uuid::Uuid;
 #[derive(Clone, Debug, Default, PartialEq, Reflect, Serialize, Deserialize)]
 #[reflect(AnimationNode, Default)]
 pub struct ProceduralMotionNode {
+    /// The motions, each over the bones of its own mask.
     pub channels: Vec<ProceduralMotionChannel>,
+    /// The seed mixed with the param's to pick each channel's phase and noise.
     pub seed: u64,
+    /// The `u64` blackboard param mixed into the seed, so each character can move out of step.
     pub seed_param: Option<Param<u64>>,
 }
 
@@ -68,11 +71,17 @@ impl ProceduralMotionNode {
 /// One motion: the bones it moves, its waveform and frequency in hertz, its peak rotation in radians about each model axis, and the param that scales it.
 #[derive(Clone, Debug, PartialEq, Reflect, Serialize, Deserialize)]
 pub struct ProceduralMotionChannel {
+    /// The mask whose bone weights scale the motion on each bone.
     pub mask: AssetHandle<BoneMask>,
+    /// How the motion varies over time.
     pub waveform: Waveform,
+    /// How fast the motion goes, in hertz; 0 or less holds still.
     pub frequency: f32,
+    /// The peak rotation in radians about each model axis; a non-finite axis counts as 0.
     pub amplitude: Vec3,
+    /// The `f32` blackboard param the motion is scaled by; 1 when absent, 0 when not positive.
     pub magnitude_param: Option<Param<f32>>,
+    /// The halflife in seconds over which the magnitude eases to the param's value; 0 snaps.
     pub magnitude_halflife: f32,
 }
 
@@ -196,7 +205,11 @@ pub enum Waveform {
     /// A sine, the same on every axis: breathing.
     Sine,
     /// Fractal gradient noise, its own on each axis: sway and tremor.
-    Noise { octaves: u32 },
+    Noise {
+        /// The number of noise octaves, each twice the frequency and half the amplitude of the
+        /// one before; clamped to 1 to 8.
+        octaves: u32,
+    },
 }
 
 impl Default for Waveform {

@@ -18,7 +18,10 @@ use crate::{
 use derive_more::{Deref, DerefMut};
 use typle::typle;
 
+/// An argument passed to a system each time it runs, before its parameters; `()` for ordinary
+/// systems.
 pub trait SystemArg: Send + Sync {
+    /// The argument with its borrow lifetime set to `'i`.
     type Arg<'i>: SystemArg;
 }
 
@@ -30,15 +33,20 @@ impl SystemArg for () {
 /// Why a system input declined, which skips its system or listener.
 #[derive(Debug, Clone)]
 pub struct ValidationError {
+    /// The type name of the input that declined.
     pub input: &'static str,
+    /// Whether the decline is silent or warns.
     pub kind: ValidationKind,
+    /// Why the input declined.
     pub message: Cow<'static, str>,
 }
 
 /// Whether a decline is expected and silent, or data the system needs is missing and warns.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ValidationKind {
+    /// The input chose not to run now; the system is skipped silently.
     Skip,
+    /// Data the system needs is missing; the system is skipped with a warning.
     Missing,
 }
 
@@ -70,10 +78,18 @@ impl fmt::Display for ValidationError {
 
 impl std::error::Error for ValidationError {}
 
+/// A system parameter: what it borrows from the world for one run, and the access that borrow
+/// needs.
+///
+/// Implement it to add a new kind of parameter; [`fill_access`](SystemInput::fill_access) must
+/// declare everything [`get_data`](SystemInput::get_data) touches.
 pub trait SystemInput {
+    /// What the parameter keeps between runs.
     type State: Send + Sync + Sized;
+    /// What the system receives for one run.
     type Data<'world, 'state>;
 
+    /// Creates the parameter's state, registering what it needs on `world`.
     fn init_state(world: &mut World) -> Self::State;
 
     /// Builds the input's data for one run with `ticks`, or declines with why.
@@ -94,8 +110,11 @@ pub trait SystemInput {
     /// Runs after the system's body ran with this input's data; a skipped run never calls it.
     fn ran(_state: &mut Self::State) {}
 
+    /// Applies changes the parameter deferred during the run, such as queued commands, with
+    /// exclusive access.
     fn apply(_state: &mut Self::State, _world: &mut World) {}
 
+    /// Declares what the parameter reads and writes.
     fn fill_access(_meta: &mut SystemMetadata, access: &mut SystemAccess);
 
     /// The access of an initialized input, which may depend on its state; the default is [`SystemInput::fill_access`].
@@ -108,6 +127,7 @@ pub trait SystemInput {
     }
 }
 
+/// A [`SystemInput`] that never writes, so it can be fetched through a shared world.
 pub trait ReadOnlySystemInput: SystemInput {}
 
 #[typle(Tuple for 0..=12)]
@@ -124,6 +144,7 @@ pub struct InputState<P: SystemInput> {
 }
 
 impl<P: ReadOnlySystemInput + 'static> InputState<P> {
+    /// Creates the input's state on `world`.
     pub fn new(world: &mut World) -> Self {
         Self {
             state: P::init_state(world),
@@ -197,10 +218,14 @@ where
     }
 }
 
+/// The data a parameter `P` gives a system for one run.
 pub type SystemInputData<'w, 's, P> = <P as SystemInput>::Data<'w, 's>;
 
+/// The argument of type `A` with its borrow lifetime set to `'i`.
 pub type SystemArgData<'i, A> = <A as SystemArg>::Arg<'i>;
 
+/// A parameter that wraps the data of `P`, so a generic parameter type can be named where a
+/// concrete one is expected.
 pub struct StaticSystemInput<'w, 's, P: SystemInput>(SystemInputData<'w, 's, P>);
 
 impl<'w, 's, P: SystemInput> Deref for StaticSystemInput<'w, 's, P> {
@@ -218,6 +243,7 @@ impl<'w, 's, P: SystemInput> DerefMut for StaticSystemInput<'w, 's, P> {
 }
 
 impl<'w, 's, P: SystemInput> StaticSystemInput<'w, 's, P> {
+    /// Returns the wrapped data.
     pub fn into_inner(self) -> SystemInputData<'w, 's, P> {
         self.0
     }
@@ -287,6 +313,8 @@ impl ForeignTicks {
     }
 }
 
+/// A value owned by one system and kept between its runs, created with [`FromWorld`] when the
+/// system is initialized.
 #[derive(Debug, Deref, DerefMut)]
 pub struct SystemLocal<'s, T: FromWorld + Send + 'static>(pub(crate) &'s mut T);
 

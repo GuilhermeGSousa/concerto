@@ -18,8 +18,11 @@ use crate::document::DefinitionDocument;
 /// What an entry's clip holds and how much of `skeleton` it drives, or why it could not be read.
 #[derive(Clone, Debug, PartialEq)]
 pub struct EntryFacts {
+    /// The clip that was read.
     pub clip: AssetId,
+    /// The skeleton the clip was read against.
     pub skeleton: AssetId,
+    /// What the clip holds, or why it could not be read.
     pub read: Result<ClipFacts, String>,
 }
 

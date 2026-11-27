@@ -32,6 +32,7 @@ impl Contacts {
         self.contacts.iter()
     }
 
+    /// Whether no body touched this one in the last fixed step.
     pub fn is_empty(&self) -> bool {
         self.contacts.is_empty()
     }
@@ -73,6 +74,7 @@ fn set_reporting(mut world: RestrictedWorld, context: ComponentLifecycleContext,
 
 /// A solid body began touching the body of the entity this signal is aimed at.
 pub struct ContactStart {
+    /// The entity of the other body, when it has one.
     pub other: Option<Entity>,
 }
 
@@ -81,6 +83,7 @@ impl EntitySignal for ContactStart {}
 
 /// A solid body stopped touching the body of the entity this signal is aimed at, or went away while touching it.
 pub struct ContactEnd {
+    /// The entity of the other body, when it has one.
     pub other: Option<Entity>,
 }
 

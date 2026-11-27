@@ -8,14 +8,23 @@ use crate::vertex::UIVertex;
 /// A fill the UI shader computes per pixel in place of `color`'s RGB.
 #[derive(Clone, Copy, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum UIGradient {
+    /// No gradient: `color` fills the node.
     #[default]
     None,
     /// Saturation from 0 at the left to 1 at the right, value from 1 at the top to 0 at the bottom, at `hue` degrees, in sRGB.
-    SaturationValue { hue: f32 },
+    SaturationValue {
+        /// The hue, in degrees.
+        hue: f32,
+    },
     /// Hue from 0 to 360 degrees, left to right, at full saturation and value.
     Hue,
     /// `color`, in sRGB, from alpha 0 at the left to 1 at the right, over a checkerboard of `cell` logical pixels.
-    Alpha { color: Srgba, cell: f32 },
+    Alpha {
+        /// The colour faded in.
+        color: Srgba,
+        /// The side of a checkerboard square, in logical pixels.
+        cell: f32,
+    },
 }
 
 /// Material for UI elements.

@@ -156,11 +156,34 @@ fn twins(skeleton: &Skeleton) -> Result<Box<[u16]>, MirrorError> {
 /// Why a skeleton cannot be mirrored, or a pose does not fit its mirror.
 #[derive(Clone, Debug, PartialEq)]
 pub enum MirrorError {
+    /// The mirror axis is zero or not finite.
     InvalidAxis(Vec3),
-    MissingTwin { joint: String, twin: String },
-    TwinParents { joint: String },
-    Asymmetric { joint: String, distance: f32 },
-    BoneCountMismatch { expected: usize, actual: usize },
+    /// A bone named for one side has no bone named for the other.
+    MissingTwin {
+        /// The bone's name.
+        joint: String,
+        /// The name its twin would have, `Left` and `Right` swapped.
+        twin: String,
+    },
+    /// A bone and its twin have parents that are not each other's twins.
+    TwinParents {
+        /// The bone's name.
+        joint: String,
+    },
+    /// The rest pose is not symmetric across the mirror plane.
+    Asymmetric {
+        /// The bone whose rest position is off its twin's reflection.
+        joint: String,
+        /// How far off it is, in model space units.
+        distance: f32,
+    },
+    /// A pose has a different number of joints than the skeleton has bones.
+    BoneCountMismatch {
+        /// The skeleton's bone count.
+        expected: usize,
+        /// The pose's joint count.
+        actual: usize,
+    },
 }
 
 impl fmt::Display for MirrorError {

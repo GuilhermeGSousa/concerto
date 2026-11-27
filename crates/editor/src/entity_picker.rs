@@ -1,3 +1,5 @@
+//! The inspector's editor of a [`SceneEntityRef`]: a button naming the entity, which opens a menu
+//! of the edited scene's entities.
 use std::collections::{HashMap, HashSet};
 
 use concerto_app::{App, Plugin, schedule_groups::LateUpdate};

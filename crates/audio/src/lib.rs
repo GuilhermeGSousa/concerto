@@ -1,3 +1,6 @@
+//! Sound playback: audio clips imported from sources, played by [`AudioPlayer`] entities on the
+//! buses of an [`AudioMixer`].
+
 mod audio;
 mod clip;
 mod importer;

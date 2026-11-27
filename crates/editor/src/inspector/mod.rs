@@ -1,3 +1,5 @@
+//! The inspector panel: the selected entity's name and component cards, a document's values, and
+//! the property editors that show and edit them.
 use concerto_app::{
     App, Plugin,
     schedule_groups::{LateUpdate, Startup, Update},
@@ -101,6 +103,7 @@ pub(crate) use write::{
     set_value,
 };
 
+/// The id the inspector panel is registered under in the [`PanelRegistry`].
 pub const PANEL_ID: &str = "concerto.ecs";
 
 #[derive(SystemSet, Clone, PartialEq, Eq, Hash, Debug)]
@@ -151,6 +154,11 @@ struct ComponentStack {
     registry_tick: Option<concerto_ecs::component::Tick>,
 }
 
+/// Adds the inspector panel, its [`InspectorRegistry`] of property editors, and the systems that
+/// build its cards and send their edits.
+///
+/// Register it before [`ReflectRowsPlugin`] and before any call to
+/// [`EditableApp::register_property_editor`].
 pub struct InspectorPlugin;
 
 impl Plugin for InspectorPlugin {
@@ -287,6 +295,8 @@ fn build_panel(mut cmd: CommandQueue, registry: Res<PanelRegistry>, theme: Res<U
     }
 }
 
+/// Spawns the inspector's name field and card column under `parent`, for a panel or a test that
+/// hosts it outside the dock.
 pub fn spawn_panel(cmd: &mut CommandQueue, parent: Entity, theme: &UITheme) {
     cmd.entity(parent)
         .add_child_with(form_column(theme), |mut details| {

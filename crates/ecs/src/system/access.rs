@@ -13,10 +13,12 @@ pub struct QueryShape {
 }
 
 impl QueryShape {
+    /// Requires matches to have the component `component`.
     pub fn require(&mut self, component: TypeId) {
         self.with.insert(component);
     }
 
+    /// Requires matches not to have the component `component`.
     pub fn exclude(&mut self, component: TypeId) {
         self.without.insert(component);
     }
@@ -46,6 +48,10 @@ impl QueryAccess {
     }
 }
 
+/// What a system reads and writes: components, resources, or the whole world.
+///
+/// The scheduler runs two systems at once only when [`SystemAccess::are_disjoint`] says their
+/// access cannot conflict.
 #[derive(Default, Clone)]
 pub struct SystemAccess {
     queries: Vec<QueryAccess>,
@@ -62,46 +68,57 @@ pub struct SystemAccess {
 }
 
 impl SystemAccess {
+    /// Records that the system reads the component `T`.
     pub fn read_component<T: Component>(&mut self) {
         self.name::<T>();
         self.component_reads.insert(TypeId::of::<T>());
     }
 
+    /// Records that the system writes the component `T`.
     pub fn write_component<T: Component>(&mut self) {
         self.name::<T>();
         self.component_writes.insert(TypeId::of::<T>());
     }
 
+    /// Records that the system reads the resource `T`.
     pub fn read_resource<T: Resource>(&mut self) {
         self.name::<T>();
         self.resource_reads.insert(TypeId::of::<T>());
     }
 
+    /// Records that the system writes the resource `T`.
     pub fn write_resource<T: Resource>(&mut self) {
         self.name::<T>();
         self.resource_writes.insert(TypeId::of::<T>());
     }
 
+    /// Records that the system reads every component.
     pub fn read_all_components(&mut self) {
         self.reads_all_components = true;
     }
 
+    /// Records that the system reads the whole world.
     pub fn read_world(&mut self) {
         self.reads_all = true;
     }
 
+    /// Records that the system takes the world exclusively, so nothing else runs beside it.
     pub fn write_world(&mut self) {
         self.writes_all = true;
     }
 
+    /// Records that the system queues changes, such as commands, that must be applied after it
+    /// runs.
     pub fn set_needs_apply(&mut self) {
         self.needs_apply = true;
     }
 
+    /// Returns whether the system queues changes that must be applied after it runs.
     pub fn needs_apply(&self) -> bool {
         self.needs_apply
     }
 
+    /// Returns whether the system takes the world exclusively.
     pub fn is_exclusive(&self) -> bool {
         self.writes_all
     }
@@ -111,6 +128,8 @@ impl SystemAccess {
         self.reads_all || self.writes_all
     }
 
+    /// Returns whether systems with access `a` and `b` can run at the same time: neither writes
+    /// what the other reads or writes.
     pub fn are_disjoint(a: &Self, b: &Self) -> bool {
         if a.writes_all || b.writes_all {
             return false;
@@ -293,6 +312,7 @@ impl SystemAccess {
         })
     }
 
+    /// Merges `other` into this access, keeping the first parameter conflict either recorded.
     pub fn combine(&mut self, other: Self) {
         self.queries.extend(other.queries);
         self.names.extend(other.names);

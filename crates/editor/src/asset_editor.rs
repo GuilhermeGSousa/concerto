@@ -23,6 +23,7 @@ use crate::scene::{SaveFailed, SceneSaved};
 
 /// Installs an editor's components when its document is created.
 pub trait AssetEditor: Send + Sync + 'static {
+    /// Inserts this editor's components on a new document; `editor` is the document's entity.
     fn build(&self, _editor: &mut EntityCommandQueue) {}
     /// Whether this editor's tabs show a close button.
     fn closable(&self) -> bool {
@@ -45,6 +46,7 @@ pub trait AssetEditor: Send + Sync + 'static {
 /// What an asset editor's preview `App` adds to the game's recipe.
 #[derive(Clone, Copy)]
 pub struct PreviewSpec {
+    /// Adds the editor's preview plugins to the `App`, after the game's recipe.
     pub build: fn(&mut App),
 }
 
@@ -120,6 +122,11 @@ pub fn valid_asset_name(name: &str) -> Result<(), String> {
 }
 
 impl AssetEditorRegistry {
+    /// Registers `E` as the editor of documents of the asset type `T`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `T` already has an editor.
     pub fn register<T: Asset, E: AssetEditor + Default>(&mut self) -> Result<()> {
         if self.editors.contains_key(T::name()) {
             bail!("an editor is already registered for {}", T::name());
@@ -218,6 +225,11 @@ impl AssetEditorRegistry {
 
 /// Application convenience API for asset editor registration.
 pub trait AssetEditorAppExt {
+    /// Registers `E` as the editor of `T` in the app's [`AssetEditorRegistry`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when [`AssetEditorRegistry`] is not installed or `T` already has an editor.
     fn register_asset_editor<T: Asset, E: AssetEditor + Default>(&mut self) -> Result<&mut Self>;
     /// Registers `E` for `T`, and lets the content browser create a new `T` with `T::new_asset`.
     ///
@@ -247,14 +259,20 @@ impl AssetEditorAppExt for App {
     }
 }
 
+/// An open document: one tab, the asset it shows, and the request to show another.
 #[derive(Component, Clone)]
 pub struct EditorDocument {
+    /// The asset kind, which names the editor that owns the document.
     pub asset_type: &'static str,
     /// Tab title retained even if the initial load fails.
     pub title: String,
+    /// The asset the document shows, `None` until its first load succeeds.
     pub current: Option<AssetEntry>,
+    /// The asset the document was asked to show and is still loading.
     pub pending: Option<AssetEntry>,
+    /// When the document was opened, relative to the others; tabs are ordered by it.
     pub order: u64,
+    /// The status text the document shows, such as the outcome of its last load or save.
     pub status: String,
     /// The last request that failed to load, until a request replaces it.
     pub failed: Option<AssetEntry>,
@@ -296,7 +314,9 @@ pub(crate) fn request_save(
 
 /// What a save wrote: `asset` is what the document now shows, and `written` every file written.
 pub struct SavedFiles {
+    /// The asset the document shows after the save.
     pub asset: AssetEntry,
+    /// Every asset the save wrote, `asset` among them.
     pub written: Vec<AssetEntry>,
 }
 
@@ -358,27 +378,42 @@ pub(crate) fn report_saves_as_written(
     }
 }
 
+/// The active document, the front tab, or `None` when no document is open.
 #[derive(Resource, Default, Deref)]
 pub struct ActiveEditor(pub Option<Entity>);
 
+/// Marks a UI entity that belongs to a document, such as a host of its widgets, so it is despawned
+/// when the document closes.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct EditorOwned(pub Entity);
 
+/// The UI parents a document's editor builds its widgets under, one per panel region, shown while
+/// the document is active.
 #[derive(Component, Default, Clone, Copy)]
 pub struct EditorHosts {
+    /// In the viewport's region, or `None` for an editor with a preview or a form.
     pub canvas: Option<Entity>,
+    /// In the left panel's region, or `None` for a form editor.
     pub left: Option<Entity>,
+    /// In the inspector's region.
     pub inspector: Option<Entity>,
+    /// In the bottom strip, beside the Asset Browser, for an editor whose
+    /// [`AssetEditor::bottom_host`] is `true`.
     pub bottom: Option<Entity>,
 }
 
+/// A request to open, activate or close documents, queued on [`AssetEditorCommands`].
 pub enum AssetEditorCommand {
     /// Opens an asset of the current project; one that is not in it is ignored.
     Open(AssetEntry),
+    /// Makes the document the active one.
     Activate(Entity),
+    /// Closes the document, once the unsaved-changes prompt allows it; a game playing on it stops.
     Close(Entity),
+    /// Closes every document, without asking about unsaved changes.
     CloseAll,
 }
+/// The queue of [`AssetEditorCommand`]s, run in order each update.
 #[derive(Resource, Default)]
 pub struct AssetEditorCommands(pub VecDeque<AssetEditorCommand>);
 

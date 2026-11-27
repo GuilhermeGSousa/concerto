@@ -28,8 +28,11 @@
 //! cameras.get_entity_mut(shot).unwrap().set_enabled(false);  // hands control back
 //! ```
 
+/// [`CameraDirector`], the stack of virtual cameras, and the systems that drive the main camera.
 pub mod director;
+/// [`MainCamera`], the marker of the level's camera.
 pub mod main_camera;
+/// [`VirtualCamera`] and the pose, lens and blend types it is made of.
 pub mod virtual_camera;
 
 use concerto_app::{App, Plugin, edit_time::AtEditTime, schedule_groups::Update};

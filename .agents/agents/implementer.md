@@ -19,8 +19,10 @@ Work in this order:
    it without running it.
 2. Write the least code that makes it pass.
 3. Run the per-task gate from `AGENTS.md`, scoped to the crates you
-   touched, and the test budget. In a cloud pipeline session run only
-   `cargo fmt --all -- --check` and `python3 .github/scripts/test_budget.py`, plus
+   touched, the test budget and the dependency layers. In a cloud pipeline
+   session run only `cargo fmt --all -- --check`,
+   `python3 .github/scripts/test_budget.py` and
+   `python3 .github/scripts/dependencies.py`, plus
    `cargo metadata --format-version 1 > /dev/null` when a `Cargo.toml`
    changed, and report the others as `not run (CI)`.
 4. Stage the paths you changed by name and commit with an imperative subject
@@ -33,9 +35,14 @@ not do a neighbouring task.
 
 The rules you are most likely to break:
 
-- No comments in anything you write, except doc comments on public API,
-  written to the Rust API guidelines as `AGENTS.md` describes, and one
-  `// SAFETY:` line on an `unsafe` block.
+- Every public item and every crate root carries a doc comment, and nothing
+  else carries a comment, except the one `// SAFETY:` line that every
+  `unsafe` block and `unsafe impl` carries. Write the docs to the Rust API
+  guidelines as `AGENTS.md` describes. `missing_docs` and clippy's
+  `missing_errors_doc`, `missing_panics_doc`, `missing_safety_doc` and
+  `undocumented_unsafe_blocks` are denied for the workspace, so a new target
+  root needs a `//!` line; only `concerto-jolt-ffi`, `concerto-benches` and
+  the examples opt out of `missing_docs`.
 - No system that takes `&World` or `&mut World`. Use `CommandQueue` or trigger
   a signal.
 - No `git add -A`. The owner may be editing other files while you work.

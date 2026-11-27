@@ -59,12 +59,18 @@ pub trait FeatureChannel: Reflect + DynCloneChannel + Send + Sync + 'static {
 /// `Stored` is its registered type name with the stored value, as a load
 /// decodes it; `Live` is the channel built from it by [`load`](Self::load).
 pub enum FeatureChannelData {
+    /// Read from a file, not yet built into the channel's type.
     Stored {
+        /// The registered short name of the channel's type.
         type_name: String,
+        /// The channel's reflected fields.
         value: ReflectedValue,
     },
+    /// Built into the channel's type, ready to extract.
     Live {
+        /// The registered short name of the channel's type.
         type_name: String,
+        /// The built channel.
         channel: Box<dyn FeatureChannel>,
     },
 }
@@ -214,6 +220,7 @@ fn short_name(type_path: &str) -> &str {
 
 /// Boxes a copy of a feature channel; every `Clone` channel has it.
 pub trait DynCloneChannel {
+    /// A boxed copy of the channel.
     fn dyn_clone(&self) -> Box<dyn FeatureChannel>;
 }
 
@@ -228,9 +235,27 @@ impl<T: FeatureChannel + Clone> DynCloneChannel for T {
 /// A `Ring` lies flat in the bone's ground plane.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum FeatureShape {
-    Ring { center: Vec3, radius: f32 },
-    Line { start: Vec3, end: Vec3 },
-    Arrow { start: Vec3, end: Vec3 },
+    /// A circle.
+    Ring {
+        /// The centre, relative to the simulation bone.
+        center: Vec3,
+        /// The radius, in metres.
+        radius: f32,
+    },
+    /// A line segment.
+    Line {
+        /// One end, relative to the simulation bone.
+        start: Vec3,
+        /// The other end, relative to the simulation bone.
+        end: Vec3,
+    },
+    /// An arrow from `start` pointing at `end`.
+    Arrow {
+        /// The tail, relative to the simulation bone.
+        start: Vec3,
+        /// The head, relative to the simulation bone.
+        end: Vec3,
+    },
 }
 
 /// What a channel reads.
@@ -239,18 +264,27 @@ pub enum FeatureShape {
 /// [`FrameContext::trajectory`]; `Pose` channels read the pose too.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ChannelSource {
+    /// The channel reads the pose as well as the simulation bone and the trajectory.
     Pose,
+    /// The channel reads only the simulation bone and the trajectory.
     Trajectory,
 }
 
 /// Everything a channel reads to extract the features of one frame, baked offline or queried online.
 pub struct FrameContext<'a> {
+    /// The skeleton the pose is of.
     pub skeleton: &'a Skeleton,
+    /// Each bone's local pose, parentless bones relative to the simulation bone; empty online.
     pub local_pose: &'a [JointPose],
+    /// Each bone's model-space transform, in bone order; empty online.
     pub model_pose: &'a [Transform],
+    /// Each bone's model-space velocity in metres per second, in bone order; empty online.
     pub model_velocities: &'a [Vec3],
+    /// The simulation bone's transform, in model space when baking and world space online.
     pub simulation: Transform,
+    /// The simulation bone's velocities.
     pub body: BodyMotion,
+    /// The trajectory samples ahead of the frame, in the same space as `simulation`.
     pub trajectory: &'a [TrajectorySample],
 }
 
@@ -260,7 +294,9 @@ pub struct FrameContext<'a> {
 /// bone's own frame.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct BodyMotion {
+    /// The linear velocity, in metres per second.
     pub velocity: Vec3,
+    /// The angular velocity, as a scaled axis in radians per second.
     pub angular_velocity: Vec3,
 }
 
@@ -306,7 +342,17 @@ pub fn preview_features(
 /// Builds a live [`FeatureChannel`] from a stored value and stores one back.
 #[derive(Clone, Copy)]
 pub struct ReflectFeatureChannel {
+    /// Builds the channel from its stored fields.
+    ///
+    /// # Errors
+    ///
+    /// Returns the reason the stored fields do not apply to the channel's type.
     pub from_value: fn(&ReflectedValue) -> Result<Box<dyn FeatureChannel>, String>,
+    /// Stores the channel's fields.
+    ///
+    /// # Errors
+    ///
+    /// Returns an [`EncodeError`] when the channel does not encode through reflection.
     pub to_value: fn(&dyn FeatureChannel) -> Result<ReflectedValue, EncodeError>,
 }
 

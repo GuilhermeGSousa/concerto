@@ -32,23 +32,32 @@ const RING_SEGMENTS: usize = 48;
 const EDGE_ON: f32 = 0.05;
 const HIGHLIGHT: Color = Color::srgba(1.0, 0.85, 0.2, 1.0);
 
+/// What the transform gizmo's handles do to the selected entity.
 #[derive(Default, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum GizmoMode {
+    /// Arrows that move it along an axis.
     #[default]
     Translate,
+    /// Rings that turn it around an axis.
     Rotate,
 }
 
+/// One of the world axes a gizmo handle moves or turns along.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Axis {
+    /// The X axis, drawn red.
     X,
+    /// The Y axis, drawn green.
     Y,
+    /// The Z axis, drawn blue.
     Z,
 }
 
 impl Axis {
+    /// The three axes, in order.
     pub const ALL: [Axis; 3] = [Axis::X, Axis::Y, Axis::Z];
 
+    /// The axis as a unit vector.
     pub fn direction(self) -> Vec3 {
         match self {
             Axis::X => Vec3::X,
@@ -57,6 +66,7 @@ impl Axis {
         }
     }
 
+    /// The colour the axis's handle is drawn in.
     pub fn color(self) -> Color {
         match self {
             Axis::X => Color::srgba(0.92, 0.26, 0.30, 1.0),
@@ -77,6 +87,7 @@ struct Drag {
     moved: bool,
 }
 
+/// The transform gizmo's mode, the handle under the pointer, and the drag in progress.
 #[derive(Resource, Default)]
 pub struct GizmoState {
     mode: GizmoMode,
@@ -91,20 +102,24 @@ impl GizmoState {
         self.captured
     }
 
+    /// Whether the gizmo moves or turns.
     pub fn mode(&self) -> GizmoMode {
         self.mode
     }
 
+    /// Switches the gizmo to `mode`, as the `SetGizmoMode` signal does.
     pub fn set_mode(&mut self, mode: GizmoMode) {
         if self.mode != mode {
             self.mode = mode;
         }
     }
 
+    /// The handle under the pointer, which is drawn highlighted.
     pub fn hovered(&self) -> Option<Axis> {
         self.hovered
     }
 
+    /// Whether a handle is being dragged.
     pub fn dragging(&self) -> bool {
         self.drag.is_some()
     }

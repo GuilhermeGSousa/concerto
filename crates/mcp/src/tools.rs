@@ -20,9 +20,13 @@ use crate::{McpRead, McpServe, ToolError, answer_unanswered, receive_read_only_c
 /// A call that no system answered gets the error its need names.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Needs {
+    /// The tool can always answer.
     None,
+    /// The tool needs an open project.
     Project,
+    /// The tool needs an open scene.
     Scene,
+    /// The tool needs the game to be playing.
     Playing,
 }
 

@@ -37,7 +37,9 @@ use crate::preview::{ClipPreviewRoot, first_rooted, preview_stage};
 /// One graph for a preview to play in place of its file: the asset's id and the graph as a save writes it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct GraphBytes {
+    /// The graph asset the bytes stand in for.
     pub id: AssetId,
+    /// The graph, serialized as a save writes its payload.
     pub bytes: Vec<u8>,
 }
 
@@ -59,7 +61,9 @@ impl GraphBytes {
 ///
 /// A graph shown before and left out now goes back to its file.
 pub struct ShowGraphs {
+    /// The graphs to stand in for their assets.
     pub graphs: Vec<GraphBytes>,
+    /// The graph asset every player plays.
     pub play: AssetId,
 }
 impl Signal for ShowGraphs {}
@@ -67,15 +71,20 @@ impl Signal for ShowGraphs {}
 /// Sets the parameter `name` on every player's blackboard to `value`, the stored form of a value of the type `type_name`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SetGraphParam {
+    /// The parameter's name.
     pub name: Name,
+    /// The registered type name of the parameter's value.
     pub type_name: String,
+    /// The value, in its stored form.
     pub value: ReflectedValue,
 }
 impl Signal for SetGraphParam {}
 
 /// Sets whether the players advance and how fast time passes for them.
 pub struct SetGraphPlayback {
+    /// Whether the players advance.
     pub playing: bool,
+    /// The multiplier on the time that passes for the players, 1 for real time.
     pub speed: f32,
 }
 impl Signal for SetGraphPlayback {}
@@ -83,8 +92,11 @@ impl Signal for SetGraphPlayback {}
 /// One playing node of a [`GraphPreviewState`]: its path from the graph the preview plays, its weight and what it reports.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PreviewNode {
+    /// The steps from the played graph to the node, through the states and graphs between.
     pub path: Vec<NodePathStep>,
+    /// The weight the node's parent gives it among its inputs, from 0 to 1.
     pub weight: f32,
+    /// What the node reports beyond its weight.
     pub report: NodeReport,
 }
 
@@ -93,6 +105,7 @@ pub struct PreviewNode {
 /// `nodes` is empty while no player plays the graph.
 #[derive(Event, Clone, Debug, Default, PartialEq)]
 pub struct GraphPreviewState {
+    /// Every node the player visits, with its weight and report.
     pub nodes: Vec<PreviewNode>,
 }
 

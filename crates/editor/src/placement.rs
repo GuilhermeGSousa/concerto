@@ -58,6 +58,7 @@ impl Plugin for AssetPlacementPlugin {
 /// What a content tile of a placeable asset carries while it is dragged; dropped on the viewport, the asset is placed under the pointer.
 #[derive(Clone, Debug, PartialEq)]
 pub struct AssetDrag {
+    /// The asset being dragged.
     pub id: AssetId,
 }
 

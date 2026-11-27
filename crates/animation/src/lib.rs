@@ -1,22 +1,55 @@
+//! Skeletal animation for Concerto: clips, animation graphs and the player that evaluates them
+//! on a skeleton's bones each frame.
+//!
+//! An [`AnimationPlayer`](player::AnimationPlayer) plays an
+//! [`AnimationGraph`](graph::AnimationGraph), a tree of nodes such as clips, blends, layers, state
+//! machines, IK and retargeting. Add [`AnimationPlugin`](plugin::AnimationPlugin), give an entity
+//! with a skeleton an [`AnimationHandleComponent`](player::AnimationHandleComponent), and set the
+//! parameters its nodes read on the player.
+
+/// Typed per-bone values that travel with a pose and blend through every combiner.
 pub mod attribute;
+/// The named parameters a player gives its graph's nodes.
 pub mod blackboard;
+/// Animation clips: keyed joint channels, clip events and additive settings.
 pub mod clip;
+/// What a graph walk hands each node: the evaluation stack and the player's context.
 pub mod evaluation;
+/// Clip events: values a clip triggers as signals on the player's entity when playback crosses
+/// them.
 pub mod event;
+/// Animation graphs: trees of nodes, built in code or loaded as assets, and their per-player
+/// state.
 pub mod graph;
+/// Two-bone IK: the chain solve and where its hinge comes from.
 pub mod ik;
+/// Pose velocities, which inertialization decays.
 pub mod inertialization;
+/// The yaw and pitch that turn a bone's look direction onto a target.
 pub mod look_at;
+/// Bone masks, which limit a layer to some bones, and their resolution against a skeleton.
 pub mod mask;
+/// Mirroring a pose across a plane through the skeleton's model-space origin.
 pub mod mirror;
+/// The animation nodes a graph is built from, and the trait a new kind of node implements.
 pub mod node;
+/// Typed names of blackboard parameters.
 pub mod param;
+/// The [`AnimationPlayer`](player::AnimationPlayer) component, which plays a graph on a
+/// skeleton.
 pub mod player;
+/// The plugin that registers animation assets, types and systems, and the
+/// [`App`](concerto_app::App) methods that register new nodes and clip events.
 pub mod plugin;
+/// Poses, the frames a graph evaluates to, and root motion.
 pub mod pose;
+/// Retargeting: rigs that describe skeletons, and playing a pose of one skeleton on another.
 pub mod retarget;
+/// The component that carries a skeleton's root motion.
 pub mod root;
+/// The systems that advance players and write their poses to bones.
 pub mod target;
+/// How a state machine blends from one state to the next.
 pub mod transition;
 
 pub use target::{animate_targets, update_animation_players};

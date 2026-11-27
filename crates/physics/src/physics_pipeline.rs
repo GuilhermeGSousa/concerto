@@ -17,6 +17,7 @@ pub struct PhysicsPipeline {
 }
 
 impl PhysicsPipeline {
+    /// Creates the active backend's scratch.
     pub fn new() -> Self {
         PhysicsPipeline {
             stepper: ActiveBackend::new_stepper(),

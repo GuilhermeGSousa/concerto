@@ -1,3 +1,5 @@
+#![allow(missing_docs, reason = "benchmark harness, not public API")]
+
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 

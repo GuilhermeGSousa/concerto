@@ -38,6 +38,7 @@ pub struct ImportFolds<'a> {
 }
 
 impl<'a> ImportFolds<'a> {
+    /// Folds the imports of `registry`.
     pub fn new(registry: &'a AssetRegistry) -> Self {
         let mut faces: HashMap<&str, &AssetEntry> = HashMap::new();
         for asset in registry.iter().filter(|asset| is_import_face(asset)) {

@@ -11,9 +11,13 @@ use crate::material::UIMaterial;
 /// One move of a grid's cursor.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GridStep {
+    /// One row up.
     Up,
+    /// One row down.
     Down,
+    /// One column left.
     Left,
+    /// One column right.
     Right,
 }
 
@@ -41,8 +45,11 @@ pub fn grid_step(index: usize, columns: usize, count: usize, step: GridStep) -> 
 /// A grid's shape and its cursor.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct UIGrid {
+    /// How many cells span a row.
     pub columns: usize,
+    /// How many cells there are, filling rows from the top left.
     pub count: usize,
+    /// The index of the cell the cursor is on.
     pub selected: usize,
 }
 
@@ -56,6 +63,7 @@ impl UIGrid {
         }
     }
 
+    /// Puts the cursor on `selected`, or on the last cell when it is past the end.
     pub fn with_selected(mut self, selected: usize) -> Self {
         self.selected = selected.min(self.count.saturating_sub(1));
         self
@@ -76,16 +84,22 @@ impl UIGrid {
 /// `fill` otherwise.
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
 pub struct UIGridCell {
+    /// The [`UIGrid`] entity.
     pub grid: Entity,
+    /// The cell's index in the grid.
     pub index: usize,
+    /// The colour while the cursor is elsewhere.
     pub fill: Color,
+    /// The colour while the cursor is on the cell.
     pub selected_fill: Color,
 }
 
 /// Moves the cursor of `grid` by `step`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct UIGridMove {
+    /// The [`UIGrid`] entity.
     pub grid: Entity,
+    /// The move.
     pub step: GridStep,
 }
 impl Signal for UIGridMove {}
@@ -93,7 +107,9 @@ impl Signal for UIGridMove {}
 /// The cursor of `grid` moved to `selected`.
 #[derive(Event, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct UIGridMoved {
+    /// The [`UIGrid`] entity.
     pub grid: Entity,
+    /// The index of the cell the cursor is now on.
     pub selected: usize,
 }
 

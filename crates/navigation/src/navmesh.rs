@@ -77,13 +77,16 @@ impl NavMeshGeometry {
 /// Convex walkable polygons over shared world-space vertices.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct NavMeshData {
+    /// The world-space vertices the polygons share.
     pub vertices: Vec<Vec3>,
+    /// The walkable polygons.
     pub polygons: Vec<NavPolygon>,
 }
 
 /// One convex polygon of a [`NavMeshData`], as indices into its vertices.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct NavPolygon {
+    /// The polygon's corners, in order, as indices into [`NavMeshData::vertices`].
     pub vertices: Vec<u32>,
 }
 
@@ -93,11 +96,17 @@ pub struct NavPolygon {
 #[derive(Reflect, Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[reflect(Default)]
 pub struct NavMeshSettings {
+    /// How far the mesh keeps from walls and edges.
     pub agent_radius: f32,
+    /// The headroom the agent needs.
     pub agent_height: f32,
+    /// The steepest walkable slope, in degrees.
     pub max_slope: f32,
+    /// The tallest ledge the agent steps up or down.
     pub step_height: f32,
+    /// The horizontal size of a cell; smaller cells follow the geometry closer and bake slower.
     pub cell_size: f32,
+    /// The vertical size of a cell.
     pub cell_height: f32,
 }
 
@@ -161,14 +170,27 @@ impl Default for NavMeshSettings {
 #[derive(Clone, Debug, PartialEq)]
 pub enum NavMeshBakeError {
     /// The settings cannot be baked with, such as a cell size that is not positive.
-    InvalidSettings { reason: String },
+    InvalidSettings {
+        /// What is wrong with the settings.
+        reason: String,
+    },
     /// The geometry spans more cells along one axis than a bake can index.
-    TooManyCells { width: u64, depth: u64 },
+    TooManyCells {
+        /// The cell count along x.
+        width: u64,
+        /// The cell count along z.
+        depth: u64,
+    },
     /// The mesh would have more vertices than a bake can index.
-    TooManyVertices { count: usize },
+    TooManyVertices {
+        /// The number of vertices the mesh would have.
+        count: usize,
+    },
     /// The generator failed at `stage`.
     Generation {
+        /// The name of the generator stage that failed.
         stage: &'static str,
+        /// What the generator reported.
         message: String,
     },
 }

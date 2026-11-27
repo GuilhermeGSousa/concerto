@@ -8,6 +8,7 @@ use ratatui::crossterm::event::{Event, KeyCode, KeyEventKind, MouseButton, Mouse
 
 use crate::resize::TerminalResizeEvent;
 
+/// The keyboard, mouse and wheel input read from the terminal this frame.
 #[derive(Resource)]
 pub struct TerminalInput {
     // Keys that received a Press or Repeat event this frame — use for movement
@@ -25,6 +26,8 @@ pub struct TerminalInput {
 }
 
 impl TerminalInput {
+    /// Creates empty input, taking the terminal's current size so the first frame sends no
+    /// [`TerminalResizeEvent`].
     pub fn new() -> Self {
         // Initialise last_terminal_size to the actual current size so the first
         // frame doesn't spuriously emit a resize event.
@@ -75,6 +78,7 @@ impl TerminalInput {
         )
     }
 
+    /// Whether `btn` is held down: it was pressed and has not been released since.
     pub fn is_mouse_button_held(&self, btn: MouseButton) -> bool {
         self.mouse_buttons_held.contains(&btn)
     }

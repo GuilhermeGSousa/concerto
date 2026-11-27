@@ -5,6 +5,7 @@ use crate::assets::texture::{
 };
 use concerto_asset_import::{ImportContext, ImportError, Importer, NoSettings};
 
+/// Imports PNG and JPEG files as [`Texture`]s, with [`TextureSettings`] per asset.
 pub struct ImageImporter;
 
 /// The encoding of image file `bytes`, read from their signature.
@@ -25,7 +26,9 @@ pub fn source_encoding(bytes: &[u8]) -> Result<SourceEncoding, String> {
 
 /// A texture an importer emits, with the source image its file keeps as uncooked data.
 pub struct ImportedTexture {
+    /// The texture, cooked from the source by its settings.
     pub texture: Texture,
+    /// The source image as it was in the file.
     pub source: TextureSource,
 }
 

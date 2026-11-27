@@ -36,6 +36,7 @@ define_label!(
     SystemSet
 );
 
+/// A [`SystemSet`] interned for cheap copying and comparison.
 pub type InternedSystemSet = Interned<dyn SystemSet>;
 
 pub(crate) struct SetEntry {
@@ -115,16 +116,20 @@ impl SetConfig {
 
 /// Converts a [`SystemSet`], a [`SetConfig`], or a tuple or `Vec<SetConfig>` of them into a [`SetConfig`].
 pub trait IntoSetConfig: Sized {
+    /// Converts into a [`SetConfig`].
     fn into_set_config(self) -> SetConfig;
 
+    /// Orders every set in this config after `target`.
     fn after<M>(self, target: impl IntoDependencyTarget<M>) -> SetConfig {
         self.into_set_config().after(target)
     }
 
+    /// Orders every set in this config before `target`.
     fn before<M>(self, target: impl IntoDependencyTarget<M>) -> SetConfig {
         self.into_set_config().before(target)
     }
 
+    /// Orders the sets of a group so each runs before the next.
     fn chain(self) -> SetConfig {
         self.into_set_config().chain()
     }

@@ -1,3 +1,5 @@
+//! Tests of scenes: spawning, capture, links, node ids, the startup scene and the encoding.
+
 mod capture_scene;
 mod glam_encoding;
 mod links;

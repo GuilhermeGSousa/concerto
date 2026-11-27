@@ -26,8 +26,11 @@ use crate::{
 #[derive(Component, Reflect, Clone, Debug, PartialEq)]
 #[reflect(Component, Default, SceneComponent)]
 pub struct NavAgent {
+    /// Walking speed in m/s, used when the destination names none.
     pub speed: f32,
+    /// How close, in metres on the horizontal plane, a waypoint must be to count as reached.
     pub arrival_radius: f32,
+    /// The distance from the last waypoint, in metres, inside which the agent slows in proportion.
     pub slow_radius: f32,
 }
 
@@ -69,14 +72,18 @@ impl Default for NavAgent {
 /// What an agent is walking to: a point's entity or its anchor.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum NavTarget {
+    /// The point on this entity.
     Point(Entity),
+    /// The point whose [`NavPoint`](crate::point::NavPoint) anchor is this name.
     Anchor(Name),
 }
 
 /// Where an agent is going; remove it to stop.
 #[derive(Component, Clone, Debug, PartialEq)]
 pub struct NavDestination {
+    /// The point to walk to.
     pub target: NavTarget,
+    /// Walking speed in m/s; `None` uses the agent's speed.
     pub speed: Option<f32>,
 }
 
@@ -110,7 +117,9 @@ impl NavDestination {
 #[derive(Component, Reflect, Clone, Copy, Debug, Default, PartialEq)]
 #[reflect(Component, Default)]
 pub struct NavSteering {
+    /// The world-space velocity to move at, in m/s; zero when stopped.
     pub velocity: Vec3,
+    /// The rotation about the y axis to face: along the movement, or the point's facing on arrival.
     pub facing: Quat,
 }
 
@@ -142,14 +151,18 @@ impl NavRoute {
 /// An agent reached the point it was sent to.
 #[derive(Event, Clone, Copy, Debug, PartialEq)]
 pub struct NavArrived {
+    /// The agent that arrived.
     pub agent: Entity,
+    /// The point's entity.
     pub point: Entity,
 }
 
 /// No route leads an agent to its target; its destination was removed.
 #[derive(Event, Clone, Copy, Debug, PartialEq)]
 pub struct NavUnreachable {
+    /// The agent that cannot get there.
     pub agent: Entity,
+    /// The target it was sent to.
     pub target: NavTarget,
 }
 

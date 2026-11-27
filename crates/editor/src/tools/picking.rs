@@ -73,7 +73,9 @@ pub fn world_to_viewport(point: Vec3, size: Vec2, view_proj: Mat4) -> Option<Vec
 /// The mesh a ray hits first: its entity and how far along the ray the hit is.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PickHit {
+    /// The entity whose mesh was hit.
     pub entity: Entity,
+    /// The distance along the ray to the hit, in world units.
     pub distance: f32,
 }
 

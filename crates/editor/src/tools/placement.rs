@@ -50,8 +50,11 @@ const LOAD_CANCELLED: &str = "the asset's load was cancelled; place it again";
 /// Trigger it; [`AssetPlaced`] says how it ended, once the asset has loaded.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PlaceAsset {
+    /// The asset to place, of a kind the recipe registered as placeable.
     pub asset: AssetId,
+    /// The new entity's parent, or `None` for the scene root.
     pub parent: Option<Entity>,
+    /// Where the new entity goes.
     pub at: PlaceAt,
 }
 
@@ -71,7 +74,9 @@ pub enum PlaceAt {
 /// How one `PlaceAsset` ended: the entity it made, or the status text saying why it made none.
 #[derive(Event, Clone, Debug, PartialEq)]
 pub struct AssetPlaced {
+    /// The placement that was asked for.
     pub request: PlaceAsset,
+    /// The new entity, or the status text saying why none was made.
     pub result: Result<Entity, String>,
 }
 

@@ -20,6 +20,8 @@ type SimpleEntities<'world, 'state> = Query<
     (Changed<Transform>, Without<ChildOf>, Without<Children>),
 >;
 
+/// Writes the [`GlobalTransform`] of each entity with no parent and no children whose [`Transform`]
+/// changed.
 pub fn update_simple_entities(mut roots: SimpleEntities<'_, '_>) {
     for (local_transform, mut global_transform) in roots.iter_mut() {
         global_transform.set_if_neq(GlobalTransform::new(local_transform.compute_matrix()));
@@ -118,6 +120,8 @@ fn propagate_to_descendant(
     }
 }
 
+/// Writes the [`GlobalTransform`] of every entity in a hierarchy whose [`Transform`], or an
+/// ancestor's, changed.
 pub fn propagate_global_transforms(
     mut roots: HierarchyRoots<'_, '_>,
     mut descendants: HierarchyDescendants<'_, '_>,

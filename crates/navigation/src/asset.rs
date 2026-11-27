@@ -38,7 +38,9 @@ impl LiveNavMesh {
 #[derive(Reflect, Serialize, Deserialize, Clone, Debug, Default)]
 #[reflect(Default)]
 pub struct NavMesh {
+    /// The scenes whose static colliders are baked.
     pub scenes: Vec<AssetHandle<Scene>>,
+    /// The agent size and slope limits the mesh is baked for.
     pub settings: NavMeshSettings,
     #[reflect(skip)]
     #[serde(skip)]

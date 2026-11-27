@@ -19,11 +19,15 @@ pub const REACH: f32 = 5.0;
 
 /// Draws a component in the editor's viewport while its entity is selected.
 pub trait ComponentGizmo: Send + Sync + 'static {
+    /// The component this gizmo draws.
     type Component: Component;
+    /// The read-only system input `draw` reads beside the component, such as a query of other
+    /// entities.
     type Input: ReadOnlySystemInput + 'static;
     /// The kind's name in the viewport's Gizmos menu and the `gizmos` tool.
     const NAME: &'static str;
 
+    /// Draws `component` of `entity`, whose world transform is `transform`, into `gizmos`.
     fn draw(
         entity: Entity,
         component: &Self::Component,

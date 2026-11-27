@@ -15,6 +15,7 @@ const WIDE_SHADER: &str = include_str!("shaders/wide.wgsl");
 /// gizmos always render on top of the scene.
 #[derive(Resource)]
 pub struct GizmoPipeline {
+    /// Draws one-pixel segments as a `line_list` of [`GizmoVertex`].
     pub pipeline: wgpu::RenderPipeline,
     /// Draws segments wider than a pixel as screen-space quads.
     pub wide_pipeline: wgpu::RenderPipeline,
@@ -23,6 +24,7 @@ pub struct GizmoPipeline {
 }
 
 impl GizmoPipeline {
+    /// Compiles both gizmo shaders and builds the pipelines for targets of `surface_format`.
     pub fn new(
         device: &wgpu::Device,
         camera_layout: &CameraLayout,

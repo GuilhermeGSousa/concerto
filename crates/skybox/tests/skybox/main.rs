@@ -1,3 +1,5 @@
+//! Tests of the sky: the atmosphere tables, the sun's lighting and drawing the sky.
+
 mod sky_reflection;
 mod sky_render;
 mod webgl2_shaders;

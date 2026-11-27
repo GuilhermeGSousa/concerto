@@ -6,6 +6,7 @@ pub(crate) fn present_window(mut render_window: ResMut<RenderWindow>, queue: Res
     render_window.present(&queue);
 }
 
+/// Submits the frame's recorded commands to the queue.
 pub fn finish_render(mut device: ResMut<RenderDevice>, queue: Res<RenderQueue>) {
     device.finish(&queue);
 }

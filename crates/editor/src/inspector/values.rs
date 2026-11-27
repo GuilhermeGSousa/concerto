@@ -37,16 +37,20 @@ impl Signal for CommitValue {}
 
 /// One value as it was last read.
 pub struct ValueSnapshot {
+    /// The value that was read.
     pub target: Arc<dyn PropertyTarget>,
+    /// The value's name when it was read, the title of its card.
     pub name: String,
     /// The value's rows, empty when it is gone.
     pub properties: Vec<Property>,
+    /// The registry the value's types were read with.
     pub types: AppTypeRegistry,
 }
 
 /// The active document's values as they were last read.
 #[derive(Resource, Default)]
 pub struct InspectedSnapshots {
+    /// One snapshot per value the panel shows, in the document's order.
     pub values: Vec<ValueSnapshot>,
 }
 
@@ -62,7 +66,9 @@ impl InspectedSnapshots {
 /// A value's card in the inspector's UI hierarchy.
 #[derive(Component, Clone)]
 pub struct ValueCard {
+    /// The value the card shows.
     pub target: Arc<dyn PropertyTarget>,
+    /// The card's title, the value's name.
     pub name: String,
     body: Entity,
 }

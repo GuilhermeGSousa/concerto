@@ -122,6 +122,11 @@ impl PoseAttributes {
     }
 
     /// The values of `A` for `bone_count` bones, to change; a channel no node set yet starts at neutral.
+    ///
+    /// # Panics
+    ///
+    /// Never in practice: each channel is keyed by the type of the attribute it holds, so the
+    /// lookup always finds values of type `A`.
     pub fn channel_mut<A: PoseAttribute>(&mut self, bone_count: usize) -> &mut [A] {
         let index = match self.index_of(TypeId::of::<A>()) {
             Some(index) => index,

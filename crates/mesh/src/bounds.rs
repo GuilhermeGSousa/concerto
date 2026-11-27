@@ -12,6 +12,8 @@ use crate::mesh::{Aabb, Mesh, MeshComponent};
 #[derive(Component, Clone, Copy, PartialEq, Eq, Debug)]
 pub struct AabbSource(AssetId);
 
+/// The local-space box of each mesh asset seen so far, `None` for an empty mesh; the local
+/// state of [`update_mesh_bounds`].
 #[derive(Default)]
 pub struct MeshBoundsCache {
     boxes: HashMap<AssetId, Option<Aabb>>,

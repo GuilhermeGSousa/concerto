@@ -1,3 +1,5 @@
+//! The `AsBindGroup` derive of `concerto-render`, which makes a struct a material.
+
 extern crate proc_macro;
 
 use proc_macro::TokenStream;

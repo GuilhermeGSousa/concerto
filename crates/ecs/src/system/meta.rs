@@ -17,6 +17,7 @@ impl SystemMetadata {
         self.is_send = false;
     }
 
+    /// Returns whether the system may run on any thread.
     pub fn is_send(&self) -> bool {
         self.is_send
     }

@@ -21,6 +21,7 @@ pub struct RenderCapabilities {
 }
 
 impl RenderCapabilities {
+    /// Reads the capabilities from `adapter`.
     pub fn from_adapter(adapter: &wgpu::Adapter) -> Self {
         let is_gl = adapter.get_info().backend == wgpu::Backend::Gl;
         let is_webgl2 = is_gl && cfg!(target_arch = "wasm32");

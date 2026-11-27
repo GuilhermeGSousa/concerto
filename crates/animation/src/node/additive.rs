@@ -21,12 +21,19 @@ use crate::{
 #[derive(Clone, Debug, PartialEq, Reflect, Serialize, Deserialize)]
 #[reflect(AnimationNode, Default)]
 pub struct AdditiveNode {
+    /// The additive clip, which must be imported as additive.
     pub clip: AssetHandle<AnimationClip>,
+    /// The weight the delta is applied at, before the param scales it; clamped to 0 to 1.
     pub weight: f32,
+    /// The `f32` blackboard param the weight is multiplied by, when it holds one.
     pub weight_param: Option<Param<f32>>,
+    /// Whether the delta loops or plays once.
     pub play_mode: AnimationPlayMode,
+    /// Where the delta starts and loops back to, in seconds from the start of its range.
     pub start_time: f32,
+    /// How many times faster than authored the delta plays; a negative rate plays as 0.
     pub play_rate: f32,
+    /// The `f32` blackboard param the play rate is multiplied by, when it holds one.
     pub play_rate_param: Option<Param<f32>>,
 }
 

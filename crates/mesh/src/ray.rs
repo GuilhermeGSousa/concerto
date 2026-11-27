@@ -5,11 +5,15 @@ use crate::mesh::{Aabb, Mesh};
 /// A half-line from `origin` along `direction`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Ray {
+    /// The point the ray starts from.
     pub origin: Vec3,
+    /// The direction it runs in; not necessarily unit length, so distances along the ray are in
+    /// multiples of it.
     pub direction: Vec3,
 }
 
 impl Ray {
+    /// Returns the point `t` lengths of `direction` from the origin.
     pub fn at(&self, t: f32) -> Vec3 {
         self.origin + self.direction * t
     }

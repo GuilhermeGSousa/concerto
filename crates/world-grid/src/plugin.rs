@@ -3,6 +3,8 @@ use concerto_render::MaterialPlugin;
 
 use crate::{material::WorldGridMaterial, world_grid::on_world_grid_changed};
 
+/// Registers the [`WorldGridMaterial`] and keeps each grid's material in step with its
+/// [`WorldGrid`](crate::WorldGrid), in the editor as well as in a game.
 pub struct WorldGridPlugin;
 
 impl Plugin for WorldGridPlugin {

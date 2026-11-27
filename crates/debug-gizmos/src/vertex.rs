@@ -11,12 +11,15 @@ use glam::Vec3;
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct GizmoVertex {
+    /// World-space position.
     pub position: [f32; 3],
+    /// RGBA colour in linear light.
     pub color: [f32; 4],
 }
 
 impl GizmoVertex {
     #[inline]
+    /// Creates a vertex at `position` with `color`, converted to linear light.
     pub fn new(position: Vec3, color: Color) -> Self {
         Self {
             position: position.to_array(),
@@ -49,11 +52,15 @@ impl GizmoVertex {
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct WideGizmoVertex {
+    /// The segment's first endpoint, in world space.
     pub start: [f32; 3],
+    /// The segment's second endpoint, in world space.
     pub end: [f32; 3],
+    /// RGBA colour in linear light.
     pub color: [f32; 4],
     /// Which endpoint this corner sits at (0 or 1) and which side of the line (-1 or 1).
     pub corner: [f32; 2],
+    /// The segment's width in pixels.
     pub width: f32,
 }
 
@@ -66,6 +73,7 @@ impl WideGizmoVertex {
         4 => Float32,
     ];
 
+    /// The wgpu vertex-buffer layout matching the `wide.wgsl` vertex inputs.
     pub fn describe() -> wgpu::VertexBufferLayout<'static> {
         wgpu::VertexBufferLayout {
             array_stride: std::mem::size_of::<WideGizmoVertex>() as wgpu::BufferAddress,

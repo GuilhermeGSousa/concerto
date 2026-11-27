@@ -9,14 +9,18 @@ use crate::{capabilities::RenderCapabilities, components::render_entity::SyncWit
 /// One radiance sample over the sphere, for building spherical harmonics.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RadianceSample {
+    /// The unit direction the light arrives from.
     pub direction: Vec3,
+    /// The linear RGB radiance arriving from it.
     pub radiance: Vec3,
+    /// The solid angle the sample covers, in steradians.
     pub solid_angle: f32,
 }
 
 /// Irradiance as spherical harmonics up to band 2, one RGB coefficient per basis function.
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub struct SphericalHarmonics {
+    /// The RGB coefficient of each basis function, band 0 first.
     pub coefficients: [Vec3; 9],
 }
 
@@ -78,8 +82,11 @@ fn basis(direction: Vec3) -> [f32; 9] {
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
 #[require(SyncWithRenderWorld)]
 pub struct CameraSkyLight {
+    /// The irradiance the sky casts, by direction.
     pub irradiance: SphericalHarmonics,
+    /// The radiance added to the sky and to sky-coloured fog, so night is not black.
     pub night_color: LinearRgba,
+    /// The light added to the ambient term at night.
     pub night_ambient: LinearRgba,
 }
 
@@ -99,8 +106,11 @@ pub const SKY_RADIANCE_SCALE: u32 = 16;
 /// Its mip levels, where it has them, are the blur rough surfaces reflect.
 #[derive(Resource)]
 pub struct SkyRadianceMap {
+    /// The view of the whole map, every mip level included.
     pub view: wgpu::TextureView,
+    /// The sampler reflections read the map with.
     pub sampler: wgpu::Sampler,
+    /// The texture's format: `Rgba16Float` or `Rgba8Unorm`.
     pub format: wgpu::TextureFormat,
 }
 

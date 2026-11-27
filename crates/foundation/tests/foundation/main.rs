@@ -1,3 +1,5 @@
+//! Tests of asset handles, ids, the registry, the content asset encoding and derived data.
+
 mod asset_handle;
 mod asset_id;
 mod asset_registry;

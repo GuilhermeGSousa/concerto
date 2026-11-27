@@ -7,29 +7,42 @@ use crate::{
     pose::{EvaluatedFrame, JointPose},
 };
 
+/// The stack of frames a graph evaluation passes from each node to the node that consumes it.
+///
+/// Nodes are evaluated in post order, so a node's inputs are the top entries of the stack, first
+/// input first.
 pub struct AnimationGraphEvaluator {
     pub(crate) evaluation_stack: Vec<EvaluatedFrame>,
 }
 
 impl AnimationGraphEvaluator {
+    /// An empty stack.
     pub fn new() -> Self {
         Self {
             evaluation_stack: Vec::new(),
         }
     }
 
+    /// Pushes a node's evaluated frame.
     pub fn push_evaluation(&mut self, evaluated_frame: EvaluatedFrame) {
         self.evaluation_stack.push(evaluated_frame);
     }
 
+    /// Pops the frame on top, or `None` if the stack is empty.
     pub fn pop_evaluation(&mut self) -> Option<EvaluatedFrame> {
         self.evaluation_stack.pop()
     }
 
+    /// The number of frames on the stack.
     pub fn stack_len(&self) -> usize {
         self.evaluation_stack.len()
     }
 
+    /// The frames from index `start` to the top, oldest first.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `start` is greater than [`Self::stack_len`].
     pub fn view_stack(&self, start: usize) -> &[EvaluatedFrame] {
         &self.evaluation_stack[start..]
     }
@@ -44,8 +57,11 @@ impl Default for AnimationGraphEvaluator {
 /// The bone root motion is read from: its index in the pose, its rest joint and the unit up of its parent's space.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RootBone {
+    /// The bone's index in the skeleton's bone list, which is also its index in the pose.
     pub index: usize,
+    /// The bone's rest pose, local to its parent.
     pub rest: JointPose,
+    /// The unit up direction of the bone's parent space.
     pub up: Vec3,
 }
 
@@ -59,6 +75,7 @@ pub struct AnimationGraphContext<'a> {
 }
 
 impl<'a> AnimationGraphContext<'a> {
+    /// The blackboard of the player being walked.
     pub fn blackboard(&self) -> &AnimationBlackboard {
         self.blackboard
     }

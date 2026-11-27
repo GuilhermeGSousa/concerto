@@ -6,8 +6,11 @@ use super::spring_damper::{from_scaled_angle_axis, quat_abs, to_scaled_angle_axi
 
 /// A vector a [`Spring`] measures displacement and velocity in: `f32` or a glam vector.
 pub trait SpringVector: Copy + Default {
+    /// Returns the sum of the two vectors.
     fn add(self, rhs: Self) -> Self;
+    /// Returns `self` minus `rhs`.
     fn sub(self, rhs: Self) -> Self;
+    /// Returns the vector scaled by `factor`.
     fn scale(self, factor: f32) -> Self;
 }
 
@@ -33,6 +36,7 @@ impl_spring_vector!(f32, Vec2, Vec3, Vec4);
 
 /// A value a [`Spring`] can animate: a [`SpringVector`], or a [`Quat`] whose velocity is a scaled angle-axis.
 pub trait SpringValue: Copy {
+    /// The type the value's displacement and velocity are measured in.
     type Velocity: SpringVector;
 
     /// How far `self` sits from `target`.
@@ -81,7 +85,9 @@ impl SpringValue for Quat {
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Spring<T: SpringValue> {
+    /// The current value.
     pub value: T,
+    /// The current velocity, in units of the value per second.
     pub velocity: T::Velocity,
     /// Natural (undamped) angular frequency in rad/s; higher is snappier.
     pub angular_frequency: f32,
@@ -94,6 +100,8 @@ pub struct Spring<T: SpringValue> {
 }
 
 impl<T: SpringValue> Spring<T> {
+    /// Creates a spring at rest at `value`, with `angular_frequency` in rad/s and `damping_ratio`
+    /// relative to critical damping.
     pub fn new(value: T, angular_frequency: f32, damping_ratio: f32) -> Self {
         Self {
             value,
@@ -103,6 +111,7 @@ impl<T: SpringValue> Spring<T> {
         }
     }
 
+    /// Creates a critically damped spring at rest at `value`, with `angular_frequency` in rad/s.
     pub fn critically_damped(value: T, angular_frequency: f32) -> Self {
         Self::new(value, angular_frequency, 1.0)
     }
@@ -126,6 +135,7 @@ impl<T: SpringValue> Spring<T> {
         self.damping_ratio = 1.0;
     }
 
+    /// Advances the spring by `dt` seconds toward `target` and returns the new value.
     pub fn update(&mut self, target: T, dt: f32) -> T {
         let c = Coefficients::compute(self.angular_frequency, self.damping_ratio, dt);
         let displacement = self.value.displacement(target);

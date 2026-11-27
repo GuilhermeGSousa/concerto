@@ -8,6 +8,13 @@ extern crate quote;
 
 use proc_macro::TokenStream;
 
+/// Derives `Component`, registering each type named in `#[require(..)]` as required, built
+/// with its `Default` or with the expression after `=`.
+///
+/// # Panics
+///
+/// Panics if the input does not parse as a struct, enum or union, which rustc rules out for a
+/// derive.
 #[proc_macro_derive(Component, attributes(require))]
 pub fn component(input: TokenStream) -> TokenStream {
     let ast = syn::parse(input).unwrap();
@@ -101,6 +108,12 @@ fn impl_component(ast: &syn::DeriveInput) -> TokenStream {
     gen.into()
 }
 
+/// Derives `Resource`, naming the resource after its type.
+///
+/// # Panics
+///
+/// Panics if the input does not parse as a struct, enum or union, which rustc rules out for a
+/// derive.
 #[proc_macro_derive(Resource)]
 pub fn resource(input: TokenStream) -> TokenStream {
     let ast = syn::parse(input).unwrap();
@@ -121,6 +134,12 @@ fn impl_resource(ast: &syn::DeriveInput) -> TokenStream {
     gen.into()
 }
 
+/// Derives `Event`.
+///
+/// # Panics
+///
+/// Panics if the input does not parse as a struct, enum or union, which rustc rules out for a
+/// derive.
 #[proc_macro_derive(Event)]
 pub fn event(input: TokenStream) -> TokenStream {
     let ast = syn::parse(input).unwrap();
@@ -138,18 +157,36 @@ fn impl_event(ast: &syn::DeriveInput) -> TokenStream {
     gen.into()
 }
 
+/// Derives `SystemSet` for a `Clone` type.
+///
+/// # Panics
+///
+/// Panics if the input does not parse as a struct, enum or union, which rustc rules out for a
+/// derive.
 #[proc_macro_derive(SystemSet)]
 pub fn system_set(input: TokenStream) -> TokenStream {
     let ast = syn::parse(input).unwrap();
     impl_label(&ast, quote!(SystemSet))
 }
 
+/// Derives `SystemTag` for a `Clone` type.
+///
+/// # Panics
+///
+/// Panics if the input does not parse as a struct, enum or union, which rustc rules out for a
+/// derive.
 #[proc_macro_derive(SystemTag)]
 pub fn system_tag(input: TokenStream) -> TokenStream {
     let ast = syn::parse(input).unwrap();
     impl_label(&ast, quote!(SystemTag))
 }
 
+/// Derives `ScheduleLabel` for a `Clone` type.
+///
+/// # Panics
+///
+/// Panics if the input does not parse as a struct, enum or union, which rustc rules out for a
+/// derive.
 #[proc_macro_derive(ScheduleLabel)]
 pub fn schedule_label(input: TokenStream) -> TokenStream {
     let ast = syn::parse(input).unwrap();

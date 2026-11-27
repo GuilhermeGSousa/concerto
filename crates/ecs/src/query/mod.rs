@@ -3,10 +3,16 @@ use std::any::TypeId;
 use fixedbitset::Ones;
 use typle::typle;
 
+/// [`Ref`] and [`Mut`], component borrows that report and record changes.
 pub mod change_detection;
+/// How a query reads each kind of item from an archetype.
 pub mod fetch;
+/// Query filters: [`With`](filter::With), [`Without`](filter::Without), [`Added`](filter::Added),
+/// [`Changed`](filter::Changed) and [`Or`](filter::Or).
 pub mod filter;
+/// [`QueryState`], a query's cached matching archetypes, for use outside systems.
 pub mod state;
+/// [`WorldQuery`], how a query term registers itself and picks archetypes.
 pub mod world_query;
 
 use crate::{
@@ -212,6 +218,7 @@ struct ArchetypeFetch<'world, T: QueryData, F: QueryFilter> {
     filter: F::Fetch<'world>,
 }
 
+/// An iterator over the items of a [`Query`] that pass its filter.
 pub struct QueryIter<'world, 'state, T: QueryData, F: QueryFilter> {
     world: UnsafeWorldCell<'world>,
     matched_archetypes: Ones<'state>,

@@ -13,6 +13,11 @@ use crate::{
 #[derive(Component)]
 pub struct GlobalListener;
 
+/// A component holding a system that runs, with an [`On<S>`](On) argument, each time the signal `S`
+/// is triggered.
+///
+/// Build one with [`IntoListener::into_listener`]; attach it to an entity, or add a global one with
+/// [`World::add_listener`](crate::World::add_listener).
 pub struct Listener<S: Signal> {
     // Taken while running so the system can safely access or reshape the world.
     state: Option<ListenerState<S>>,
@@ -193,9 +198,12 @@ impl<S: Signal> Component for Listener<S> {
     }
 }
 
+/// Adds a listener entity to the world's dispatch list for `S`; the listener's `on_add` hook queues
+/// it.
 pub struct RegisterListenerCommand<S: Signal>(Entity, PhantomData<fn() -> S>);
 
 impl<S: Signal> RegisterListenerCommand<S> {
+    /// Creates the command for the listener on `entity`.
     pub fn new(entity: Entity) -> Self {
         Self(entity, PhantomData)
     }
@@ -213,9 +221,12 @@ impl<S: Signal> Command for RegisterListenerCommand<S> {
     }
 }
 
+/// Takes a listener entity out of the world's dispatch list for `S`; the listener's `on_remove`
+/// hook queues it.
 pub struct UnregisterListenerCommand<S: Signal>(Entity, PhantomData<fn() -> S>);
 
 impl<S: Signal> UnregisterListenerCommand<S> {
+    /// Creates the command for the listener on `entity`.
     pub fn new(entity: Entity) -> Self {
         Self(entity, PhantomData)
     }
@@ -227,11 +238,14 @@ impl<S: Signal> Command for UnregisterListenerCommand<S> {
     }
 }
 
+/// A system that takes [`On<S>`](On) as its argument; implemented for every such system.
 pub trait ListenerSystem<S: Signal>: System<In = On<'static, S>> + 'static {}
 
 impl<S: Signal, T: System<In = On<'static, S>>> ListenerSystem<S> for T {}
 
+/// Converts a system or a built [`Listener`] into a [`Listener`].
 pub trait IntoListener<S: Signal, M> {
+    /// Returns the listener.
     fn into_listener(self) -> Listener<S>;
 }
 
@@ -263,9 +277,12 @@ impl<S: Signal> IntoListener<S, IsListener> for Listener<S> {
     }
 }
 
+/// Converts a function or closure into a [`ListenerSystem`].
 pub trait IntoListenerSystem<S: Signal, Marker> {
+    /// The system it converts into.
     type ListenerSystem: ListenerSystem<S>;
 
+    /// Returns the system.
     fn into_listener_system(self) -> Self::ListenerSystem;
 }
 

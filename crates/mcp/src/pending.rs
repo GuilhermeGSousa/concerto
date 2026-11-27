@@ -9,8 +9,11 @@ use crate::{McpInbox, Reply, ToolError};
 /// Changing calls queue behind it.
 #[derive(Component)]
 pub struct PendingCall {
+    /// Where the call's answer goes.
     pub reply: Reply,
+    /// When [`expire_pending_calls`] answers the call if nothing else has.
     pub deadline: Instant,
+    /// What the call waits for, named in the timeout answer `Timed out waiting for <this>.`.
     pub waiting_for: &'static str,
     /// What the call answers at its deadline in place of `timeout`; its waiting system may set it while it waits.
     pub at_deadline: Option<String>,

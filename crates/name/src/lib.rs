@@ -1,3 +1,6 @@
+//! [`Name`], an interned string that is cheap to copy, compare and hash, and the [`name!`] macro
+//! that interns a literal once.
+
 use std::{
     collections::HashMap,
     fmt,

@@ -1,3 +1,6 @@
+//! Tests of the ECS's public behaviour: storage, queries, change detection, hierarchy, signals,
+//! ordering and reflection.
+
 mod archetype_moves;
 mod component_change_history;
 mod component_lifecycle;

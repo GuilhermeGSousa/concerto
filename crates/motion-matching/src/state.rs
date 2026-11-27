@@ -27,10 +27,15 @@ use crate::{
 /// One search's raw query and what it was built from, so a drawn query is a single moment in time.
 #[derive(Clone)]
 pub struct LastQuery {
+    /// The query's raw feature values, before normalisation, in channel order.
     pub features: Vec<f32>,
+    /// The frame the node was playing when it searched.
     pub frame: usize,
+    /// The simulation bone's world transform the query was built from.
     pub simulation: Transform,
+    /// The trajectory samples the query was built from, rescaled for the play rate.
     pub trajectory: Vec<TrajectorySample>,
+    /// The squared distance of the best frame found, or `None` when the search found none.
     pub best_cost: Option<f32>,
 }
 

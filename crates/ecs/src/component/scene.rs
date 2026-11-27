@@ -13,11 +13,14 @@ use crate::{entity::Entity, reflect::ReflectSceneLeaf};
 /// replaced with the spawned [`Entity`] when the scene is applied.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SceneEntityRef {
+    /// A scene-node index, before the scene is spawned.
     Index(usize),
+    /// The spawned entity, once the scene is applied.
     Entity(Entity),
 }
 
 impl SceneEntityRef {
+    /// Returns the spawned entity, or `None` while the reference is still a node index.
     pub fn entity(self) -> Option<Entity> {
         match self {
             Self::Index(_) => None,

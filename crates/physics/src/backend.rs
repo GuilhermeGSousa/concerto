@@ -45,9 +45,13 @@ pub struct RawRayHit<Handle> {
 
 /// The first body a swept sphere touches, in backend terms.
 pub struct RawShapeHit<Handle> {
+    /// The body that was hit.
     pub body: Handle,
+    /// Distance swept before the hit, as a fraction `[0, 1]` of the sweep's direction vector.
     pub fraction: f32,
+    /// World-space contact point on the hit body.
     pub point: Vec3,
+    /// World-space surface normal at the contact point.
     pub normal: Vec3,
 }
 
@@ -70,14 +74,19 @@ pub struct RawGroundHit<Handle> {
 /// Whether a sensor pair began or stopped overlapping.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum SensorContactKind {
+    /// The sensor began overlapping the other body.
     Enter,
+    /// The sensor stopped overlapping the other body.
     Exit,
 }
 
 /// A sensor pair that began or stopped overlapping, in backend terms.
 pub struct RawSensorContact<Handle> {
+    /// The sensor body.
     pub sensor: Handle,
+    /// The dynamic or kinematic body that entered or left the sensor.
     pub other: Handle,
+    /// Whether the overlap began or ended.
     pub kind: SensorContactKind,
 }
 
@@ -91,8 +100,11 @@ pub enum RawContactKind {
     /// `normal` points from `first` to `second`, and `impulse` is that step's
     /// normal impulse.
     Touch {
+        /// World-space contact point.
         point: Vec3,
+        /// World-space contact normal, from `first` towards `second`.
         normal: Vec3,
+        /// The normal impulse applied in that collision step, in newton-seconds.
         impulse: f32,
     },
     /// The pair stopped touching.
@@ -101,8 +113,11 @@ pub enum RawContactKind {
 
 /// A contact between two solid bodies, of which at least one reports contacts, in backend terms.
 pub struct RawContact<Handle> {
+    /// The first body of the pair.
     pub first: Handle,
+    /// The second body of the pair.
     pub second: Handle,
+    /// Whether the pair began, kept or stopped touching.
     pub kind: RawContactKind,
 }
 
@@ -132,8 +147,10 @@ pub trait PhysicsBackend: Send + Sync + Sized {
     /// separate from the world so stepping can borrow both.
     type Stepper: Send + Sync;
 
+    /// Creates an empty world.
     fn new() -> Self;
 
+    /// Creates the per-step scratch that [`step`](Self::step) borrows.
     fn new_stepper() -> Self::Stepper;
 
     /// Advances the world by `delta_time` seconds (one fixed timestep), in `collision_steps` equal collision steps.
@@ -197,21 +214,28 @@ pub trait PhysicsBackend: Send + Sync + Sized {
     /// A body's current world-space pose (translation and rotation).
     fn body_transform(&self, body: Self::BodyHandle) -> Transform;
 
+    /// The body's linear velocity, in m/s in world space.
     fn linear_velocity(&self, body: Self::BodyHandle) -> Vec3;
 
+    /// The body's angular velocity, in rad/s about the world axes.
     fn angular_velocity(&self, body: Self::BodyHandle) -> Vec3;
 
     /// Also wakes the body, so a sleeping body picks the velocity up.
     fn set_linear_velocity(&mut self, body: Self::BodyHandle, velocity: Vec3);
 
+    /// Applies an impulse, in N·s, at the body's centre of mass, changing its velocity at once.
     fn add_impulse(&mut self, body: Self::BodyHandle, impulse: Vec3);
 
+    /// Applies an impulse, in N·s, at the world-space `position`, which also changes its spin.
     fn add_impulse_at(&mut self, body: Self::BodyHandle, impulse: Vec3, position: Vec3);
 
+    /// Adds a force, in N, at the body's centre of mass for the next step.
     fn add_force(&mut self, body: Self::BodyHandle, force: Vec3);
 
+    /// Adds a force, in N, at the world-space `position` for the next step, which also adds torque.
     fn add_force_at(&mut self, body: Self::BodyHandle, force: Vec3, position: Vec3);
 
+    /// Adds a torque, in N·m about the world axes, for the next step.
     fn add_torque(&mut self, body: Self::BodyHandle, torque: Vec3);
 
     /// Casts a ray from `origin` along `direction` — whose length is the
@@ -286,6 +310,9 @@ pub trait PhysicsBackend: Send + Sync + Sized {
     /// Turns every joint's motor on, aimed at the rotation each part has relative to its parent in `pose`.
     fn drive_ragdoll_motors(&mut self, ragdoll: Self::RagdollHandle, pose: &[BodyPose]);
 
+    /// Sets what the motor of the joint between `part` and its parent does.
+    ///
+    /// A backend without ragdolls does nothing.
     fn set_ragdoll_joint_drive(
         &mut self,
         ragdoll: Self::RagdollHandle,
@@ -293,6 +320,9 @@ pub trait PhysicsBackend: Send + Sync + Sized {
         drive: JointDrive,
     );
 
+    /// Makes one part kinematic or dynamic, keeping its velocity.
+    ///
+    /// A backend without ragdolls does nothing.
     fn set_ragdoll_part_motion(
         &mut self,
         ragdoll: Self::RagdollHandle,
@@ -300,8 +330,15 @@ pub trait PhysicsBackend: Send + Sync + Sized {
         motion: MotionType,
     );
 
+    /// Freezes every part where it stands, out of the simulation, or makes every part dynamic
+    /// again.
+    ///
+    /// A backend without ragdolls does nothing.
     fn set_ragdoll_frozen(&mut self, ragdoll: Self::RagdollHandle, frozen: bool);
 
+    /// The angular impulse the motor of `part`'s joint applied in the last collision step.
+    ///
+    /// Zero for the root part, for a joint whose motor is off, and on a backend without ragdolls.
     fn ragdoll_joint_motor_impulse(&self, ragdoll: Self::RagdollHandle, part: usize) -> Vec3;
 
     /// The shape's axis-aligned bounds (min, max) in its own local space, before any body pose or scale.
@@ -310,12 +347,23 @@ pub trait PhysicsBackend: Send + Sync + Sized {
     /// recovered.
     fn shape_local_aabb(shape: &Self::ShapeHandle) -> Aabb;
 
+    /// Creates a sphere of `radius` metres centred on the origin.
     fn create_sphere_shape(radius: f32) -> Self::ShapeHandle;
+    /// Creates a box centred on the origin from its half extents along x, y and z.
     fn create_cuboid_shape(width: f32, height: f32, length: f32) -> Self::ShapeHandle;
+    /// Creates a capsule along the y axis: a cylinder of `half_height` above and below the origin,
+    /// capped by hemispheres of `radius`.
     fn create_capsule_shape(half_height: f32, radius: f32) -> Self::ShapeHandle;
+    /// Builds a triangle mesh shape from the positions and indices of `mesh`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MeshShapeCreationError`] when the backend cannot build a triangle mesh shape from
+    /// `mesh`.
     fn create_shape_from_mesh(mesh: &Mesh) -> Result<Self::ShapeHandle, MeshShapeCreationError>;
 }
 
+/// The error returned when a backend cannot build a triangle mesh shape from a mesh.
 #[derive(Debug)]
 pub struct MeshShapeCreationError;
 

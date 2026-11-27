@@ -20,6 +20,7 @@ pub const DEFAULT_AMBIENT_INTENSITY: f32 = 0.03;
 #[derive(Component, Clone, Copy, Debug, PartialEq, Reflect)]
 #[reflect(Component, Default, SceneComponent)]
 pub struct CameraEnvironment {
+    /// The distance fog, or `None` for none.
     pub fog: Option<Fog>,
     /// Ambient light, as a colour multiplied by each surface's albedo; replaced by the sky's under a sky.
     pub ambient: Color,
@@ -40,11 +41,13 @@ impl Default for CameraEnvironment {
 }
 
 impl CameraEnvironment {
+    /// Sets [`Self::fog`].
     pub fn with_fog(mut self, fog: Fog) -> Self {
         self.fog = Some(fog);
         self
     }
 
+    /// Sets [`Self::ambient`].
     pub fn with_ambient(mut self, ambient: Color) -> Self {
         self.ambient = ambient;
         self
@@ -83,7 +86,10 @@ pub struct UnlitView;
 pub struct Fog {
     /// The color fog fades toward; ignored under a sky, where fog takes the sky's color.
     pub color: Color,
+    /// How quickly fog thickens past `start`, per world unit; the fog amount is
+    /// `1 - exp(-(distance_past_start * density)²)`.
     pub density: f32,
+    /// The distance from the camera, in world units, where fog begins.
     pub start: f32,
 }
 

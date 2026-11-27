@@ -19,6 +19,7 @@ use concerto_foundation::assets::registry::{AssetEntry, AssetRegistry, EmbeddedI
 use concerto_foundation::assets::AssetId;
 use concerto_reflect::Reflect;
 
+/// Where imported outputs are placed in a project's content tree.
 pub mod config;
 pub mod metadata;
 mod pack;

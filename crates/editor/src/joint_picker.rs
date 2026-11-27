@@ -1,3 +1,5 @@
+//! The inspector's editor of a joint name: a button naming the joint, which opens a menu of the
+//! bones of the skeleton the document's value names.
 use concerto_ecs::{
     Component, Entity, Query, Res, ResMut, With,
     command::{CommandQueue, EntityCommandQueue},

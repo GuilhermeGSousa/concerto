@@ -81,6 +81,8 @@ define_context!(
 #[derive(SystemSet, Clone, PartialEq, Eq, Hash, Debug)]
 pub struct EditorContextSet;
 
+/// Binds the editor's actions to their default shortcuts at startup, such as Ctrl+S to save and
+/// Ctrl+P to play.
 pub struct ActionsPlugin;
 
 impl Plugin for ActionsPlugin {

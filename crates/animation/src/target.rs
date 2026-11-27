@@ -39,6 +39,8 @@ pub(crate) fn initialize_skeletons(
     }
 }
 
+/// Evaluates every unpaused [`AnimationPlayer`], writes the pose to its bones' [`Transform`]s and
+/// triggers the clip events it fired.
 pub fn animate_targets(
     mut animation_players: Query<(Entity, &mut AnimationPlayer, &SkeletonComponent)>,
     mut transforms: Query<&mut Transform>,
@@ -99,6 +101,8 @@ fn trigger(
     }
 }
 
+/// Advances every unpaused [`AnimationPlayer`] by the frame's delta time and writes the root
+/// motion it produced to the skeleton's [`AnimationRootBone`].
 pub fn update_animation_players(
     mut animation_players: Query<(&mut AnimationPlayer, Option<&SkeletonComponent>)>,
     mut root_bones: Query<&mut AnimationRootBone>,

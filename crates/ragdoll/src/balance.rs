@@ -186,6 +186,7 @@ impl Default for Balance {
 }
 
 impl Balance {
+    /// Sets the strength profile the body is powered with while it balances.
     pub fn with_profile(mut self, profile: impl Into<Name>) -> Self {
         self.profile = profile.into();
         self
@@ -204,11 +205,13 @@ impl Balance {
         self
     }
 
+    /// Sets how many steps the body may take without recovering before it gives up.
     pub fn with_max_steps(mut self, max_steps: u32) -> Self {
         self.max_steps = max_steps;
         self
     }
 
+    /// Sets the seconds the body must stay balanced and slow before it has succeeded.
     pub fn with_settle_seconds(mut self, settle_seconds: f32) -> Self {
         self.settle_seconds = settle_seconds;
         self
