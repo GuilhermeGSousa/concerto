@@ -29,6 +29,8 @@ pub const SPLITTER_HIT_SIZE: f32 = 8.0;
 /// what a drag means.
 #[derive(Component)]
 pub struct UISplitter {
+    /// The axis drags are reported along: `Horizontal` for a vertical line between side-by-side
+    /// siblings.
     pub axis: UISplitAxis,
     /// Colour of the line at rest.
     pub color: Color,
@@ -37,6 +39,7 @@ pub struct UISplitter {
 }
 
 impl UISplitter {
+    /// A splitter along `axis`, invisible at rest and blue while hovered or dragged.
     pub fn new(axis: UISplitAxis) -> Self {
         Self {
             axis,
@@ -55,6 +58,7 @@ pub(crate) struct UISplitterLine;
 /// `delta` is the pointer's movement along the splitter's axis since the last
 /// one, in logical pixels.
 pub struct UISplitterDragged {
+    /// The pointer's movement along the splitter's axis since the last drag, in logical pixels.
     pub delta: f32,
 }
 

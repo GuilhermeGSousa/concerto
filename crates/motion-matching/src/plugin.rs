@@ -24,6 +24,9 @@ use crate::{
     },
 };
 
+/// Registers motion databases, feature channels, the character simulation and the motion
+/// matching node, with the systems that drive the capsule, publish its trajectory and reconcile the
+/// visible character with it.
 pub struct MotionMatchingPlugin;
 
 impl Plugin for MotionMatchingPlugin {

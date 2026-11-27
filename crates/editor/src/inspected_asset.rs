@@ -1,3 +1,5 @@
+//! The generic editor of the asset kinds a game marks with `register_inspected_asset`: a form tab
+//! that shows the asset's value in the inspector and saves it.
 use std::{any::Any, path::Path, sync::Arc};
 
 use anyhow::Context;
@@ -34,6 +36,7 @@ use crate::{
 
 /// The generic editor of an asset kind the game marked with `register_inspected_asset`.
 pub struct InspectedAssetEditor {
+    /// The kind's record, which decodes, saves and names its assets.
     pub record: InspectedAsset,
 }
 
@@ -66,15 +69,20 @@ impl AssetEditor for InspectedAssetEditor {
 /// What a generic tab holds: its kind's record, the value being edited, and the file as last read or saved.
 #[derive(Component)]
 pub struct InspectedDocument {
+    /// The kind's record, which decodes, saves and names its assets.
     pub record: InspectedAsset,
+    /// The value being edited, `None` until the asset has loaded.
     pub value: Option<Box<dyn Reflect>>,
+    /// The asset file's bytes as last read or saved, which a discard of the edits decodes again.
     pub loaded: Vec<u8>,
+    /// The skeleton the value names, whose bones the joint picker offers, if it names one.
     pub skeleton: Option<AssetId>,
 }
 
 /// The game's inspected asset kinds and type registry, from the last scene's Edit App.
 #[derive(Resource, Default)]
 pub struct ProjectTypes {
+    /// The type registry of the last scene's edit `App`, `None` before a scene has opened.
     pub registry: Option<AppTypeRegistry>,
 }
 

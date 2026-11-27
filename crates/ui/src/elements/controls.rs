@@ -53,6 +53,7 @@ pub struct Splitter {
 }
 
 impl UITheme {
+    /// A [`UICheckbox`] labelled `label`, ticked when `checked`, in the accent colour.
     pub fn checkbox(&self, label: impl Into<String>, checked: bool) -> Checkbox {
         Checkbox {
             theme: self.clone(),
@@ -73,6 +74,7 @@ impl UITheme {
         }
     }
 
+    /// A [`UISlider`] from `min` to `max` at `value`, a control's height tall.
     pub fn slider(&self, value: f32, min: f32, max: f32) -> Slider {
         Slider {
             theme: self.clone(),

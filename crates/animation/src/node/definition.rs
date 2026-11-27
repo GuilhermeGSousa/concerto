@@ -24,6 +24,7 @@ pub type NodeState = Box<dyn Any + Send + Sync>;
 
 /// A kind of animation graph node: reflected data plus the per-player state it evaluates with.
 pub trait AnimationNode: Reflect + Send + Sync + 'static {
+    /// The state the node keeps per player, created by [`Self::create_state`].
     type State: Send + Sync + 'static;
     /// What the node reads to create its state.
     type CreateInput: ReadOnlySystemInput + 'static;
@@ -32,12 +33,14 @@ pub trait AnimationNode: Reflect + Send + Sync + 'static {
     /// What the node reads to write its pose.
     type EvaluateInput: ReadOnlySystemInput + 'static;
 
+    /// Creates the node's state for one player, when the player starts the graph.
     fn create_state(
         &self,
         input: &SystemInputData<'_, '_, Self::CreateInput>,
         context: &AnimationGraphContext<'_>,
     ) -> Self::State;
 
+    /// Advances the node's state by `delta_time` seconds, before the frame is evaluated.
     fn update(
         &self,
         state: &mut Self::State,
@@ -46,6 +49,11 @@ pub trait AnimationNode: Reflect + Send + Sync + 'static {
         context: &AnimationGraphContext<'_>,
     );
 
+    /// Writes the node's pose and the clip events it crossed into `output`.
+    ///
+    /// `evaluated_inputs` holds the frames of the node's inputs in slot order, and `bone_ids` the
+    /// skeleton's bone ids in pose order. `output` starts at the skeleton's rest pose; a node that
+    /// writes nothing leaves the rest pose. `pool` hands out scratch frames, which go back to it.
     fn evaluate(
         &self,
         state: &mut Self::State,
@@ -73,8 +81,12 @@ pub trait AnimationNode: Reflect + Send + Sync + 'static {
             .map_or(RootMotion::IDENTITY, |input| input.motion)
     }
 
+    /// Puts the state back to where [`Self::create_state`] left it, as when a state machine
+    /// enters the node's state again.
     fn reset(&self, state: &mut Self::State);
 
+    /// Whether the node has played to its end, which a state machine's on-finish transition waits
+    /// for; `true` unless the node says otherwise.
     fn is_finished(&self, _state: &Self::State) -> bool {
         true
     }
@@ -151,14 +163,19 @@ pub fn register_node_inputs<N: AnimationNode>(world: &mut World) {
 
 /// An [`EditorAnimationNode`] with its state type erased; implemented for every one.
 pub trait ErasedAnimationNode: Send + Sync {
+    /// The node as a reflected value.
     fn as_reflect(&self) -> &dyn Reflect;
 
+    /// The node as a reflected value, to change.
     fn as_reflect_mut(&mut self) -> &mut dyn Reflect;
 
+    /// Creates the node's state, or `None` when the walk's inputs lack what the node reads.
     fn create_state(&self, context: &AnimationGraphContext<'_>) -> Option<NodeState>;
 
+    /// Advances the state by `delta_time` seconds; see [`AnimationNode::update`].
     fn update(&self, state: &mut NodeState, delta_time: f32, context: &AnimationGraphContext<'_>);
 
+    /// Writes the node's pose into `output`; see [`AnimationNode::evaluate`].
     fn evaluate(
         &self,
         state: &mut NodeState,
@@ -169,6 +186,7 @@ pub trait ErasedAnimationNode: Send + Sync {
         output: &mut AnimationFrame,
     );
 
+    /// The node's root motion this frame; see [`AnimationNode::root_motion`].
     fn root_motion(
         &self,
         state: &mut NodeState,
@@ -177,26 +195,36 @@ pub trait ErasedAnimationNode: Send + Sync {
         inputs: &[WeightedMotion],
     ) -> RootMotion;
 
+    /// Resets the state; see [`AnimationNode::reset`].
     fn reset(&self, state: &mut NodeState);
 
+    /// Whether the node has played to its end; `true` for a state of another node's type.
     fn is_finished(&self, state: &NodeState) -> bool;
 
+    /// Visits the graph assets this node plays inside itself.
     fn inner_graphs(&self, visit: &mut dyn FnMut(&AssetHandle<AnimationGraph>));
 
+    /// The inputs this node takes.
     fn input_slots(&self) -> InputSlots;
 
+    /// Tells the node an editor gave it an input at `index`.
     fn input_added(&mut self, index: usize);
 
+    /// Tells the node an editor took its input at `index` away.
     fn input_removed(&mut self, index: usize);
 
+    /// Visits the graph states this node's state holds, each with the state machine state that
+    /// plays it.
     fn inner_states(
         &self,
         state: &NodeState,
         visit: &mut dyn FnMut(Option<Name>, &AnimationGraphState),
     );
 
+    /// One line saying what the node does now; see [`EditorAnimationNode::describe`].
     fn describe(&self, state: &NodeState) -> Option<String>;
 
+    /// Visits, mutably, the graph states this node's state holds.
     #[cfg(any(test, feature = "test-support"))]
     fn inner_states_mut(
         &self,
@@ -204,8 +232,10 @@ pub trait ErasedAnimationNode: Send + Sync {
         visit: &mut dyn FnMut(&mut AnimationGraphState),
     );
 
+    /// The state as [`Any`], to downcast to the node's state type.
     fn state_as_any<'a>(&self, state: &'a NodeState) -> &'a dyn Any;
 
+    /// The state as [`Any`], to downcast and change.
     fn state_as_any_mut<'a>(&self, state: &'a mut NodeState) -> &'a mut dyn Any;
 }
 
@@ -349,8 +379,10 @@ fn fetched<'a, T: AnimationNode, P: ReadOnlySystemInput + 'static>(
 /// How a graph builds a node from stored data and stores it back.
 #[derive(Clone, Copy)]
 pub struct ReflectAnimationNode {
+    /// Builds the node from its stored fields, with the fields that did not apply.
     pub from_value:
         fn(&ReflectedValue, &mut LiveLeaves) -> (Box<dyn ErasedAnimationNode>, Vec<ValueWarning>),
+    /// Stores the node's fields; `None` when the node is not of the registered type.
     pub to_value: fn(&dyn ErasedAnimationNode) -> Option<Result<ReflectedValue, EncodeError>>,
 }
 

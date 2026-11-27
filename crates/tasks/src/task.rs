@@ -5,6 +5,9 @@ use std::{
     task::{Context, Poll},
 };
 
+/// A spawned future whose output is read by awaiting it.
+///
+/// Dropping a `Task` cancels the future.
 #[derive(Deref)]
 pub struct Task<T>(async_executor::Task<T>);
 
@@ -17,10 +20,12 @@ impl<T> Future for Task<T> {
 }
 
 impl<T> Task<T> {
+    /// Wraps an [`async_executor::Task`].
     pub fn new(task: async_executor::Task<T>) -> Self {
         Task(task)
     }
 
+    /// Returns whether the future has finished, without waiting for it.
     pub fn is_finished(&self) -> bool {
         self.0.is_finished()
     }

@@ -20,8 +20,11 @@ const ADJUSTMENT_EPS: f32 = 1.0e-8;
 #[derive(Component, Reflect, Clone, Debug, PartialEq)]
 #[reflect(Component, Default)]
 pub enum CharacterDisplacement {
+    /// Averages the character and the capsule; see [`Synchronization`].
     Synchronization(Synchronization),
+    /// Damps the character toward the capsule; see [`Adjustment`].
     Adjustment(Adjustment),
+    /// Keeps the character near the capsule; see [`Clamp`].
     Clamp(Clamp),
 }
 
@@ -38,6 +41,7 @@ impl Default for CharacterDisplacement {
 #[derive(Reflect, Clone, Debug, PartialEq)]
 #[reflect(Default)]
 pub struct Synchronization {
+    /// How far the result leans toward the character's animated placement, from 0 to 1.
     pub data_factor: f32,
 }
 
@@ -51,10 +55,15 @@ impl Default for Synchronization {
 #[derive(Reflect, Clone, Debug, PartialEq)]
 #[reflect(Default)]
 pub struct Adjustment {
+    /// Whether each frame's correction is capped by a ratio of that frame's root motion.
     pub by_velocity: bool,
+    /// The halflife, in seconds, the position gap closes with.
     pub position_halflife: f32,
+    /// The halflife, in seconds, the facing gap closes with.
     pub rotation_halflife: f32,
+    /// The largest position correction per frame, as a fraction of the frame's root translation.
     pub position_max_ratio: f32,
+    /// The largest facing correction per frame, as a fraction of the frame's root turn.
     pub rotation_max_ratio: f32,
 }
 
@@ -74,7 +83,9 @@ impl Default for Adjustment {
 #[derive(Reflect, Clone, Debug, PartialEq)]
 #[reflect(Default)]
 pub struct Clamp {
+    /// The farthest the character may be from the capsule, in metres.
     pub max_distance: f32,
+    /// The widest the character's facing may differ from the capsule's, in radians.
     pub max_angle: f32,
 }
 
@@ -96,7 +107,10 @@ impl Default for Clamp {
 #[derive(Component, Reflect, Clone, Copy, Debug, Default, PartialEq)]
 #[reflect(Component, SceneComponent, Default)]
 pub struct CharacterLink {
+    /// The entity holding the character's
+    /// [`CharacterSimulation`](crate::simulation::CharacterSimulation).
     pub capsule: SceneEntityRef,
+    /// The entity holding the skeleton and its animation player.
     pub skeleton: SceneEntityRef,
 }
 

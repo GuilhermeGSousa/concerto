@@ -15,12 +15,16 @@ use uuid::Uuid;
 /// Translation, rotation and scale of one bone relative to its parent.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct JointPose {
+    /// The offset from the parent bone, in the parent's space.
     pub translation: Vec3,
+    /// The rotation relative to the parent bone.
     pub rotation: Quat,
+    /// The scale on each axis relative to the parent bone.
     pub scale: Vec3,
 }
 
 impl JointPose {
+    /// The pose that leaves the bone where its parent is: no offset, rotation or scale.
     pub const IDENTITY: JointPose = JointPose {
         translation: Vec3::ZERO,
         rotation: Quat::IDENTITY,
@@ -36,17 +40,27 @@ impl JointPose {
 /// Why a skeleton could not be built or evaluated.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SkeletonError {
+    /// A per-bone slice has a different length from `inverse_bindposes`.
     LengthMismatch {
+        /// The name of the slice.
         field: &'static str,
+        /// The number of inverse bind poses.
         expected: usize,
+        /// The slice's length.
         actual: usize,
     },
+    /// A bone's parent does not come before it.
     ParentNotBefore {
+        /// The index of the bone.
         bone: usize,
+        /// The index of its parent.
         parent: usize,
     },
+    /// A pose does not have one joint per bone.
     PoseLength {
+        /// The number of bones.
         expected: usize,
+        /// The number of joints in the pose.
         actual: usize,
     },
 }
@@ -111,10 +125,15 @@ impl JsonLeaf for JointName {
 /// Every slice has one entry per bone, and each bone's parent comes before it.
 #[derive(Asset, Serialize, Deserialize)]
 pub struct Skeleton {
+    /// The matrix from mesh space to each bone's space in the bind pose.
     pub inverse_bindposes: Box<[Mat4]>,
+    /// The index of each bone's parent, `None` for a root.
     pub parents: Box<[Option<u16>]>,
+    /// Each bone's name.
     pub names: Box<[Name]>,
+    /// Each bone's pose relative to its parent when nothing animates it.
     pub rest_pose: Box<[JointPose]>,
+    /// The stable id of each bone's scene node, which animation clips target.
     pub bone_ids: Box<[Uuid]>,
 }
 
@@ -180,6 +199,7 @@ impl Skeleton {
         Ok(())
     }
 
+    /// Returns the number of bones.
     pub fn bone_count(&self) -> usize {
         self.inverse_bindposes.len()
     }
@@ -222,12 +242,15 @@ impl LoadableAsset for Skeleton {}
 
 /// An asset that names the skeleton its bone fields refer to.
 pub trait SkeletonSource: Reflect {
+    /// Returns the skeleton, or `None` when none is set.
     fn skeleton(&self) -> Option<&AssetHandle<Skeleton>>;
 }
 
 /// Reads a value's skeleton without naming its type.
 #[derive(Clone, Copy)]
 pub struct ReflectSkeletonSource {
+    /// Returns the id of the value's skeleton, or `None` when the value has none or is not of
+    /// the registered type.
     pub skeleton: fn(&dyn Reflect) -> Option<AssetId>,
 }
 
@@ -251,12 +274,17 @@ fn skeleton_of<T: SkeletonSource>(value: &dyn Reflect) -> Option<AssetId> {
 #[derive(Component, Clone, Reflect, Default)]
 #[reflect(Component, SceneComponent)]
 pub struct SkeletonComponent {
+    /// The skeleton asset.
     pub skeleton: AssetHandle<Skeleton>,
+    /// The entity of each bone, in the skeleton's bone order.
     pub bones: Vec<SceneEntityRef>,
+    /// The entity of the skeleton's root bone, set on the entity that owns the skeleton and
+    /// `None` on extra mesh parts skinned by the same bones.
     pub root: Option<SceneEntityRef>,
 }
 
 impl SkeletonComponent {
+    /// Creates the component from its three fields.
     pub fn new(
         skeleton: AssetHandle<Skeleton>,
         bones: Vec<SceneEntityRef>,
@@ -269,14 +297,17 @@ impl SkeletonComponent {
         }
     }
 
+    /// Returns the skeleton asset.
     pub fn skeleton(&self) -> &AssetHandle<Skeleton> {
         &self.skeleton
     }
 
+    /// Returns the entity of each bone, in the skeleton's bone order.
     pub fn bones(&self) -> &[SceneEntityRef] {
         &self.bones
     }
 
+    /// Returns the root bone's entity, or `None` when there is none or it is not resolved yet.
     pub fn root(&self) -> Option<Entity> {
         self.root.and_then(SceneEntityRef::entity)
     }

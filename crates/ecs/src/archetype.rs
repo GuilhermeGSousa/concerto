@@ -34,6 +34,10 @@ impl ArchetypeEdges {
     }
 }
 
+/// The entities that have exactly one set of components, and the [`Table`] that stores those
+/// components.
+///
+/// Adding or removing a component moves an entity to another archetype.
 pub struct Archetype {
     data_table: Table,
     component_ids: Vec<ComponentId>,
@@ -42,6 +46,7 @@ pub struct Archetype {
 }
 
 impl Archetype {
+    /// Creates an archetype over `data_table`, whose columns must match `component_ids`.
     pub fn new(data_table: Table, component_ids: Vec<ComponentId>, id: ArchetypeId) -> Archetype {
         Archetype {
             data_table,
@@ -85,27 +90,34 @@ impl Archetype {
         }
     }
 
+    /// Appends `entity` to the archetype's entity list, without its components; push each one with
+    /// [`push_component`](Archetype::push_component).
     pub fn add_entity(&mut self, entity: Entity) {
         self.data_table.add_entity(entity);
     }
 
+    /// Returns whether the archetype's entities have the component `component_id`.
     pub fn contains(&self, component_id: ComponentId) -> bool {
         self.data_table.has_column(component_id)
     }
 
+    /// Returns the number of entities in the archetype.
     pub fn len(&self) -> usize {
         self.data_table.get_row_count()
     }
 
+    /// Returns the archetype's index in the world.
     pub fn id(&self) -> ArchetypeId {
         self.id
     }
 
+    /// Returns whether the archetype has no entities.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
     pub(crate) unsafe fn get_component_unsafe<T: 'static>(&self, row: TableRowIndex) -> Option<&T> {
+        // SAFETY: the caller guarantees `row` is a row of this archetype's table.
         unsafe {
             self.data_table
                 .get_column(ComponentId::of::<T>())?
@@ -113,6 +125,7 @@ impl Archetype {
         }
     }
 
+    /// Returns whether the component at `row` was added since the system with `ticks` last ran.
     pub fn was_entity_added(
         &self,
         component_id: ComponentId,
@@ -133,6 +146,8 @@ impl Archetype {
             .changed_since(row, component_id, since, current_tick)
     }
 
+    /// Returns whether the component at `row` was added or changed since the system with `ticks`
+    /// last ran.
     pub fn was_entity_changed(
         &self,
         component_id: ComponentId,
@@ -159,9 +174,11 @@ impl Archetype {
         row: TableRowIndex,
     ) -> Option<MutableCellAccessor<'_, T>> {
         let column = self.data_table.get_column_mut(ComponentId::of::<T>())?;
+        // SAFETY: the caller guarantees `row` is a row of this archetype's table.
         unsafe { column.get_unsafe_mut(row) }
     }
 
+    /// Returns the archetype's entities, in row order.
     pub fn entities(&self) -> &[Entity] {
         self.data_table.entities()
     }
@@ -183,10 +200,12 @@ impl Archetype {
         self.data_table.drop_row(row);
     }
 
+    /// Returns the component ids that define the archetype.
     pub fn component_ids(&self) -> &[ComponentId] {
         &self.component_ids
     }
 }
 
+/// The index of an [`Archetype`] in its world.
 #[derive(Clone, Copy, Deref, From)]
 pub struct ArchetypeId(usize);

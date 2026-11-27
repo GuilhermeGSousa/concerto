@@ -33,7 +33,9 @@ use crate::tools::{
 /// Trigger it in the edit `App`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RemoveLinkChange {
+    /// The entity that carries the `SceneLink`.
     pub link: Entity,
+    /// The change's index among the link's own changes, from 0.
     pub index: usize,
 }
 
@@ -42,7 +44,9 @@ impl Signal for RemoveLinkChange {}
 /// What one `RemoveLinkChange` did, or the status text saying why it was refused.
 #[derive(Event, Clone)]
 pub struct LinkChangeRemoved {
+    /// The removal that was asked for.
     pub request: RemoveLinkChange,
+    /// `Ok` when the change was removed, or the status text saying why it was refused.
     pub result: Result<(), String>,
 }
 

@@ -88,66 +88,79 @@ impl Default for FirstPersonWalker {
 }
 
 impl FirstPersonWalker {
+    /// Sets the speed in m/s with the `Move` stick pushed to `hurry_threshold`.
     pub fn with_walk_speed(mut self, walk_speed: f32) -> Self {
         self.walk_speed = walk_speed;
         self
     }
 
+    /// Sets the speed in m/s with the `Move` stick pushed all the way.
     pub fn with_hurry_speed(mut self, hurry_speed: f32) -> Self {
         self.hurry_speed = hurry_speed;
         self
     }
 
+    /// Sets the `Move` deflection, in `0..1`, up to which the walker walks.
     pub fn with_hurry_threshold(mut self, hurry_threshold: f32) -> Self {
         self.hurry_threshold = hurry_threshold;
         self
     }
 
+    /// Sets the tallest step the walker climbs, in metres.
     pub fn with_step_height(mut self, step_height: f32) -> Self {
         self.step_height = step_height;
         self
     }
 
+    /// Sets the steepest ground it stands on, in radians from level.
     pub fn with_max_slope_angle(mut self, max_slope_angle: f32) -> Self {
         self.max_slope_angle = max_slope_angle;
         self
     }
 
+    /// Sets the capsule's radius, in metres.
     pub fn with_radius(mut self, radius: f32) -> Self {
         self.radius = radius;
         self
     }
 
+    /// Sets the height from the feet to the top of the capsule, in metres.
     pub fn with_height(mut self, height: f32) -> Self {
         self.height = height;
         self
     }
 
+    /// Sets the height from the feet to the eyes, in metres.
     pub fn with_eye_height(mut self, eye_height: f32) -> Self {
         self.eye_height = eye_height;
         self
     }
 
+    /// Sets how far ahead of the body's centre the eyes are, in metres.
     pub fn with_eye_forward(mut self, eye_forward: f32) -> Self {
         self.eye_forward = eye_forward;
         self
     }
 
+    /// Sets the radians per second the view turns with the `Look` stick pushed all the way.
     pub fn with_look_rate(mut self, look_rate: f32) -> Self {
         self.look_rate = look_rate;
         self
     }
 
+    /// Sets the radians the view turns per unit of mouse motion.
     pub fn with_mouse_sensitivity(mut self, mouse_sensitivity: f32) -> Self {
         self.mouse_sensitivity = mouse_sensitivity;
         self
     }
 
+    /// Sets how far the view pitches up or down, in radians.
     pub fn with_pitch_limit(mut self, pitch_limit: f32) -> Self {
         self.pitch_limit = pitch_limit;
         self
     }
 
+    /// Sets whether pushing the `Look` stick up looks down.
     pub fn with_invert_y(mut self, invert_y: bool) -> Self {
         self.invert_y = invert_y;
         self
@@ -170,10 +183,12 @@ impl FirstPersonWalker {
         self.pitch = (self.pitch + pitch).clamp(-self.pitch_limit, self.pitch_limit);
     }
 
+    /// The view's turn about +Y, in radians; 0 looks along -Z and a positive yaw turns left.
     pub fn yaw(&self) -> f32 {
         self.yaw
     }
 
+    /// The view's pitch, in radians within `pitch_limit`; positive looks up.
     pub fn pitch(&self) -> f32 {
         self.pitch
     }
@@ -222,6 +237,7 @@ impl FirstPersonWalker {
 /// Give the entity a `Camera` or a `VirtualCamera`.
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
 pub struct FirstPersonView {
+    /// The walker entity whose eyes this entity sits at.
     pub walker: Entity,
 }
 

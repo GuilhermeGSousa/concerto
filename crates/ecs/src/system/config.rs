@@ -15,7 +15,12 @@ use crate::{
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum DependencyTarget {
     /// Every system of this type in the same schedule.
-    System { id: TypeId, name: &'static str },
+    System {
+        /// The system's type, as [`System::system_type`] returns it.
+        id: TypeId,
+        /// The system's name, for errors.
+        name: &'static str,
+    },
     /// Every member of this set in the same schedule.
     Set(InternedSystemSet),
 }
@@ -28,6 +33,7 @@ pub struct SetTarget;
 
 /// Converts a system function or a [`SystemSet`] into a [`DependencyTarget`].
 pub trait IntoDependencyTarget<Marker> {
+    /// Returns the target.
     fn into_target(self) -> DependencyTarget;
 }
 
@@ -171,24 +177,30 @@ impl SystemConfig {
 /// A `Vec` must hold configs rather than bare functions: collecting functions coerces them
 /// to one function-pointer type, which cannot be told apart as an ordering target.
 pub trait IntoSystemConfig<Marker>: Sized {
+    /// Converts into a [`SystemConfig`].
     fn into_config(self) -> SystemConfig;
 
+    /// Orders every system in this config after `target`.
     fn after<M>(self, target: impl IntoDependencyTarget<M>) -> SystemConfig {
         self.into_config().after(target)
     }
 
+    /// Orders every system in this config before `target`.
     fn before<M>(self, target: impl IntoDependencyTarget<M>) -> SystemConfig {
         self.into_config().before(target)
     }
 
+    /// Gives every system in this config `tag`; only a [`TagFilter`](crate::TagFilter) reads it.
     fn tagged(self, tag: impl SystemTag) -> SystemConfig {
         self.into_config().tagged(tag)
     }
 
+    /// Adds every system in this config to `set`.
     fn in_set(self, set: impl SystemSet) -> SystemConfig {
         self.into_config().in_set(set)
     }
 
+    /// Orders the children of a group so each runs before the next.
     fn chain(self) -> SystemConfig {
         self.into_config().chain()
     }

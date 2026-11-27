@@ -26,22 +26,29 @@ use crate::graph::{Stored, StoredRef};
 use crate::inertialization::PoseVelocity;
 use crate::pose::JointPose;
 
+/// The key values of an [`AnimationChannel`], one per key time, for the joint part it animates.
 #[derive(Serialize, Deserialize)]
 pub enum AnimationChanelOutput {
+    /// Translations in the parent bone's space.
     Translation(Vec<Vec3>),
+    /// Rotations relative to the parent bone.
     Rotation(Vec<Quat>),
+    /// Per-axis scales.
     Scale(Vec<Vec3>),
 }
 
 impl AnimationChanelOutput {
+    /// Translation keys from `[x, y, z]` arrays.
     pub fn from_translation(translations: impl Iterator<Item = [f32; 3]>) -> Self {
         Self::Translation(translations.map(Vec3::from_array).collect::<Vec<_>>())
     }
 
+    /// Rotation keys from `[x, y, z, w]` quaternion arrays.
     pub fn from_rotation(rotations: impl Iterator<Item = [f32; 4]>) -> Self {
         Self::Rotation(rotations.map(Quat::from_array).collect::<Vec<_>>())
     }
 
+    /// Scale keys from `[x, y, z]` arrays.
     pub fn from_scale(scales: impl Iterator<Item = [f32; 3]>) -> Self {
         Self::Scale(scales.map(Vec3::from_array).collect::<Vec<_>>())
     }
@@ -76,6 +83,10 @@ impl KeySpan {
     }
 }
 
+/// The keys that animate one part of one joint: translation, rotation or scale.
+///
+/// Between keys, translation and scale are lerped and rotation is slerped; before the first key
+/// and after the last the nearest key holds.
 #[derive(Serialize, Deserialize)]
 pub struct AnimationChannel {
     time_samples: Vec<f32>,
@@ -83,6 +94,7 @@ pub struct AnimationChannel {
 }
 
 impl AnimationChannel {
+    /// A channel of `outputs` at `time_samples`, in seconds, ascending, one per output.
     pub fn new(time_samples: Vec<f32>, outputs: AnimationChanelOutput) -> Self {
         Self {
             time_samples,
@@ -90,6 +102,9 @@ impl AnimationChannel {
         }
     }
 
+    /// Writes the channel's value at `current_time` seconds into its part of `transform`.
+    ///
+    /// A channel with fewer than two keys leaves `transform` unchanged.
     pub fn sample_transform(&self, current_time: f32, transform: &mut JointPose) {
         if self.time_samples.len() < 2 {
             return;
@@ -165,6 +180,7 @@ impl AnimationChannel {
         }
     }
 
+    /// The time of the last key in seconds, or `None` for a channel with no keys.
     pub fn duration(&self) -> Option<f32> {
         self.time_samples.last().copied()
     }
@@ -277,19 +293,28 @@ impl AnimationChannel {
 /// One event on a clip: the value to trigger and the clip time it fires at.
 #[derive(Serialize, Deserialize)]
 pub struct ClipEventKey {
+    /// The clip time the event fires at, in seconds.
     pub time: f32,
+    /// The event value.
     pub event: ClipEventData,
 }
 
 /// A clip event as a clip holds it: `Stored` until the clip loads, `Live` once built.
 pub enum ClipEventData {
+    /// As read from the file, before the event's type is looked up.
     Stored {
+        /// The registry key of the event's type.
         type_name: String,
+        /// The event's reflected fields.
         value: ReflectedValue,
     },
+    /// Built into the event's type, ready to trigger.
     Live {
+        /// The registry key of the event's type.
         type_name: String,
+        /// The event value.
         value: Box<dyn Reflect>,
+        /// How the event's type is built and triggered.
         data: ReflectClipEvent,
     },
 }
@@ -341,17 +366,23 @@ impl<'de> Deserialize<'de> for ClipEventData {
 /// Whether a clip is additive, and against what.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub enum Additive {
+    /// The clip is a pose, played as it is.
     #[default]
     None,
+    /// The clip is a delta in each joint's local space, taken against a base clip.
     LocalSpace(AdditiveBase),
 }
 
 /// The clip a delta is taken against, the spans of both clips that are aligned, and the bones whose translation is not added.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct AdditiveBase {
+    /// The clip the delta is taken against.
     pub clip: AssetHandle<AnimationClip>,
+    /// The span of the base clip aligned with [`Self::range`]; `None` for the whole clip.
     pub base_range: Option<ClipRange>,
+    /// The span of this clip aligned with [`Self::base_range`]; `None` for the whole clip.
     pub range: Option<ClipRange>,
+    /// The ids of the bones whose translation is left out of the delta.
     pub roots: Vec<Uuid>,
 }
 
@@ -389,7 +420,9 @@ impl AdditiveBase {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ClipRange {
+    /// The start, in seconds from the clip's start.
     pub start: f32,
+    /// The end, in seconds from the clip's start; after `start`.
     pub end: f32,
 }
 
@@ -404,9 +437,12 @@ impl ClipRange {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AdditiveSetting {
+    /// The clip the delta is taken against.
     pub base: AssetId,
+    /// The span of the base clip that is aligned; the whole clip when absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub base_range: Option<ClipRange>,
+    /// The span of this clip that is aligned; the whole clip when absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub range: Option<ClipRange>,
 }
@@ -590,6 +626,8 @@ fn hash_range(hash: &mut Fnv1a, range: Option<ClipRange>) {
     }
 }
 
+/// A skeletal animation asset: keyed channels per bone id, clip events, and whether the clip is
+/// additive.
 #[derive(Serialize, Deserialize)]
 pub struct AnimationClip {
     additive: Additive,
@@ -697,6 +735,8 @@ fn snap_rate(rate: f32) -> f32 {
 }
 
 impl AnimationClip {
+    /// Adds a channel for the bone `id`, after any it has, and extends the duration to its last
+    /// key.
     pub fn add_channel(&mut self, id: Uuid, channel: AnimationChannel) {
         if let Some(channel_duration) = channel.duration() {
             self.duration = self.duration.max(channel_duration);
@@ -705,14 +745,17 @@ impl AnimationClip {
         self.channels.entry(id).or_default().push(channel);
     }
 
+    /// The ids of the bones the clip has channels for.
     pub fn target_ids(&self) -> Keys<'_, Uuid, Vec<AnimationChannel>> {
         self.channels.keys()
     }
 
+    /// The channels for the bone `id`, in the order they were added.
     pub fn get_channels(&self, id: &Uuid) -> Option<&Vec<AnimationChannel>> {
         self.channels.get(id)
     }
 
+    /// The clip's length in seconds: the last key time of any channel.
     pub fn duration(&self) -> f32 {
         self.duration
     }

@@ -1,3 +1,5 @@
+//! Routes the editor window's input to the hosted `App` the viewport shows, and gives it back to
+//! the editor.
 use std::collections::HashSet;
 
 use concerto_ecs::{
@@ -29,9 +31,13 @@ pub const POINTER_GONE: Vec2 = Vec2::splat(-1.0);
 /// Where the viewport is this frame, in the editor window's physical pixels.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ViewportView {
+    /// The top-left corner of the picture.
     pub origin: Vec2,
+    /// The picture's size.
     pub size: (u32, u32),
+    /// Whether the pointer is over the viewport.
     pub over: bool,
+    /// Whether a text field of the editor has focus, so keys and clicks stay with the editor.
     pub typing: bool,
 }
 
@@ -174,7 +180,9 @@ pub(crate) fn blur_old_target(
 /// Who has the editor window's input while a document's game plays.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InputOwner {
+    /// The game gets keys, the pointer and gamepads, and hides the cursor if it asks to.
     Game,
+    /// The editor gets everything but gamepads, until a click on the picture gives it to the game.
     Editor,
 }
 

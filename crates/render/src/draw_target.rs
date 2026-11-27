@@ -12,6 +12,7 @@ pub struct SharedTexture {
 }
 
 impl SharedTexture {
+    /// Creates an empty slot for textures of `format`.
     pub fn new(format: wgpu::TextureFormat) -> Self {
         Self {
             format,
@@ -19,11 +20,16 @@ impl SharedTexture {
         }
     }
 
+    /// Returns the format of the textures the slot holds.
     pub fn format(&self) -> wgpu::TextureFormat {
         self.format
     }
 
     /// The texture most recently drawn into, or `None` until the `App` has a non-zero size.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a thread panicked while holding the slot's lock.
     pub fn get(&self) -> Option<RenderTexture> {
         self.slot.lock().unwrap().clone()
     }
@@ -41,7 +47,10 @@ impl SharedTexture {
 /// Where an `App`'s window cameras and UI draw. The host inserts it before the recipe runs.
 #[derive(Resource, Clone)]
 pub enum DrawTarget {
+    /// A window's surface, presented each frame.
     Surface(Arc<wgpu::Surface<'static>>),
+    /// A texture a host shows, such as the editor's game viewport.
     Texture(SharedTexture),
+    /// Nowhere: window cameras and UI are not drawn.
     None,
 }

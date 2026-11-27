@@ -47,25 +47,41 @@ use concerto_window::{input::MouseButton, plugin::WindowPlugin};
 #[derive(Component, Reflect, Default)]
 #[reflect(Component, Default)]
 pub struct Setting {
+    /// The setting's name, which an edit refuses to leave blank.
     pub title: String,
+    /// Whether the setting is on; a click on its row toggles it.
     pub enabled: bool,
 }
 
+/// What [`SettingEditor`] reads from a [`Setting`] to draw its row.
 #[derive(Clone, PartialEq, Debug)]
 pub struct SettingSnapshot {
+    /// The setting's name.
     pub title: String,
+    /// Whether the setting is on.
     pub enabled: bool,
 }
 
+/// One change [`SettingEditor`] applies to a [`Setting`].
 pub enum SettingEdit {
+    /// Turns the setting on or off.
     Toggle,
+    /// Gives the setting a new, non-blank name.
     Rename(String),
-    Set { title: String, enabled: bool },
+    /// Sets both fields, as the MCP `set_property` tool does through [`PropertyEditor::edit_to`].
+    Set {
+        /// The new name, which must not be blank.
+        title: String,
+        /// Whether the setting is on.
+        enabled: bool,
+    },
 }
 
+/// The custom property editor of [`Setting`]: one button that shows the value and toggles it.
 #[derive(Default)]
 pub struct SettingEditor;
 
+/// The button a [`SettingEditor`] row holds, naming that row.
 #[derive(Component)]
 pub struct SettingButton(pub Entity);
 
@@ -136,6 +152,7 @@ fn label(snapshot: &SettingSnapshot) -> String {
     )
 }
 
+/// Queues a [`SettingEdit::Toggle`] for the row of the clicked [`SettingButton`].
 pub fn toggle_setting(
     on: On<UIClick>,
     buttons: Query<&SettingButton>,
@@ -156,6 +173,7 @@ pub fn toggle_setting(
     }
 }
 
+/// Writes each [`SettingButton`]'s label from its row's current snapshot.
 pub fn refresh_settings(
     mut buttons: Query<(&SettingButton, &mut UIText)>,
     rows: Query<&PropertyRowValue>,
@@ -199,6 +217,11 @@ fn build_inspector(mut cmd: CommandQueue, theme: Res<UITheme>) {
 }
 
 /// An editor `App` with the inspector and one scene `App`, `arrange`d before it starts, with no window.
+///
+/// # Panics
+///
+/// Panics if the scene `App` fails to build, or if [`install`] removes the editor's
+/// [`ActiveEditor`] resource, which this function inserts before it.
 pub fn headless_editor(
     arrange: impl FnOnce(&mut App),
     arrange_editor: impl FnOnce(&mut App),

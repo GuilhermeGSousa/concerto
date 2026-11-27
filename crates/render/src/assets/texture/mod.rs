@@ -24,24 +24,38 @@ pub(crate) use blob::{block_extent, block_row_bytes, block_rows};
 /// Whether a texture is sampled from its levels or drawn into by a camera.
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum TextureKind {
+    /// Sampled by shaders from levels imported or built in code.
     Sampled,
-    RenderTarget { width: u32, height: u32 },
+    /// Drawn into by a camera and then sampled.
+    RenderTarget {
+        /// The width in texels.
+        width: u32,
+        /// The height in texels.
+        height: u32,
+    },
 }
 
 /// How a texture's source bytes are encoded.
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum SourceEncoding {
+    /// A PNG file.
     Png,
+    /// A JPEG file.
     Jpeg,
 }
 
 /// The image file a texture was imported from, as it was imported.
 #[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug)]
 pub struct TextureSource {
+    /// The file's bytes.
     pub bytes: Vec<u8>,
+    /// How the bytes are encoded.
     pub encoding: SourceEncoding,
+    /// The image width in pixels.
     pub width: u32,
+    /// The image height in pixels.
     pub height: u32,
+    /// The FNV-1a hash of `bytes`.
     pub hash: u64,
 }
 
@@ -83,8 +97,11 @@ impl TextureSource {
 /// What a texture's payload keeps of its source: enough for the derive key and the size.
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
 pub struct SourceSummary {
+    /// The source image width in pixels.
     pub width: u32,
+    /// The source image height in pixels.
     pub height: u32,
+    /// The FNV-1a hash of the source file's bytes.
     pub hash: u64,
 }
 
@@ -94,9 +111,13 @@ pub struct SourceSummary {
 /// image itself is the file's uncooked data.
 #[derive(Serialize, Deserialize)]
 pub struct Texture {
+    /// Whether it is sampled or drawn into.
     pub kind: TextureKind,
+    /// What it holds, which picks its default compression and colour space.
     pub role: TextureRole,
+    /// How its levels are derived from its source.
     pub settings: TextureSettings,
+    /// What it keeps of the image it was imported from; `None` for a texture built in code.
     pub source: Option<SourceSummary>,
     #[serde(skip)]
     levels: Option<TextureLevels>,
@@ -193,6 +214,8 @@ impl Texture {
         self.levels.as_ref()
     }
 
+    /// Returns the size of level 0: a render target's size, else the levels', else the source's,
+    /// else zero.
     pub fn size(&self) -> wgpu::Extent3d {
         let extent = |width, height| wgpu::Extent3d {
             width,

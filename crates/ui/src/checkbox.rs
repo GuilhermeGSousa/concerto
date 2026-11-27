@@ -12,6 +12,7 @@ use crate::{interaction::UIClick, material::UIMaterial};
 /// A toggleable boolean widget.
 #[derive(Component)]
 pub struct UICheckbox {
+    /// Whether the box is ticked.
     pub checked: bool,
     /// Colour when `checked == true`.
     pub checked_color: Color,
@@ -20,6 +21,7 @@ pub struct UICheckbox {
 }
 
 impl UICheckbox {
+    /// A checkbox in state `checked`, blue when ticked and dark grey when not.
     pub fn new(checked: bool) -> Self {
         Self {
             checked,
@@ -31,6 +33,7 @@ impl UICheckbox {
 
 /// Sent to a [`UICheckbox`] when it is toggled.
 pub struct UICheckboxChanged {
+    /// The new state.
     pub checked: bool,
 }
 

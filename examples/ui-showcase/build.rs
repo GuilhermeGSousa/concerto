@@ -1,3 +1,5 @@
+#![allow(missing_docs, reason = "example build script, not public API")]
+
 use std::env;
 use std::path::{Path, PathBuf};
 

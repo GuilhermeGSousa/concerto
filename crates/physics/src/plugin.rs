@@ -20,6 +20,11 @@ use crate::{
     simulation::step_simulation,
 };
 
+/// Adds the physics simulation: [`PhysicsState`], [`PhysicsSettings`], and the systems that
+/// create bodies from colliders, step the world each fixed tick, report contacts and sensor
+/// overlaps, probe the ground and interpolate body transforms.
+///
+/// While the app is editing it inserts no [`PhysicsPipeline`], so the world never steps.
 pub struct PhysicsPlugin;
 
 impl Plugin for PhysicsPlugin {

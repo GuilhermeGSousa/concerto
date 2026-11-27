@@ -15,6 +15,7 @@ pub struct Sensor;
 
 /// A body entered the sensor this signal is aimed at.
 pub struct SensorEnter {
+    /// The entity of the body that entered.
     pub other: Entity,
 }
 
@@ -23,6 +24,7 @@ impl EntitySignal for SensorEnter {}
 
 /// A body left the sensor this signal is aimed at, or went away while inside it.
 pub struct SensorExit {
+    /// The entity of the body that left.
     pub other: Entity,
 }
 

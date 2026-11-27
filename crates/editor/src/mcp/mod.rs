@@ -1,3 +1,5 @@
+//! The editor served over MCP: the `App` that `--mcp` runs and the editor's own tools, which look
+//! at the editor and act on it through the signals its panels trigger.
 mod act;
 mod edit;
 mod input;

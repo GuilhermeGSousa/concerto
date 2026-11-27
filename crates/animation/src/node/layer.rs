@@ -23,16 +23,24 @@ use crate::{
 #[derive(Clone, Debug, PartialEq, Reflect, Serialize, Deserialize)]
 #[reflect(AnimationNode, Default)]
 pub struct LayerNode {
+    /// The mask whose bone weights limit where the overlay applies.
     pub mask: AssetHandle<BoneMask>,
+    /// Where rotations are blended.
     pub space: LayerSpace,
+    /// The layer weight, before the param scales it; each bone's mask weight is multiplied by it.
     pub weight: f32,
+    /// The `f32` blackboard param the weight is multiplied by, when it holds one.
     pub weight_param: Option<Param<f32>>,
 }
 
 /// Where a layer blends rotations.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Reflect, Serialize, Deserialize)]
 pub enum LayerSpace {
+    /// Each joint's local rotation is blended, so a bone also turns with its unmasked parents in
+    /// the base.
     Local,
+    /// Each joint's model-space rotation is blended, so a masked bone keeps the overlay's facing
+    /// whatever the base does above it.
     #[default]
     Mesh,
 }
@@ -170,6 +178,7 @@ impl AnimationNode for LayerNode {
                 blend_mesh(state, skeleton, weight, &base.frame, &overlay.frame, output)
             }
         }
+        blend_attributes(&state.mask.weights, weight, &overlay.frame, output);
     }
 
     fn reset(&self, _: &mut LayerState) {}
@@ -200,6 +209,22 @@ fn blend_local(weights: &[f32], layer: f32, overlay: &AnimationFrame, output: &m
             continue;
         };
         blend_joint(joint, target, weight);
+    }
+}
+
+fn blend_attributes(
+    weights: &[f32],
+    layer: f32,
+    overlay: &AnimationFrame,
+    output: &mut AnimationFrame,
+) {
+    for (bone, mask_weight) in weights.iter().enumerate() {
+        let weight = mask_weight * layer;
+        if weight > 0.0 {
+            output
+                .attributes_mut()
+                .blend_bone(overlay.attributes(), bone, weight);
+        }
     }
 }
 

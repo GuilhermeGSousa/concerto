@@ -58,10 +58,12 @@ use concerto_window::input::actions::{ActionFired, ActionMap};
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 
+/// The id the hierarchy panel is registered under in the [`PanelRegistry`].
 pub const PANEL_ID: &str = "concerto.score";
 
 const ROW_HEIGHT: f32 = 32.0;
 
+/// The hierarchy panel's filter, its rows by scene entity, and the entity it is to reveal.
 #[derive(Resource, Default)]
 pub struct HierarchyState {
     filter: String,
@@ -80,8 +82,11 @@ impl HierarchyState {
 /// How a row of the world tree differs from a plain one: a muted name, its own icon, or a marker after the name.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct RowLook {
+    /// Whether the name is drawn in the muted text colour.
     pub muted: bool,
+    /// A glyph drawn in place of the row's usual icon.
     pub icon: Option<char>,
+    /// A glyph drawn after the name.
     pub marker: Option<char>,
 }
 
@@ -128,6 +133,8 @@ enum RowMenuItem {
 
 const MENU_WIDTH: f32 = 168.0;
 
+/// Adds the hierarchy panel, the tree of the edited scene or the playing game, with its filter, row
+/// menu and the [`RowLooks`] other plugins fill.
 pub struct HierarchyPlugin;
 
 impl Plugin for HierarchyPlugin {
@@ -233,6 +240,8 @@ fn build_panel(mut cmd: CommandQueue, registry: Res<PanelRegistry>, theme: Res<U
     }
 }
 
+/// Spawns the hierarchy's header, filter and tree under `parent`, for a panel or a test that hosts
+/// it outside the dock.
 pub fn spawn_panel(cmd: &mut CommandQueue, parent: Entity, theme: &UITheme) {
     cmd.entity(parent).add_child_with(
         (

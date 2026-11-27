@@ -106,6 +106,8 @@ impl ShotReaction {
         self
     }
 
+    /// Sets how far the spine folds over a wound in the trunk, in radians, and the seconds over
+    /// which it straightens.
     pub fn with_fold(mut self, fold: f32, fold_seconds: f32) -> Self {
         self.fold = fold;
         self.fold_seconds = fold_seconds;
@@ -116,6 +118,7 @@ impl ShotReaction {
 /// One wound of a shot in progress.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Wound {
+    /// The index of the struck part.
     pub part: usize,
     /// Where the bullet struck, in the part's own space.
     pub point: Vec3,

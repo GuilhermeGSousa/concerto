@@ -1,4 +1,9 @@
+//! An MCP server inside an [`App`]: tools are systems that answer calls from the client, in frames
+//! or, for read-only tools, between them.
+
 mod calls;
+/// The headless host, which runs an `App` that draws into a texture instead of a window and serves
+/// it over MCP.
 pub mod host;
 mod pending;
 mod reply;

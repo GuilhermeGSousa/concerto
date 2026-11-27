@@ -21,8 +21,11 @@ const IMPACT_SAMPLES: usize = 6;
 /// A mass at a place, moving.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct MassPoint {
+    /// The mass in kg.
     pub mass: f32,
+    /// The world-space position, in metres.
     pub position: Vec3,
+    /// The world-space velocity, in m/s.
     pub velocity: Vec3,
 }
 
@@ -146,7 +149,9 @@ pub fn outside_by(polygon: &[Vec3], point: Vec3) -> Vec3 {
 /// Where and when a part will meet something on its current path.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Impact {
+    /// The world-space point the part will reach.
     pub point: Vec3,
+    /// The world-space normal of the surface it will meet, pointing away from it.
     pub normal: Vec3,
     /// Seconds from now.
     pub seconds: f32,

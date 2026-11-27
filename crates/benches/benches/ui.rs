@@ -1,3 +1,5 @@
+#![allow(missing_docs, reason = "benchmark harness, not public API")]
+
 use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
 
 use concerto::headless;

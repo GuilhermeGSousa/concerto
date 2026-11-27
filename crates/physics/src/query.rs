@@ -44,7 +44,9 @@ impl Default for QueryFilter<'_> {
 /// The first body a swept sphere touches, found by [`PhysicsState::cast_sphere`](crate::physics_state::PhysicsState::cast_sphere).
 #[derive(Clone, Copy, Debug)]
 pub struct ShapeHit {
+    /// The body that was hit.
     pub body: BodyId,
+    /// The entity of the hit body, when it has one.
     pub entity: Option<Entity>,
     /// The index of the ragdoll part that was hit, when the body belongs to a ragdoll.
     pub part: Option<usize>,

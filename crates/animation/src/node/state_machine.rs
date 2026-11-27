@@ -21,8 +21,11 @@ use derive_more::Deref;
 use glam::Vec2;
 use uuid::Uuid;
 
+/// A state for [`AnimationStateMachine::new`]: its name and the graph it plays.
 pub struct AnimationFSMStateDefinition {
+    /// The state's name, unique in the machine.
     pub name: Name,
+    /// The graph the state plays.
     pub graph: AssetHandle<AnimationGraph>,
 }
 
@@ -32,21 +35,31 @@ pub(crate) struct AnimationFSMState {
     graph: AssetHandle<AnimationGraph>,
 }
 
+/// When a transition fires; the machine tries the current state's transitions in order each
+/// update and takes the first that fires.
 #[derive(Debug, Clone, Default, Reflect, serde::Serialize, serde::Deserialize)]
 pub enum AnimationFSMTrigger {
+    /// At once, on the first update in the state.
     #[default]
     Instant,
+    /// When every node of the state's graph reports itself finished.
     OnAnimationEnd,
+    /// When a `bool` blackboard param holds a value.
     BoolEquals {
+        /// The param to read; a missing param never fires.
         param: Param<bool>,
+        /// The value that fires the transition.
         value: bool,
     },
+    /// When a [`Vec2`] blackboard param is not zero.
     Vec2NonZero {
+        /// The param to read; a missing param never fires.
         param: Param<Vec2>,
     },
 }
 
 impl AnimationFSMTrigger {
+    /// A trigger that fires when the `bool` param `param` equals `cond`.
     pub fn on_bool(param: impl Into<Param<bool>>, cond: bool) -> Self {
         Self::BoolEquals {
             param: param.into(),
@@ -54,6 +67,7 @@ impl AnimationFSMTrigger {
         }
     }
 
+    /// A trigger that fires when the `Vec2` param `param` is not zero.
     pub fn on_non_zero_vec(param: impl Into<Param<Vec2>>) -> Self {
         Self::Vec2NonZero {
             param: param.into(),
@@ -61,9 +75,13 @@ impl AnimationFSMTrigger {
     }
 }
 
+/// A transition for [`AnimationStateMachine::new`], out of the state it is listed under.
 pub struct AnimationStateMachineTransitionDefinition {
+    /// The state the transition enters; an unknown name enters the first state.
     pub target_state: Name,
+    /// When the transition fires.
     pub trigger: AnimationFSMTrigger,
+    /// The cross-fade time or inertialization halflife, in seconds; see [`TransitionBlender`].
     pub blend_time: f32,
 }
 
@@ -74,29 +92,50 @@ pub(crate) struct AnimationStateMachineTransition {
     blend_time: f32,
 }
 
+/// The index of a state in its [`AnimationStateMachine`].
 #[derive(Clone, Copy, Default, Deref, Reflect, serde::Serialize, serde::Deserialize)]
 pub struct StateId(usize);
 
 /// One state of an [`AnimationStateMachine`], as its read access shows it.
 pub struct AnimationFSMStateView<'a> {
+    /// The state's name.
     pub name: Name,
+    /// The graph the state plays.
     pub graph: &'a AssetHandle<AnimationGraph>,
 }
 
 /// One transition of an [`AnimationStateMachine`]; `index` is its place among its source state's transitions.
 pub struct AnimationFSMTransitionView<'a> {
+    /// The transition's place among its source state's transitions.
     pub index: usize,
+    /// The state the transition enters.
     pub target: Name,
+    /// When the transition fires.
     pub trigger: &'a AnimationFSMTrigger,
+    /// The cross-fade time or inertialization halflife, in seconds; see [`TransitionBlender`].
     pub blend_time: f32,
 }
 
 /// Why an edit of an [`AnimationStateMachine`] was refused.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum StateMachineEditError {
-    UnknownState { name: Name },
-    DuplicateState { name: Name },
-    TransitionOutOfRange { from: Name, index: usize },
+    /// No state has the name.
+    UnknownState {
+        /// The name no state has.
+        name: Name,
+    },
+    /// A state already has the name.
+    DuplicateState {
+        /// The name already taken.
+        name: Name,
+    },
+    /// The state has no transition at the index.
+    TransitionOutOfRange {
+        /// The state the transition would leave.
+        from: Name,
+        /// The index past the state's transitions.
+        index: usize,
+    },
 }
 
 impl fmt::Display for StateMachineEditError {
@@ -129,6 +168,8 @@ impl StateId {
     }
 }
 
+/// A node that plays one of its states' graphs at a time and moves between them by triggered
+/// transitions, blended by its [`TransitionBlender`].
 #[derive(Default, Reflect, serde::Serialize, serde::Deserialize)]
 #[reflect(AnimationNode)]
 pub struct AnimationStateMachine {
@@ -140,6 +181,10 @@ pub struct AnimationStateMachine {
 }
 
 impl AnimationStateMachine {
+    /// A machine with `states_definition` in order, starting in `initial_state`.
+    ///
+    /// Transitions listed under an unknown state are dropped. A transition to an unknown state, and
+    /// an unknown `initial_state`, fall back to the first state.
     pub fn new(
         initial_state: Name,
         states_definition: Vec<AnimationFSMStateDefinition>,
@@ -186,6 +231,8 @@ impl AnimationStateMachine {
         }
     }
 
+    /// Starts a builder whose first state, `state_name`, is the initial one and gets its
+    /// transitions from `f`.
     pub fn from_initial_state(
         state_name: Name,
         state_graph: AssetHandle<AnimationGraph>,
@@ -453,11 +500,16 @@ impl AnimationStateMachine {
 /// A transition in flight; `progress` runs from 0 to 1.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TransitionView {
+    /// The state the transition leaves.
     pub from: Name,
+    /// The state the transition enters.
     pub to: Name,
+    /// How far the blend has run, from 0 to 1.
     pub progress: f32,
 }
 
+/// The state of an [`AnimationStateMachine`] in one player: the current state, each state's
+/// graph state and the blend between them.
 pub struct AnimationStateMachineState {
     state_graphs: AnimationGraphStates,
     current_state: StateId,
@@ -487,7 +539,7 @@ impl AnimationStateMachineState {
         }
     }
 
-    /// The name of the state the machine is in.
+    /// The name of the state the machine is in, or `None` for a machine without states.
     pub fn current_state_name(&self) -> Option<Name> {
         self.state_names.get(*self.current_state).copied()
     }
@@ -688,6 +740,8 @@ struct FSMTransitionEntry {
     blend_time: f32,
 }
 
+/// Builds an [`AnimationStateMachine`] state by state; see
+/// [`AnimationStateMachine::from_initial_state`].
 pub struct AnimationStateMachineBuilder {
     initial_state: Name,
     states: Vec<FSMStateEntry>,
@@ -702,6 +756,7 @@ impl AnimationStateMachineBuilder {
         self
     }
 
+    /// Adds a state after the others, its transitions added through `f`.
     pub fn state(
         mut self,
         state_name: Name,
@@ -720,6 +775,7 @@ impl AnimationStateMachineBuilder {
         self
     }
 
+    /// The machine; transitions to unknown states enter the first state.
     pub fn build(self) -> AnimationStateMachine {
         let mut name_to_index: HashMap<Name, StateId> = HashMap::new();
         let mut states = Vec::new();
@@ -760,12 +816,14 @@ impl AnimationStateMachineBuilder {
     }
 }
 
+/// Adds the transitions out of one state of an [`AnimationStateMachineBuilder`].
 pub struct TransitionBuilder<'a> {
     builder: &'a mut AnimationStateMachineBuilder,
     from: Name,
 }
 
 impl TransitionBuilder<'_> {
+    /// Adds a transition to `state_name`, fired by `trigger`, blended over `blend_time` seconds.
     pub fn to(
         &mut self,
         state_name: Name,

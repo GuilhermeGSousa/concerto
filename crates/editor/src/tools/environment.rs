@@ -34,6 +34,8 @@ impl Plugin for ViewportEnvironmentPlugin {
 /// Whether the viewport draws the scene unlit, by base colour and emission alone.
 #[derive(Resource, Default, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ViewportShading {
+    /// `true` draws by base colour and emission alone, without lights, shadows, ambient light or
+    /// fog.
     pub unlit: bool,
 }
 

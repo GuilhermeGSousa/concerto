@@ -1,3 +1,5 @@
+//! The system inputs through which editor systems read the edit target's world and send signals to
+//! it: [`EditWorld`] and [`EditWorldSignals`].
 use std::ops::{Deref, DerefMut};
 
 use concerto_ecs::{

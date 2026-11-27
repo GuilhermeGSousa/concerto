@@ -1,3 +1,9 @@
+//! Runtime reflection: reading and writing a value's fields by name, storing it as a
+//! self-describing [`ReflectedValue`], and looking types up by name in a [`TypeRegistry`].
+//!
+//! Derive [`Reflect`] on a type to make it inspectable in the editor, saveable in scenes and
+//! assets, and addressable by a [`PropertyPath`].
+
 extern crate self as concerto_reflect;
 
 mod json;
@@ -39,8 +45,10 @@ pub use value::{
 ///
 /// Presentation, snapshots and validation belong to the caller.
 pub trait Reflect: Any + Send + Sync {
+    /// Returns the value's kind and its parts, for reading.
     fn reflect_ref(&self) -> ReflectRef<'_>;
 
+    /// Returns the value's kind and its parts, for writing.
     fn reflect_mut(&mut self) -> ReflectMut<'_>;
 
     /// The concrete type's name, as [`std::any::type_name`] writes it.
@@ -70,6 +78,8 @@ pub trait Reflect: Any + Send + Sync {
         }
     }
 
+    /// Visits a struct's fields, an enum's active variant's fields, or a list's elements, mutably;
+    /// leaves have none.
     fn visit_mut(&mut self, visitor: &mut dyn PropertyVisitorMut) {
         let fields: &mut dyn Fields = match self.reflect_mut() {
             ReflectMut::Struct(fields) => fields,
@@ -107,14 +117,18 @@ impl dyn Reflect {
     }
 }
 
+/// Receives each field or list element that [`Reflect::visit`] walks.
 pub trait PropertyVisitor {
+    /// Receives the field `name` and its value.
     fn field(&mut self, name: &'static str, value: &dyn Reflect);
 
     /// Receives a list's element; ignored by default.
     fn element(&mut self, _index: usize, _value: &dyn Reflect) {}
 }
 
+/// Receives each field or list element that [`Reflect::visit_mut`] walks, mutably.
 pub trait PropertyVisitorMut {
+    /// Receives the field `name` and its value.
     fn field(&mut self, name: &'static str, value: &mut dyn Reflect);
 
     /// Receives a list's element; ignored by default.

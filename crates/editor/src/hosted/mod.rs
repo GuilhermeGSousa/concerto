@@ -53,6 +53,7 @@ pub use events::{Hosted, HostedAppEvents, HostedEventsAppExt};
 pub use seam::{EditWorld, EditWorldSignals};
 pub use target::{EditTarget, SetEditTarget, ViewportTarget};
 
+/// The texture format a hosted `App` draws its picture in.
 pub const PICTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 
 /// The bytes of render assets a hosted `App` uploads in one frame, whatever its game sets.
@@ -72,18 +73,27 @@ pub(crate) struct FinishBuildsOffThread;
 /// Whether a host builds an `App` to edit a scene in, to play the game, or to preview an asset in.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HostRole {
+    /// Edits a scene: its systems run at edit time.
     Edit,
+    /// Plays the game: every system runs.
     Game,
+    /// Shows an asset in its editor's preview: its systems run at preview time.
     Preview,
 }
 
 /// What a host supplies when it builds an `App`.
 pub struct HostRequest<'a> {
+    /// The GPU the `App` draws its picture with, or `None` for an `App` that draws nothing.
     pub gpu: Option<&'a Gpu>,
+    /// The game's recipe, which builds the `App` before the host's own plugins.
     pub recipe: fn(&mut App),
+    /// The size of the `App`'s window, and so of its picture, in physical pixels.
     pub size: (u32, u32),
+    /// Physical pixels per logical pixel in the `App`'s window.
     pub scale_factor: f64,
+    /// What the `App` is built for.
     pub role: HostRole,
+    /// Connects the `App`'s clipboard to the editor's, or `None` to leave it unconnected.
     pub clipboard: Option<fn(&mut WindowClipboard)>,
 }
 
@@ -646,8 +656,11 @@ pub(crate) fn finish_pending(
 /// Whether a Scene document is being edited, is starting its game, or is playing it.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PlayState {
+    /// The edit `App` is the document's `App`.
     Editing,
+    /// The play `App` is building or settling, hidden, while the edit `App` stays shown.
     Starting,
+    /// The play `App` is the document's `App` and the edit `App` is parked.
     Playing,
 }
 
@@ -715,19 +728,23 @@ impl Signal for StopPlay {}
 /// A document's game finished building and is playing.
 #[derive(Event, Clone, Debug, PartialEq)]
 pub struct PlayStarted {
+    /// The document whose game plays.
     pub document: Entity,
 }
 
 /// A request to play a document's game ended without it playing; `message` says why.
 #[derive(Event, Clone, Debug, PartialEq)]
 pub struct PlayFailed {
+    /// The document whose game did not start.
     pub document: Entity,
+    /// Why the game did not start.
     pub message: String,
 }
 
 /// A document's game, starting or playing, was stopped and its edit `App` is back.
 #[derive(Event, Clone, Debug, PartialEq)]
 pub struct PlayStopped {
+    /// The document whose game was stopped.
     pub document: Entity,
 }
 
@@ -824,6 +841,8 @@ pub(crate) fn install_listeners(world: &mut World) {
     world.add_listener(input::release_input);
 }
 
+/// Builds, steps and routes input to the `App`s the editor's documents hold, and starts and stops
+/// their games.
 pub struct HostedPlugin;
 
 impl Plugin for HostedPlugin {

@@ -31,19 +31,34 @@ const MIN_WEIGHT: f32 = 1.0e-4;
 #[derive(Clone, Debug, PartialEq, Reflect, serde::Serialize, serde::Deserialize)]
 #[reflect(AnimationNode, Default)]
 pub struct FootPlacementNode {
+    /// The pelvis bone, lowered so the lowest foot can reach the ground.
     pub pelvis: JointName,
+    /// The legs to place.
     pub legs: Vec<FootPlacementLeg>,
+    /// How far above the character's floor, in metres, the rays start; the floor is the height of
+    /// the model origin.
     pub max_step_up: f32,
+    /// How far below the character's floor, in metres, the rays reach.
     pub max_step_down: f32,
+    /// How far the pelvis may drop for the lowest foot, in metres; negative counts as 0.
     pub max_pelvis_drop: f32,
+    /// The largest angle, in radians, a foot tilts to the ground; negative counts as 0.
     pub max_foot_angle: f32,
+    /// The halflife, in seconds, the foot heights ease with.
     pub foot_halflife: f32,
+    /// The halflife, in seconds, the pelvis drop eases with.
     pub pelvis_halflife: f32,
+    /// The halflife, in seconds, the foot tilts ease with.
     pub rotation_halflife: f32,
+    /// The distance below full leg extension, in metres, where reach starts to ease.
     pub softness: f32,
+    /// The weight the placement is applied at, before the param scales it; clamped to 0 to 1.
     pub weight: f32,
+    /// The `f32` blackboard param the weight is multiplied by, when it holds one.
     pub weight_param: Option<Param<f32>>,
+    /// The halflife, in seconds, the weight eases with.
     pub weight_halflife: f32,
+    /// The blackboard param holding the [`IgnoredBody`] the rays skip.
     pub ignore_param: Option<Param<IgnoredBody>>,
 }
 
@@ -163,8 +178,12 @@ impl FootPlacementNode {
 /// hinge axis.
 #[derive(Clone, Debug, Default, PartialEq, Reflect, serde::Serialize, serde::Deserialize)]
 pub struct FootPlacementLeg {
+    /// The foot bone, where the first ray is cast; its parent is the knee and its grandparent the
+    /// hip.
     pub foot: JointName,
+    /// The toe bone, where a second ray is cast, if any.
     pub toe: Option<JointName>,
+    /// The knee's hinge axis.
     pub hinge: Hinge,
 }
 
@@ -194,6 +213,7 @@ impl FootPlacementLeg {
 /// The body a foot placement node's rays skip, set on the blackboard by the game: the character's own capsule.
 #[derive(Clone, Copy, Debug, Default, Reflect)]
 pub struct IgnoredBody {
+    /// The body to skip; `None` skips none.
     #[reflect(skip)]
     pub body: Option<BodyId>,
 }

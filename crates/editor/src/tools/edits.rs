@@ -34,8 +34,11 @@ use crate::{
 
 /// One value written into a component, already checked against the widget registry.
 pub struct CommitProperty {
+    /// The row the edit came from, which addresses the component and the path.
     pub row: PropertyRow,
+    /// The editor's edit, erased; the editor downcasts it.
     pub edit: Arc<dyn Any + Send + Sync>,
+    /// The editor registered for the property, which applies the edit.
     pub editor: Arc<dyn ErasedEditor>,
 }
 
@@ -44,7 +47,9 @@ impl Signal for CommitProperty {}
 /// What one edit of a property did to the row it addressed, or why it was refused.
 #[derive(Event, Clone)]
 pub struct PropertyCommitted {
+    /// The property the edit addressed.
     pub address: PropertyAddress,
+    /// `Ok` when the value was written, or why it was refused.
     pub result: Result<(), PropertyRefusal>,
 }
 
@@ -173,9 +178,13 @@ fn apply_through(
 
 /// Writes a JSON value, shaped as `inspect` reports it, into the property at `path` of a component; an empty path names the whole component.
 pub struct SetValue {
+    /// The entity in the edit target's world.
     pub entity: Entity,
+    /// The type of the component on `entity`.
     pub component: TypeId,
+    /// The property inside the component, empty for the whole component.
     pub path: PropertyPath,
+    /// The new value, as JSON in the shape `inspect` reports.
     pub value: Value,
 }
 
@@ -342,8 +351,20 @@ pub(crate) fn decode_property(
 /// Adds an addable component at its default value, or removes a registered one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ComponentEdit {
-    Add { entity: Entity, component: TypeId },
-    Remove { entity: Entity, component: TypeId },
+    /// Adds `component`, at its registered default, to `entity`.
+    Add {
+        /// The entity in the edit target's world.
+        entity: Entity,
+        /// The type of the component to add.
+        component: TypeId,
+    },
+    /// Removes `component` from `entity`.
+    Remove {
+        /// The entity in the edit target's world.
+        entity: Entity,
+        /// The type of the component to remove.
+        component: TypeId,
+    },
 }
 
 /// Structural edits waiting to be sent to the scene.
@@ -358,7 +379,9 @@ impl Signal for EditComponent {}
 /// What one `EditComponent` did, or the status text saying why it was refused.
 #[derive(Event, Clone)]
 pub struct ComponentEdited {
+    /// The edit that was asked for.
     pub edit: ComponentEdit,
+    /// `Ok` when it was applied, or the status text saying why it was refused.
     pub result: Result<(), String>,
 }
 

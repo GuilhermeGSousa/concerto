@@ -8,25 +8,34 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+/// A source's import sidecar, the committed `<source>.import.toml` beside it.
 pub struct SourceMetadata {
+    /// The sidecar format version; [`load`](Self::load) accepts only 1.
     pub version: u32,
+    /// The source's own identity, minted on its first import; no two sidecars share one.
     pub source_id: AssetId,
+    /// The name of the importer that reads the source, such as `gltf`.
     pub importer: String,
+    /// The ids the source's outputs keep across imports, keyed by sub-asset name.
     #[serde(default)]
     pub outputs: BTreeMap<String, OutputMetadata>,
+    /// The importer's settings, the sidecar's `[settings]` table.
     #[serde(default, skip_serializing_if = "toml::Table::is_empty")]
     pub settings: toml::Table,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+/// What a sidecar keeps for one output of its source.
 pub struct OutputMetadata {
+    /// The output's asset id, kept stable across re-imports.
     pub asset_id: AssetId,
     /// Whether the output is written as its own file instead of inside its import's scene file.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub file: bool,
 }
 
+/// The path of `source`'s import sidecar: the source path with `.import.toml` appended.
 pub fn sidecar_path(source: &Path) -> PathBuf {
     let mut name = source.as_os_str().to_os_string();
     name.push(".import.toml");
@@ -34,6 +43,12 @@ pub fn sidecar_path(source: &Path) -> PathBuf {
 }
 
 impl SourceMetadata {
+    /// Loads the import sidecar at `path` and checks it.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the file cannot be read or parsed, has a version other than 1, names an importer
+    /// this crate does not have, or gives two outputs the same asset id.
     pub fn load(path: &Path) -> anyhow::Result<Self> {
         let text = std::fs::read_to_string(path)
             .with_context(|| format!("reading source metadata '{}'", path.display()))?;

@@ -1,6 +1,9 @@
 use std::{any::Any, hash::Hash};
 
+/// Equality between trait objects: two values are equal when they are the same type and compare
+/// equal.
 pub trait DynEq: Any {
+    /// Returns whether `other` is the same type as `self` and equal to it.
     fn dyn_eq(&self, other: &dyn DynEq) -> bool;
 }
 
@@ -15,7 +18,10 @@ where
     }
 }
 
+/// Hashing for trait objects that also hashes the concrete type, so equal values of different types
+/// hash apart.
 pub trait DynHash: DynEq {
+    /// Feeds the value and its type into `hasher`.
     fn dyn_hash(&self, hasher: &mut dyn std::hash::Hasher);
 }
 
@@ -29,6 +35,10 @@ where
     }
 }
 
+/// Declares a label trait, such as `ScheduleLabel` or `SystemSet`, whose values are compared,
+/// hashed and interned as trait objects.
+///
+/// The macro takes the trait's doc attributes and its name.
 #[macro_export]
 macro_rules! define_label {
     (
@@ -39,8 +49,10 @@ macro_rules! define_label {
         pub trait $label_trait_name:
             Send + Sync + std::fmt::Debug + $crate::label::DynHash + $crate::label::DynEq
         {
+            /// Returns a boxed copy of the label.
             fn dyn_clone(&self) -> Box<dyn $label_trait_name>;
 
+            /// Returns the interned copy of the label, interning it on first use.
             fn intern(&self) -> $crate::intern::Interned<dyn $label_trait_name>
             where Self: Sized {
                 static INTERNER: $crate::intern::Interner<dyn $label_trait_name> =

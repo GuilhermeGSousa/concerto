@@ -53,13 +53,22 @@ use crate::{
     subapp::{SubApp, SubApps},
 };
 
+/// Marking systems and listeners to run in edit and preview `App`s as well as in a game.
 pub mod edit_time;
+/// Extraction: copying data from the main world into the render world each frame.
 pub mod extractor;
+/// [`InspectedAssets`], the asset kinds the editor can create, show and save without naming their
+/// types.
 pub mod inspected_asset;
+/// [`MainSchedulePlugin`](main_schedule::MainSchedulePlugin), which runs the main world's frame.
 pub mod main_schedule;
+/// [`PlaceableAssets`], the asset kinds the editor can place in a scene without naming their types.
 pub mod placeable_asset;
+/// [`Plugin`] and the engine's base plugins, such as time and asset management.
 pub mod plugins;
+/// The labels of the schedules each frame runs, in the main and render worlds.
 pub mod schedule_groups;
+/// [`SubApp`], one world with its own schedules.
 pub mod subapp;
 
 pub use inspected_asset::{DecodedAsset, InspectedAsset, InspectedAssets};
@@ -89,8 +98,12 @@ fn compile(schedules: Schedules, world: &mut World, filter: &TagFilter) -> Compi
 /// What an [`App`] is for, which decides the systems and listeners it keeps.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum AppMode {
+    /// A game: every system and listener runs.
     Game,
+    /// The editor's view of a scene: only what is marked
+    /// [`at_edit_time`](edit_time::AtEditTime::at_edit_time) runs.
     Edit,
+    /// A preview in the editor: only what is marked to run at edit or preview time runs.
     Preview,
 }
 
@@ -104,6 +117,7 @@ pub struct App {
 }
 
 impl App {
+    /// Creates a game `App` with empty main and render worlds and no plugins.
     pub fn new() -> App {
         Self {
             subapps: SubApps::default(),
@@ -353,6 +367,7 @@ impl App {
         self
     }
 
+    /// Inserts `value` into the main world, replacing any resource of the same type.
     pub fn insert_resource<R: Resource>(&mut self, value: R) -> &mut Self {
         self.main_mut().insert_resource(value);
         self
@@ -416,14 +431,18 @@ impl App {
         self
     }
 
+    /// Removes the resource `R` from the main world and returns it, or `None` when it is absent.
     pub fn remove_resource<R: Resource>(&mut self) -> Option<R> {
         self.main_mut().remove_resource()
     }
 
+    /// Returns the main world's resource `R`, or `None` when it is absent.
     pub fn get_resource<R: Resource>(&self) -> Option<&R> {
         self.main().get_resource()
     }
 
+    /// Returns the main world's resource `R` mutably and marks it changed, or `None` when it is
+    /// absent.
     pub fn get_resource_mut<R: Resource>(&mut self) -> Option<&mut R> {
         self.main_mut().get_resource_mut()
     }
@@ -452,18 +471,22 @@ impl App {
         self.main_mut().world_mut().run_schedule(label);
     }
 
+    /// Returns the main world's sub-app.
     pub fn main(&self) -> &SubApp {
         self.subapps.main()
     }
 
+    /// Returns the main world's sub-app mutably.
     pub fn main_mut(&mut self) -> &mut SubApp {
         self.subapps.main_mut()
     }
 
+    /// Returns the render world's sub-app.
     pub fn render(&self) -> &SubApp {
         self.subapps.render()
     }
 
+    /// Returns the render world's sub-app mutably.
     pub fn render_mut(&mut self) -> &mut SubApp {
         self.subapps.render_mut()
     }

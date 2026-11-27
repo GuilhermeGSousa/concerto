@@ -47,11 +47,12 @@ impl UIInputState {
         }
     }
 
-    /// The node this button pressed on, if it is still down.
+    /// The interactable node under the pointer, if any.
     pub fn hovered(&self) -> Option<Entity> {
         self.hovered
     }
 
+    /// The node `button` pressed on, if it is still down.
     pub fn pressed(&self, button: MouseButton) -> Option<Entity> {
         self.capture(button).and_then(|capture| capture.pressed)
     }
@@ -171,50 +172,67 @@ pub struct UIDisabled;
 /// Per-node colour palette for the four interaction states.
 #[derive(Component, Clone)]
 pub struct UIInteractionStyle {
+    /// The colour with the pointer off the node.
     pub normal: Color,
+    /// The colour with the pointer over the node and the left button up.
     pub hovered: Color,
+    /// The colour with the pointer over the node and the left button held.
     pub pressed: Color,
+    /// The colour while the node has [`UIDisabled`].
     pub disabled: Color,
 }
 
 /// Sent to a node when a button is released over the node it pressed.
 pub struct UIClick {
+    /// The pointer's position in the window, in logical pixels.
     pub position: Vec2,
+    /// The mouse button.
     pub button: MouseButton,
 }
 
 /// Sent to a node after the second [`UIClick`] of a quick pair on it.
 pub struct UIDoubleClick {
+    /// The pointer's position in the window, in logical pixels.
     pub position: Vec2,
+    /// The mouse button.
     pub button: MouseButton,
 }
 
 /// Sent to a node when a button goes down over it.
 pub struct UIPointerDown {
+    /// The pointer's position in the window, in logical pixels.
     pub position: Vec2,
+    /// The mouse button.
     pub button: MouseButton,
 }
 
 /// Sent to the node a button pressed when that button is released, wherever the pointer is.
 pub struct UIPointerUp {
+    /// The pointer's position in the window, in logical pixels.
     pub position: Vec2,
+    /// The mouse button.
     pub button: MouseButton,
 }
 
 /// Sent every frame to the node a held button pressed, wherever the pointer is.
 pub struct UIDrag {
+    /// The pointer's position in the window, in logical pixels.
     pub position: Vec2,
+    /// How far the pointer moved since the last drag signal, in logical pixels.
     pub delta: Vec2,
+    /// The held mouse button.
     pub button: MouseButton,
 }
 
 /// Sent to a node when the pointer moves onto it.
 pub struct UIPointerEnter {
+    /// The pointer's position in the window, in logical pixels.
     pub position: Vec2,
 }
 
 /// Sent to a node when the pointer moves off it.
 pub struct UIPointerLeave {
+    /// The pointer's position in the window, in logical pixels.
     pub position: Vec2,
 }
 

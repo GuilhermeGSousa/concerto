@@ -7,7 +7,9 @@ use crate::pose::Pose;
 
 /// Linear and angular velocity per bone.
 pub struct PoseVelocity {
+    /// The linear velocity of each bone's local translation, in units per second.
     pub linear: Box<[Vec3]>,
+    /// The angular velocity of each bone's local rotation, as a scaled axis in radians per second.
     pub angular: Box<[Vec3]>,
 }
 

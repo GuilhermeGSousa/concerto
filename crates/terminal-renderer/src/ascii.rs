@@ -1,10 +1,20 @@
 const CHARS: &[u8] = b" .:-=+*#%@";
 
+/// Returns the character for brightness `luma`, from a space for 0 to `@` for 255.
 pub fn luma_to_char(luma: u8) -> char {
     let idx = (luma as usize * (CHARS.len() - 1)) / 255;
     CHARS[idx] as char
 }
 
+/// Replaces `out` with one character per pixel of an RGBA8 image, one line per row, each ended by
+/// a newline.
+///
+/// `data` holds `height` rows of `padded_bpr` bytes each, of which the first `width * 4` are
+/// pixels.
+///
+/// # Panics
+///
+/// Panics if `data` is shorter than the rows and pixels it is said to hold.
 pub fn pixels_to_ascii_into(
     data: &[u8],
     width: u32,

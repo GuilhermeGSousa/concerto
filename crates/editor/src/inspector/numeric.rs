@@ -251,8 +251,8 @@ fn push_checked<T: NumericValue + Default>(
 ///
 /// # Errors
 ///
-/// Returns [`EditError::TypeMismatch`] when [`NumericFields`] does not edit `row` or its value is not numeric, and
-/// [`EditError::Rejected`] when `row` holds a `u32` or an `i32`.
+/// Returns [`EditError::TypeMismatch`] when `NumericFields` does not edit `row` or its value is not
+/// numeric, and [`EditError::Rejected`] when `row` holds a `u32` or an `i32`.
 #[cfg(any(test, feature = "testing"))]
 pub fn commit_number(
     commits: &mut PropertyCommits,

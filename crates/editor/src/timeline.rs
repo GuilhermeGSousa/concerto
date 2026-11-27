@@ -1,3 +1,5 @@
+//! The timeline: a reusable widget that draws a clip's time, selection, markers and key rows on a
+//! UI node, and sends each gesture on it as a signal to that node for its owner to answer.
 use concerto_app::{App, Plugin, schedule_groups::LateUpdate};
 use concerto_color::Color;
 use concerto_ecs::{
@@ -43,29 +45,44 @@ const KEY_INSET: f32 = 4.0;
 /// A ruler, a track, a marker lane and track rows over a clip's length, drawn on the UI node that holds it.
 #[derive(Component, PartialEq)]
 pub struct Timeline {
+    /// The clip's length in seconds, which the ruler spans.
     pub duration: f32,
+    /// Frames per second, or `None` for a clip without frames, whose times do not snap and whose
+    /// track selects nothing.
     pub rate: Option<f32>,
+    /// The time the head is drawn at and the readout shows, in seconds.
     pub time: f32,
+    /// The first and last selected frames, inclusive, drawn as a band on the track.
     pub selection: Option<(u32, u32)>,
+    /// Whether a drag on the track selects frames; without it the band stays hidden.
     pub selectable: bool,
+    /// The marks on the marker lane, which is hidden while this is empty.
     pub markers: Vec<TimelineMarker>,
+    /// The index of the marker drawn in the selection colour.
     pub selected_marker: Option<usize>,
+    /// The read-only rows under the marker lane.
     pub tracks: Vec<TimelineTrack>,
 }
 
 /// A labelled mark at a time on a timeline's marker lane.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TimelineMarker {
+    /// Where the marker is, in seconds.
     pub time: f32,
+    /// The text beside the marker's line.
     pub label: String,
+    /// Whether the marker is drawn muted and cannot be dragged.
     pub locked: bool,
 }
 
 /// A read-only row under the marker lane: a label and the times it has keys at.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TimelineTrack {
+    /// The text in the label column beside the row.
     pub label: String,
+    /// Whether the label is drawn in the warning colour.
     pub warning: bool,
+    /// The times of the row's keys, in seconds; keys within 3 pixels join into a bar.
     pub keys: Vec<f32>,
 }
 
@@ -104,6 +121,7 @@ impl Timeline {
 
 /// Sent to a [`Timeline`] when the ruler is pressed or dragged, with the time under the pointer.
 pub struct TimelineScrubbed {
+    /// The time under the pointer in seconds, snapped to a frame when there is a rate.
     pub time: f32,
 }
 
@@ -112,6 +130,7 @@ impl EntitySignal for TimelineScrubbed {}
 
 /// Sent to a [`Timeline`] when a drag on the track selects frames, inclusive, or a click clears them.
 pub struct TimelineSelected {
+    /// The first and last frames dragged over, inclusive, or `None` for a click.
     pub range: Option<(u32, u32)>,
 }
 
@@ -120,6 +139,7 @@ impl EntitySignal for TimelineSelected {}
 
 /// Sent when a marker is pressed (`Some`) or the track or the lane's empty space is clicked (`None`).
 pub struct TimelineMarkerSelected {
+    /// The pressed marker's index, or `None` for a click on empty space.
     pub index: Option<usize>,
 }
 
@@ -128,7 +148,9 @@ impl EntitySignal for TimelineMarkerSelected {}
 
 /// Sent while an unlocked marker is dragged, with the time under the pointer, snapped to a frame when there is a rate.
 pub struct TimelineMarkerMoved {
+    /// The dragged marker's index.
     pub index: usize,
+    /// The time under the pointer in seconds.
     pub time: f32,
 }
 
@@ -971,6 +993,7 @@ fn sync_timeline_rows(
 }
 
 /// Builds and keeps every [`Timeline`] drawn; `EditorPlugin` registers it.
+/// Draws every [`Timeline`] and sends the signals of the gestures on it.
 pub struct TimelinePlugin;
 
 impl Plugin for TimelinePlugin {

@@ -132,6 +132,11 @@ impl<'w, 's> Inputs<'w, 's> {
     ///
     /// Returns a [`ValidationError`] of kind `Skip` when `P` is not a member of this set, and
     /// the member's own error, such as `Missing` for an absent resource, when it declined.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the data stored for member `P` is not of `P`'s data type. The set fetches each
+    /// member's data from that member's own input, so this does not happen.
     pub fn get<P: ReadOnlySystemInput + 'static>(
         &self,
     ) -> Result<&P::Data<'w, 's>, ValidationError> {

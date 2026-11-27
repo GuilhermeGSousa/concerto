@@ -1,3 +1,4 @@
+//! The asset editor of an [`AnimationGraph`]: its tab, working copy, preview and MCP tools.
 mod copy;
 mod document;
 mod panels;

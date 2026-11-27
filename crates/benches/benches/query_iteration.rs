@@ -1,3 +1,5 @@
+#![allow(missing_docs, reason = "benchmark harness, not public API")]
+
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 
 use concerto_ecs::{

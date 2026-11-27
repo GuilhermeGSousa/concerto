@@ -1,3 +1,4 @@
+//! The asset editor of a [`MotionDatabase`] definition, as an extension of `concerto-editor`.
 mod derive;
 mod document;
 mod facts;

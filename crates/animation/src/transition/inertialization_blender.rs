@@ -2,6 +2,7 @@ use concerto_foundation::assets::asset_store::AssetStore;
 use uuid::Uuid;
 
 use crate::{
+    attribute::PoseAttributes,
     evaluation::AnimationGraphContext,
     graph::{AnimationGraph, AnimationGraphStates, GraphId},
     inertialization::{Inertializer, PoseVelocity},
@@ -20,6 +21,19 @@ pub(crate) struct InertializationBlender {
     last_delta_time: f32,
     source: Option<GraphId>,
     elapsed: f32,
+    last_attributes: PoseAttributes,
+    source_attributes: Option<PoseAttributes>,
+    source_share: f32,
+}
+
+const SETTLED_ATTRIBUTE_SHARE: f32 = 1.0e-4;
+
+fn share_left(halflife: f32, elapsed: f32) -> f32 {
+    if halflife > 0.0 {
+        0.5_f32.powf(elapsed / halflife)
+    } else {
+        0.0
+    }
 }
 
 impl InertializationBlender {
@@ -35,6 +49,20 @@ impl InertializationBlender {
             last_delta_time: 0.0,
             source: None,
             elapsed: 0.0,
+            last_attributes: PoseAttributes::default(),
+            source_attributes: None,
+            source_share: 0.0,
+        }
+    }
+
+    fn decay_attributes(&mut self, step: f32, output: &mut AnimationFrame) {
+        let Some(source) = self.source_attributes.as_ref() else {
+            return;
+        };
+        self.source_share *= share_left(self.halflife, step);
+        output.attributes_mut().blend(source, self.source_share);
+        if self.source_share < SETTLED_ATTRIBUTE_SHARE {
+            self.source_attributes = None;
         }
     }
 
@@ -89,11 +117,7 @@ impl AnimationTransitionBlender for InertializationBlender {
                 self.halflife
             }
         };
-        let progress = if halflife > 0.0 {
-            1.0 - 0.5_f32.powf(self.elapsed / halflife)
-        } else {
-            1.0
-        };
+        let progress = 1.0 - share_left(halflife, self.elapsed);
         Some(BlendInFlight {
             from,
             to: self.stack.current(),
@@ -129,6 +153,8 @@ impl AnimationTransitionBlender for InertializationBlender {
                     .get_or_insert_with(|| Inertializer::new(bone_count))
                     .transition(source, &source_velocity, output.pose(), &zero_velocity);
                 self.halflife = halflife;
+                self.source_attributes = Some(std::mem::take(&mut self.last_attributes));
+                self.source_share = 1.0;
                 true
             }
             _ => false,
@@ -151,8 +177,10 @@ impl AnimationTransitionBlender for InertializationBlender {
             );
             pool.release(destination);
         }
+        self.decay_attributes(if started { 0.0 } else { delta_time }, output);
 
         self.store_output(output.pose(), delta_time);
+        self.last_attributes.copy_from(output.attributes());
     }
 
     fn root_motion(

@@ -23,6 +23,7 @@ impl FrameStats {
     /// Number of frames kept in the rolling window (~2 s at 60 FPS).
     pub const WINDOW: usize = 120;
 
+    /// Creates an empty window.
     pub fn new() -> Self {
         Self {
             samples: [0.0; Self::WINDOW],
@@ -52,6 +53,7 @@ impl FrameStats {
         }
     }
 
+    /// Returns whether no frame has been recorded.
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }

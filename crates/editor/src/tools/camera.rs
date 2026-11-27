@@ -32,6 +32,8 @@ use crate::tools::selection::Selection;
 #[derive(Component)]
 pub(crate) struct EditorCamera;
 
+/// Marks an entity the scene tools spawn, such as the editor camera or a gizmo, so the scene's own
+/// queries and the tools that read the scene leave it out.
 #[derive(Component)]
 pub struct EditorHelper;
 
@@ -55,9 +57,11 @@ pub struct ViewportPointer {
 /// A first-person fly camera with Unreal's controls.
 #[derive(Resource)]
 pub struct FlyCamera {
+    /// The camera's position in world space.
     pub position: Vec3,
     /// Radians around world up, applied before pitch.
     pub yaw: f32,
+    /// Radians up from level, kept within ±1.55.
     pub pitch: f32,
     /// Metres per second, adjusted by the wheel while looking around.
     pub speed: f32,
@@ -106,9 +110,13 @@ const BOOST: f32 = 4.0;
 const PAN_PER_PIXEL: f32 = 0.0015;
 const DOLLY_PER_NOTCH: f32 = 0.25;
 
+/// Framing requests for the editor camera, set by the `FrameSelection` and `FrameAll` signals and
+/// cleared once the camera has read them.
 #[derive(Resource, Default)]
 pub struct ViewportCommands {
+    /// Frame the selection and its descendants on the next update.
     pub frame_selection: bool,
+    /// Frame every entity with bounds on the next update; it wins over `frame_selection`.
     pub frame_all: bool,
 }
 

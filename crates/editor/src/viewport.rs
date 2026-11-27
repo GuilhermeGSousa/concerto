@@ -37,6 +37,8 @@ use crate::tools::{
     gizmo::{GizmoMode, SetGizmoMode},
 };
 
+/// Marks the UI node that shows the picture of the active document's `App`, where assets dragged
+/// from the Asset Browser are placed.
 #[derive(Component)]
 pub struct ViewportRegion;
 
@@ -47,6 +49,8 @@ pub struct ViewportToolbar;
 #[derive(Component)]
 struct InputHint;
 
+/// Adds the viewport panel, which shows the active document's picture and routes input to it, with
+/// its gizmo and framing shortcuts.
 pub struct ViewportPlugin;
 impl Plugin for ViewportPlugin {
     fn build(&self, app: &mut App) {
@@ -67,6 +71,7 @@ impl Plugin for ViewportPlugin {
     }
 }
 
+/// The id the viewport panel is registered under in the [`PanelRegistry`].
 pub const PANEL_ID: &str = "concerto.scene";
 
 const INPUT_BORDER: f32 = 2.0;

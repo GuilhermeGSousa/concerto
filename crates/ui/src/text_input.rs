@@ -56,10 +56,13 @@ pub struct UITextInput {
     pub placeholder: String,
     /// Byte offset of the insert cursor within `value`.
     pub cursor: usize,
+    /// Byte offset within `value` of the selection's other end, the cursor being one; `None` when
+    /// nothing is selected.
     pub selection_anchor: Option<usize>,
 }
 
 impl UITextInput {
+    /// An empty field showing `placeholder`.
     pub fn new(placeholder: impl Into<String>) -> Self {
         Self {
             value: String::new(),
@@ -73,20 +76,25 @@ impl UITextInput {
 /// Fired whenever a [`UITextInput`]'s value changes.
 #[derive(Event)]
 pub struct UITextInputChanged {
+    /// The field's entity.
     pub entity: Entity,
+    /// The new value.
     pub value: String,
 }
 
 /// Fired when Enter is pressed in a focused [`UITextInput`].
 #[derive(Event)]
 pub struct UITextInputSubmitted {
+    /// The field's entity.
     pub entity: Entity,
+    /// The value submitted.
     pub value: String,
 }
 
 /// Fired when Escape is pressed in a focused [`UITextInput`].
 #[derive(Event)]
 pub struct UITextInputCancelled {
+    /// The field's entity.
     pub entity: Entity,
 }
 

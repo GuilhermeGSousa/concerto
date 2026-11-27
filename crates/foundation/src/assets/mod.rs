@@ -26,13 +26,22 @@ macro_rules! asset_id {
     };
 }
 
+/// Type-erased storage for each asset type; its items are internal to the crate.
 pub mod asset_container;
+/// [`AssetServer`](asset_server::AssetServer), which loads content assets by id and tracks their
+/// handles.
 pub mod asset_server;
+/// [`AssetStore`](asset_store::AssetStore), the resource that holds the loaded assets of one type.
 pub mod asset_store;
 pub mod content;
+/// Derived data: asset blobs computed from other content assets and cached by key.
 pub mod derived;
+/// [`AssetHandle`](handle::AssetHandle), a reference to an asset, and the events about assets'
+/// lifetimes.
 pub mod handle;
+/// [`AssetRegistry`](registry::AssetRegistry), the index of every content asset by id and address.
 pub mod registry;
+/// Reading content asset files from the platform's content root.
 pub mod utils;
 
 /// Where the runtime finds content asset files.
@@ -129,6 +138,8 @@ pub trait Asset: Send + Sync + 'static + serde::Serialize + serde::de::Deseriali
     /// The version of this type's payload encoding, stored in each content asset's header.
     const FORMAT_VERSION: u32 = 1;
 
+    /// Returns the asset type's name, stored in each content asset's header as its kind; the derive
+    /// uses the type's name.
     fn name() -> &'static str;
 
     /// Decodes a payload written at `version`, older than [`FORMAT_VERSION`](Self::FORMAT_VERSION).
@@ -183,9 +194,11 @@ pub trait UncookedData:
 
 /// An asset the editor can create from nothing.
 pub trait CreatableAsset: Asset {
+    /// Returns a new, empty asset.
     fn new_asset() -> Self;
 }
 
+/// An asset that can be loaded from a content file, with a hook that finishes setting it up.
 pub trait LoadableAsset: Asset {
     /// Finishes runtime initialization once the payload is deserialized.
     ///

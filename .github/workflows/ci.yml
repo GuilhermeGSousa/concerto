@@ -89,7 +89,7 @@ jobs:
   clippy_check:
     name: Clippy
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
@@ -114,6 +114,16 @@ jobs:
         run: cargo clippy --locked -p concerto-physics --no-default-features --features force-rapier -- -D warnings
         env:
           CARGO_BUILD_WARNINGS: deny
+      - name: Check documentation
+        run: cargo doc --locked --workspace --no-deps --features concerto-editor/testing,concerto-animation/test-support,concerto-ragdoll/test-support
+        env:
+          RUSTDOCFLAGS: -D warnings
+          CARGO_BUILD_WARNINGS: deny
+      - name: Check documentation of the Rapier physics backend
+        run: cargo doc --locked --no-deps -p concerto-physics --no-default-features --features force-rapier
+        env:
+          RUSTDOCFLAGS: -D warnings
+          CARGO_BUILD_WARNINGS: deny
         
   dependencies:
     name: Dependencies
@@ -133,6 +143,17 @@ jobs:
       - uses: actions/checkout@v4
       - name: Check the test budget
         run: python3 .github/scripts/test_budget.py
+
+  dependency_layers:
+    name: Dependency layers
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install stable Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Check the dependency layers
+        run: python3 .github/scripts/dependencies.py
 
   format:
     name: Format

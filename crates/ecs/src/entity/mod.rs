@@ -11,8 +11,11 @@ use crate::{
     world::World,
 };
 
+/// The store that hands out entities and records where each one's components live.
 pub mod entity_store;
+/// Hashers and collections keyed by [`Entity`].
 pub mod hash;
+/// The parent and child relation: [`ChildOf`] on a child and [`Children`] on its parent.
 pub mod hierarchy;
 
 pub use hash::{EntityHash, EntityHashMap, EntityHashSet, EntityHasher};
@@ -91,6 +94,7 @@ impl Display for Entity {
     }
 }
 
+/// Where an entity's components are stored: its archetype and its row in that archetype's table.
 #[derive(Clone, Copy, PartialEq)]
 pub struct EntityLocation {
     pub(crate) archetype_index: u32,
@@ -125,6 +129,7 @@ impl<'w> EntityWorldMut<'w> {
         Self { world, entity }
     }
 
+    /// Returns the entity this borrow edits.
     pub fn id(&self) -> Entity {
         self.entity
     }
@@ -145,6 +150,8 @@ impl<'w> EntityWorldMut<'w> {
         self
     }
 
+    /// Makes each of `children` a child of this entity, detaching any from a previous parent;
+    /// children already attached here stay where they are.
     pub fn add_children(&mut self, children: &[Entity]) -> &mut Self {
         // Who is already attached is one lookup on this entity, not one per child:
         // `Children` holds exactly the entities whose `ChildOf` points here.

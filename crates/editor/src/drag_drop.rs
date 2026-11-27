@@ -1,3 +1,5 @@
+//! Dragging a payload from one UI node to another: a [`DragSource`] carries it, a [`DropTarget`]
+//! takes it, and [`Dropped`] tells the target.
 use std::marker::PhantomData;
 
 use concerto_app::{
@@ -33,11 +35,14 @@ const LABEL_OFFSET: Vec2 = Vec2::new(12.0, 16.0);
 /// Makes a UI node draggable with the left button: `label` follows the cursor and `payload` goes to the [`DropTarget<P>`] it is released over.
 #[derive(Component, Clone)]
 pub struct DragSource<P: Clone + Send + Sync + 'static> {
+    /// What a drop delivers.
     pub payload: P,
+    /// The text that follows the cursor during the drag.
     pub label: String,
 }
 
 impl<P: Clone + Send + Sync + 'static> DragSource<P> {
+    /// A source that drags `payload`, showing `label`.
     pub fn new(payload: P, label: impl Into<String>) -> Self {
         Self {
             payload,
@@ -53,6 +58,7 @@ pub struct DropTarget<P: Clone + Send + Sync + 'static> {
 }
 
 impl<P: Clone + Send + Sync + 'static> DropTarget<P> {
+    /// A target for payloads of type `P`.
     pub fn new() -> Self {
         Self {
             marker: PhantomData,
@@ -68,7 +74,9 @@ impl<P: Clone + Send + Sync + 'static> Default for DropTarget<P> {
 
 /// Sent to a [`DropTarget<P>`] when a dragged [`DragSource<P>`] is released over it, with the pointer position in logical pixels.
 pub struct Dropped<P> {
+    /// The dragged source's payload.
     pub payload: P,
+    /// The pointer's position in the window, in logical pixels.
     pub position: Vec2,
 }
 
@@ -108,6 +116,7 @@ impl Plugin for DragDropPlugin {
     }
 }
 
+/// Registers the payload types nodes can be dragged with.
 pub trait DragDropAppExt {
     /// Lets nodes carry [`DragSource<P>`] and [`DropTarget<P>`]; a second call for the same `P` does nothing.
     fn add_drag_payload<P: Clone + Send + Sync + 'static>(&mut self) -> &mut Self;

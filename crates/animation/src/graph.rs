@@ -39,16 +39,25 @@ static PLACEHOLDER: PlaceholderNode = PlaceholderNode {};
 /// A node is `Stored` until built and `Live` once built. One that could not be built becomes a
 /// `Placeholder`, which plays as [`PlaceholderNode`] and keeps the value it could not build.
 pub enum AnimationNodeData {
+    /// Read from a file, not yet built into the node's type.
     Stored {
+        /// The registry key of the node's type.
         type_name: String,
+        /// The node's reflected fields.
         value: ReflectedValue,
     },
+    /// Built into the node's type, ready to play.
     Live {
+        /// The registry key of the node's type.
         type_name: String,
+        /// The built node.
         node: Box<dyn ErasedAnimationNode>,
     },
+    /// A node that could not be built; it plays as [`PlaceholderNode`].
     Placeholder {
+        /// The registry key the node was stored under.
         type_name: String,
+        /// The reflected fields that could not be built, kept so a save writes them back.
         value: ReflectedValue,
     },
 }
@@ -171,6 +180,7 @@ impl PartialEq for AnimationNodeData {
     }
 }
 
+/// The index of a node in an [`AnimationGraph`]; stable while no node is removed.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct AnimationNodeIndex(NodeIndex);
 
@@ -191,9 +201,19 @@ impl From<NodeIndex> for AnimationNodeIndex {
 /// Why [`AnimationGraph::connect`] refused a connection.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ConnectError {
-    NotANode { index: AnimationNodeIndex },
+    /// An index does not name a node of the graph.
+    NotANode {
+        /// The index that names no node.
+        index: AnimationNodeIndex,
+    },
+    /// The child is the result node, which is no node's input.
     ChildIsResult,
-    ChildHasParent { child: AnimationNodeIndex },
+    /// The child is already an input of another node.
+    ChildHasParent {
+        /// The child that already has a parent.
+        child: AnimationNodeIndex,
+    },
+    /// The child already reaches the parent, so the edge would close a cycle.
     Cycle,
 }
 
@@ -218,6 +238,11 @@ impl fmt::Display for ConnectError {
 
 impl std::error::Error for ConnectError {}
 
+/// A tree of animation nodes that evaluates to one pose per frame, rooted at a result node.
+///
+/// Each node's inputs are its children, and a node is the input of at most one other node. A
+/// graph is built in code with [`Self::add_node`] and [`AnimationNodeContext`], or loaded as an
+/// asset, whose nodes are made live on load.
 #[derive(Asset, serde::Serialize, serde::Deserialize)]
 pub struct AnimationGraph {
     nodes: AnimationDirectedGraph,
@@ -244,6 +269,7 @@ impl CreatableAsset for AnimationGraph {
 }
 
 impl AnimationGraph {
+    /// A graph holding only its result node, which plays the rest pose.
     pub fn new() -> Self {
         let mut nodes = AnimationDirectedGraph::new();
         let result_node = nodes.add_node(AnimationNodeData::of(&ResultNode {}));
@@ -341,6 +367,7 @@ impl AnimationGraph {
         &self.load_warnings
     }
 
+    /// A graph whose result node plays `node`.
     pub fn from_node<T: AnimationNode>(node: T) -> Self {
         let mut graph = Self::new();
         let result_node_index = graph.result_node().index();
@@ -348,6 +375,7 @@ impl AnimationGraph {
         graph
     }
 
+    /// Adds `node` as the next input of `output_node` and returns the new node's context.
     pub fn add_node<T: AnimationNode>(
         &mut self,
         node: T,
@@ -370,6 +398,7 @@ impl AnimationGraph {
         }
     }
 
+    /// The context of the result node, to add its input to.
     pub fn result_node(&mut self) -> AnimationNodeContext<'_> {
         let result_node = self.result_node;
         AnimationNodeContext {
@@ -378,18 +407,23 @@ impl AnimationGraph {
         }
     }
 
+    /// The nodes the result node reaches, depth first, each node before its inputs.
     pub fn iter(&self) -> impl Iterator<Item = AnimationNodeIndex> + '_ {
         Dfs::new(&self.nodes, *self.result_node)
             .iter(&self.nodes)
             .map(|node_index| node_index.into())
     }
 
+    /// The nodes the result node reaches, depth first, each node after its inputs: the order
+    /// the graph evaluates in.
     pub fn iter_post_order(&self) -> impl Iterator<Item = AnimationNodeIndex> + '_ {
         DfsPostOrder::new(&self.nodes, *self.result_node)
             .iter(&self.nodes)
             .map(|node_index| node_index.into())
     }
 
+    /// The node at `node_index` if it is live or a placeholder; `None` if it is still stored or
+    /// there is no such node.
     pub fn live_node(&self, node_index: AnimationNodeIndex) -> Option<&dyn ErasedAnimationNode> {
         self.nodes
             .node_weight(*node_index)
@@ -476,12 +510,14 @@ impl Default for AnimationGraph {
     }
 }
 
+/// A node of a graph being built, to add inputs to; see [`AnimationGraph::add_node`].
 pub struct AnimationNodeContext<'a> {
     pub(crate) graph: &'a mut AnimationGraph,
     pub(crate) node_index: AnimationNodeIndex,
 }
 
 impl<'a> AnimationNodeContext<'a> {
+    /// The node's index in the graph.
     pub fn index(&self) -> AnimationNodeIndex {
         self.node_index
     }
@@ -586,15 +622,22 @@ impl<'a> AnimationNodeContext<'a> {
 /// One step of the path to a playing node from a player's graph: a node of the graph the step is in and, when the next step is in a state's graph, that state.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct NodePathStep {
+    /// The node, in the graph this step is in.
     pub node: AnimationNodeIndex,
+    /// The state of the node's state machine whose graph the next step is in, if any.
     pub state: Option<Name>,
 }
 
 /// One playing node as [`AnimationGraphState::for_each_node`] visits it; the last step of `path` is the node itself.
 pub struct NodeVisit<'a> {
+    /// The steps from the player's graph to the node; the last is the node itself.
     pub path: &'a [NodePathStep],
+    /// The weight its parent gives the node among its inputs, from 0 to 1; not multiplied down
+    /// the path.
     pub weight: f32,
+    /// The node being visited.
     pub node: &'a dyn ErasedAnimationNode,
+    /// The node's state in the player being walked.
     pub state: &'a NodeState,
 }
 

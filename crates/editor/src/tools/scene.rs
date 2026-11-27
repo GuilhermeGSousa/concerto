@@ -38,7 +38,10 @@ pub struct RevealEntity(pub Entity);
 
 /// Replaces whatever scene is open with `scene`, the document `id` holds; a link in it back to `id` is refused.
 pub struct OpenScene {
+    /// The scene to spawn.
     pub scene: Scene,
+    /// The asset the scene was loaded from, which a link inside it may not point back to, or `None`
+    /// when it has none.
     pub id: Option<AssetId>,
 }
 impl Signal for OpenScene {}

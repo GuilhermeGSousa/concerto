@@ -2,6 +2,7 @@ use std::ops::Deref;
 
 use concerto_ecs::resource::Resource;
 
+/// The render world's wgpu queue; it derefs to the [`wgpu::Queue`].
 #[derive(Resource)]
 pub struct RenderQueue {
     pub(crate) queue: wgpu::Queue,

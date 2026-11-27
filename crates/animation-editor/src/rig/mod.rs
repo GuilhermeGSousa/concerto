@@ -60,14 +60,23 @@ use crate::{
 #[derive(Clone, Debug, PartialEq, Reflect)]
 #[reflect(Default)]
 pub struct RigPreview {
+    /// The rig on the other side of the retarget from the open one.
     pub other: AssetHandle<RetargetRig>,
+    /// The clip the source plays in `Clip` mode.
     pub clip: AssetHandle<AnimationClip>,
+    /// Which side of the retarget the open rig plays; the target by default.
     pub open_rig_is: OpenRigSide,
+    /// Whether the characters stand in their reference poses or play the clip.
     pub mode: RigPreviewMode,
+    /// Whether the roots move with the clip; off, each pelvis stays over its spot.
     pub root_motion: bool,
+    /// Whether the bones are drawn; on by default.
     pub bones: bool,
+    /// Whether the clip loops; on by default.
     pub looping: bool,
+    /// The playback speed multiplier, any finite value above 0.
     pub speed: f32,
+    /// The time in seconds the clip is paused at, or `None` while it plays.
     pub paused_at: Option<f32>,
 }
 
@@ -90,8 +99,10 @@ impl Default for RigPreview {
 /// Which side of the retarget the open rig plays.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Reflect)]
 pub enum OpenRigSide {
+    /// The open rig is retargeted onto from the other rig.
     #[default]
     Target,
+    /// The open rig is retargeted from onto the other rig.
     Source,
 }
 
@@ -132,6 +143,7 @@ fn playable_speed(speed: f32) -> bool {
 ///
 /// An edit never marks the tab unsaved. A speed of 0 or below, or not finite, is refused.
 pub struct RigPreviewValue {
+    /// The rig tab's document.
     pub document: Entity,
 }
 

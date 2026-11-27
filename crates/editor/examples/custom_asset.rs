@@ -53,9 +53,12 @@ use std::{
     time::{Duration, Instant},
 };
 
+/// The example's asset kind: a line of dialogue, edited as a form in the generic inspector tab.
 #[derive(serde::Serialize, serde::Deserialize, Reflect, Debug, PartialEq)]
 pub struct Dialogue {
+    /// The line spoken.
     pub text: String,
+    /// A number for the form to show beside the text.
     pub spin_speed: f32,
 }
 impl Asset for Dialogue {

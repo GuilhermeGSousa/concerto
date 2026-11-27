@@ -3,18 +3,24 @@ use crate::{Hsla, LinearRgba};
 /// sRGB + linear alpha color.
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Srgba {
+    /// The red channel, sRGB-encoded, 0.0 to 1.0.
     pub r: f32,
+    /// The green channel, sRGB-encoded, 0.0 to 1.0.
     pub g: f32,
+    /// The blue channel, sRGB-encoded, 0.0 to 1.0.
     pub b: f32,
+    /// The alpha, linear, 0.0 transparent to 1.0 opaque.
     pub a: f32,
 }
 
 impl Srgba {
+    /// Creates a color from sRGB-encoded channels and linear alpha.
     #[inline]
     pub const fn new(r: f32, g: f32, b: f32, a: f32) -> Self {
         Self { r, g, b, a }
     }
 
+    /// Returns the channels as `[r, g, b, a]`, still sRGB-encoded.
     #[inline]
     pub const fn to_array(self) -> [f32; 4] {
         [self.r, self.g, self.b, self.a]
@@ -60,11 +66,13 @@ impl Srgba {
         LinearRgba::from(*self).luminance()
     }
 
+    /// Converts to linear light.
     #[inline]
     pub fn to_linear(self) -> LinearRgba {
         LinearRgba::from(self)
     }
 
+    /// Converts to hue, saturation and lightness.
     #[inline]
     pub fn to_hsl(self) -> Hsla {
         Hsla::from(self)

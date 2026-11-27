@@ -23,15 +23,21 @@ use crate::{
     text::resources::TextFontSystem,
 };
 
+/// [`UIFonts`](fonts::UIFonts), the font faces the UI shapes text with.
 pub mod fonts;
 pub(crate) mod resources;
 
 /// Font family for a text node.
 #[derive(Clone, Default)]
 pub enum FontFamily {
+    /// The default sans-serif family, which
+    /// [`UIFontsApp::set_ui_sans_serif`](fonts::UIFontsApp::set_ui_sans_serif) can change; the
+    /// default.
     #[default]
     SansSerif,
+    /// The default serif family.
     Serif,
+    /// The default monospace family.
     Monospace,
     /// Any font family by name (e.g. `"JetBrains Mono"`).
     Name(String),
@@ -40,8 +46,10 @@ pub enum FontFamily {
 /// Font style (normal or italic).
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub enum FontStyle {
+    /// Upright; the default.
     #[default]
     Normal,
+    /// Slanted, drawn with the font's italic face.
     Italic,
 }
 
@@ -49,8 +57,11 @@ pub enum FontStyle {
 #[derive(Component, Clone)]
 #[require(UINode)]
 pub struct UIText {
+    /// The text shown.
     pub text: String,
+    /// The font size, in logical pixels; 14 by default.
     pub font_size: f32,
+    /// The distance between baselines, in logical pixels; 18 by default.
     pub line_height: f32,
     /// Font family. Defaults to [`FontFamily::SansSerif`].
     pub font_family: FontFamily,

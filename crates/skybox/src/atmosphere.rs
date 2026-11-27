@@ -24,8 +24,11 @@ pub const SKY_STEPS: u32 = 16;
 /// The air's scattering and extinction at one height, per kilometre.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Medium {
+    /// The Rayleigh scattering coefficient of each RGB channel.
     pub rayleigh_scattering: Vec3,
+    /// The Mie scattering coefficient, the same for every channel.
     pub mie_scattering: f32,
+    /// The total loss of each RGB channel to scattering and absorption.
     pub extinction: Vec3,
 }
 
@@ -41,8 +44,11 @@ impl Medium {
 /// Texel `(x, y)` holds the value at `(x / (width - 1), y / (height - 1))`.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Lut {
+    /// The number of texels per row.
     pub width: u32,
+    /// The number of rows.
     pub height: u32,
+    /// The texels, `width * height` of them, with alpha 1.
     pub texels: Vec<Vec4>,
 }
 

@@ -12,10 +12,12 @@ use super::{
     Asset, AssetId,
 };
 
+/// One loaded asset in an [`AssetStore`].
 pub struct AssetStoreEntry<A: Asset> {
     pub(crate) asset: A,
 }
 
+/// The resource that holds every loaded asset of type `A`, by id.
 pub struct AssetStore<A: Asset + 'static> {
     assets: HashMap<AssetId, AssetStoreEntry<A>>,
     drop_sender: Sender<AssetLifetimeEvent>,
@@ -30,6 +32,7 @@ impl<A: Asset + 'static> Resource for AssetStore<A> {
 }
 
 impl<A: Asset + 'static> AssetStore<A> {
+    /// Creates an empty store.
     pub fn new() -> Self {
         let (lifetime_sender, lifetime_recv) = crossbeam_channel::unbounded();
         AssetStore {
@@ -40,16 +43,19 @@ impl<A: Asset + 'static> AssetStore<A> {
         }
     }
 
+    /// Returns the asset `handle` refers to, or `None` while it is not loaded.
     pub fn get(&self, handle: &AssetHandle<A>) -> Option<&A> {
         self.assets.get(&handle.id()).map(|entry| &entry.asset)
     }
 
+    /// Returns the asset `handle` refers to mutably, or `None` while it is not loaded.
     pub fn get_mut(&mut self, handle: &AssetHandle<A>) -> Option<&mut A> {
         self.assets
             .get_mut(&handle.id())
             .map(|entry| &mut entry.asset)
     }
 
+    /// Stores `asset` under `id`, replacing any asset already there.
     pub fn insert(&mut self, id: AssetId, asset: A)
     where
         A: 'static,

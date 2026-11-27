@@ -42,8 +42,11 @@ use crate::{
 
 /// An action that destroys a document's live state.
 pub enum GuardedIntent {
+    /// A command to an asset editor, such as closing a document.
     Editor(AssetEditorCommand),
+    /// A project command, such as opening another project; any game playing stops first.
     Project(EditorCommand),
+    /// Closing the editor window; any game playing stops first.
     Quit,
 }
 
@@ -51,10 +54,14 @@ pub enum GuardedIntent {
 pub struct DiscardEdits(pub Entity);
 impl Signal for DiscardEdits {}
 
+/// The user's answer to the unsaved-changes prompt.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum GuardChoice {
+    /// Saves the documents, then carries on with the action if every save succeeded.
     Save,
+    /// Drops the documents' unsaved changes, triggering [`DiscardEdits`] for each, and carries on.
     Discard,
+    /// Drops the action and keeps the changes.
     Cancel,
 }
 
@@ -70,6 +77,8 @@ struct Held {
     stage: Stage,
 }
 
+/// The unsaved-changes prompt's state: the action it holds, the documents it asks about, and the
+/// user's answer.
 #[derive(Resource, Default)]
 pub struct UnsavedGuard {
     held: Option<Held>,
@@ -105,6 +114,7 @@ impl UnsavedGuard {
         }
     }
 
+    /// Answers the open prompt with `choice`; ignored when no prompt is open.
     pub fn choose(&mut self, choice: GuardChoice) {
         if self.asking() {
             self.choice = Some(choice);
@@ -132,6 +142,7 @@ pub(crate) fn stop_every_game(states: &Query<(Entity, &PlayState)>, cmd: &mut Co
     }
 }
 
+/// Adds the unsaved-changes prompt and holds a window close until it is answered.
 pub struct GuardPlugin;
 
 impl Plugin for GuardPlugin {

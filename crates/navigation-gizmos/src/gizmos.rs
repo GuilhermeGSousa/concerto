@@ -25,8 +25,12 @@ pub(crate) const ARROW_WIDTH: f32 = 0.15;
 /// Which navigation layers are drawn: the nav graph, each agent's route, and each loaded navmesh.
 #[derive(Resource, Clone, Debug, PartialEq)]
 pub struct NavigationGizmos {
+    /// Draws every nav point and its facing, coloured by whether it is enabled, and every link; in
+    /// the editor too.
     pub graph: bool,
+    /// Draws each agent's route from where it stands through the waypoints still ahead.
     pub routes: bool,
+    /// Draws the polygon edges of each loaded navmesh, 2 cm above its surface.
     pub mesh: bool,
 }
 

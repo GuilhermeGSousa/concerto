@@ -18,16 +18,24 @@ impl fmt::Display for GraphNodeId {
 
 /// A node as the working copy holds it: live, or the stored value of one that could not be built.
 pub enum HeldValue {
+    /// The node, built from its registered type.
     Live(Box<dyn ErasedAnimationNode>),
+    /// The stored value of a node that is not live, such as one whose type did not build; saved
+    /// as read.
     Stored(ReflectedValue),
 }
 
 /// One node of a working copy, with its inputs in slot order.
 pub struct HeldNode {
+    /// The node's id in the working copy.
     pub id: GraphNodeId,
+    /// The node's registered type name, which a save writes.
     pub type_name: String,
+    /// The node, live or as stored.
     pub value: HeldValue,
+    /// The nodes that feed this one, in slot order.
     pub inputs: Vec<GraphNodeId>,
+    /// The graph's load warnings about this node, joined, if it had any.
     pub warning: Option<String>,
 }
 
@@ -76,27 +84,35 @@ impl HeldNode {
 /// Where a node is an input: its parent and the slot it fills.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct GraphLink {
+    /// The node the input belongs to.
     pub parent: GraphNodeId,
+    /// The index of the input in the parent's slots.
     pub slot: usize,
 }
 
 /// What a connection did: the slot the child took, and the input it displaced.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Connected {
+    /// The index of the slot the child took.
     pub slot: usize,
+    /// The node that filled the slot before and is now loose, if any.
     pub loose: Option<GraphNodeId>,
 }
 
 /// Where a node of a working copy sits in a graph built from it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BuiltNode {
+    /// The node's id in the working copy.
     pub id: GraphNodeId,
+    /// The node's index in the built graph.
     pub index: AnimationNodeIndex,
 }
 
 /// A graph built from a working copy, with the index each node of the copy has in it.
 pub struct BuiltGraph {
+    /// The built graph.
     pub graph: AnimationGraph,
+    /// The graph index of each node of the copy that the graph holds.
     pub nodes: Vec<BuiltNode>,
 }
 

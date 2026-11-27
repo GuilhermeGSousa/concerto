@@ -18,6 +18,7 @@
 //! triple is three `f32`s, an xyzw rotation four, a ragdoll pose seven per
 //! part), and body ids of bodies still in the world. A world is used from one
 //! thread at a time, and nothing reads or changes it while it steps.
+#![allow(missing_docs, reason = "raw bindings to Jolt's C API")]
 
 use std::marker::{PhantomData, PhantomPinned};
 

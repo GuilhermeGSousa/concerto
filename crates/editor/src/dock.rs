@@ -31,12 +31,21 @@ use taffy::{AlignItems, FlexDirection};
 /// Where a panel sits in the shell.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Region {
+    /// The top-left corner, which shows the editor's name.
     Brand,
+    /// The rest of the top strip, which holds the window's controls when the editor draws its own
+    /// frame.
     Stats,
+    /// The resizable card on the left, the hierarchy's.
     Left,
+    /// The middle, the viewport's.
     Centre,
+    /// The resizable card on the right, the inspector's.
     Right,
+    /// The resizable strip under the middle, which holds the Asset Browser and a document's bottom
+    /// host.
     Bottom,
+    /// The status line along the bottom edge.
     Status,
 }
 
@@ -53,11 +62,16 @@ impl Region {
 /// A panel's declaration.
 #[derive(Clone, Copy)]
 pub struct PanelDescriptor {
+    /// The panel's unique id, which [`PanelRegistry::body`] looks it up by.
     pub id: &'static str,
+    /// The title a titled region shows above the panel.
     pub title: &'static str,
+    /// Where the panel sits.
     pub region: Region,
 }
 
+/// The panels the plugins declared, and once the dock has run, the UI entities of the regions and
+/// of each panel's body.
 #[derive(Resource, Default)]
 pub struct PanelRegistry {
     panels: Vec<PanelDescriptor>,
@@ -67,6 +81,7 @@ pub struct PanelRegistry {
 }
 
 impl PanelRegistry {
+    /// Declares `panel`; a second panel with the same id is ignored with a warning.
     pub fn register(&mut self, panel: PanelDescriptor) {
         if self.panels.iter().any(|existing| existing.id == panel.id) {
             log::warn!(
@@ -93,6 +108,7 @@ impl PanelRegistry {
         self.bodies.get(id).copied()
     }
 
+    /// Every declared panel, in the order they were declared.
     pub fn panels(&self) -> &[PanelDescriptor] {
         &self.panels
     }
@@ -108,6 +124,11 @@ impl PanelRegistry {
 
 /// Registers a panel. Call from a panel plugin's `build`.
 pub trait DockedApp {
+    /// Declares `panel` on the [`PanelRegistry`].
+    ///
+    /// # Panics
+    ///
+    /// Panics when [`DockPlugin`] is not registered yet.
     fn add_panel(&mut self, panel: PanelDescriptor) -> &mut Self;
 }
 
@@ -120,6 +141,8 @@ impl DockedApp for App {
     }
 }
 
+/// Builds the shell's regions at startup, lays out the panels each update, and resizes them on
+/// [`ResizePanel`]; register it before any panel.
 pub struct DockPlugin;
 
 impl Plugin for DockPlugin {
@@ -135,9 +158,13 @@ impl Plugin for DockPlugin {
 /// A panel whose size the layout holds.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum LayoutPanel {
+    /// The left card's width.
     Left,
+    /// The right card's width.
     Right,
+    /// The bottom strip's height.
     Bottom,
+    /// The Asset Browser's width in the bottom strip.
     Browser,
 }
 
@@ -155,9 +182,13 @@ pub enum PanelState {
 /// What each panel is on the front tab; the workspace decides it and the dock lays it out.
 #[derive(Resource, Clone, Copy, PartialEq, Eq, Debug)]
 pub struct PanelStates {
+    /// How the left card takes its space.
     pub left: PanelState,
+    /// How the right card takes its space.
     pub right: PanelState,
+    /// How the bottom strip takes its space.
     pub bottom: PanelState,
+    /// How the Asset Browser in the bottom strip takes its space.
     pub browser: PanelState,
 }
 
@@ -173,6 +204,7 @@ impl Default for PanelStates {
 }
 
 impl PanelStates {
+    /// The state of `panel`.
     pub fn of(&self, panel: LayoutPanel) -> PanelState {
         match panel {
             LayoutPanel::Left => self.left,
@@ -186,9 +218,13 @@ impl PanelStates {
 /// The stored sizes of the resizable panels, in logical pixels, for the session and every tab.
 #[derive(Resource, Clone, Copy, PartialEq, Debug)]
 pub struct EditorLayout {
+    /// The left card's width.
     pub left: f32,
+    /// The right card's width.
     pub right: f32,
+    /// The bottom strip's height.
     pub bottom: f32,
+    /// The Asset Browser's width in the bottom strip.
     pub browser: f32,
 }
 
@@ -318,6 +354,7 @@ fn strip_room(window: Vec2) -> f32 {
 /// Sets the stored size of a panel, clamped to what the window allows; ignored for a panel that is hidden or filling.
 #[derive(Clone, Copy, Debug)]
 pub struct ResizePanel {
+    /// The panel to resize.
     pub panel: LayoutPanel,
     /// The wanted size, in logical pixels.
     pub size: f32,

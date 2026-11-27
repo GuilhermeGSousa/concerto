@@ -44,9 +44,13 @@ use crate::{document::DefinitionDocument, panels::shown_index};
 /// A baked database with the skeleton and the clips it samples, as a preview plays it.
 #[derive(Clone)]
 pub struct BakedPlayback {
+    /// The baked database.
     pub database: Arc<MotionDatabase>,
+    /// The skeleton the clips animate.
     pub skeleton: Arc<Skeleton>,
+    /// One clip per entry, in entry order.
     pub clips: Vec<Arc<AnimationClip>>,
+    /// The database's live feature channels, which draw each frame's features.
     pub channels: Arc<[Box<dyn FeatureChannel>]>,
 }
 
@@ -59,7 +63,9 @@ impl Signal for ShowDatabase {}
 
 /// Moves the preview to the baked frame of `entry` nearest to `time` in its clip, in seconds.
 pub struct SeekDatabase {
+    /// The index of the entry in the database.
     pub entry: usize,
+    /// The time in the entry's clip, in seconds.
     pub time: f32,
 }
 
@@ -75,7 +81,9 @@ impl Signal for ShowChannel {}
 /// Written when the frame changes.
 #[derive(Event, Clone, Debug, PartialEq)]
 pub struct DatabaseProgress {
+    /// The index of the entry in the database.
     pub entry: usize,
+    /// The time in the entry's clip, in seconds.
     pub time: f32,
 }
 

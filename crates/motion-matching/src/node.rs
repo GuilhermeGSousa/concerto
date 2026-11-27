@@ -68,15 +68,28 @@ fn sources<'a>(
 #[derive(Clone, Reflect, serde::Serialize, serde::Deserialize)]
 #[reflect(AnimationNode, Default)]
 pub struct MotionMatchingNode {
+    /// The database to play; the node holds the rest pose until it is baked and its clips load.
     pub database: AssetHandle<MotionDatabase>,
+    /// The time between searches, in seconds; also the least time between two forced searches.
     pub search_period: f32,
+    /// The change of the desired velocity, in metres per second squared, whose settling forces a
+    /// search: one runs when it falls below this after being at or above it.
     pub velocity_change_threshold: f32,
+    /// The angular speed of the desired facing, in radians per second, whose settling forces a
+    /// search, as [`Self::velocity_change_threshold`] does.
     pub rotation_change_threshold: f32,
+    /// How many frames from the current one a better frame must be for the node to jump to it.
     pub same_frame_tolerance: usize,
+    /// How many frames either side of the current one are left out of a search.
     pub ignore_surrounding: usize,
+    /// How many frames at the end of each clip range are left out of a search; reaching them
+    /// forces a search.
     pub ignore_range_end: usize,
+    /// The halflife, in seconds, of the inertialization that hides each jump.
     pub blend_halflife: f32,
+    /// How many times faster than baked the database plays.
     pub play_rate: f32,
+    /// The `f32` blackboard param the play rate is multiplied by, when it holds one.
     pub play_rate_param: Option<Param<f32>>,
 }
 
@@ -106,46 +119,58 @@ impl MotionMatchingNode {
         }
     }
 
+    /// Sets the time between searches, in seconds.
     pub fn with_search_period(mut self, search_period: f32) -> Self {
         self.search_period = search_period;
         self
     }
 
+    /// Sets the change of the desired velocity, in metres per second squared, whose settling
+    /// forces a search.
     pub fn with_velocity_change_threshold(mut self, velocity_change_threshold: f32) -> Self {
         self.velocity_change_threshold = velocity_change_threshold;
         self
     }
 
+    /// Sets the angular speed of the desired facing, in radians per second, whose settling forces
+    /// a search.
     pub fn with_rotation_change_threshold(mut self, rotation_change_threshold: f32) -> Self {
         self.rotation_change_threshold = rotation_change_threshold;
         self
     }
 
+    /// Sets how many frames from the current one a better frame must be to jump to it.
     pub fn with_same_frame_tolerance(mut self, same_frame_tolerance: usize) -> Self {
         self.same_frame_tolerance = same_frame_tolerance;
         self
     }
 
+    /// Sets how many frames either side of the current one a search leaves out.
     pub fn with_ignore_surrounding(mut self, ignore_surrounding: usize) -> Self {
         self.ignore_surrounding = ignore_surrounding;
         self
     }
 
+    /// Sets how many frames at the end of each clip range a search leaves out.
     pub fn with_ignore_range_end(mut self, ignore_range_end: usize) -> Self {
         self.ignore_range_end = ignore_range_end;
         self
     }
 
+    /// Sets the halflife, in seconds, of the inertialization that hides each jump.
     pub fn with_blend_halflife(mut self, blend_halflife: f32) -> Self {
         self.blend_halflife = blend_halflife;
         self
     }
 
+    /// Sets how many times faster than baked the database plays.
     pub fn with_play_rate(mut self, play_rate: f32) -> Self {
         self.play_rate = play_rate;
         self
     }
 
+    /// Multiplies the play rate by the `f32` blackboard param named `play_rate_param`, when it
+    /// holds one.
     pub fn with_play_rate_param(mut self, play_rate_param: impl Into<Param<f32>>) -> Self {
         self.play_rate_param = Some(play_rate_param.into());
         self

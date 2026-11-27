@@ -69,6 +69,11 @@ fn index_of(name: &str) -> usize {
 }
 
 /// A 25-bone humanoid skeleton standing in a T-pose at the origin, 1.65 m to the head bone, facing +Z with its left side at +X.
+///
+/// # Panics
+///
+/// Panics if the built-in bone table is malformed: a bone names a parent the table does not
+/// hold, or the bones do not form a valid skeleton. The table is fixed and well formed.
 pub fn humanoid_skeleton() -> Skeleton {
     let parents: Vec<Option<u16>> = BONES
         .iter()
@@ -120,12 +125,21 @@ pub fn humanoid_rig() -> RetargetRig {
 
 /// The reference humanoid: its skeleton, the ragdoll generated for it, and that ragdoll fitted and built.
 pub struct ReferenceHumanoid {
+    /// The skeleton, built in code.
     pub skeleton: Skeleton,
+    /// The ragdoll asset generated for the skeleton.
     pub ragdoll: Ragdoll,
+    /// The ragdoll fitted to the skeleton and built.
     pub resolved: ResolvedRagdoll,
 }
 
 /// Builds the reference humanoid of 75 kg.
+///
+/// # Panics
+///
+/// Panics if the reference rig does not resolve against the reference skeleton, the generator
+/// rejects it, or the generated ragdoll does not fit the skeleton; none of these happens with
+/// the built-in tables.
 pub fn reference_humanoid() -> ReferenceHumanoid {
     let skeleton = humanoid_skeleton();
     let rig = humanoid_rig()
@@ -152,7 +166,9 @@ pub fn reference_humanoid() -> ReferenceHumanoid {
 /// The reference humanoid's skeleton as entities: one per bone under a skeleton entity that holds the `SkeletonComponent`.
 #[derive(Clone, Debug)]
 pub struct SpawnedHumanoid {
+    /// The entity that holds the `SkeletonComponent`.
     pub skeleton: Entity,
+    /// One entity per bone, in the skeleton's joint order.
     pub bones: Vec<Entity>,
 }
 

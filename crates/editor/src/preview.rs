@@ -210,9 +210,13 @@ impl Plugin for PreviewHostPlugin {
 /// A camera turning around `target` at `distance`, by `yaw` around world up and then `pitch`.
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
 pub struct OrbitCamera {
+    /// The point the camera looks at, in world space.
     pub target: Vec3,
+    /// The distance from `target`, kept within 0.25 and 100.
     pub distance: f32,
+    /// Radians around world up.
     pub yaw: f32,
+    /// Radians up from level, kept within ±1.55.
     pub pitch: f32,
 }
 

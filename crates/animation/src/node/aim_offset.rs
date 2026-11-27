@@ -35,14 +35,23 @@ const SNAP_WEIGHT: f32 = 1.0e-4;
 #[derive(Clone, Debug, PartialEq, Reflect, serde::Serialize, serde::Deserialize)]
 #[reflect(AnimationNode, Default)]
 pub struct AimOffsetNode {
+    /// The additive aim clips, each at the yaw and pitch it aims at.
     pub points: Vec<AimPoint>,
+    /// The bone the target's yaw and pitch are measured from.
     pub frame_bone: JointName,
+    /// The model-space axis the frame bone aims along in its rest pose.
     pub forward: Vec3,
+    /// The model-space up of the frame bone in its rest pose.
     pub up: Vec3,
+    /// The `Vec3` blackboard param holding the world-space point to aim at.
     pub target_param: Param<Vec3>,
+    /// The weight the aim is layered at, before the param scales it; clamped to 0 to 1.
     pub weight: f32,
+    /// The `f32` blackboard param the weight is multiplied by, when it holds one.
     pub weight_param: Option<Param<f32>>,
+    /// The halflife, in seconds, the weight eases in and out with.
     pub weight_halflife: f32,
+    /// The halflife, in seconds, the yaw and pitch ease toward the target with; 0 snaps.
     pub angle_halflife: f32,
 }
 
@@ -65,8 +74,11 @@ impl Default for AimOffsetNode {
 /// An additive aim clip and the yaw and pitch, in radians, it aims at.
 #[derive(Clone, Debug, Default, PartialEq, Reflect, serde::Serialize, serde::Deserialize)]
 pub struct AimPoint {
+    /// The additive clip, which must be imported as additive.
     pub clip: AssetHandle<AnimationClip>,
+    /// The yaw it aims at, in radians; positive turns toward the frame's side, `up × forward`.
     pub yaw: f32,
+    /// The pitch it aims at, in radians; positive turns toward the frame's up.
     pub pitch: f32,
 }
 

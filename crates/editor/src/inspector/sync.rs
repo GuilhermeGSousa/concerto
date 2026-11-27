@@ -18,7 +18,9 @@ use std::{collections::HashMap, sync::Arc};
 pub struct InspectedComponent {
     /// The entity the card shows a component of, in the edit `App`'s world.
     pub scene_entity: Entity,
+    /// The type of the component the card shows.
     pub type_id: TypeId,
+    /// The component's short type name, the card's title.
     pub name: &'static str,
     body: Entity,
     read: bool,

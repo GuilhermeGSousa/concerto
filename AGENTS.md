@@ -89,10 +89,13 @@ of these pass, in this order. They are the CI jobs, with CI's flags.
 ```sh
 cargo fmt --all -- --check
 python3 .github/scripts/test_budget.py
+python3 .github/scripts/dependencies.py
 cargo deny check bans advisories
 CARGO_BUILD_WARNINGS=deny cargo clippy --locked --workspace --all-targets -- -D warnings
 cargo clippy --locked --workspace -- -A clippy::all -D clippy::cognitive_complexity
 CARGO_BUILD_WARNINGS=deny cargo clippy --locked -p concerto-physics --no-default-features --features force-rapier -- -D warnings
+RUSTDOCFLAGS="-D warnings" CARGO_BUILD_WARNINGS=deny cargo doc --locked --workspace --no-deps --features concerto-editor/testing,concerto-animation/test-support,concerto-ragdoll/test-support
+RUSTDOCFLAGS="-D warnings" CARGO_BUILD_WARNINGS=deny cargo doc --locked --no-deps -p concerto-physics --no-default-features --features force-rapier
 cargo test --locked --workspace
 cargo test --locked -p concerto-physics --no-default-features --features force-rapier
 cargo build --locked --target wasm32-unknown-unknown
@@ -143,14 +146,17 @@ in the debugger; `--profile profiling` is the fully optimized build, and the
 one to measure performance with.
 
 While a plan is in progress, each task runs a gate scoped to the crates it
-touched: `cargo fmt --all -- --check` and the test budget, then the clippy and test lines above
+touched: `cargo fmt --all -- --check`, the test budget and the dependency
+layers, then the clippy and test lines above
 with `-p <crate>` for each crate in place of `--workspace` (and the Rapier
-lines when physics is one of them). The full gate runs once, after the last
+lines when physics is one of them), and
+`RUSTDOCFLAGS="-D warnings" CARGO_BUILD_WARNINGS=deny cargo doc --locked --no-deps -p <crate>` for each
+crate. The full gate runs once, after the last
 task and before the branch review.
 
 Report each command you ran with its result. If one fails, say so and show the
 output. A command you did not run is reported as not run. A change to Markdown
-alone needs none of them. A cloud pipeline session runs only the first two, and
+alone needs none of them. A cloud pipeline session runs only the first three, and
 the `cargo metadata` step below when a `Cargo.toml` changed, and leaves the
 rest to CI. When CI could not start its jobs, for want of Actions minutes, the
 session goes on and reports those commands as not run.
@@ -168,9 +174,17 @@ the checks for the owner in its review comment.
 
 ## Code rules
 
-**Comments.** Only public API carries comments, as doc comments: `///` on a
-public item, and `//!` at the top of a crate or a public module. Write them to
-the Rust API guidelines and the rustdoc conventions:
+**Comments.** Every public item and every crate root carries a doc comment,
+and nothing else carries a comment: `///` on a public item, and `//!` at the
+top of each target root (`lib.rs`, `main.rs`, `build.rs`, `src/bin/*`,
+`benches/*`, `examples/*`, `tests/*`) and of a public module. The workspace
+lints enforce it: `missing_docs` for the items and roots, and clippy's
+`missing_errors_doc`, `missing_panics_doc` and `missing_safety_doc` for the
+sections below. `concerto-jolt-ffi`, `concerto-benches` and the three
+examples are exempt from `missing_docs` and opt out with
+`#![allow(missing_docs, reason = "...")]` at each of their target roots; the
+other lints still apply to them. Write the docs to the Rust API guidelines and
+the rustdoc conventions:
 
 - Open with a one-sentence summary of what the item is or does. Add
   paragraphs only for what the signature and the summary do not say:
@@ -183,10 +197,10 @@ the Rust API guidelines and the rustdoc conventions:
 - Link the items you name with intra-doc links: ``[`Query`]``.
 
 Nothing else carries a comment, in any file type: no `//` in Rust, and none in
-WGSL, TOML, YAML or shell. The one exception is an `unsafe` block, which may
-carry one `// SAFETY:` line saying why it is sound. Design reasoning goes in
-your reply or in the spec. Leave existing comments alone unless the code they
-describe changes.
+WGSL, TOML, YAML or shell. The one exception is `unsafe` code: every `unsafe`
+block and `unsafe impl` carries one `// SAFETY:` line saying why it is sound.
+Design reasoning goes in your reply or in the spec. Leave existing comments
+alone unless the code they describe changes.
 
 **Systems never take the world.** A system's parameters are `Query`, `Res`,
 `Option<Res<T>>`, `ResMut`, `Option<ResMut<T>>`, `CommandQueue`, `EventReader`, `EventWriter`, `RemovedComponents<T>` (once a plugin calls `App::track_removals::<T>()`), `SystemLocal`,
@@ -238,10 +252,13 @@ Something to be done is a signal. If change detection cannot express the case,
 say so in the spec and propose the fix to change detection; do not work around
 it with a counter.
 
-**Warnings are errors.** `[workspace.lints.rust] warnings = "deny"` is set and
-every package inherits it with `[lints] workspace = true`, so an unused import
+**Warnings are errors.** `[workspace.lints.rust]` sets `warnings` and
+`missing_docs` to `deny`, `[workspace.lints.clippy]` denies
+`missing_errors_doc`, `missing_panics_doc`, `missing_safety_doc` and
+`undocumented_unsafe_blocks`, and every package inherits both tables with
+`[lints] workspace = true`, so an unused import or an undocumented public item
 fails the build of any crate. A new crate's `Cargo.toml` carries those two
-lines.
+lines, and each of its target roots starts with a `//!` line.
 
 **Match the code around you.** Naming, module layout, error handling, and test
 style follow the file you are in.
@@ -321,8 +338,19 @@ editor's MCP tools.
 
 - A game crate never depends on `concerto-editor`. The editor hosts the game;
   whatever a game says about editing must be reachable from engine crates.
+- Each workspace package sits in a layer and depends only on the layers it is
+  allowed, in normal, build and dev dependencies alike.
+  `python3 .github/scripts/dependencies.py` checks it.
+
+  | Layer | Packages | May depend on |
+  |---|---|---|
+  | engine | every package not listed below, the root `concerto` included | engine |
+  | gizmos | `concerto-*-gizmos` | engine, gizmos |
+  | editor | `concerto-editor`, `concerto-*-editor` | engine, gizmos, editor |
+  | example | packages under `examples/` | engine, gizmos |
 - Jolt is the native physics backend and Rapier is the web one. Do not make
-  Jolt build for wasm.
+  Jolt build for wasm. `python3 .github/scripts/dependencies.py` fails when the
+  root `concerto` crate reaches `concerto-jolt-ffi` on `wasm32-unknown-unknown`.
 - Render-world systems are added with `add_render_system`. `add_system` with
   `Extract`, `Render`, or `LateRender` puts the system in the main world, where
   those schedules never run.

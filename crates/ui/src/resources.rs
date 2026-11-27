@@ -14,18 +14,22 @@ pub struct UIRenderDiagnostics {
 }
 
 impl UIRenderDiagnostics {
+    /// How many times a node's quad has been built or rewritten since the start.
     pub fn geometry_rebuilds(&self) -> u64 {
         self.geometry_rebuilds.load(Ordering::Relaxed)
     }
 
+    /// How many times a text node has been shaped since the start.
     pub fn text_reshapes(&self) -> u64 {
         self.text_reshapes.load(Ordering::Relaxed)
     }
 
+    /// How many times a material's bind group has been built since the start.
     pub fn binding_rebuilds(&self) -> u64 {
         self.binding_rebuilds.load(Ordering::Relaxed)
     }
 
+    /// How many times a text layer has been prepared for drawing since the start.
     pub fn text_prepares(&self) -> u64 {
         self.text_prepares.load(Ordering::Relaxed)
     }

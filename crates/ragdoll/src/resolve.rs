@@ -13,20 +13,25 @@ use crate::asset::{Ragdoll, RagdollShape, Segment, Side};
 /// Why a ragdoll asset does not fit its skeleton or cannot be built.
 #[derive(Clone, Debug, PartialEq)]
 pub enum RagdollError {
+    /// The asset has no parts.
     NoParts,
     /// A part names a bone the skeleton does not have.
     UnknownBone {
+        /// The bone's name.
         bone: Name,
     },
     /// Two parts are on the same bone.
     DuplicateBone {
+        /// The bone's name.
         bone: Name,
     },
     /// A part is under no other part, and neither is the first root.
     ///
     /// A ragdoll is one tree.
     SecondRoot {
+        /// The bone of the first root part.
         root: Name,
+        /// The bone of the part outside its tree.
         bone: Name,
     },
     /// The physics backend refused the parts.
@@ -58,24 +63,34 @@ impl std::error::Error for RagdollError {}
 /// The parts of one arm and one leg, each when the ragdoll has it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Limbs {
+    /// The index of the part of segment [`Segment::UpperArm`].
     pub upper_arm: Option<usize>,
+    /// The index of the part of segment [`Segment::LowerArm`].
     pub lower_arm: Option<usize>,
+    /// The index of the part of segment [`Segment::Hand`].
     pub hand: Option<usize>,
+    /// The index of the part of segment [`Segment::Thigh`].
     pub thigh: Option<usize>,
+    /// The index of the part of segment [`Segment::Shin`].
     pub shin: Option<usize>,
+    /// The index of the part of segment [`Segment::Foot`].
     pub foot: Option<usize>,
 }
 
 /// Which part is which, from the segment and side each part of the asset names.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Landmarks {
+    /// The index of the part of segment [`Segment::Pelvis`].
     pub pelvis: Option<usize>,
     /// The spine parts, from the lowest up.
     pub spine: Vec<usize>,
     /// The highest spine part, or the pelvis when the ragdoll has no spine part.
     pub chest: Option<usize>,
+    /// The index of the part of segment [`Segment::Head`].
     pub head: Option<usize>,
+    /// The parts on the [`Side::Left`].
     pub left: Limbs,
+    /// The parts on the [`Side::Right`].
     pub right: Limbs,
 }
 
@@ -119,6 +134,7 @@ impl ResolvedRagdoll {
         self.built.settings()
     }
 
+    /// The number of parts, the length of every per-part list.
     pub fn part_count(&self) -> usize {
         self.bones.len()
     }

@@ -1,6 +1,8 @@
 use concerto_ecs::resource::Resource;
 use wgpu::{TextureView, TextureViewDescriptor};
 
+/// The texture the render world draws the window's frame into this frame: the surface's
+/// current texture, or a host's shared texture.
 #[derive(Resource)]
 pub struct RenderWindow {
     view: Option<TextureView>,
@@ -9,6 +11,7 @@ pub struct RenderWindow {
 }
 
 impl RenderWindow {
+    /// Creates a window with no texture and a size of zero.
     pub fn new() -> Self {
         RenderWindow {
             view: None,
@@ -17,6 +20,7 @@ impl RenderWindow {
         }
     }
 
+    /// Sets the surface texture to draw into this frame, to be presented by [`Self::present`].
     pub fn set_swapchain_texture(&mut self, frame: wgpu::SurfaceTexture) {
         self.view = Some(frame.texture.create_view(&TextureViewDescriptor::default()));
         self.texture = Some(frame);
@@ -27,6 +31,7 @@ impl RenderWindow {
         self.texture = None;
     }
 
+    /// Returns the view of this frame's texture, or `None` when there is none.
     pub fn get_view(&self) -> Option<&TextureView> {
         self.view.as_ref()
     }
@@ -35,10 +40,12 @@ impl RenderWindow {
         self.size = size;
     }
 
+    /// Returns the drawable size in physical pixels.
     pub fn size(&self) -> (u32, u32) {
         self.size
     }
 
+    /// Presents this frame's surface texture, if there is one, and drops its view.
     pub fn present(&mut self, queue: &wgpu::Queue) {
         if let Some(texture) = self.texture.take() {
             queue.present(texture);

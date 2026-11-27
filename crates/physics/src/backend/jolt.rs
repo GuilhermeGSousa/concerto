@@ -48,6 +48,7 @@ pub struct RagdollSettingsHandle(*mut concerto_jolt_ffi::JoltRagdollSettings);
 
 // SAFETY: Jolt ragdoll settings are immutable once built and creating a ragdoll only reads them; the reference count they are released through is atomic.
 unsafe impl Send for RagdollSettingsHandle {}
+// SAFETY: the settings are immutable once built, so shared references only read them.
 unsafe impl Sync for RagdollSettingsHandle {}
 
 impl Drop for RagdollSettingsHandle {
@@ -65,6 +66,7 @@ pub struct RagdollHandle(*mut concerto_jolt_ffi::JoltRagdoll);
 
 // SAFETY: the handle is only an address; it is dereferenced through `JoltBackend`, whose exclusive access the scheduler guarantees.
 unsafe impl Send for RagdollHandle {}
+// SAFETY: sharing the handle shares only an address; it is dereferenced through `JoltBackend`, whose exclusive access the scheduler guarantees.
 unsafe impl Sync for RagdollHandle {}
 
 const POSE_FLOATS: usize = 7;
@@ -84,6 +86,7 @@ fn flatten_pose(pose: &[BodyPose]) -> Vec<f32> {
 // granted exclusive access, so the world is never touched from two threads at
 // once.
 unsafe impl Send for JoltBackend {}
+// SAFETY: `&self` methods only read the Jolt world through its locking body interface, and the scheduler never grants `ResMut<PhysicsState>` while a `Res` of it is held.
 unsafe impl Sync for JoltBackend {}
 
 /// Owns one reference to a Jolt collision shape, released on drop.
@@ -98,6 +101,7 @@ pub struct ShapeHandle(*mut concerto_jolt_ffi::JoltShape);
 // `JPH::RefTarget`'s reference count, which is an atomic with release/acquire
 // ordering, making the drop below safe from any thread.
 unsafe impl Send for ShapeHandle {}
+// SAFETY: a Jolt shape is immutable once built and its reference count is atomic, so shared references only read it.
 unsafe impl Sync for ShapeHandle {}
 
 impl ShapeHandle {
@@ -126,6 +130,7 @@ pub struct Stepper {
 // guarantees exclusive `ResMut` access, so the pointer is never used from two
 // threads concurrently.
 unsafe impl Send for Stepper {}
+// SAFETY: the stepper is only used through `&mut`, under the scheduler's exclusive `ResMut` access, so a shared reference never reaches the pointer.
 unsafe impl Sync for Stepper {}
 
 fn to_jolt_dofs(dofs: AllowedDofs) -> concerto_jolt_ffi::JoltAllowedDofs {

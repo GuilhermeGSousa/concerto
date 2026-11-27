@@ -17,12 +17,17 @@ use crate::rigid_body::{MotionType, RigidBody};
 use crate::sensor::Sensor;
 use crate::shape::{MeshCollider, PhysicsShape, SharedPhysicsShape};
 
+/// The collision shape of an entity's physics body.
+///
+/// An entity with a `Collider` and a [`GlobalTransform`] gets a body, static unless a [`RigidBody`]
+/// sits beside it. Replacing or removing the collider destroys the body. Clones share the shape.
 #[derive(Clone)]
 pub struct Collider {
     shared_shape: SharedPhysicsShape,
 }
 
 impl Collider {
+    /// Creates a collider over an already built shape, sharing it.
     pub fn from_shape(shape: SharedPhysicsShape) -> Self {
         Self {
             shared_shape: shape,
@@ -55,6 +60,8 @@ impl Collider {
         }
     }
 
+    /// How far the shape reaches below its origin, in metres: the negated minimum y of its local
+    /// bounds.
     pub fn bottom_offset(&self) -> f32 {
         -self.shared_shape.local_aabb().min().y
     }
@@ -125,6 +132,8 @@ fn destroy_collider_body(mut world: RestrictedWorld, context: ComponentLifecycle
 #[derive(Component, Reflect, Clone, Copy, Debug)]
 #[reflect(Component, Default, SceneComponent)]
 pub struct BoxCollider {
+    /// Half the box's size along each local axis, in metres; the collider uses the absolute value,
+    /// raised to at least 0.001.
     pub half_extents: Vec3,
 }
 
@@ -150,6 +159,13 @@ pub fn build_box_colliders(
     }
 }
 
+/// Creates a physics body for every entity with a [`Collider`] and a [`GlobalTransform`] but no
+/// [`BodyId`], and inserts the `BodyId`.
+///
+/// The body takes the entity's [`RigidBody`], [`ColliderOffset`], [`Sensor`], [`GravityScale`] and
+/// [`CollisionLayers`] if present, reports contacts when [`Contacts`] is present, and gets a
+/// [`TransformInterpolation`] when it has a `RigidBody`. A `Sensor` on a mesh collider is ignored,
+/// and a sensor with a dynamic rigid body is made kinematic.
 pub fn register_colliders(
     colliders: Query<
         (

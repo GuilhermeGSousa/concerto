@@ -116,23 +116,31 @@ impl SceneLink {
 /// Whether a link's change found its node at the last spawn.
 #[derive(Clone, Debug, PartialEq)]
 pub enum ChangeOutcome {
+    /// The change was made to its node.
     Applied,
+    /// The change was not made, for the reason given, such as its node no longer being in the
+    /// scene.
     Unapplied(String),
 }
 
 /// Where a [`SceneLink`] is: `Waiting` spawns (again) once its scene is loaded.
 #[derive(Component, Default, Clone, Debug, PartialEq)]
 pub enum SceneLinkState {
+    /// The link spawns once its scene is loaded; the default.
     #[default]
     Waiting,
+    /// The scene's nodes are spawned.
     Spawned,
+    /// The link was not spawned, for the reason given, because it would link a scene into itself.
     Refused(String),
 }
 
 /// An entity a link spawned from its scene, and the id of the scene node it was spawned from.
 #[derive(Component, Clone, Debug, PartialEq)]
 pub struct LinkedNode {
+    /// The [`SceneLink`] entity that spawned this one.
     pub link: Entity,
+    /// The id of the node in the link's scene.
     pub node: NodeId,
 }
 
@@ -140,6 +148,7 @@ pub struct LinkedNode {
 #[derive(Component, Reflect, Default, Clone, Debug, PartialEq)]
 #[reflect(Component, Default, SceneComponent)]
 pub struct LinkParent {
+    /// The path of the linked node to parent under, from the link the entity sits on.
     pub path: LinkPath,
 }
 
@@ -150,13 +159,16 @@ pub struct LinkRoot(pub AssetId);
 /// A link finished spawning its scene.
 #[derive(Event, Clone)]
 pub struct SceneLinkSpawned {
+    /// The [`SceneLink`] entity.
     pub link: Entity,
 }
 
 /// A linked node's outermost link and its path from there.
 #[derive(Clone, Debug, PartialEq)]
 pub struct OwnedPath {
+    /// The outermost [`SceneLink`] entity.
     pub link: Entity,
+    /// The path from that link to the node.
     pub path: LinkPath,
 }
 
