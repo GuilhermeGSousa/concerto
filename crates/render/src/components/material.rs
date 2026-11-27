@@ -17,6 +17,7 @@ use crate::{assets::material::StandardMaterial, Material};
 #[reflect(Component, Default, SceneComponent)]
 #[require(crate::components::render_entity::SyncWithRenderWorld)]
 pub struct MaterialComponent<M: Material + Send + Sync + 'static = StandardMaterial> {
+    /// The material asset to draw with.
     pub handle: AssetHandle<M>,
 }
 

@@ -36,10 +36,12 @@ impl ShaderDefs {
         self.0.remove(name)
     }
 
+    /// Returns the value `name` is defined to, or `None` when it is undefined.
     pub fn get(&self, name: &str) -> Option<&ShaderDefValue> {
         self.0.get(name)
     }
 
+    /// Whether `name` is defined.
     pub fn contains(&self, name: &str) -> bool {
         self.0.contains_key(name)
     }

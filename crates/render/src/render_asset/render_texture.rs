@@ -16,6 +16,7 @@ use concerto_foundation::assets::{asset_server::AssetServer, AssetId};
 use std::ops::Deref;
 use wgpu::TextureUsages;
 
+/// A texture on the GPU, with a view and a sampler for binding it.
 #[allow(dead_code)]
 #[derive(Clone)]
 pub struct RenderTexture {
@@ -28,10 +29,15 @@ pub struct RenderTexture {
 }
 
 impl RenderTexture {
+    /// Returns the underlying GPU texture.
     pub fn texture(&self) -> &wgpu::Texture {
         &self.texture
     }
 
+    /// Creates the GPU texture for `texture` and uploads its levels.
+    ///
+    /// A sampled texture without levels is created empty. The sampler repeats and filters
+    /// linearly between texels and mips.
     pub fn from_texture(texture: &Texture, device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
         let usage = match texture.kind {
             TextureKind::Sampled => TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
@@ -93,6 +99,8 @@ impl RenderTexture {
         }
     }
 
+    /// Creates a `Depth32Float` texture of at least 1 by 1 texels with a comparison sampler, for
+    /// shadow and depth passes.
     pub fn create_depth_texture(
         device: &wgpu::Device,
         width: u32,
@@ -190,10 +198,12 @@ impl RenderAsset for RenderTexture {
     }
 }
 
+/// A 1 by 1 texture bound where a material has no texture in a slot.
 #[derive(Resource)]
 pub struct DummyRenderTexture(pub(crate) RenderTexture);
 
 impl DummyRenderTexture {
+    /// Creates the texture on `device`.
     pub fn new(device: &wgpu::Device) -> Self {
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: None,
@@ -226,6 +236,7 @@ impl DummyRenderTexture {
         })
     }
 
+    /// Returns the texture.
     pub fn inner(&self) -> &RenderTexture {
         &self.0
     }
@@ -247,6 +258,7 @@ pub struct FallbackTextures {
 }
 
 impl FallbackTextures {
+    /// Creates and uploads the three textures.
     pub fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
         Self {
             color: solid_texture(

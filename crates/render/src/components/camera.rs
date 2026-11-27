@@ -41,6 +41,7 @@ use crate::{
     view_target::{Msaa, ViewTarget},
 };
 
+/// Maps OpenGL clip-space depth, -1 to 1, to wgpu's 0 to 1.
 #[rustfmt::skip]
 pub const OPENGL_TO_WGPU_MATRIX: Mat4 = Mat4::from_cols_array(
     &[
@@ -51,20 +52,25 @@ pub const OPENGL_TO_WGPU_MATRIX: Mat4 = Mat4::from_cols_array(
     ]
 );
 
+/// Where a [`Camera`] draws.
 #[allow(dead_code)]
 #[derive(concerto_reflect::Reflect, Default)]
 pub enum RenderTarget {
+    /// The app's window.
     #[default]
     MainWindow,
+    /// A render-target [`Texture`], which materials can then sample.
     Texture(AssetHandle<Texture>),
 }
 
 #[allow(dead_code)]
 impl RenderTarget {
+    /// Returns [`RenderTarget::MainWindow`].
     pub fn main_window() -> Self {
         RenderTarget::MainWindow
     }
 
+    /// Returns a target drawing into the texture `handle`.
     pub fn texture(handle: AssetHandle<Texture>) -> Self {
         RenderTarget::Texture(handle)
     }
@@ -74,7 +80,9 @@ impl RenderTarget {
 #[derive(Clone, Copy, Debug, PartialEq, concerto_reflect::Reflect)]
 #[reflect(Default)]
 pub struct Viewport {
+    /// The top-left corner, each axis from 0 to 1.
     pub min: Vec2,
+    /// The bottom-right corner, each axis from 0 to 1.
     pub max: Vec2,
 }
 
@@ -119,9 +127,13 @@ fn edge(fraction: f32, size: u32, floor: u32) -> u32 {
 /// A rect on a render target in physical pixels, from its top-left corner.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct PixelRect {
+    /// The left edge, in pixels from the target's left side.
     pub x: u32,
+    /// The top edge, in pixels from the target's top.
     pub y: u32,
+    /// The width in pixels.
     pub width: u32,
+    /// The height in pixels.
     pub height: u32,
 }
 
@@ -163,16 +175,25 @@ pub fn viewport_rect(viewport: Option<&Viewport>, target: UVec2) -> PixelRect {
     }
 }
 
+/// A perspective camera that draws the scene from its entity's transform, looking down its
+/// local -Z.
 #[derive(Component, concerto_reflect::Reflect)]
 #[reflect(Component, SceneComponent)]
 #[require(crate::components::render_entity::SyncWithRenderWorld)]
 pub struct Camera {
+    /// Width over height; kept matched to its viewport for a camera on the main window.
     pub aspect: f32,
+    /// The vertical field of view, in radians.
     pub fovy: f32,
+    /// The distance to the near clipping plane, in world units.
     pub znear: f32,
+    /// The distance to the far clipping plane, in world units.
     pub zfar: f32,
+    /// The colour the target is cleared to before drawing, as it appears on screen.
     pub clear_color: Color,
+    /// Where the camera draws.
     pub render_target: RenderTarget,
+    /// The part of the target drawn to, or `None` for all of it.
     pub viewport: Option<Viewport>,
 }
 
@@ -201,6 +222,8 @@ impl Camera {
         viewport_rect(self.viewport.as_ref(), target)
     }
 
+    /// Returns the projection matrix from view space to clip space, with depth from 0 at
+    /// `znear` to 1 at `zfar`.
     pub fn build_projection_matrix(&self) -> Mat4 {
         glam::camera::rh::proj::directx::perspective(self.fovy, self.aspect, self.znear, self.zfar)
     }
@@ -220,6 +243,8 @@ impl Default for Camera {
     }
 }
 
+/// The camera data the shaders read at `@group(1)`: its view and projection, fog, ambient
+/// light, sky light and display settings.
 #[repr(C)]
 #[derive(Debug, Copy, Clone, ShaderType)]
 pub struct CameraUniform {
@@ -240,6 +265,7 @@ pub struct CameraUniform {
 }
 
 impl CameraUniform {
+    /// Creates uniform data with identity matrices, no fog, the default ambient light and no sky.
     pub fn new() -> Self {
         Self {
             view_pos: Vec3::ZERO,
@@ -264,6 +290,8 @@ impl CameraUniform {
         self.exposure = exposure.multiplier();
     }
 
+    /// Sets the view and projection from `camera` and `transform`, and the fog, ambient and sky
+    /// light from `environment` and `sky_light`, using the defaults where they are `None`.
     pub fn update_view_proj(
         &mut self,
         camera: &Camera,
@@ -317,14 +345,20 @@ impl Default for CameraUniform {
     }
 }
 
+/// The render-world form of a [`Camera`]: its GPU uniform, bind group and the textures it draws
+/// into.
 #[derive(Component)]
 pub struct RenderCamera {
     pub(crate) clear_color: LinearRgba,
+    /// The bind group shaders take at `@group(1)`.
     pub camera_bind_group: wgpu::BindGroup,
+    /// The uniform data last written to `camera_buffer`.
     pub camera_uniform: CameraUniform,
+    /// The GPU buffer holding the uniform.
     pub camera_buffer: wgpu::Buffer,
     /// The HDR colour and depth textures this camera's scene is drawn into.
     pub view_target: ViewTarget,
+    /// The texture the finished frame goes to, or `None` for the window.
     pub render_target: Option<RenderTexture>,
     pub(crate) viewport: Option<Viewport>,
     pub(crate) layers: RenderLayers,
@@ -334,6 +368,7 @@ pub struct RenderCamera {
 }
 
 impl RenderCamera {
+    /// Returns the depth texture of the camera's view target.
     pub fn depth_texture(&self) -> &RenderTexture {
         self.view_target.depth_texture()
     }
@@ -391,6 +426,8 @@ impl RenderCamera {
         );
     }
 
+    /// Recreates the camera's render-target texture at `width` by `height` in `format`; does
+    /// nothing for a camera drawing to the window.
     pub fn resize_render_target(
         &mut self,
         device: &wgpu::Device,

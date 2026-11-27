@@ -1,5 +1,8 @@
+/// The GPU form of a mesh.
 pub mod render_mesh;
+/// The GPU form of a texture, and textures cameras draw into.
 pub mod render_texture;
+/// The window surface and the texture the frame is drawn into.
 pub mod render_window;
 
 use std::{
@@ -15,12 +18,18 @@ use concerto_ecs::{
 };
 use concerto_foundation::assets::{asset_store::AssetStore, Asset, AssetId};
 
+/// Why [`RenderAsset::prepare_asset`] gave no GPU asset.
 pub enum AssetPreparationError {
+    /// Something the asset needs is not prepared yet; it is tried again next frame.
     NotReady,
 }
 
+/// The GPU form of a main-world asset, prepared once in the render world for each asset in its
+/// [`AssetStore`] and kept in [`RenderAssets`].
 pub trait RenderAsset: Send + Sync + Sized + 'static {
+    /// The main-world asset it is prepared from.
     type SourceAsset: Asset;
+    /// The render-world system inputs preparation reads, such as the device.
     type PreparationParams: SystemInput;
 
     /// The GPU form of the asset `id`, `source_asset`.
@@ -47,6 +56,7 @@ pub trait RenderAsset: Send + Sync + Sized + 'static {
 /// The most bytes of render assets prepared in one frame; `None` prepares everything at once.
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct RenderAssetBytesPerFrame {
+    /// The byte budget, or `None` for no limit.
     pub max_bytes: Option<usize>,
 }
 
@@ -155,26 +165,32 @@ pub(crate) fn prepare_render_asset<A: RenderAsset>(
     }
 }
 
+/// The prepared GPU form of every asset of one kind, by asset id, in the render world.
 #[derive(Resource)]
 pub struct RenderAssets<A: RenderAsset + 'static>(HashMap<AssetId, A>);
 
 impl<A: RenderAsset + 'static> RenderAssets<A> {
+    /// Creates an empty map.
     pub fn new() -> Self {
         RenderAssets(HashMap::new())
     }
 
+    /// Stores the GPU form of asset `id`, replacing any before it.
     pub fn insert(&mut self, id: AssetId, asset: A) {
         self.0.insert(id, asset);
     }
 
+    /// Removes and returns the GPU form of asset `id`, if it was prepared.
     pub fn remove(&mut self, id: &AssetId) -> Option<A> {
         self.0.remove(id)
     }
 
+    /// Returns the GPU form of asset `id`, or `None` until it is prepared.
     pub fn get(&self, id: &AssetId) -> Option<&A> {
         self.0.get(id)
     }
 
+    /// Whether asset `id` is prepared.
     pub fn contains(&self, id: &AssetId) -> bool {
         self.0.contains_key(id)
     }
@@ -186,11 +202,14 @@ impl<A: RenderAsset + 'static> Default for RenderAssets<A> {
     }
 }
 
+/// Prepares the GPU form `A` of every [`RenderAsset::SourceAsset`] each frame, within the
+/// [`RenderAssetBytesPerFrame`] budget, and keeps it in [`RenderAssets<A>`].
 pub struct RenderAssetPlugin<A: RenderAsset> {
     _marker: std::marker::PhantomData<A>,
 }
 
 impl<A: RenderAsset> RenderAssetPlugin<A> {
+    /// Creates the plugin.
     pub fn new() -> Self {
         RenderAssetPlugin {
             _marker: std::marker::PhantomData,

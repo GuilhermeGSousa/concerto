@@ -1,9 +1,13 @@
 use std::ops::{Deref, DerefMut};
 
+/// A wgpu value that is `Send` and `Sync` on wasm too, where wgpu's own types are not.
+///
+/// It derefs to the value.
 #[derive(Debug, Clone)]
 pub struct WgpuWrapper<T>(T);
 
 impl<T> WgpuWrapper<T> {
+    /// Wraps `value`.
     pub fn new(value: T) -> Self {
         Self(value)
     }

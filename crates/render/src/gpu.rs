@@ -6,8 +6,11 @@ use wgpu::{Backend, DeviceType, Limits, MemoryHints};
 /// The GPU an `App` renders with. A host creates it and may give the same one to several `App`s.
 #[derive(Resource, Clone)]
 pub struct Gpu {
+    /// The device that creates GPU resources.
     pub device: wgpu::Device,
+    /// The queue that runs submitted work.
     pub queue: wgpu::Queue,
+    /// The adapter the device was created from.
     pub adapter: wgpu::Adapter,
 }
 
@@ -143,11 +146,17 @@ impl Gpu {
 /// Why `Gpu::try_request` gave no `Gpu`.
 #[derive(Debug)]
 pub enum GpuRequestError {
+    /// No adapter matched the request.
     NoAdapter,
+    /// An adapter was found but gave no device.
     Device {
+        /// The adapter's name.
         name: String,
+        /// The kind of adapter: integrated, discrete, virtual, CPU or other.
         device_type: DeviceType,
+        /// The graphics API it runs on.
         backend: Backend,
+        /// What wgpu reported.
         error: wgpu::RequestDeviceError,
     },
 }

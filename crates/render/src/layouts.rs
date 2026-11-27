@@ -17,10 +17,12 @@ use crate::{
 /// are created from, guaranteeing wgpu bind-group compatibility.
 #[derive(Resource)]
 pub struct CameraLayout {
+    /// The layout of the camera bind group at `@group(1)`.
     pub camera_layout: wgpu::BindGroupLayout,
 }
 
 impl CameraLayout {
+    /// Creates the layout on `device`.
     pub fn new(device: &wgpu::Device) -> Self {
         let camera_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -106,6 +108,7 @@ impl SkeletonLayout {
 pub struct LightingLayout(pub(crate) wgpu::BindGroupLayout);
 
 impl LightingLayout {
+    /// Creates the layout on `device`, with the shadow map views `capabilities` allow.
     pub fn new(device: &wgpu::Device, capabilities: &RenderCapabilities) -> Self {
         let layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
             label: Some("lighting_bind_group_layout"),
