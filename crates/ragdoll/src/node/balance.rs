@@ -1,5 +1,4 @@
 use concerto_animation::{
-    attribute::PoseAttribute,
     evaluation::{AnimationGraphContext, DriveContext},
     node::{AnimationNode, EditorAnimationNode, InputSlots, ReflectAnimationNode},
     pose::{AnimationFrame, EvaluatedFrame, FramePool},
@@ -372,71 +371,6 @@ impl CommandsOut {
         }
         let strength = profile?.strength_of(&body.resolved().bone_name(part)?);
         (strength != PartStrength::Kinematic).then(|| MotorCommand::holding(strength, 1.0, target))
-    }
-
-    #[expect(dead_code)]
-    pub(crate) fn layered(
-        &self,
-        claim: Option<OrderedClaim>,
-        body: BodyView<'_>,
-        profile: Option<&StrengthProfile>,
-        part: usize,
-    ) -> Option<MotorCommand> {
-        let base = self.wanted(body, profile, part);
-        let Some(claim) = claim else {
-            return base;
-        };
-        let weight = claim.weight;
-        let claimed = claim.command.motor(body.animated_target(part));
-        match base {
-            Some(mut base) => {
-                let force = base.force;
-                let torque = base.torque;
-                base.blend(1.0 - weight, &claimed, weight);
-                base.force = force + claimed.force * weight;
-                base.torque = torque + claimed.torque * weight;
-                Some(base)
-            }
-            None => (weight >= 0.5).then_some(claimed),
-        }
-    }
-}
-
-#[expect(dead_code)]
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct OrderedClaim {
-    pub(crate) weight: f32,
-    pub(crate) command: PartCommand,
-}
-
-#[expect(dead_code)]
-#[derive(Clone, Debug, Default)]
-pub(crate) struct ClaimsOut {
-    claims: Vec<Option<OrderedClaim>>,
-}
-
-#[expect(dead_code)]
-impl ClaimsOut {
-    pub(crate) fn reset(&mut self, count: usize) {
-        self.claims.clear();
-        self.claims.resize(count, None);
-    }
-
-    pub(crate) fn claim(&mut self, part: usize, weight: f32, command: PartCommand) {
-        if let Some(slot) = self.claims.get_mut(part) {
-            *slot = Some(OrderedClaim {
-                weight: weight.clamp(0.0, 1.0),
-                command,
-            });
-        }
-    }
-
-    pub(crate) fn clear(&mut self) {
-        self.claims.clear();
-    }
-
-    pub(crate) fn get(&self, part: usize) -> Option<OrderedClaim> {
-        self.claims.get(part).copied().flatten()
     }
 }
 
