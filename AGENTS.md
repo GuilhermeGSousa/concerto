@@ -94,6 +94,7 @@ cargo deny check bans advisories
 CARGO_BUILD_WARNINGS=deny cargo clippy --locked --workspace --all-targets -- -D warnings
 cargo clippy --locked --workspace -- -A clippy::all -D clippy::cognitive_complexity
 CARGO_BUILD_WARNINGS=deny cargo clippy --locked -p concerto-physics --no-default-features --features force-rapier -- -D warnings
+RUSTDOCFLAGS="-D warnings" CARGO_BUILD_WARNINGS=deny cargo doc --locked --workspace --no-deps
 cargo test --locked --workspace
 cargo test --locked -p concerto-physics --no-default-features --features force-rapier
 cargo build --locked --target wasm32-unknown-unknown
@@ -147,7 +148,9 @@ While a plan is in progress, each task runs a gate scoped to the crates it
 touched: `cargo fmt --all -- --check`, the test budget and the dependency
 layers, then the clippy and test lines above
 with `-p <crate>` for each crate in place of `--workspace` (and the Rapier
-lines when physics is one of them). The full gate runs once, after the last
+lines when physics is one of them), and
+`RUSTDOCFLAGS="-D warnings" cargo doc --locked --no-deps -p <crate>` for each
+crate. The full gate runs once, after the last
 task and before the branch review.
 
 Report each command you ran with its result. If one fails, say so and show the

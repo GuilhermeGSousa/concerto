@@ -89,7 +89,7 @@ jobs:
   clippy_check:
     name: Clippy
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
@@ -113,6 +113,11 @@ jobs:
       - name: Run clippy on the Rapier physics backend
         run: cargo clippy --locked -p concerto-physics --no-default-features --features force-rapier -- -D warnings
         env:
+          CARGO_BUILD_WARNINGS: deny
+      - name: Check documentation
+        run: cargo doc --locked --workspace --no-deps
+        env:
+          RUSTDOCFLAGS: -D warnings
           CARGO_BUILD_WARNINGS: deny
         
   dependencies:
