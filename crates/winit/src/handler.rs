@@ -116,7 +116,7 @@ impl Handler {
             return;
         };
 
-        for action in apply::settings_actions(self.applied.as_ref(), &settings) {
+        for action in apply::WindowAction::diff(self.applied.as_ref(), &settings) {
             match action {
                 WindowAction::Title(title) => handle.set_title(&title),
                 WindowAction::Decorations(decorations) => handle.set_decorations(decorations),
@@ -303,7 +303,7 @@ impl ApplicationHandler for Handler {
         let slot = Rc::clone(&self.app);
         let mut slot = slot.borrow_mut();
         let Some(app) = slot.as_mut() else {
-            match translate::while_waiting(&event) {
+            match Waiting::of(&event) {
                 Some(Waiting::Redraw) => handle.request_redraw(),
                 Some(Waiting::Exit) => event_loop.exit(),
                 None => (),

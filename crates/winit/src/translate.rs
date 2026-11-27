@@ -78,11 +78,13 @@ pub(crate) enum Waiting {
     Exit,
 }
 
-pub(crate) fn while_waiting(event: &WinitEvent) -> Option<Waiting> {
-    match event {
-        WinitEvent::RedrawRequested => Some(Waiting::Redraw),
-        WinitEvent::CloseRequested => Some(Waiting::Exit),
-        _ => None,
+impl Waiting {
+    pub(crate) fn of(event: &WinitEvent) -> Option<Self> {
+        match event {
+            WinitEvent::RedrawRequested => Some(Self::Redraw),
+            WinitEvent::CloseRequested => Some(Self::Exit),
+            _ => None,
+        }
     }
 }
 
@@ -270,7 +272,7 @@ mod tests {
         ];
         for case in cases {
             assert_eq!(translate(&case.event), case.engine, "{:?}", case.event);
-            assert_eq!(while_waiting(&case.event), case.waiting, "{:?}", case.event);
+            assert_eq!(Waiting::of(&case.event), case.waiting, "{:?}", case.event);
         }
     }
 }
