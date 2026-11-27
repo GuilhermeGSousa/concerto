@@ -249,27 +249,29 @@ fn open_project_scene(
         else {
             continue;
         };
-        if let Some(id) = project_scene(project, &registry) {
+        if let Some(id) = project.project_scene(&registry) {
             commands.0.push_back(EditorCommand::OpenAsset(id));
         }
     }
 }
 
-fn project_scene(project: &Project, registry: &AssetRegistry) -> Option<AssetId> {
-    if let Some(address) = &project.default_scene {
-        let scene = registry.id_for_address(address).filter(|id| {
-            registry
-                .get(*id)
-                .is_some_and(|entry| entry.kind == Scene::name())
-        });
-        if scene.is_some() {
-            return scene;
+impl Project {
+    fn project_scene(&self, registry: &AssetRegistry) -> Option<AssetId> {
+        if let Some(address) = &self.default_scene {
+            let scene = registry.id_for_address(address).filter(|id| {
+                registry
+                    .get(*id)
+                    .is_some_and(|entry| entry.kind == Scene::name())
+            });
+            if scene.is_some() {
+                return scene;
+            }
+            log::warn!(
+                "content.toml's default_scene {address} is not a scene in the self; opening the first scene instead"
+            );
         }
-        log::warn!(
-            "content.toml's default_scene {address} is not a scene in the project; opening the first scene instead"
-        );
+        registry.of_type::<Scene>().next().map(|entry| entry.id)
     }
-    registry.of_type::<Scene>().next().map(|entry| entry.id)
 }
 
 fn process_commands(

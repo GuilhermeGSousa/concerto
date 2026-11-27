@@ -33,7 +33,7 @@ pub(crate) fn create_editor_hosts(
     nodes: Query<(&UINode, &ChildOf)>,
     mut commands: CommandQueue,
 ) {
-    let bases = panel_bodies(&registry);
+    let bases = registry.panel_bodies();
     for (editor, doc) in documents.iter() {
         let mut hosts = [None; 3];
         let mut bottom = None;
@@ -95,12 +95,14 @@ pub(crate) fn create_editor_hosts(
     }
 }
 
-fn panel_bodies(registry: &PanelRegistry) -> [Option<Entity>; 3] {
-    [
-        registry.body(crate::viewport::PANEL_ID),
-        registry.body(crate::hierarchy::PANEL_ID),
-        registry.body(crate::inspector::PANEL_ID),
-    ]
+impl PanelRegistry {
+    fn panel_bodies(&self) -> [Option<Entity>; 3] {
+        [
+            self.body(crate::viewport::PANEL_ID),
+            self.body(crate::hierarchy::PANEL_ID),
+            self.body(crate::inspector::PANEL_ID),
+        ]
+    }
 }
 
 /// Update visibility, and which regions collapse or fill, only when tab/panel resources or host components change.
@@ -133,7 +135,7 @@ pub(crate) fn sync_workspace(
     if let Some(centre) = registry.region(Region::Centre) {
         set_visible(&mut nodes, centre, !form);
     }
-    let bases = panel_bodies(&registry);
+    let bases = registry.panel_bodies();
     for (entity, visible) in bases.into_iter().zip([viewport, scene, scene || inspected]) {
         if let Some(entity) = entity {
             set_visible(&mut nodes, entity, visible);

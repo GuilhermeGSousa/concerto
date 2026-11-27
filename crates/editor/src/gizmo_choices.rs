@@ -291,28 +291,30 @@ fn unknown_gizmo(kind: &str, names: &[&'static str]) -> ToolError {
     ToolError::new("unknown_gizmo", message)
 }
 
-fn chosen(
-    arguments: &Gizmos,
-    names: &[&'static str],
-    choices: &mut GizmoChoices,
-) -> Result<String, ToolError> {
-    match (arguments.kind.as_deref(), arguments.always) {
-        (None, None) => {}
-        (Some(kind), Some(always)) => {
-            let name = names
-                .iter()
-                .find(|name| name.eq_ignore_ascii_case(kind))
-                .ok_or_else(|| unknown_gizmo(kind, names))?;
-            choices.set(name, always);
+impl Gizmos {
+    fn chosen(
+        &self,
+        names: &[&'static str],
+        choices: &mut GizmoChoices,
+    ) -> Result<String, ToolError> {
+        match (self.kind.as_deref(), self.always) {
+            (None, None) => {}
+            (Some(kind), Some(always)) => {
+                let name = names
+                    .iter()
+                    .find(|name| name.eq_ignore_ascii_case(kind))
+                    .ok_or_else(|| unknown_gizmo(kind, names))?;
+                choices.set(name, always);
+            }
+            _ => {
+                return Err(ToolError::new(
+                    "invalid_arguments",
+                    "Give kind and always together to set a kind, or neither to list the kinds.",
+                ));
+            }
         }
-        _ => {
-            return Err(ToolError::new(
-                "invalid_arguments",
-                "Give kind and always together to set a kind, or neither to list the kinds.",
-            ));
-        }
+        Ok(listing(names, choices))
     }
-    Ok(listing(names, choices))
 }
 
 fn gizmos(
@@ -322,7 +324,7 @@ fn gizmos(
 ) {
     let names = kind_names(kinds.as_deref());
     for (arguments, reply) in calls.read() {
-        match chosen(&arguments, &names, &mut choices) {
+        match arguments.chosen(&names, &mut choices) {
             Ok(answer) => reply.ok(answer),
             Err(error) => reply.err(error),
         }

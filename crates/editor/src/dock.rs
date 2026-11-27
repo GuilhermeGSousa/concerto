@@ -275,7 +275,7 @@ impl EditorLayout {
 
     /// The sizes shown in a window of `window` logical pixels: the stored ones, or smaller where they do not fit.
     pub fn shown(&self, states: &PanelStates, window: Vec2) -> EditorLayout {
-        let room = row_room(states, window);
+        let room = states.row_room(window);
         let mut shown = *self;
         if states.right == PanelState::Sized {
             let left = sized(states.left, self.left);
@@ -293,7 +293,7 @@ impl EditorLayout {
     /// `size` held within what `panel` may take in a window of `window` logical pixels.
     pub fn clamp(&self, panel: LayoutPanel, size: f32, states: &PanelStates, window: Vec2) -> f32 {
         let shown = self.shown(states, window);
-        let room = row_room(states, window);
+        let room = states.row_room(window);
         let range = match panel {
             LayoutPanel::Left => Range {
                 min: LEFT_MIN,
@@ -329,18 +329,20 @@ fn sized(state: PanelState, size: f32) -> f32 {
     }
 }
 
-fn row_room(states: &PanelStates, window: Vec2) -> f32 {
-    let splitters = [states.left, states.right]
-        .into_iter()
-        .filter(|state| *state == PanelState::Sized)
-        .count() as f32
-        * GAP;
-    let rest = if states.right == PanelState::Fill {
-        RIGHT_MIN
-    } else {
-        CENTRE_MIN_WIDTH
-    };
-    window.x - GAP * 2.0 - splitters - rest
+impl PanelStates {
+    fn row_room(&self, window: Vec2) -> f32 {
+        let splitters = [self.left, self.right]
+            .into_iter()
+            .filter(|state| *state == PanelState::Sized)
+            .count() as f32
+            * GAP;
+        let rest = if self.right == PanelState::Fill {
+            RIGHT_MIN
+        } else {
+            CENTRE_MIN_WIDTH
+        };
+        window.x - GAP * 2.0 - splitters - rest
+    }
 }
 
 fn column_room(window: Vec2) -> f32 {

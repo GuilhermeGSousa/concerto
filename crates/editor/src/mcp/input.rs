@@ -305,7 +305,7 @@ fn send_queued_input(
             let held = held(document, owner, &hosted, &input, &routing);
             match sending.held_back {
                 None => pending.reply.ok(sent(document, &sending, owner, &held)),
-                Some(why) => pending.reply.err(held_back(why, &sending, &held)),
+                Some(why) => pending.reply.err(why.held_back(&sending, &held)),
             }
             cmd.despawn(entity);
             return;
@@ -444,31 +444,33 @@ fn sent(document: Entity, sending: &Sending, owner: Option<InputOwner>, held: &s
     answer
 }
 
-fn held_back(why: HeldBack, sending: &Sending, held: &str) -> ToolError {
-    let sent = format!(
-        "Sent {} of {} window events{held}.",
-        sending.to_game + sending.to_editor,
-        sending.total
-    );
-    match why {
-        HeldBack::Editor => ToolError::new(
-            "input_released",
-            format!(
-                "{sent} While the editor has input, only key and button releases and pad events go through. {RELEASED}"
+impl HeldBack {
+    fn held_back(self, sending: &Sending, held: &str) -> ToolError {
+        let sent = format!(
+            "Sent {} of {} window events{held}.",
+            sending.to_game + sending.to_editor,
+            sending.total
+        );
+        match self {
+            HeldBack::Editor => ToolError::new(
+                "input_released",
+                format!(
+                    "{sent} While the editor has input, only key and button releases and pad events go through. {RELEASED}"
+                ),
             ),
-        ),
-        HeldBack::Hidden => ToolError::new(
-            "input_released",
-            format!(
-                "{sent} The game left the viewport, so only key and button releases and pad events went on after that."
+            HeldBack::Hidden => ToolError::new(
+                "input_released",
+                format!(
+                    "{sent} The game left the viewport, so only key and button releases and pad events went on after that."
+                ),
             ),
-        ),
-        HeldBack::Stopped => ToolError::new(
-            "not_playing",
-            format!(
-                "{sent} The game stopped, so only key and button releases and pad events went on after that."
+            HeldBack::Stopped => ToolError::new(
+                "not_playing",
+                format!(
+                    "{sent} The game stopped, so only key and button releases and pad events went on after that."
+                ),
             ),
-        ),
+        }
     }
 }
 
@@ -485,7 +487,7 @@ fn window_events(
         };
         let mut move_to =
             |at: [f32; 2], written: &mut VecDeque<WindowEvent>| -> Result<(), ToolError> {
-                let position = to_window(view, at).map_err(invalid)?;
+                let position = view.to_window(at).map_err(invalid)?;
                 written.push_back(WindowEvent::CursorMoved { position });
                 if position != pointer {
                     written.push_back(WindowEvent::MouseMotion {
@@ -509,7 +511,7 @@ fn window_events(
                     move_to(at, &mut written)?;
                 }
                 written.push_back(WindowEvent::MouseButton {
-                    button: mouse_button(button.button),
+                    button: button.button.mouse_button(),
                     pressed: button.pressed,
                 });
             }
@@ -518,7 +520,7 @@ fn window_events(
                 delta: ScrollDelta::Lines(Vec2::from(wheel.wheel)),
             }),
             InputEvent::Pad(pad) => {
-                if let Some(event) = pad_event(pad, &mut pads).map_err(invalid)? {
+                if let Some(event) = pad.pad_event(&mut pads).map_err(invalid)? {
                     written.push_back(event);
                 }
             }
@@ -527,54 +529,56 @@ fn window_events(
     Ok(written)
 }
 
-fn pad_event(pad: &PadInput, pads: &mut Pads) -> Result<Option<WindowEvent>, String> {
-    let n = pad.pad;
-    let id = GamepadId::new(n);
-    match (
-        pad.connect,
-        pad.button.as_deref(),
-        pad.axis.as_deref(),
-        pad.value,
-    ) {
-        (Some(true), None, None, _) => {
-            if pads.sent.contains(&id) {
-                return Ok(None);
+impl PadInput {
+    fn pad_event(&self, pads: &mut Pads) -> Result<Option<WindowEvent>, String> {
+        let n = self.pad;
+        let id = GamepadId::new(n);
+        match (
+            self.connect,
+            self.button.as_deref(),
+            self.axis.as_deref(),
+            self.value,
+        ) {
+            (Some(true), None, None, _) => {
+                if pads.sent.contains(&id) {
+                    return Ok(None);
+                }
+                if pads.connected.contains(&id) {
+                    return Err(format!(
+                        "self {n} is a real gamepad; pick another number. Pads in use: {}.",
+                        pads.numbers()
+                    ));
+                }
+                pads.connected.push(id);
+                pads.sent.insert(id);
+                Ok(Some(WindowEvent::GamepadConnected {
+                    id,
+                    name: self.name.clone().unwrap_or_else(|| format!("Pad {n}")),
+                }))
             }
-            if pads.connected.contains(&id) {
-                return Err(format!(
-                    "pad {n} is a real gamepad; pick another number. Pads in use: {}.",
-                    pads.numbers()
-                ));
+            (Some(false), None, None, _) => {
+                if !pads.sent.contains(&id) {
+                    pads.require(id)?;
+                    return Err(format!(
+                        "self {n} is a real gamepad; send_input unplugs only the pads it connected, so unplug it by hand."
+                    ));
+                }
+                pads.connected.retain(|connected| *connected != id);
+                pads.sent.remove(&id);
+                Ok(Some(WindowEvent::GamepadDisconnected { id }))
             }
-            pads.connected.push(id);
-            pads.sent.insert(id);
-            Ok(Some(WindowEvent::GamepadConnected {
-                id,
-                name: pad.name.clone().unwrap_or_else(|| format!("Pad {n}")),
-            }))
-        }
-        (Some(false), None, None, _) => {
-            if !pads.sent.contains(&id) {
+            (None, Some(button), None, Some(value)) => {
+                let button = named(PAD_BUTTONS, button, "self button")?;
                 pads.require(id)?;
-                return Err(format!(
-                    "pad {n} is a real gamepad; send_input unplugs only the pads it connected, so unplug it by hand."
-                ));
+                Ok(Some(WindowEvent::GamepadButton { id, button, value }))
             }
-            pads.connected.retain(|connected| *connected != id);
-            pads.sent.remove(&id);
-            Ok(Some(WindowEvent::GamepadDisconnected { id }))
+            (None, None, Some(axis), Some(value)) => {
+                let axis = named(PAD_AXES, axis, "self axis")?;
+                pads.require(id)?;
+                Ok(Some(WindowEvent::GamepadAxis { id, axis, value }))
+            }
+            _ => Err(PAD_SHAPES.to_string()),
         }
-        (None, Some(button), None, Some(value)) => {
-            let button = named(PAD_BUTTONS, button, "pad button")?;
-            pads.require(id)?;
-            Ok(Some(WindowEvent::GamepadButton { id, button, value }))
-        }
-        (None, None, Some(axis), Some(value)) => {
-            let axis = named(PAD_AXES, axis, "pad axis")?;
-            pads.require(id)?;
-            Ok(Some(WindowEvent::GamepadAxis { id, axis, value }))
-        }
-        _ => Err(PAD_SHAPES.to_string()),
     }
 }
 
@@ -593,26 +597,30 @@ fn named<T: Copy>(table: &[(&'static str, T)], name: &str, kind: &str) -> Result
     ))
 }
 
-fn mouse_button(name: ButtonName) -> MouseButton {
-    match name {
-        ButtonName::Left => MouseButton::Left,
-        ButtonName::Right => MouseButton::Right,
-        ButtonName::Middle => MouseButton::Middle,
-        ButtonName::Back => MouseButton::Back,
-        ButtonName::Forward => MouseButton::Forward,
+impl ButtonName {
+    fn mouse_button(self) -> MouseButton {
+        match self {
+            ButtonName::Left => MouseButton::Left,
+            ButtonName::Right => MouseButton::Right,
+            ButtonName::Middle => MouseButton::Middle,
+            ButtonName::Back => MouseButton::Back,
+            ButtonName::Forward => MouseButton::Forward,
+        }
     }
 }
 
-fn to_window(view: &ViewportView, at: [f32; 2]) -> Result<Vec2, String> {
-    let (width, height) = view.size;
-    let inside = at[0] >= 0.0 && at[1] >= 0.0 && at[0] < width as f32 && at[1] < height as f32;
-    if !inside {
-        return Err(format!(
-            "[{}, {}] is outside the viewport's picture, which is {width}x{height} pixels: [0, 0] is its top-left corner.",
-            at[0], at[1]
-        ));
+impl ViewportView {
+    fn to_window(self, at: [f32; 2]) -> Result<Vec2, String> {
+        let (width, height) = self.size;
+        let inside = at[0] >= 0.0 && at[1] >= 0.0 && at[0] < width as f32 && at[1] < height as f32;
+        if !inside {
+            return Err(format!(
+                "[{}, {}] is outside the viewport's picture, which is {width}x{height} pixels: [0, 0] is its top-left corner.",
+                at[0], at[1]
+            ));
+        }
+        Ok(self.origin + Vec2::from(at))
     }
-    Ok(view.origin + Vec2::from(at))
 }
 
 fn key_named(name: &str) -> Result<KeyCode, String> {

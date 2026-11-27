@@ -312,7 +312,7 @@ impl PendingApp {
             return None;
         }
         let mut hosted = self.take_ready()?;
-        match finish_build(&mut hosted, self.on_ready.take(), &self.cancelled) {
+        match hosted.finish_build(self.on_ready.take(), &self.cancelled) {
             Ok(true) => Some(hosted),
             Ok(false) => None,
             Err(failure) => {
@@ -339,11 +339,9 @@ impl PendingApp {
             phase => {
                 self.phase = phase;
                 let hosted = self.take_ready()?;
-                self.phase = Phase::Finishing(spawn_finishing(
-                    hosted,
-                    self.on_ready.take(),
-                    Arc::clone(&self.cancelled),
-                ));
+                self.phase = Phase::Finishing(
+                    hosted.spawn_finishing(self.on_ready.take(), Arc::clone(&self.cancelled)),
+                );
                 None
             }
         }
@@ -435,41 +433,44 @@ impl Drop for PendingApp {
     }
 }
 
-fn spawn_finishing(
-    mut hosted: HostedApp,
-    on_ready: Option<OnReady>,
-    cancelled: Arc<AtomicBool>,
-) -> JoinHandle<Finished> {
-    std::thread::Builder::new()
-        .name("hosted-build".into())
-        .spawn(move || {
-            profiling::register_thread!("hosted-build");
-            finish_build(&mut hosted, on_ready, &cancelled).map(|ready| ready.then_some(hosted))
-        })
-        .expect("the thread that finishes a hosted App's build could not be started")
-}
+impl HostedApp {
+    fn spawn_finishing(
+        mut self,
+        on_ready: Option<OnReady>,
+        cancelled: Arc<AtomicBool>,
+    ) -> JoinHandle<Finished> {
+        std::thread::Builder::new()
+            .name("self-build".into())
+            .spawn(move || {
+                profiling::register_thread!("self-build");
+                self.finish_build(on_ready, &cancelled)
+                    .map(|ready| ready.then_some(self))
+            })
+            .expect("the thread that finishes a self App's build could not be started")
+    }
 
-fn finish_build(
-    hosted: &mut HostedApp,
-    on_ready: Option<OnReady>,
-    cancelled: &AtomicBool,
-) -> Result<bool, String> {
-    let editor_executor = run_non_send_systems_here(&mut hosted.app);
-    let built = catch_unwind(AssertUnwindSafe(|| hosted.app.finish_plugin_build()));
-    if let Some(executor) = editor_executor {
-        hosted.app.insert_resource(executor);
+    fn finish_build(
+        &mut self,
+        on_ready: Option<OnReady>,
+        cancelled: &AtomicBool,
+    ) -> Result<bool, String> {
+        let editor_executor = run_non_send_systems_here(&mut self.app);
+        let built = catch_unwind(AssertUnwindSafe(|| self.app.finish_plugin_build()));
+        if let Some(executor) = editor_executor {
+            self.app.insert_resource(executor);
+        }
+        built.map_err(|payload| panic_message(payload, "finishing the build"))?;
+        self.app.insert_resource(hosted_upload_budget());
+        if cancelled.load(Ordering::SeqCst) {
+            self.cancel_loads();
+            return Ok(false);
+        }
+        if let Some(on_ready) = on_ready {
+            catch_unwind(AssertUnwindSafe(|| on_ready(self)))
+                .map_err(|payload| panic_message(payload, "the ready step"))?;
+        }
+        Ok(true)
     }
-    built.map_err(|payload| panic_message(payload, "finishing the build"))?;
-    hosted.app.insert_resource(hosted_upload_budget());
-    if cancelled.load(Ordering::SeqCst) {
-        hosted.cancel_loads();
-        return Ok(false);
-    }
-    if let Some(on_ready) = on_ready {
-        catch_unwind(AssertUnwindSafe(|| on_ready(hosted)))
-            .map_err(|payload| panic_message(payload, "the ready step"))?;
-    }
-    Ok(true)
 }
 
 fn run_non_send_systems_here(app: &mut App) -> Option<MainThreadExecutor> {

@@ -105,9 +105,11 @@ pub(crate) fn sync_in_viewport(
     }
 }
 
-fn forget_routing(routing: &mut Routing) {
-    routing.buttons.clear();
-    routing.pointer_on_picture = None;
+impl Routing {
+    fn forget_routing(&mut self) {
+        self.buttons.clear();
+        self.pointer_on_picture = None;
+    }
 }
 
 pub(crate) fn focus_shown_app(
@@ -128,7 +130,7 @@ pub(crate) fn focus_shown_app(
             }
         }
     }
-    forget_routing(&mut routing);
+    routing.forget_routing();
 }
 
 pub(crate) fn blur_hidden_app(
@@ -146,7 +148,7 @@ pub(crate) fn blur_hidden_app(
             cmd.trigger(StopPlay(document));
         }
     }
-    forget_routing(&mut routing);
+    routing.forget_routing();
 }
 
 pub(crate) fn focus_new_target(
@@ -161,7 +163,7 @@ pub(crate) fn focus_new_target(
     {
         app.push(WindowEvent::Focused(true));
     }
-    forget_routing(&mut routing);
+    routing.forget_routing();
 }
 
 pub(crate) fn blur_old_target(
@@ -248,8 +250,10 @@ fn contains(view: &ViewportView, position: Vec2) -> bool {
     position.cmpge(view.origin).all() && position.cmplt(view.origin + size).all()
 }
 
-fn on_picture(view: &ViewportView, pointer: Vec2) -> bool {
-    view.over && contains(view, pointer)
+impl ViewportView {
+    fn on_picture(&self, pointer: Vec2) -> bool {
+        self.over && contains(self, pointer)
+    }
 }
 
 fn release(owner: &mut InputOwner, app: &mut HostedApp) {
@@ -257,18 +261,15 @@ fn release(owner: &mut InputOwner, app: &mut HostedApp) {
     app.push(WindowEvent::Focused(false));
 }
 
-fn hand_over(
-    owner: &mut InputOwner,
-    app: &mut HostedApp,
-    held: Option<&Input>,
-    pads_since: &[WindowEvent],
-) {
-    release(owner, app);
-    for pad in held.into_iter().flat_map(Input::gamepads) {
-        push_pad_state(pad, app);
-    }
-    for event in pads_since {
-        app.push(event.clone());
+impl InputOwner {
+    fn hand_over(&mut self, app: &mut HostedApp, held: Option<&Input>, pads_since: &[WindowEvent]) {
+        release(self, app);
+        for pad in held.into_iter().flat_map(Input::gamepads) {
+            push_pad_state(pad, app);
+        }
+        for event in pads_since {
+            app.push(event.clone());
+        }
     }
 }
 
@@ -283,7 +284,7 @@ pub(crate) fn release_input(
         && **owner == InputOwner::Game
         && let Some(mut app) = hosted.get_entity_mut(document)
     {
-        hand_over(&mut owner, &mut app, Some(&input), &[]);
+        owner.hand_over(&mut app, Some(&input), &[]);
     }
 }
 
@@ -417,11 +418,9 @@ pub(crate) fn route_play_input(
                     stopping = true;
                     cmd.trigger(StopPlay(document));
                 }
-                _ if pressed == Some(RELEASE) => {
-                    hand_over(&mut current, &mut app, held, &pads_since)
-                }
-                WindowEvent::MouseButton { pressed: true, .. } if !on_picture(&view, pointer) => {
-                    hand_over(&mut current, &mut app, held, &pads_since);
+                _ if pressed == Some(RELEASE) => current.hand_over(&mut app, held, &pads_since),
+                WindowEvent::MouseButton { pressed: true, .. } if !view.on_picture(pointer) => {
+                    current.hand_over(&mut app, held, &pads_since);
                 }
                 WindowEvent::Focused(false) => release(&mut current, &mut app),
                 WindowEvent::CursorMoved { position } => app.push(WindowEvent::CursorMoved {
@@ -451,7 +450,7 @@ pub(crate) fn route_play_input(
                     forward_pad(event, &mut routing.told_pads, &mut app)
                 }
                 WindowEvent::Focused(false) => app.push(event.clone()),
-                WindowEvent::MouseButton { pressed: true, .. } if on_picture(&view, pointer) => {
+                WindowEvent::MouseButton { pressed: true, .. } if view.on_picture(pointer) => {
                     current = InputOwner::Game;
                     app.push(WindowEvent::Focused(true));
                     app.push(WindowEvent::CursorMoved {

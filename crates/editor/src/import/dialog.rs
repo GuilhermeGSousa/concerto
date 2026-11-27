@@ -155,14 +155,16 @@ pub fn cancel(staging: &mut ImportStaging) {
     staging.scan = None;
 }
 
-fn confirm_checked(staging: &mut ImportStaging, queue: &mut ImportQueue, project: &ProjectState) {
-    let root = project.project.as_ref().map(|project| &project.root);
-    if let Some(root) = root {
-        validate_rows(&mut staging.rows, root);
-    }
-    confirm(staging, queue);
-    if let Some(root) = root {
-        queue.bind(root);
+impl ImportStaging {
+    fn confirm_checked(&mut self, queue: &mut ImportQueue, project: &ProjectState) {
+        let root = project.project.as_ref().map(|project| &project.root);
+        if let Some(root) = root {
+            validate_rows(&mut self.rows, root);
+        }
+        confirm(self, queue);
+        if let Some(root) = root {
+            queue.bind(root);
+        }
     }
 }
 
@@ -340,20 +342,22 @@ fn write_settings(
     }
 }
 
-fn shown_value(row: &StagedImport, kind: SettingsKind) -> Option<Box<dyn Reflect>> {
-    let Some(Ok(staged)) = &row.staged else {
-        return None;
-    };
-    let (edit, current) = match kind {
-        SettingsKind::Import => (row.settings.as_deref(), Some(staged.settings.as_ref())),
-        SettingsKind::Asset => (
-            row.asset_settings.as_deref(),
-            staged.asset_settings.as_deref(),
-        ),
-    };
-    let value = edit.or(current)?;
-    let importer = importer_for(&row.source.extension()?.to_string_lossy())?;
-    Some(importer.clone_settings(value))
+impl StagedImport {
+    fn shown_value(&self, kind: SettingsKind) -> Option<Box<dyn Reflect>> {
+        let Some(Ok(staged)) = &self.staged else {
+            return None;
+        };
+        let (edit, current) = match kind {
+            SettingsKind::Import => (self.settings.as_deref(), Some(staged.settings.as_ref())),
+            SettingsKind::Asset => (
+                self.asset_settings.as_deref(),
+                staged.asset_settings.as_deref(),
+            ),
+        };
+        let value = edit.or(current)?;
+        let importer = importer_for(&self.source.extension()?.to_string_lossy())?;
+        Some(importer.clone_settings(value))
+    }
 }
 
 fn show_settings(
@@ -393,7 +397,7 @@ fn show_settings(
         }
         let mut visible = false;
         for (section, kind, mut section_node) in sections.iter_mut() {
-            let value = selected.and_then(|index| shown_value(&staging.rows[index], kind.0));
+            let value = selected.and_then(|index| staging.rows[index].shown_value(kind.0));
             if section_node.visible != value.is_some() {
                 section_node.visible = value.is_some();
             }
@@ -453,7 +457,7 @@ fn press_keys(
         return;
     }
     requested.0 = false;
-    confirm_checked(&mut staging, &mut queue, &project);
+    staging.confirm_checked(&mut queue, &project);
 }
 
 #[allow(clippy::too_many_arguments)]

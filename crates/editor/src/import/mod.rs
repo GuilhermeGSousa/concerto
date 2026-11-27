@@ -145,7 +145,7 @@ pub fn validate_rows(rows: &mut [StagedImport], project_root: &Path) {
             .get(&normalised(&row.destination))
             .copied()
             .unwrap_or(0);
-        row.state = row_state(row, project_root, occurrences);
+        row.state = row.row_state(project_root, occurrences);
     }
 }
 
@@ -183,27 +183,42 @@ fn placement_problem(destination: &str) -> Option<&'static str> {
     (!inside).then_some("outside the project")
 }
 
-fn row_state(row: &StagedImport, project_root: &Path, occurrences: usize) -> RowState {
-    if let Some(problem) = placement_problem(&row.destination) {
-        return RowState::Rejected(problem.into());
+impl StagedImport {
+    fn row_state(&self, project_root: &Path, occurrences: usize) -> RowState {
+        if let Some(problem) = placement_problem(&self.destination) {
+            return RowState::Rejected(problem.into());
+        }
+        if occurrences > 1 {
+            return RowState::Rejected("listed twice".into());
+        }
+        let source_extension = extension_of(&self.source);
+        if importer_for(&source_extension).is_none() {
+            return RowState::Rejected(format!("no importer for '.{source_extension}'"));
+        }
+        if extension_of(Path::new(&self.destination)) != source_extension {
+            return RowState::Rejected(format!("extension must stay '.{source_extension}'"));
+        }
+        if let Some(Err(error)) = &self.staged {
+            return RowState::Rejected(error.clone());
+        }
+        if project_root.join(&self.destination).exists() {
+            RowState::Replaces
+        } else {
+            RowState::New
+        }
     }
-    if occurrences > 1 {
-        return RowState::Rejected("listed twice".into());
-    }
-    let source_extension = extension_of(&row.source);
-    if importer_for(&source_extension).is_none() {
-        return RowState::Rejected(format!("no importer for '.{source_extension}'"));
-    }
-    if extension_of(Path::new(&row.destination)) != source_extension {
-        return RowState::Rejected(format!("extension must stay '.{source_extension}'"));
-    }
-    if let Some(Err(error)) = &row.staged {
-        return RowState::Rejected(error.clone());
-    }
-    if project_root.join(&row.destination).exists() {
-        RowState::Replaces
-    } else {
-        RowState::New
+
+    fn settings_used(&self, types: &AppTypeRegistry) -> String {
+        let staged = self.staged.as_ref().and_then(|staged| staged.as_ref().ok());
+        let settings = self
+            .settings
+            .as_deref()
+            .or(staged.map(|staged| staged.settings.as_ref()));
+        let asset_settings = self
+            .asset_settings
+            .as_deref()
+            .or(staged.and_then(|staged| staged.asset_settings.as_deref()));
+        settings_text(settings, asset_settings, &types.read())
     }
 }
 
@@ -448,7 +463,7 @@ fn drive_imports(
     queue.current_destination = Some(row.destination.clone());
     let types = types.clone();
     queue.job = Some(std::thread::spawn(move || {
-        let used = settings_used(&row, &types);
+        let used = row.settings_used(&types);
         let settings = ImportSettings {
             settings: row.settings,
             asset_settings: row.asset_settings,
@@ -470,19 +485,6 @@ fn drive_imports(
             result,
         }
     }));
-}
-
-fn settings_used(row: &StagedImport, types: &AppTypeRegistry) -> String {
-    let staged = row.staged.as_ref().and_then(|staged| staged.as_ref().ok());
-    let settings = row
-        .settings
-        .as_deref()
-        .or(staged.map(|staged| staged.settings.as_ref()));
-    let asset_settings = row
-        .asset_settings
-        .as_deref()
-        .or(staged.and_then(|staged| staged.asset_settings.as_deref()));
-    settings_text(settings, asset_settings, &types.read())
 }
 
 fn finish_import(

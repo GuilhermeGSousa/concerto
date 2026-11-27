@@ -387,20 +387,22 @@ fn filtered<'a>(
         .collect())
 }
 
-fn fold_mark(folds: &ImportFolds, asset: &AssetEntry) -> String {
-    if let Some(face) = folds.face_of(asset) {
-        return format!(" · part of {}", face.address);
-    }
-    match &asset.provenance {
-        Some(provenance) if is_import_face(asset) => {
-            let counted = match folds.parts_of(asset.id).len() {
-                0 => "no parts".to_owned(),
-                1 => "1 part".to_owned(),
-                parts => format!("{parts} parts"),
-            };
-            format!(" · import of {} with {counted}", provenance.source)
+impl ImportFolds<'_> {
+    fn fold_mark(&self, asset: &AssetEntry) -> String {
+        if let Some(face) = self.face_of(asset) {
+            return format!(" · part of {}", face.address);
         }
-        _ => String::new(),
+        match &asset.provenance {
+            Some(provenance) if is_import_face(asset) => {
+                let counted = match self.parts_of(asset.id).len() {
+                    0 => "no parts".to_owned(),
+                    1 => "1 part".to_owned(),
+                    parts => format!("{parts} parts"),
+                };
+                format!(" · import of {} with {counted}", provenance.source)
+            }
+            _ => String::new(),
+        }
     }
 }
 
@@ -444,7 +446,7 @@ fn list(
             asset.location(),
             asset.kind,
             asset.id.simple_hex(),
-            fold_mark(&folds, asset)
+            folds.fold_mark(asset)
         ));
     }
     let next = offset + shown.len();
@@ -452,29 +454,31 @@ fn list(
         lines.push(format!(
             "… {} more: list_assets {}",
             matches.len() - next,
-            continuation(arguments, next, limit)
+            arguments.continuation(next, limit)
         ));
     }
     Ok(lines.join("\n"))
 }
 
-fn continuation(arguments: &ListAssets, offset: usize, limit: usize) -> Value {
-    let mut call = Map::new();
-    if let Some(folder) = &arguments.folder {
-        call.insert("folder".into(), folder.clone().into());
+impl ListAssets {
+    fn continuation(&self, offset: usize, limit: usize) -> Value {
+        let mut call = Map::new();
+        if let Some(folder) = &self.folder {
+            call.insert("folder".into(), folder.clone().into());
+        }
+        if let Some(kind) = &self.kind {
+            call.insert("kind".into(), kind.clone().into());
+        }
+        call.insert("limit".into(), limit.into());
+        call.insert("offset".into(), offset.into());
+        if let Some(parts_of) = &self.parts_of {
+            call.insert("parts_of".into(), parts_of.clone().into());
+        }
+        if let Some(query) = &self.query {
+            call.insert("query".into(), query.clone().into());
+        }
+        Value::Object(call)
     }
-    if let Some(kind) = &arguments.kind {
-        call.insert("kind".into(), kind.clone().into());
-    }
-    call.insert("limit".into(), limit.into());
-    call.insert("offset".into(), offset.into());
-    if let Some(parts_of) = &arguments.parts_of {
-        call.insert("parts_of".into(), parts_of.clone().into());
-    }
-    if let Some(query) = &arguments.query {
-        call.insert("query".into(), query.clone().into());
-    }
-    Value::Object(call)
 }
 
 type EditTargetDocument = Query<
@@ -689,7 +693,7 @@ fn find_entities(
             linked: &linked,
             links: Links::Expanded,
         };
-        reply.ok(find(&view, &arguments));
+        reply.ok(view.find(&arguments));
     }
 }
 
@@ -796,52 +800,55 @@ fn tree_call(root: Option<Entity>, depth: usize, limit: usize) -> Value {
     Value::Object(call)
 }
 
-fn find(view: &SceneView, arguments: &FindEntities) -> String {
-    let name = arguments.name.as_deref().map(str::to_lowercase);
-    let wanted = arguments.component.as_deref();
-    let mut found = Vec::new();
-    let mut path = Vec::new();
-    for &start in &view.starts {
-        search(view, start, &mut path, &mut |entity, path| {
-            let named = name.as_deref().is_none_or(|name| {
-                (view.name)(entity).is_some_and(|candidate| candidate.to_lowercase().contains(name))
+impl SceneView<'_> {
+    fn find(&self, arguments: &FindEntities) -> String {
+        let name = arguments.name.as_deref().map(str::to_lowercase);
+        let wanted = arguments.component.as_deref();
+        let mut found = Vec::new();
+        let mut path = Vec::new();
+        for &start in &self.starts {
+            search(self, start, &mut path, &mut |entity, path| {
+                let named = name.as_deref().is_none_or(|name| {
+                    (self.name)(entity)
+                        .is_some_and(|candidate| candidate.to_lowercase().contains(name))
+                });
+                let carries = wanted.is_none_or(|wanted| {
+                    (self.components)(entity)
+                        .iter()
+                        .any(|(short, full)| short.eq_ignore_ascii_case(wanted) || *full == wanted)
+                });
+                if named && carries {
+                    found.push(self.line(entity, &path.join(" > ")));
+                }
             });
-            let carries = wanted.is_none_or(|wanted| {
-                (view.components)(entity)
-                    .iter()
-                    .any(|(short, full)| short.eq_ignore_ascii_case(wanted) || *full == wanted)
-            });
-            if named && carries {
-                found.push(view.line(entity, &path.join(" > ")));
+        }
+        if found.is_empty() {
+            return "No entities match.".to_owned();
+        }
+        let limit = arguments.limit.max(1);
+        let mut lines = vec![if found.len() == 1 {
+            "1 entity matches:".to_owned()
+        } else {
+            format!("{} entities match:", found.len())
+        }];
+        lines.extend(found.iter().take(limit).cloned());
+        if found.len() > limit {
+            let mut call = Map::new();
+            if let Some(component) = &arguments.component {
+                call.insert("component".into(), component.clone().into());
             }
-        });
-    }
-    if found.is_empty() {
-        return "No entities match.".to_owned();
-    }
-    let limit = arguments.limit.max(1);
-    let mut lines = vec![if found.len() == 1 {
-        "1 entity matches:".to_owned()
-    } else {
-        format!("{} entities match:", found.len())
-    }];
-    lines.extend(found.iter().take(limit).cloned());
-    if found.len() > limit {
-        let mut call = Map::new();
-        if let Some(component) = &arguments.component {
-            call.insert("component".into(), component.clone().into());
+            call.insert("limit".into(), found.len().into());
+            if let Some(name) = &arguments.name {
+                call.insert("name".into(), name.clone().into());
+            }
+            lines.push(format!(
+                "… {} more: find_entities {}",
+                found.len() - limit,
+                Value::Object(call)
+            ));
         }
-        call.insert("limit".into(), found.len().into());
-        if let Some(name) = &arguments.name {
-            call.insert("name".into(), name.clone().into());
-        }
-        lines.push(format!(
-            "… {} more: find_entities {}",
-            found.len() - limit,
-            Value::Object(call)
-        ));
+        lines.join("\n")
     }
-    lines.join("\n")
 }
 
 fn search(
@@ -944,7 +951,7 @@ fn inspection(
                     .any(|name| names_component(short, full, name))
             })
         })
-        .map(|(short, full, id)| component_json(source, registry, entity, short, full, id))
+        .map(|(short, full, id)| source.component_json(registry, entity, short, full, id))
         .collect();
     let mut answer = Map::new();
     answer.insert("entity".into(), entity.to_id_string().into());
@@ -959,22 +966,24 @@ fn inspection(
     Ok(Value::Object(answer).to_string())
 }
 
-pub(super) fn component_json(
-    source: &InspectionSource,
-    registry: &InspectorRegistry,
-    entity: Entity,
-    short: &str,
-    full: &str,
-    id: TypeId,
-) -> Value {
-    let mut component = Map::new();
-    component.insert("name".into(), short.into());
-    component.insert("type".into(), full.into());
-    match source.read(entity, id) {
-        Some(value) => insert_value(&mut component, value, &source.types(), registry),
-        None => insert_unavailable(&mut component),
+impl InspectionSource<'_> {
+    pub(super) fn component_json(
+        &self,
+        registry: &InspectorRegistry,
+        entity: Entity,
+        short: &str,
+        full: &str,
+        id: TypeId,
+    ) -> Value {
+        let mut component = Map::new();
+        component.insert("name".into(), short.into());
+        component.insert("type".into(), full.into());
+        match self.read(entity, id) {
+            Some(value) => insert_value(&mut component, value, &self.types(), registry),
+            None => insert_unavailable(&mut component),
+        }
+        Value::Object(component)
     }
-    Value::Object(component)
 }
 
 /// Adds `value` and `paths` to an answer's JSON.

@@ -233,12 +233,14 @@ fn busy() -> ToolError {
     )
 }
 
-fn project_opening(state: &ProjectState, commands: &EditorCommands) -> bool {
-    state.busy()
-        || commands
-            .0
-            .iter()
-            .any(|command| matches!(command, EditorCommand::OpenProject(_)))
+impl ProjectState {
+    fn project_opening(&self, commands: &EditorCommands) -> bool {
+        self.busy()
+            || commands
+                .0
+                .iter()
+                .any(|command| matches!(command, EditorCommand::OpenProject(_)))
+    }
 }
 
 fn open_project(
@@ -248,7 +250,7 @@ fn open_project(
     mut cmd: CommandQueue,
 ) {
     for (arguments, reply) in calls.read() {
-        if project_opening(&state, &commands) {
+        if state.project_opening(&commands) {
             reply.err(busy());
             continue;
         }
@@ -352,7 +354,7 @@ fn open_asset(
     mut cmd: CommandQueue,
 ) {
     for (arguments, reply) in calls.read() {
-        if project_opening(&state, &commands) {
+        if state.project_opening(&commands) {
             reply.err(busy());
             continue;
         }
@@ -480,7 +482,7 @@ fn create_asset(
     mut cmd: CommandQueue,
 ) {
     for (arguments, reply) in calls.read() {
-        if project_opening(&state, &commands) {
+        if state.project_opening(&commands) {
             reply.err(busy());
             continue;
         }
@@ -560,7 +562,7 @@ fn import_source(
     mut cmd: CommandQueue,
 ) {
     for (arguments, reply) in calls.read() {
-        if project_opening(&state, &commands) {
+        if state.project_opening(&commands) {
             reply.err(busy());
             continue;
         }
@@ -915,33 +917,36 @@ fn invalid_pose(message: &str) -> ToolError {
     ToolError::new("invalid_arguments", message)
 }
 
-fn pose_of(arguments: &SetCamera) -> Result<SetCameraPose, ToolError> {
-    let finite = arguments
-        .position
-        .iter()
-        .chain(arguments.look_at.iter().flatten())
-        .chain(&arguments.yaw)
-        .chain(&arguments.pitch)
-        .all(|number| number.is_finite());
-    if !finite {
-        return Err(invalid_pose(
-            "position, look_at, yaw and pitch must be finite numbers within f32's range, about ±3.4e38.",
-        ));
-    }
-    let position = Vec3::from_array(arguments.position);
-    match (arguments.look_at, arguments.yaw, arguments.pitch) {
-        (Some(target), None, None) => SetCameraPose::looking_at(position, Vec3::from_array(target))
-            .ok_or_else(|| {
-                invalid_pose("look_at is the camera's own position; give a point away from it.")
+impl SetCamera {
+    fn pose_of(&self) -> Result<SetCameraPose, ToolError> {
+        let finite = self
+            .position
+            .iter()
+            .chain(self.look_at.iter().flatten())
+            .chain(&self.yaw)
+            .chain(&self.pitch)
+            .all(|number| number.is_finite());
+        if !finite {
+            return Err(invalid_pose(
+                "position, look_at, yaw and pitch must be finite numbers within f32's range, about ±3.4e38.",
+            ));
+        }
+        let position = Vec3::from_array(self.position);
+        match (self.look_at, self.yaw, self.pitch) {
+            (Some(target), None, None) => {
+                SetCameraPose::looking_at(position, Vec3::from_array(target)).ok_or_else(|| {
+                    invalid_pose("look_at is the camera's own position; give a point away from it.")
+                })
+            }
+            (None, Some(yaw), Some(pitch)) => Ok(SetCameraPose {
+                position,
+                yaw,
+                pitch,
             }),
-        (None, Some(yaw), Some(pitch)) => Ok(SetCameraPose {
-            position,
-            yaw,
-            pitch,
-        }),
-        _ => Err(invalid_pose(
-            "Give either look_at, or yaw and pitch together, but not both.",
-        )),
+            _ => Err(invalid_pose(
+                "Give either look_at, or yaw and pitch together, but not both.",
+            )),
+        }
     }
 }
 
@@ -956,7 +961,7 @@ fn set_camera(
             reply.err(camera_refused());
             continue;
         }
-        match pose_of(&arguments) {
+        match arguments.pose_of() {
             Ok(pose) => {
                 scene.trigger(pose);
                 cmd.spawn((

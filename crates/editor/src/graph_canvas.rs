@@ -447,20 +447,24 @@ fn mark_color(emphasis: Option<CanvasEmphasis>, selected: bool, theme: &UITheme)
     })
 }
 
-fn node_border(node: &CanvasNode, selected: bool, theme: &UITheme) -> Color {
-    mark_color(node.emphasis, selected, theme).unwrap_or(theme.border)
-}
+impl CanvasNode {
+    fn node_border(&self, selected: bool, theme: &UITheme) -> Color {
+        mark_color(self.emphasis, selected, theme).unwrap_or(theme.border)
+    }
 
-fn node_border_width(node: &CanvasNode, selected: bool) -> f32 {
-    if selected || node.emphasis.is_some() {
-        MARKED_BORDER_WIDTH
-    } else {
-        BORDER_WIDTH
+    fn node_border_width(&self, selected: bool) -> f32 {
+        if selected || self.emphasis.is_some() {
+            MARKED_BORDER_WIDTH
+        } else {
+            BORDER_WIDTH
+        }
     }
 }
 
-fn link_color(link: &CanvasLink, selected: bool, theme: &UITheme) -> Color {
-    mark_color(link.emphasis, selected, theme).unwrap_or(theme.text_muted)
+impl CanvasLink {
+    fn link_color(&self, selected: bool, theme: &UITheme) -> Color {
+        mark_color(self.emphasis, selected, theme).unwrap_or(theme.text_muted)
+    }
 }
 
 fn at_box(rect: UIBox) -> UINode {
@@ -481,15 +485,17 @@ fn square(centre: Vec2, side: f32) -> UIBox {
     }
 }
 
-fn arrow_box(route: &LinkRoute, direction: ArrowDirection, theme: &UITheme) -> UIBox {
-    let height = theme.line_height(ICON_SIZE);
-    let left = match direction {
-        ArrowDirection::Right => route.end.x - ICON_SIZE + ARROW_OVERLAP,
-        ArrowDirection::Left => route.end.x - ARROW_OVERLAP,
-    };
-    UIBox {
-        min: Vec2::new(left, route.end.y - height / 2.0),
-        size: Vec2::new(ICON_SIZE, height),
+impl LinkRoute {
+    fn arrow_box(&self, direction: ArrowDirection, theme: &UITheme) -> UIBox {
+        let height = theme.line_height(ICON_SIZE);
+        let left = match direction {
+            ArrowDirection::Right => self.end.x - ICON_SIZE + ARROW_OVERLAP,
+            ArrowDirection::Left => self.end.x - ARROW_OVERLAP,
+        };
+        UIBox {
+            min: Vec2::new(left, self.end.y - height / 2.0),
+            size: Vec2::new(ICON_SIZE, height),
+        }
     }
 }
 
@@ -738,156 +744,160 @@ fn setup_canvas(
     }
 }
 
-fn build_node(
-    items: &mut concerto_ecs::command::EntityCommandQueue<'_>,
-    node: &CanvasNode,
-    placed: &layout::NodeBox,
-    selected: bool,
-    theme: &UITheme,
-) -> BuiltNode {
-    let mut material = UIMaterial::with_border(
-        theme.surface_raised,
-        node_border(node, selected, theme),
-        node_border_width(node, selected),
-    );
-    material.corner_radius = theme.radius_sm;
-    let mut frame = items.spawn_child((
-        at_box(placed.rect).with_flex_direction(FlexDirection::Column),
-        material,
-    ));
-    let line = theme.line_height(theme.font_size_md);
-    let small_line = theme.line_height(theme.font_size_sm);
-    let inner = NODE_WIDTH - 2.0 * TEXT_INSET;
-    let mut header = frame.spawn_child(
-        UINode::default()
-            .with_flex_direction(FlexDirection::Row)
-            .with_align_items(AlignItems::Center)
-            .with_height(UIValue::Px(HEADER_HEIGHT))
-            .with_flex_shrink(0.0)
-            .with_padding(UIRect::axes(0.0, TEXT_INSET)),
-    );
-    header.add_child(
-        theme
-            .label(node.title.clone())
-            .single_line()
-            .size(UIValue::Px(inner - BADGE_WIDTH), UIValue::Px(line))
-            .fixed()
-            .clipped(),
-    );
-    let badge = header
-        .spawn_child((
+impl BuiltNode {
+    fn build_node(
+        items: &mut concerto_ecs::command::EntityCommandQueue<'_>,
+        node: &CanvasNode,
+        placed: &layout::NodeBox,
+        selected: bool,
+        theme: &UITheme,
+    ) -> Self {
+        let mut material = UIMaterial::with_border(
+            theme.surface_raised,
+            node.node_border(selected, theme),
+            node.node_border_width(selected),
+        );
+        material.corner_radius = theme.radius_sm;
+        let mut frame = items.spawn_child((
+            at_box(placed.rect).with_flex_direction(FlexDirection::Column),
+            material,
+        ));
+        let line = theme.line_height(theme.font_size_md);
+        let small_line = theme.line_height(theme.font_size_sm);
+        let inner = NODE_WIDTH - 2.0 * TEXT_INSET;
+        let mut header = frame.spawn_child(
+            UINode::default()
+                .with_flex_direction(FlexDirection::Row)
+                .with_align_items(AlignItems::Center)
+                .with_height(UIValue::Px(HEADER_HEIGHT))
+                .with_flex_shrink(0.0)
+                .with_padding(UIRect::axes(0.0, TEXT_INSET)),
+        );
+        header.add_child(
             theme
-                .label(node.badge.clone().unwrap_or_default())
-                .small()
-                .muted()
-                .mono()
+                .label(node.title.clone())
                 .single_line()
-                .size(UIValue::Px(BADGE_WIDTH), UIValue::Px(small_line))
+                .size(UIValue::Px(inner - BADGE_WIDTH), UIValue::Px(line))
                 .fixed()
                 .clipped(),
-            CanvasReadout,
-        ))
-        .entity();
-    let row = |text: &str, height: f32| {
-        theme
-            .label(text)
-            .small()
-            .muted()
-            .single_line()
-            .size(UIValue::Px(inner), UIValue::Px(height))
-            .fixed()
-            .clipped()
-            .margin(UIRect::axes(0.0, TEXT_INSET))
-            .padding(UIRect {
-                top: ((height - small_line) / 2.0).max(0.0),
-                ..Default::default()
-            })
-    };
-    let subtitle = node.subtitle.as_ref().map(|subtitle| {
-        frame
-            .spawn_child((row(subtitle, SUBTITLE_HEIGHT), CanvasReadout))
-            .entity()
-    });
-    for input in node.inputs.iter().take(placed.inputs.len()) {
-        frame.add_child(row(input, PIN_ROW_HEIGHT));
-    }
-    let frame = frame.entity();
-    for pin in placed.inputs.iter().chain(&placed.output) {
-        let mut pin_material = UIMaterial::flat(theme.text_muted);
-        pin_material.corner_radius = PIN_SIZE / 2.0;
-        items.add_child((at_box(square(*pin, PIN_SIZE)), pin_material));
-    }
-    BuiltNode {
-        frame,
-        badge,
-        subtitle,
+        );
+        let badge = header
+            .spawn_child((
+                theme
+                    .label(node.badge.clone().unwrap_or_default())
+                    .small()
+                    .muted()
+                    .mono()
+                    .single_line()
+                    .size(UIValue::Px(BADGE_WIDTH), UIValue::Px(small_line))
+                    .fixed()
+                    .clipped(),
+                CanvasReadout,
+            ))
+            .entity();
+        let row = |text: &str, height: f32| {
+            theme
+                .label(text)
+                .small()
+                .muted()
+                .single_line()
+                .size(UIValue::Px(inner), UIValue::Px(height))
+                .fixed()
+                .clipped()
+                .margin(UIRect::axes(0.0, TEXT_INSET))
+                .padding(UIRect {
+                    top: ((height - small_line) / 2.0).max(0.0),
+                    ..Default::default()
+                })
+        };
+        let subtitle = node.subtitle.as_ref().map(|subtitle| {
+            frame
+                .spawn_child((row(subtitle, SUBTITLE_HEIGHT), CanvasReadout))
+                .entity()
+        });
+        for input in node.inputs.iter().take(placed.inputs.len()) {
+            frame.add_child(row(input, PIN_ROW_HEIGHT));
+        }
+        let frame = frame.entity();
+        for pin in placed.inputs.iter().chain(&placed.output) {
+            let mut pin_material = UIMaterial::flat(theme.text_muted);
+            pin_material.corner_radius = PIN_SIZE / 2.0;
+            items.add_child((at_box(square(*pin, PIN_SIZE)), pin_material));
+        }
+        BuiltNode {
+            frame,
+            badge,
+            subtitle,
+        }
     }
 }
 
-fn build_link(
-    items: &mut concerto_ecs::command::EntityCommandQueue<'_>,
-    link: &CanvasLink,
-    route: &LinkRoute,
-    stacked: usize,
-    selected: bool,
-    theme: &UITheme,
-) -> BuiltLink {
-    let color = link_color(link, selected, theme);
-    let segments = route
-        .segments()
-        .into_iter()
-        .map(|segment| {
+impl BuiltLink {
+    fn build_link(
+        items: &mut concerto_ecs::command::EntityCommandQueue<'_>,
+        link: &CanvasLink,
+        route: &LinkRoute,
+        stacked: usize,
+        selected: bool,
+        theme: &UITheme,
+    ) -> Self {
+        let color = link.link_color(selected, theme);
+        let segments = route
+            .segments()
+            .into_iter()
+            .map(|segment| {
+                items
+                    .spawn_child((at_box(segment.bounds(LINK_WIDTH)), UIMaterial::flat(color)))
+                    .entity()
+            })
+            .collect();
+        let arrow = route.arrow.map(|direction| {
+            let glyph = match direction {
+                ArrowDirection::Left => glyph::CARET_LEFT,
+                ArrowDirection::Right => glyph::CARET_RIGHT,
+            };
             items
-                .spawn_child((at_box(segment.bounds(LINK_WIDTH)), UIMaterial::flat(color)))
+                .spawn_child((
+                    at_box(route.arrow_box(direction, theme)),
+                    icon(theme, glyph, ICON_SIZE).color(color),
+                ))
                 .entity()
-        })
-        .collect();
-    let arrow = route.arrow.map(|direction| {
-        let glyph = match direction {
-            ArrowDirection::Left => glyph::CARET_LEFT,
-            ArrowDirection::Right => glyph::CARET_RIGHT,
-        };
-        items
-            .spawn_child((
-                at_box(arrow_box(route, direction, theme)),
-                icon(theme, glyph, ICON_SIZE).color(color),
-            ))
-            .entity()
-    });
-    if let Some(label) = &link.label {
-        let height = theme.line_height(theme.font_size_sm);
-        let middle = (route.start.y + route.end.y) / 2.0;
-        let beside_run = route.bend + LABEL_OFFSET;
-        let below = stacked as f32 * height;
-        let at = match route.arrow {
-            Some(ArrowDirection::Right) => {
-                Vec2::new(beside_run, route.end.y - height - LABEL_OFFSET - below)
-            }
-            Some(ArrowDirection::Left) if route.start.x > route.end.x => {
-                Vec2::new(route.end.x + ICON_SIZE, route.end.y + LABEL_OFFSET + below)
-            }
-            Some(ArrowDirection::Left) => Vec2::new(beside_run, middle - height / 2.0 + below),
-            None => Vec2::new(beside_run, middle - height),
-        };
-        items.add_child(
-            theme
-                .label(label.clone())
-                .small()
-                .muted()
-                .no_wrap()
-                .node(|node| {
-                    node.with_position(Position::Absolute).with_inset(UIInset {
-                        left: UIValue::Px(at.x),
-                        top: UIValue::Px(at.y),
-                        ..Default::default()
-                    })
-                }),
-        );
-    }
-    BuiltLink {
-        link: route.link,
-        segments,
-        arrow,
+        });
+        if let Some(label) = &link.label {
+            let height = theme.line_height(theme.font_size_sm);
+            let middle = (route.start.y + route.end.y) / 2.0;
+            let beside_run = route.bend + LABEL_OFFSET;
+            let below = stacked as f32 * height;
+            let at = match route.arrow {
+                Some(ArrowDirection::Right) => {
+                    Vec2::new(beside_run, route.end.y - height - LABEL_OFFSET - below)
+                }
+                Some(ArrowDirection::Left) if route.start.x > route.end.x => {
+                    Vec2::new(route.end.x + ICON_SIZE, route.end.y + LABEL_OFFSET + below)
+                }
+                Some(ArrowDirection::Left) => Vec2::new(beside_run, middle - height / 2.0 + below),
+                None => Vec2::new(beside_run, middle - height),
+            };
+            items.add_child(
+                theme
+                    .label(label.clone())
+                    .small()
+                    .muted()
+                    .no_wrap()
+                    .node(|node| {
+                        node.with_position(Position::Absolute).with_inset(UIInset {
+                            left: UIValue::Px(at.x),
+                            top: UIValue::Px(at.y),
+                            ..Default::default()
+                        })
+                    }),
+            );
+        }
+        BuiltLink {
+            link: route.link,
+            segments,
+            arrow,
+        }
     }
 }
 
@@ -901,8 +911,8 @@ fn repaint(
     for (node, shown) in canvas.nodes.iter().zip(&built.nodes) {
         let selected = canvas.selection == Some(CanvasTarget::Node(node.id));
         if let Some(mut material) = materials.get_entity_mut(shown.frame) {
-            let color = node_border(node, selected, theme).to_linear();
-            let width = node_border_width(node, selected);
+            let color = node.node_border(selected, theme).to_linear();
+            let width = node.node_border_width(selected);
             if material.border_color != color || material.border_width != width {
                 material.border_color = color;
                 material.border_width = width;
@@ -928,7 +938,7 @@ fn repaint(
             continue;
         };
         let selected = canvas.selection == Some(CanvasTarget::Link(shown.link));
-        let color = link_color(link, selected, theme);
+        let color = link.link_color(selected, theme);
         for &segment in &shown.segments {
             if let Some(mut material) = materials.get_entity_mut(segment)
                 && material.color != color.to_linear()
@@ -1004,7 +1014,7 @@ fn rebuild(
                         && canvas.links[other.link].label.is_some()
                 })
                 .count();
-            build_link(
+            BuiltLink::build_link(
                 &mut items,
                 &canvas.links[route.link],
                 route,
@@ -1020,7 +1030,7 @@ fn rebuild(
         .zip(&placed.nodes)
         .map(|(node, node_box)| {
             let selected = canvas.selection == Some(CanvasTarget::Node(node.id));
-            build_node(&mut items, node, node_box, selected, theme)
+            BuiltNode::build_node(&mut items, node, node_box, selected, theme)
         })
         .collect();
     built.layout = placed;

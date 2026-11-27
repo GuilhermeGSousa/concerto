@@ -1150,17 +1150,15 @@ fn spawn_pending_item(
     item
 }
 
-fn pending_listing(
-    pending: &PendingAsset,
-    content_root: &str,
-    icons: &AssetIcons,
-) -> Listed<'static> {
-    let inside = inside_root(&pending.folder, content_root).trim_start_matches('/');
-    Listed {
-        key: pending.key(),
-        parent: (!inside.is_empty()).then(|| ContentKey::Folder(inside.to_string())),
-        name: Cow::Borrowed(""),
-        icon: icons.glyph(pending.kind),
+impl PendingAsset {
+    fn pending_listing(&self, content_root: &str, icons: &AssetIcons) -> Listed<'static> {
+        let inside = inside_root(&self.folder, content_root).trim_start_matches('/');
+        Listed {
+            key: self.key(),
+            parent: (!inside.is_empty()).then(|| ContentKey::Folder(inside.to_string())),
+            name: Cow::Borrowed(""),
+            icon: icons.glyph(self.kind),
+        }
     }
 }
 
@@ -1176,7 +1174,7 @@ fn list_content<'a>(
         let pending = state
             .pending
             .as_ref()
-            .map(|pending| pending_listing(pending, &project.content_root, icons));
+            .map(|pending| pending.pending_listing(&project.content_root, icons));
         list_folder(
             &folder_tree(registry, folds, &project.content_root),
             None,
