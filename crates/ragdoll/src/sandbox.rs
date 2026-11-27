@@ -57,6 +57,11 @@ impl RagdollWorld {
             .run(&mut self.world);
     }
 
+    /// The physics state of [`world`](Self::world).
+    ///
+    /// # Panics
+    ///
+    /// Panics if [`world`](Self::world) no longer holds a [`PhysicsState`].
     pub fn state(&mut self) -> &mut PhysicsState {
         self.world
             .get_resource_mut::<PhysicsState>()
@@ -105,6 +110,10 @@ impl RagdollWorld {
     }
 
     /// Steps the simulation once.
+    ///
+    /// # Panics
+    ///
+    /// Panics if [`world`](Self::world) no longer holds a [`PhysicsState`].
     pub fn step(&mut self) {
         let Self { world, pipeline } = self;
         pipeline.step(

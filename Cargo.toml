@@ -90,6 +90,12 @@ proptest = "1"
 [workspace.lints.rust]
 warnings = "deny"
 
+[workspace.lints.clippy]
+missing_errors_doc = "deny"
+missing_panics_doc = "deny"
+missing_safety_doc = "deny"
+undocumented_unsafe_blocks = "deny"
+
 [lints]
 workspace = true
 

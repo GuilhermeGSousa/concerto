@@ -245,6 +245,11 @@ fn chain(rig: &ResolvedRig, name: Name, needs: usize) -> Result<&ResolvedChain, 
 /// Returns [`GenerateError::MissingChain`] when `rig` has no chain of a name
 /// in the settings' [`HumanoidChains`], and [`GenerateError::ShortChain`]
 /// when a chain has fewer bones than its limb needs.
+///
+/// # Panics
+///
+/// Panics if a chain of `rig` names a bone outside `rig`'s reference model, which a rig
+/// resolved against `skeleton` rules out.
 pub fn generate_humanoid(
     skeleton_handle: AssetHandle<Skeleton>,
     skeleton: &Skeleton,

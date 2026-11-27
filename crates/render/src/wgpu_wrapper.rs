@@ -9,7 +9,9 @@ impl<T> WgpuWrapper<T> {
     }
 }
 
+// SAFETY: the wrapper holds wgpu handles, which are `Send` natively and are only `!Send` on wasm, where `fragile-send-sync-non-atomic-wasm` keeps everything on one thread.
 unsafe impl<T> Send for WgpuWrapper<T> {}
+// SAFETY: the wrapper holds wgpu handles, which are `Sync` natively and are only `!Sync` on wasm, where `fragile-send-sync-non-atomic-wasm` keeps everything on one thread.
 unsafe impl<T> Sync for WgpuWrapper<T> {}
 
 impl<T> Deref for WgpuWrapper<T> {

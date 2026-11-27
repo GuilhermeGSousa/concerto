@@ -58,9 +58,10 @@ impl<T: Component> SystemInput for RemovedComponents<'_, '_, T> {
         world: UnsafeWorldCell<'world>,
         ticks: SystemTicks,
     ) -> Result<Self::Data<'world, 'state>, ValidationError> {
-        // SAFETY: this input declares exactly the access of its two parts.
         Ok(RemovedComponents {
+            // SAFETY: this input declares exactly the access of its two parts.
             channel: unsafe { <ChannelParam<T>>::get_data(&mut (), world, ticks) }?,
+            // SAFETY: this input declares exactly the access of its two parts.
             cursor: unsafe { <CursorParam<T>>::get_data(state, world, ticks) }?,
         })
     }

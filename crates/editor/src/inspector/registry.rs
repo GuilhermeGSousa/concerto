@@ -345,9 +345,10 @@ impl SystemInput for InspectionSource<'_> {
         world: UnsafeWorldCell<'world>,
         ticks: SystemTicks,
     ) -> Result<Self::Data<'world, 'state>, ValidationError> {
-        // SAFETY: this input declares exactly the access of its two parts.
         Ok(InspectionSource {
+            // SAFETY: this input declares exactly the access of its two parts.
             components: unsafe { ComponentMetadata::get_data(state, world, ticks) }?,
+            // SAFETY: this input declares exactly the access of its two parts.
             table: unsafe { Res::new(world, ticks) }?,
         })
     }

@@ -74,6 +74,7 @@ impl Column {
     }
 
     pub(crate) unsafe fn get_unsafe<T: 'static>(&self, row: TableRowIndex) -> Option<&T> {
+        // SAFETY: the caller guarantees `row` is less than the column's length.
         unsafe { self.data.get_unchecked(*row).downcast_ref() }
     }
 
@@ -108,6 +109,7 @@ impl Column {
         &mut self,
         row: TableRowIndex,
     ) -> Option<MutableCellAccessor<'_, T>> {
+        // SAFETY: the caller guarantees `row` is less than the column's length.
         unsafe {
             self.data
                 .get_unchecked_mut(*row)

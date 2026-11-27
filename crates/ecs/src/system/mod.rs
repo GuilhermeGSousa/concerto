@@ -93,6 +93,7 @@ impl System for BoxedSystem {
     }
 
     unsafe fn run_unsafe(&mut self, args: Self::In, world: UnsafeWorldCell) {
+        // SAFETY: the caller upholds `run_unsafe`'s contract, which forwards unchanged to the boxed system.
         unsafe { (**self).run_unsafe(args, world) };
     }
 
@@ -321,6 +322,7 @@ where
     }
 
     unsafe fn run_unsafe(&mut self, _args: Self::In, world: UnsafeWorldCell) {
+        // SAFETY: the caller upholds `run_unsafe`'s contract, which forwards unchanged to the wrapped system.
         unsafe { self.system.run_unsafe(self.args.clone(), world) };
     }
 

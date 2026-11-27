@@ -34,6 +34,12 @@ pub fn sidecar_path(source: &Path) -> PathBuf {
 }
 
 impl SourceMetadata {
+    /// Loads the import sidecar at `path` and checks it.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the file cannot be read or parsed, has a version other than 1, names an importer
+    /// this crate does not have, or gives two outputs the same asset id.
     pub fn load(path: &Path) -> anyhow::Result<Self> {
         let text = std::fs::read_to_string(path)
             .with_context(|| format!("reading source metadata '{}'", path.display()))?;

@@ -227,6 +227,11 @@ pub struct PropertyCommit {
 }
 
 impl PropertyCommit {
+    /// The edit `edit` from editor `E` to `row`, whose value is a `T`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EditError::TypeMismatch`] when `row`'s value is not a `T` or its editor is not `E`.
     pub fn new<T: Reflect, E: PropertyEditor<T>>(
         row: &PropertyRow,
         edit: E::Edit,
@@ -261,6 +266,11 @@ impl PropertyCommit {
 pub struct PropertyCommits(pub Vec<PropertyCommit>);
 
 impl PropertyCommits {
+    /// Queues the edit `edit` from editor `E` to `row`, whose value is a `T`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EditError::TypeMismatch`] when `row`'s value is not a `T` or its editor is not `E`.
     pub fn push<T: Reflect, E: PropertyEditor<T>>(
         &mut self,
         row: &PropertyRow,

@@ -155,20 +155,25 @@ impl TaskPool {
         T: Send + 'static,
     {
         let executor: &Executor = &self.executor;
+        // SAFETY: the scope blocks until every task spawned in it has finished, so no borrow outlives this call.
         let executor: &'env Executor = unsafe { mem::transmute(executor) };
 
+        // SAFETY: the scope blocks until every task spawned in it has finished, so no borrow outlives this call.
         let external_executor: &'env ThreadExecutor<'env> =
             unsafe { mem::transmute(external_executor) };
+        // SAFETY: the scope blocks until every task spawned in it has finished, so no borrow outlives this call.
         let scope_executor: &'env ThreadExecutor<'env> = unsafe { mem::transmute(scope_executor) };
 
         let spawned_tasks: ConcurrentQueue<
             FallibleTask<Result<T, Box<dyn core::any::Any + Send>>>,
         > = ConcurrentQueue::unbounded();
+        // SAFETY: the scope blocks until every task spawned in it has finished, so no borrow outlives this call.
         let spawned_tasks: &'env ConcurrentQueue<
             FallibleTask<Result<T, Box<dyn core::any::Any + Send>>>,
         > = unsafe { mem::transmute(&spawned_tasks) };
 
         let scope = ScopedTaskPool::new(executor, external_executor, scope_executor, spawned_tasks);
+        // SAFETY: the scope blocks until every task spawned in it has finished, so no borrow outlives this call.
         let scope: &'env ScopedTaskPool<'_, 'env, T> = unsafe { mem::transmute(&scope) };
         let closure_panic = catch_unwind(AssertUnwindSafe(|| f(scope))).err();
 
@@ -284,6 +289,11 @@ impl<'scope, 'env, T: Send> ScopedTaskPool<'scope, 'env, T> {
         }
     }
 
+    /// Spawns `f` onto the pool's executor; the scope returns its output with the others.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the scope's task queue is closed, which this crate never does.
     pub fn spawn<F: Future<Output = T> + Send + 'scope>(&self, f: F) {
         let task = self
             .executor
@@ -293,6 +303,12 @@ impl<'scope, 'env, T: Send> ScopedTaskPool<'scope, 'env, T> {
         self.spawned_tasks.push(task).unwrap();
     }
 
+    /// Spawns `f` onto the external executor the scope was opened with, or the scope's thread
+    /// when it was opened without one.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the scope's task queue is closed, which this crate never does.
     pub fn spawn_on_external<F: Future<Output = T> + 'scope + Send>(&self, f: F) {
         let task = self
             .external_executor
@@ -303,6 +319,10 @@ impl<'scope, 'env, T: Send> ScopedTaskPool<'scope, 'env, T> {
     }
 
     /// Spawns onto the thread that opened this scope and is waiting on it.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the scope's task queue is closed, which this crate never does.
     pub fn spawn_on_scope<F: Future<Output = T> + 'scope + Send>(&self, f: F) {
         let task = self
             .scope_executor

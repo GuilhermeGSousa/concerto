@@ -14,5 +14,7 @@ impl Vertex {
     pub const MAX_AFFECTED_BONES: usize = 4;
 }
 
+// SAFETY: `Vertex` is `repr(C)` and holds only arrays of `f32` and `u32`, all 4-byte aligned, so it has no padding and every bit pattern is valid.
 unsafe impl bytemuck::Pod for Vertex {}
+// SAFETY: every field is an array of `f32` or `u32`, for which all zeros is a valid value.
 unsafe impl bytemuck::Zeroable for Vertex {}

@@ -24,6 +24,10 @@ impl SharedTexture {
     }
 
     /// The texture most recently drawn into, or `None` until the `App` has a non-zero size.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a thread panicked while holding the slot's lock.
     pub fn get(&self) -> Option<RenderTexture> {
         self.slot.lock().unwrap().clone()
     }

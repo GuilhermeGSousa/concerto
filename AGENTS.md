@@ -185,10 +185,10 @@ the Rust API guidelines and the rustdoc conventions:
 - Link the items you name with intra-doc links: ``[`Query`]``.
 
 Nothing else carries a comment, in any file type: no `//` in Rust, and none in
-WGSL, TOML, YAML or shell. The one exception is an `unsafe` block, which may
-carry one `// SAFETY:` line saying why it is sound. Design reasoning goes in
-your reply or in the spec. Leave existing comments alone unless the code they
-describe changes.
+WGSL, TOML, YAML or shell. The one exception is `unsafe` code: every `unsafe`
+block and `unsafe impl` carries one `// SAFETY:` line saying why it is sound.
+Design reasoning goes in your reply or in the spec. Leave existing comments
+alone unless the code they describe changes.
 
 **Systems never take the world.** A system's parameters are `Query`, `Res`,
 `Option<Res<T>>`, `ResMut`, `Option<ResMut<T>>`, `CommandQueue`, `EventReader`, `EventWriter`, `RemovedComponents<T>` (once a plugin calls `App::track_removals::<T>()`), `SystemLocal`,

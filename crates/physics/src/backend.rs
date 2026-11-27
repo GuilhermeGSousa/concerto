@@ -313,6 +313,12 @@ pub trait PhysicsBackend: Send + Sync + Sized {
     fn create_sphere_shape(radius: f32) -> Self::ShapeHandle;
     fn create_cuboid_shape(width: f32, height: f32, length: f32) -> Self::ShapeHandle;
     fn create_capsule_shape(half_height: f32, radius: f32) -> Self::ShapeHandle;
+    /// Builds a triangle mesh shape from the positions and indices of `mesh`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MeshShapeCreationError`] when the backend cannot build a triangle mesh shape from
+    /// `mesh`.
     fn create_shape_from_mesh(mesh: &Mesh) -> Result<Self::ShapeHandle, MeshShapeCreationError>;
 }
 

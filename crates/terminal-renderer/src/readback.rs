@@ -39,6 +39,13 @@ impl TerminalRenderState {
 #[derive(Component)]
 pub struct TerminalOutput;
 
+/// Copies the first render camera's target into the staging buffer, waits for it, and
+/// converts it to the characters of the [`TerminalFrame`].
+///
+/// # Panics
+///
+/// Panics if the first render camera has no render target, if the device fails to poll, or if
+/// the staging buffer fails to map or its mapped range cannot be read.
 pub fn readback_terminal_frame(
     device: Res<RenderDevice>,
     queue: Res<RenderQueue>,

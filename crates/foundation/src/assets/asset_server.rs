@@ -287,6 +287,10 @@ impl AssetServer {
     ///
     /// Every clone of the server sees it, and a load uses the one the server
     /// holds when its `on_load` starts.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a thread panicked while holding one of the server's locks.
     pub fn set_type_registry(&self, registry: AppTypeRegistry) {
         *self.data.type_registry.write().unwrap() = registry;
     }
@@ -316,6 +320,10 @@ impl AssetServer {
     /// and cancels the loads pending at the call.
     ///
     /// This is also available for non-native content providers.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a thread panicked while holding one of the server's locks.
     pub fn publish_content_source(&self, root: ContentAssetRoot, registry: AssetRegistry) {
         // `load` takes these locks in the same order. Holding the pending lock
         // closes the gap where a request could otherwise attach to the old
@@ -330,11 +338,19 @@ impl AssetServer {
     }
 
     /// Replaces the registry subsequent loads resolve through, keeping the root and pending loads.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a thread panicked while holding one of the server's locks.
     pub fn publish_registry(&self, registry: AssetRegistry) {
         self.data.content.write().unwrap().registry = Arc::new(registry);
     }
 
     /// The registry loads resolve through, empty until one is published.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a thread panicked while holding one of the server's locks.
     pub fn registry(&self) -> Option<Arc<AssetRegistry>> {
         Some(Arc::clone(&self.data.content.read().unwrap().registry))
     }
@@ -342,6 +358,10 @@ impl AssetServer {
     /// Whether an asset requested with [`load`](Self::load) or [`add`](Self::add) has yet to reach the world.
     ///
     /// A failed load counts until its failure is handled.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a thread panicked while holding one of the server's locks.
     pub fn is_loading(&self) -> bool {
         !self.data.pending.read().unwrap().assets.is_empty()
             || !self.data.asset_load_event_receiver.is_empty()
@@ -351,12 +371,20 @@ impl AssetServer {
     ///
     /// False for an id never loaded or added, and once its load fails, is
     /// cancelled, or it unloads.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a thread panicked while holding one of the server's locks.
     pub fn is_loading_or_loaded(&self, id: AssetId) -> bool {
         self.data.pending.read().unwrap().assets.contains_key(&id)
             || self.data.loaded_assets.read().unwrap().contains(&id)
     }
 
     /// Cancels the loads pending at the call, so none of them delivers its asset afterwards.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a thread panicked while holding one of the server's locks.
     pub fn cancel_pending(&self) {
         let mut pending = self.data.pending.write().unwrap();
         let kept: Vec<_> = self
@@ -371,6 +399,12 @@ impl AssetServer {
         pending.cancel();
     }
 
+    /// Registers the asset type `A` with its store, so handles to `A` can be loaded and added, and
+    /// records its `FORMAT_VERSION`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a thread panicked while holding one of the server's locks.
     pub fn register_asset<A: Asset>(&mut self, asset: &AssetStore<A>) {
         self.data
             .handle_provider
@@ -383,6 +417,10 @@ impl AssetServer {
     }
 
     /// Registers `A` as [`register_asset`](Self::register_asset) does, and derives its blob on every load.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a thread panicked while holding one of the server's locks.
     pub fn register_derived_asset<A: DerivedData>(&mut self, asset: &AssetStore<A>) {
         self.register_asset(asset);
         note_derived_kind::<A>();
@@ -403,6 +441,10 @@ impl AssetServer {
     ///
     /// [`cook`](Self::cook) writes the assets of such a kind that derive with
     /// their blob.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a thread panicked while holding one of the server's locks.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn can_cook(&self, kind: &str) -> bool {
         self.data.cook_hooks.read().unwrap().contains_key(kind)
@@ -420,6 +462,10 @@ impl AssetServer {
     /// Returns the first error and stops there: when the content root is a URL,
     /// a file cannot be read or written, an asset fails to derive, or a derived
     /// asset is embedded in another file.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a thread panicked while holding one of the server's locks.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn cook(&self, out: &Path) -> anyhow::Result<CookReport> {
         let (root, registry) = self.content_source();
@@ -587,16 +633,28 @@ impl AssetServer {
     }
 
     /// Replaces the cache derived loads read and write; every clone sees it.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a thread panicked while holding one of the server's locks.
     pub fn set_derived_cache(&self, cache: DerivedDataCache) {
         *self.data.derived_cache.write().unwrap() = cache;
     }
 
     /// The cache derived loads read and write, none until one is set.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a thread panicked while holding one of the server's locks.
     pub fn derived_cache(&self) -> DerivedDataCache {
         self.data.derived_cache.read().unwrap().clone()
     }
 
     /// The `FORMAT_VERSION` of the registered asset type named `kind`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a thread panicked while holding one of the server's locks.
     pub fn format_version(&self, kind: &str) -> Option<u32> {
         self.data.format_versions.read().unwrap().get(kind).copied()
     }
@@ -609,11 +667,19 @@ impl AssetServer {
     /// Lets a handle to `A` be set through this server as a weak one that names its asset and loads nothing.
     ///
     /// For an editor that edits references to a kind it does not load.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a thread panicked while holding one of the server's locks.
     pub fn name_asset<A: Asset>(&self) {
         self.data.named.write().unwrap().insert(TypeId::of::<A>());
     }
 
     /// Whether handles to `A` set through this server only name their asset.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a thread panicked while holding one of the server's locks.
     pub fn names_asset<A: Asset>(&self) -> bool {
         self.data.named.read().unwrap().contains(&TypeId::of::<A>())
     }
@@ -723,6 +789,10 @@ impl AssetServer {
     ///
     /// Each is replaced once the read lands. An asset of a kind this server
     /// never loaded is left as it is.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a thread panicked while holding one of the server's locks.
     pub fn reload_file(&self, file: AssetId) {
         let loaders = self.data.loaders.read().unwrap().clone();
         let (_, registry) = self.content_source();
@@ -946,6 +1016,13 @@ impl Default for AssetServer {
     }
 }
 
+/// Moves the assets whose loads finished into the world, and sends an [`AssetLoadFailed`] event
+/// for each load that failed.
+///
+/// # Panics
+///
+/// Panics if the world has no [`AssetServer`], or if a thread panicked while holding one of
+/// the server's locks.
 pub fn handle_asset_load_events(world: &mut world::World) {
     let server = world.remove_resource::<AssetServer>().unwrap();
 

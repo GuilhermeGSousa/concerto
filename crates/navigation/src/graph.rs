@@ -228,6 +228,11 @@ impl NavGraph {
     }
 
     /// The shortest route from `from` to `to` through enabled points.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the graph's entity index or adjacency names a point it does not hold, which the
+    /// graph's construction rules out.
     pub fn path(&self, from: Entity, to: Entity) -> Option<NavPath> {
         let start = *self.indices.get(&from)?;
         let goal = *self.indices.get(&to)?;

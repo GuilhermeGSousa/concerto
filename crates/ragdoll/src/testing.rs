@@ -69,6 +69,11 @@ fn index_of(name: &str) -> usize {
 }
 
 /// A 25-bone humanoid skeleton standing in a T-pose at the origin, 1.65 m to the head bone, facing +Z with its left side at +X.
+///
+/// # Panics
+///
+/// Panics if the built-in bone table is malformed: a bone names a parent the table does not
+/// hold, or the bones do not form a valid skeleton. The table is fixed and well formed.
 pub fn humanoid_skeleton() -> Skeleton {
     let parents: Vec<Option<u16>> = BONES
         .iter()
@@ -126,6 +131,12 @@ pub struct ReferenceHumanoid {
 }
 
 /// Builds the reference humanoid of 75 kg.
+///
+/// # Panics
+///
+/// Panics if the reference rig does not resolve against the reference skeleton, the generator
+/// rejects it, or the generated ragdoll does not fit the skeleton; none of these happens with
+/// the built-in tables.
 pub fn reference_humanoid() -> ReferenceHumanoid {
     let skeleton = humanoid_skeleton();
     let rig = humanoid_rig()

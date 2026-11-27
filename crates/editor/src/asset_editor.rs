@@ -120,6 +120,11 @@ pub fn valid_asset_name(name: &str) -> Result<(), String> {
 }
 
 impl AssetEditorRegistry {
+    /// Registers `E` as the editor of documents of the asset type `T`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `T` already has an editor.
     pub fn register<T: Asset, E: AssetEditor + Default>(&mut self) -> Result<()> {
         if self.editors.contains_key(T::name()) {
             bail!("an editor is already registered for {}", T::name());
@@ -218,6 +223,11 @@ impl AssetEditorRegistry {
 
 /// Application convenience API for asset editor registration.
 pub trait AssetEditorAppExt {
+    /// Registers `E` as the editor of `T` in the app's [`AssetEditorRegistry`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when [`AssetEditorRegistry`] is not installed or `T` already has an editor.
     fn register_asset_editor<T: Asset, E: AssetEditor + Default>(&mut self) -> Result<&mut Self>;
     /// Registers `E` for `T`, and lets the content browser create a new `T` with `T::new_asset`.
     ///

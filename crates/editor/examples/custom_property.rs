@@ -199,6 +199,11 @@ fn build_inspector(mut cmd: CommandQueue, theme: Res<UITheme>) {
 }
 
 /// An editor `App` with the inspector and one scene `App`, `arrange`d before it starts, with no window.
+///
+/// # Panics
+///
+/// Panics if the scene `App` fails to build, or if [`install`] removes the editor's
+/// [`ActiveEditor`] resource, which this function inserts before it.
 pub fn headless_editor(
     arrange: impl FnOnce(&mut App),
     arrange_editor: impl FnOnce(&mut App),

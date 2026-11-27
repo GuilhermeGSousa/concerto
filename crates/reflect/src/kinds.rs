@@ -66,7 +66,18 @@ pub trait List {
 
 /// A value with no reflected inside, which encodes itself as bytes.
 pub trait Leaf {
+    /// Encodes the value as bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`LeafError`] when the value cannot be encoded.
     fn encode(&self) -> Result<Vec<u8>, LeafError>;
+
+    /// Replaces the value with the one `bytes` encode.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`LeafError`] when `bytes` do not decode as this type.
     fn decode(&mut self, bytes: &[u8]) -> Result<(), LeafError>;
 }
 

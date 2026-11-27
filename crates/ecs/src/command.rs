@@ -195,6 +195,7 @@ pub(crate) type ConsumeCommand = unsafe fn(NonNull<MaybeUninit<u8>>, Option<&mut
 unsafe fn consume_command<C: Command>(ptr: NonNull<MaybeUninit<u8>>, world: Option<&mut World>) {
     // The command is moved out before `world` is touched: executing it can push
     // onto the same buffer and reallocate it, leaving `ptr` dangling.
+    // SAFETY: the caller guarantees `ptr` addresses an unconsumed `C`, and it is read exactly once.
     let command = unsafe { ptr.as_ptr().cast::<C>().read_unaligned() };
 
     if let Some(world) = world {

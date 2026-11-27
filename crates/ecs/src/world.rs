@@ -95,7 +95,9 @@ impl Default for World {
     }
 }
 
+// SAFETY: every component, resource and command the world stores is `Send + Sync`; only their type-erased storage hides that from the compiler.
 unsafe impl Send for World {}
+// SAFETY: every component, resource and command the world stores is `Send + Sync`; only their type-erased storage hides that from the compiler.
 unsafe impl Sync for World {}
 
 impl World {
@@ -471,6 +473,7 @@ impl World {
     ) -> Option<&T> {
         self.archetypes
             .get(entity_location.archetype_index as usize)
+            // SAFETY: an `EntityLocation` the world hands out names a live row of its archetype.
             .and_then(|archetype| unsafe { archetype.get_component_unsafe(entity_location.row) })
     }
 
@@ -480,6 +483,7 @@ impl World {
     ) -> Option<MutableCellAccessor<'_, T>> {
         self.archetypes
             .get_mut(entity_location.archetype_index as usize)
+            // SAFETY: an `EntityLocation` the world hands out names a live row of its archetype.
             .and_then(|archetype| unsafe {
                 archetype.get_component_unsafe_mut(entity_location.row)
             })
@@ -973,7 +977,9 @@ pub struct UnsafeWorldCell<'w> {
     _marker: PhantomData<(&'w World, &'w UnsafeCell<World>)>,
 }
 
+// SAFETY: the cell stands for a borrow of a `World`, which is `Send`, and its `unsafe` accessors make callers rule out conflicting access.
 unsafe impl Send for UnsafeWorldCell<'_> {}
+// SAFETY: the cell stands for a borrow of a `World`, which is `Sync`, and its `unsafe` accessors make callers rule out conflicting access.
 unsafe impl Sync for UnsafeWorldCell<'_> {}
 
 impl<'w> From<&'w mut World> for UnsafeWorldCell<'w> {

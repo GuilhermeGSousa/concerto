@@ -119,6 +119,13 @@ impl AssetRegistry {
         Self::default()
     }
 
+    /// Reads a registry from the text [`write_registry`] writes.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the text is not a registry that [`parse_registry`] accepts: invalid
+    /// TOML, an invalid id, a line without a kind, two ids at one location, or an asset embedded at
+    /// an address that holds no host.
     pub fn parse(text: &str) -> anyhow::Result<Self> {
         Ok(Self::from_entries(parse_registry(text)?))
     }

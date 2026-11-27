@@ -41,6 +41,12 @@ pub trait Importer: Send + Sync {
         None
     }
 
+    /// Imports the source at `source_path` with `settings`, emitting its sub-assets into `ctx`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an [`ImportError`] when the source cannot be read, is malformed or lacks data the
+    /// import needs, or when an emitted sub-asset cannot be serialized.
     fn import(
         &self,
         source_path: &Path,

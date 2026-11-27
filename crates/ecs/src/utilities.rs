@@ -46,6 +46,7 @@ impl Hasher for NoOpHasher {
 
 pub struct SyncUnsafeCell<T: ?Sized>(UnsafeCell<T>);
 
+// SAFETY: like `std`'s unstable `SyncUnsafeCell`, sharing it is sound because every access to the inner value goes through `unsafe` code that must rule out data races.
 unsafe impl<T: ?Sized + Sync> Sync for SyncUnsafeCell<T> {}
 
 impl<T> SyncUnsafeCell<T> {
@@ -70,6 +71,7 @@ impl<T: ?Sized> SyncUnsafeCell<T> {
     pub fn from_mut(t: &mut T) -> &mut SyncUnsafeCell<T> {
         let ptr = ptr::from_mut(t) as *mut SyncUnsafeCell<T>;
 
+        // SAFETY: `SyncUnsafeCell<T>` wraps only an `UnsafeCell<T>`, which has the layout of `T`, and the exclusive borrow of `t` moves to the result.
         unsafe { &mut *ptr }
     }
 }
@@ -78,6 +80,7 @@ impl<T> SyncUnsafeCell<[T]> {
     pub fn as_slice_of_cells(&self) -> &[SyncUnsafeCell<T>] {
         let self_ptr: *const SyncUnsafeCell<[T]> = ptr::from_ref(self);
         let slice_ptr = self_ptr as *const [SyncUnsafeCell<T>];
+        // SAFETY: `SyncUnsafeCell<T>` has the layout of `T`, so a cell of `[T]` has the layout of a slice of cells of the same length.
         unsafe { &*slice_ptr }
     }
 }
@@ -136,4 +139,5 @@ impl<T: Clone + Sync> Clone for SyncCell<T> {
     }
 }
 
+// SAFETY: a shared `SyncCell` gives access to its value only through `read`, which requires `T: Sync`.
 unsafe impl<T: ?Sized> Sync for SyncCell<T> {}

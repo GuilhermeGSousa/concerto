@@ -106,6 +106,7 @@ impl Archetype {
     }
 
     pub(crate) unsafe fn get_component_unsafe<T: 'static>(&self, row: TableRowIndex) -> Option<&T> {
+        // SAFETY: the caller guarantees `row` is a row of this archetype's table.
         unsafe {
             self.data_table
                 .get_column(ComponentId::of::<T>())?
@@ -159,6 +160,7 @@ impl Archetype {
         row: TableRowIndex,
     ) -> Option<MutableCellAccessor<'_, T>> {
         let column = self.data_table.get_column_mut(ComponentId::of::<T>())?;
+        // SAFETY: the caller guarantees `row` is a row of this archetype's table.
         unsafe { column.get_unsafe_mut(row) }
     }
 

@@ -42,6 +42,12 @@ pub struct PhysicsShape(
 );
 
 impl PhysicsShape {
+    /// A triangle mesh shape built from the positions and indices of `mesh`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MeshShapeCreationError`] when the active backend cannot build a triangle mesh
+    /// shape from `mesh`.
     pub fn from_mesh(mesh: &Mesh) -> Result<Self, MeshShapeCreationError> {
         Ok(Self(
             ActiveBackend::create_shape_from_mesh(mesh)?,

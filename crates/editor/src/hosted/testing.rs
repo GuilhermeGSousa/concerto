@@ -210,6 +210,12 @@ pub fn play_state(world: &World, document: Entity) -> Option<PlayState> {
         .copied()
 }
 
+/// A hosted `App` built from `recipe` and `extra`, finished on this thread.
+///
+/// # Panics
+///
+/// Panics if a plugin of `recipe` or `extra` is still building asynchronously, so the `App`
+/// is not ready at once.
 pub fn hosted_now(recipe: fn(&mut App), extra: impl FnOnce(&mut App)) -> HostedApp {
     super::begin(request(recipe), extra, |_| {})
         .finish_now()
@@ -227,6 +233,11 @@ pub struct HostWorld {
     pub document: Entity,
 }
 
+/// A world that hosts one `App` built from `recipe` as the active document and edit target.
+///
+/// # Panics
+///
+/// Panics as [`hosted_now`] does.
 pub fn host_world(recipe: fn(&mut App)) -> HostWorld {
     let mut world = World::new();
     world.insert_resource(ActiveEditor::default());
@@ -279,6 +290,11 @@ pub fn scene_entry(name: &str) -> AssetEntry {
     }
 }
 
+/// Writes a scene file for `asset` under `root`, with one node named after each of `nodes`.
+///
+/// # Panics
+///
+/// Panics if the scene does not encode or the file cannot be written.
 pub fn write_scene_file(root: &std::path::Path, asset: &AssetEntry, nodes: &[&str]) {
     let nodes = nodes
         .iter()
@@ -338,6 +354,12 @@ impl Default for SceneFixture {
 }
 
 impl SceneFixture {
+    /// A fixture with an editor world, a project in a temporary directory, and two scene files in it.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the temporary directory or a scene file cannot be created, or if an asset editor
+    /// is registered twice.
     pub fn new() -> Self {
         let directory = tempfile::tempdir().unwrap();
         let project_root = directory.path().to_path_buf();
@@ -470,6 +492,12 @@ impl SceneFixture {
         }
     }
 
+    /// Opens the fixture's first scene and runs frames until it is open, returning its document.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the scene does not open within 20 seconds, or if its document does not become
+    /// the active one and host a scene.
     pub fn open(&mut self) -> Entity {
         let scene = self.scene.clone();
         self.request(&scene);
@@ -490,6 +518,11 @@ impl SceneFixture {
         document
     }
 
+    /// Adds an asset of `kind` to the project and asks to open it, returning its document.
+    ///
+    /// # Panics
+    ///
+    /// Panics if opening the asset does not make its document the active one.
     pub fn request_kind(&mut self, kind: &str) -> Entity {
         let asset = AssetEntry {
             embedded_in: None,
@@ -529,6 +562,11 @@ impl SceneFixture {
         self.world.tick();
     }
 
+    /// Makes `document` the active document and the edit target.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the editor world has no [`ActiveEditor`].
     pub fn activate(&mut self, document: Option<Entity>) {
         self.world.get_resource_mut::<ActiveEditor>().unwrap().0 = document;
         self.world.trigger(SetEditTarget(document));
@@ -545,6 +583,11 @@ impl SceneFixture {
         self.delivery.push(system);
     }
 
+    /// Runs frames until no hosted `App` is still building and every scene document is idle.
+    ///
+    /// # Panics
+    ///
+    /// Panics if that takes longer than 20 seconds.
     pub fn frames_until_idle(&mut self) {
         let deadline = Instant::now() + Duration::from_secs(20);
         loop {
@@ -581,6 +624,11 @@ impl SceneFixture {
         asset
     }
 
+    /// Adds `asset` to the project's registry.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the editor world has no [`AssetRegistry`].
     pub fn add_to_project(&mut self, asset: &AssetEntry) {
         self.world
             .get_resource_mut::<AssetRegistry>()
@@ -592,6 +640,11 @@ impl SceneFixture {
         self.command(AssetEditorCommand::Open(asset.clone()));
     }
 
+    /// Asks to open the fixture's second scene and checks that `document` stays active.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `document` is not the active document afterwards.
     pub fn request_other_scene(&mut self, document: Entity) {
         let other = self.other.clone();
         self.request(&other);
@@ -605,6 +658,11 @@ impl SceneFixture {
         self.command(AssetEditorCommand::Close(document));
     }
 
+    /// Queues `command` and runs the system that processes asset editor commands.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the editor world has no [`AssetEditorCommands`].
     pub fn command(&mut self, command: AssetEditorCommand) {
         self.world
             .get_resource_mut::<AssetEditorCommands>()
@@ -635,6 +693,11 @@ impl SceneFixture {
         });
     }
 
+    /// The world of the `App` that `document` hosts.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `document` hosts no `App`.
     pub fn scene_world(&self, document: Entity) -> &World {
         self.world
             .get_component_for_entity::<HostedApp>(document)
@@ -642,6 +705,11 @@ impl SceneFixture {
             .world()
     }
 
+    /// The world of the `App` that `document` hosts, mutably.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `document` hosts no `App`.
     pub fn scene_world_mut(&mut self, document: Entity) -> &mut World {
         self.world
             .get_component_for_entity_mut::<HostedApp>(document)
@@ -660,6 +728,11 @@ impl SceneFixture {
             .collect()
     }
 
+    /// The entity named `name` in the scene of `document`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `document` hosts no `App`, or its scene has no entity named `name`.
     pub fn scene_entity(&mut self, document: Entity, name: &str) -> Entity {
         let scene = self.scene_world_mut(document);
         scene
@@ -670,6 +743,11 @@ impl SceneFixture {
             .unwrap_or_else(|| panic!("the scene has no node called {name}"))
     }
 
+    /// The root entity of the scene of `document`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `document` hosts no `App`, or its scene has no root.
     pub fn scene_root(&mut self, document: Entity) -> Entity {
         let scene = self.scene_world_mut(document);
         scene
@@ -680,6 +758,11 @@ impl SceneFixture {
             .expect("an open scene has a root")
     }
 
+    /// The entity selected in the scene of `document`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `document` hosts no `App`, or its world has no [`Selection`].
     pub fn selected(&self, document: Entity) -> Option<Entity> {
         self.scene_world(document)
             .get_resource::<Selection>()
@@ -702,6 +785,11 @@ impl SceneFixture {
         self.written()
     }
 
+    /// Every `E` written to the editor world's channel so far.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the editor world has no channel for `E`.
     pub fn written<E: Event + Clone + 'static>(&self) -> Vec<E> {
         self.world
             .get_resource::<EventChannel<E>>()
@@ -715,12 +803,22 @@ impl SceneFixture {
         self.document(document).status.clone()
     }
 
+    /// The [`EditorDocument`] of `document`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `document` is not an open document.
     pub fn document(&self, document: Entity) -> &EditorDocument {
         self.world
             .get_component_for_entity::<EditorDocument>(document)
             .expect("the document is open")
     }
 
+    /// The fixture's first scene as its file on disk holds it.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the file cannot be read or does not decode as a scene.
     pub fn saved_scene(&self) -> Scene {
         let bytes = std::fs::read(self.project_root.join(&self.scene.address)).unwrap();
         let (_, payload) = read_content_asset(&bytes).unwrap();
@@ -735,6 +833,11 @@ impl SceneFixture {
             .collect()
     }
 
+    /// Points the project root at a file, so that saving into the project fails.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the editor world has no open project.
     pub fn make_project_unwritable(&mut self) {
         let file = self.project_root.join(&self.scene.address);
         self.world
@@ -746,6 +849,11 @@ impl SceneFixture {
             .root = file;
     }
 
+    /// How many frames the `App` that `document` hosts has run.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `document` hosts no `App`, or its world does not count frames.
     pub fn hosted_frames(&self, document: Entity) -> usize {
         self.scene_world(document)
             .get_resource::<Frames>()
@@ -769,6 +877,11 @@ impl SceneFixture {
         play_state(&self.world, document)
     }
 
+    /// The world of the edit `App` parked while `document` plays.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `document` has no parked edit `App`.
     pub fn parked_world(&self, document: Entity) -> &World {
         self.world
             .get_component_for_entity::<ParkedEditApp>(document)
@@ -777,6 +890,11 @@ impl SceneFixture {
             .world()
     }
 
+    /// Whether the `App` that `document` hosts is at edit time.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `document` hosts no `App`.
     pub fn hosted_is_editing(&self, document: Entity) -> bool {
         self.world
             .get_component_for_entity::<HostedApp>(document)
@@ -792,6 +910,11 @@ impl SceneFixture {
             .map(|hosted| hosted.world().id())
     }
 
+    /// Whether the game systems of the `App` that `document` hosts have run.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `document` hosts no `App`, or its world has no [`GameRan`].
     pub fn game_ran(&self, document: Entity) -> bool {
         self.scene_world(document)
             .get_resource::<GameRan>()
@@ -799,6 +922,11 @@ impl SceneFixture {
             .0
     }
 
+    /// Runs frames until `done` holds.
+    ///
+    /// # Panics
+    ///
+    /// Panics with `what` if that takes longer than 20 seconds.
     pub fn frames_until(&mut self, what: &str, mut done: impl FnMut(&mut Self) -> bool) {
         let deadline = Instant::now() + Duration::from_secs(20);
         loop {

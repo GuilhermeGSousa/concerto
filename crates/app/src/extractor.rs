@@ -27,6 +27,11 @@ impl MainWorld {
 
 /// Moves `main` into `render` as the `MainWorld` resource, runs the
 /// [`Extract`] schedule, then swaps it back out.
+///
+/// # Panics
+///
+/// Panics if a system in the [`Extract`] schedule removes the `MainWorld` resource from
+/// `render`.
 pub fn extract(main: &mut World, render: &mut World) {
     let scratch = main
         .remove_resource::<ScratchMainWorld>()
