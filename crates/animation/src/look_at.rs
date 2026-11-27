@@ -26,10 +26,12 @@ impl LookFrame {
         })
     }
 
+    /// The unit direction the bone looks along.
     pub fn forward(&self) -> Vec3 {
         self.forward
     }
 
+    /// The unit up, perpendicular to [`Self::forward`].
     pub fn up(&self) -> Vec3 {
         self.up
     }
@@ -43,7 +45,9 @@ impl LookFrame {
 /// A turn of a `LookFrame`, in radians: yaw about its up toward its side, then pitch toward its up.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct YawPitch {
+    /// The turn about the frame's up, in radians; positive turns forward toward its side.
     pub yaw: f32,
+    /// The turn toward the frame's up after the yaw, in radians.
     pub pitch: f32,
 }
 

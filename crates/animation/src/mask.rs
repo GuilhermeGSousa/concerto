@@ -7,7 +7,9 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, Default, PartialEq, Reflect, Serialize, Deserialize)]
 #[reflect(SkeletonSource)]
 pub struct BoneMask {
+    /// The skeleton the editor offers bones from; the mask applies to any skeleton by bone name.
     pub preview_skeleton: AssetHandle<Skeleton>,
+    /// The branches, each naming a bone.
     pub branches: Vec<BoneMaskBranch>,
 }
 
@@ -55,9 +57,16 @@ impl SkeletonSource for BoneMask {
 /// One entry of a mask: a bone, the weight it gives, how many levels the weight ramps in over, and whether it covers the bone's descendants.
 #[derive(Clone, Debug, PartialEq, Reflect, Serialize, Deserialize)]
 pub struct BoneMaskBranch {
+    /// The bone the branch starts at, by name.
     pub bone: JointName,
+    /// The weight the branch gives, clamped to 0 to 1 when resolved; NaN counts as 0.
     pub weight: f32,
+    /// The number of levels below the bone over which the weight ramps up to full.
+    ///
+    /// At 0 the bone itself has the full weight; at `n` the bone has `1 / (n + 1)` of it and the
+    /// bone `n` levels down has all of it.
     pub depth: u32,
+    /// Whether the branch's weight passes down to the bone's descendants.
     pub descendants: bool,
 }
 
@@ -103,8 +112,11 @@ impl BoneMaskBranch {
 /// A mask resolved against one skeleton, in buffers reused from frame to frame.
 #[derive(Default)]
 pub struct MaskResolution {
+    /// The weight of each bone, in bone order, from 0 to 1.
     pub weights: Vec<f32>,
+    /// The bones the mask names that the skeleton does not have.
     pub missing: Vec<JointName>,
+    /// Whether the mask names the root bone, which always gets weight 0.
     pub names_root: bool,
     entry_at: Vec<Option<u32>>,
     covering: Vec<Option<Cover>>,

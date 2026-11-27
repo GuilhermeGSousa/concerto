@@ -90,6 +90,8 @@ impl AnimationAppExt for App {
     }
 }
 
+/// Registers the animation assets, node and event types, and the systems that play every
+/// [`AnimationPlayer`](crate::player::AnimationPlayer) in `LateUpdate`, at preview time too.
 pub struct AnimationPlugin;
 
 impl Plugin for AnimationPlugin {

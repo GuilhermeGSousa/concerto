@@ -15,7 +15,10 @@ pub enum Hinge {
     /// The plane the chain's rest pose bends in, when it bends clearly.
     Rest,
     /// A fixed axis in the mid bone's frame.
-    Axis { axis: Vec3 },
+    Axis {
+        /// The hinge axis in the mid bone's frame; a zero or non-finite axis gives no hinge.
+        axis: Vec3,
+    },
 }
 
 impl Hinge {
@@ -75,8 +78,11 @@ fn rest_model(skeleton: &Skeleton, bone: usize) -> RestModel {
 /// The positions of a two-bone chain's three joints, in one space.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TwoBoneChain {
+    /// The position of the first joint, which the chain turns about.
     pub root: Vec3,
+    /// The position of the middle joint, the elbow or knee.
     pub mid: Vec3,
+    /// The position of the end joint, which the solve brings to the goal.
     pub tip: Vec3,
     /// The axis the mid joint bends about, in the chain's space, by the right-hand rule from the upper bone to the lower.
     ///
@@ -90,7 +96,9 @@ pub struct TwoBoneChain {
 /// Each joint's rotation in that space is pre-multiplied by its entry.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TwoBoneSolution {
+    /// The rotation pre-multiplied onto the root joint's rotation.
     pub root: Quat,
+    /// The rotation pre-multiplied onto the mid joint's rotation, after the root's.
     pub mid: Quat,
 }
 

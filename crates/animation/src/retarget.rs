@@ -28,20 +28,31 @@ use crate::{
 #[derive(Clone, Debug, Default, PartialEq, Reflect, Serialize, Deserialize)]
 #[reflect(SkeletonSource, Default)]
 pub struct RetargetRig {
+    /// The skeleton the rig describes.
     pub skeleton: AssetHandle<Skeleton>,
+    /// The retarget root, the pelvis, whose height scales the motion between rigs.
     pub root: JointName,
+    /// The bone above the root that carries the character's ground motion, if the skeleton has
+    /// one.
     pub motion_root: Option<JointName>,
+    /// The named bone chains, matched by name to the other rig's.
     pub chains: Vec<RetargetChain>,
+    /// The pose the rig is aligned in before its corrections.
     pub reference: ReferencePose,
+    /// Rotations applied to bones of the reference pose so the two rigs line up.
     pub corrections: Vec<BoneCorrection>,
+    /// The named IK goals, matched by name to the other rig's.
     pub goals: Vec<RetargetGoal>,
 }
 
 /// A named run of bones from `start` down to `end`, matched to the chain of the same name on another rig.
 #[derive(Clone, Debug, Default, PartialEq, Reflect, Serialize, Deserialize)]
 pub struct RetargetChain {
+    /// The chain's name, unique in the rig.
     pub name: Name,
+    /// The bone the chain starts at, nearest the root.
     pub start: JointName,
+    /// The bone the chain ends at, at or below `start`.
     pub end: JointName,
 }
 
@@ -50,7 +61,9 @@ pub struct RetargetChain {
 /// The bone is the tip of a two-bone chain made of it, its parent and its grandparent.
 #[derive(Clone, Debug, Default, PartialEq, Reflect, Serialize, Deserialize)]
 pub struct RetargetGoal {
+    /// The goal's name, unique in the rig.
     pub name: Name,
+    /// The tip bone of the two-bone chain the goal bends.
     pub bone: JointName,
 }
 
@@ -70,9 +83,13 @@ impl RetargetGoal {
 /// full extension, and `hinge` is the target leg's hinge axis.
 #[derive(Clone, Debug, PartialEq, Reflect, Serialize, Deserialize)]
 pub struct RetargetGoalSettings {
+    /// The name of the goal, which both rigs must have.
     pub goal: Name,
+    /// How far toward the goal the tip moves, from 0 to 1.
     pub weight: f32,
+    /// The distance below full extension, in model-space units, where reach starts to ease.
     pub softness: f32,
+    /// The hinge the target leg bends about, in the target mid bone's own frame.
     pub hinge: Hinge,
 }
 
@@ -123,7 +140,9 @@ pub enum ReferencePose {
     Rest,
     /// The skeleton's rest pose with every channel of `clip` sampled at `time`.
     ClipFrame {
+        /// The clip to sample.
         clip: AssetHandle<AnimationClip>,
+        /// The time to sample it at, in seconds; must be finite.
         time: f32,
     },
 }
@@ -131,7 +150,9 @@ pub enum ReferencePose {
 /// A rotation applied to one bone of the reference pose, in the bone's own space.
 #[derive(Clone, Debug, PartialEq, Reflect, Serialize, Deserialize)]
 pub struct BoneCorrection {
+    /// The bone to turn.
     pub bone: JointName,
+    /// The rotation applied to the bone, in its own space.
     pub rotation: Quat,
 }
 
@@ -445,12 +466,19 @@ impl SkeletonSource for RetargetRig {
 /// A rig resolved against its skeleton: bone indices, and the reference pose in local and model space.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ResolvedRig {
+    /// The index of the retarget root.
     pub root: usize,
+    /// The index of the motion root, if the rig names one.
     pub motion_root: Option<usize>,
+    /// The chains, in the rig's order.
     pub chains: Vec<ResolvedChain>,
+    /// The goals, in the rig's order.
     pub goals: Vec<ResolvedGoal>,
+    /// The reference pose with corrections applied, local to each bone's parent, in bone order.
     pub reference_local: Vec<JointPose>,
+    /// The reference pose's model-space transform of each bone, in bone order.
     pub reference_model: Vec<Mat4>,
+    /// The root's height above the model origin in the reference pose, in metres; above 0.1 mm.
     pub root_height: f32,
 }
 
@@ -469,27 +497,39 @@ impl ResolvedRig {
 /// A chain's name and its bones, from its start down to its end.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ResolvedChain {
+    /// The chain's name.
     pub name: Name,
+    /// The chain's bone indices, from its start down to its end.
     pub bones: Vec<usize>,
 }
 
 /// A goal's name and the bones it bends: `tip`, its parent `mid`, and the mid's parent `root`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ResolvedGoal {
+    /// The goal's name.
     pub name: Name,
+    /// The index of the tip bone.
     pub tip: usize,
+    /// The index of the tip's parent.
     pub mid: usize,
+    /// The index of the mid bone's parent.
     pub root: usize,
 }
 
 /// What a rig bone name was used as, for errors.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum BoneUse {
+    /// The retarget root.
     Root,
+    /// The motion root.
     MotionRoot,
+    /// The start of the named chain.
     ChainStart(Name),
+    /// The end of the named chain.
     ChainEnd(Name),
+    /// A bone correction.
     Correction,
+    /// The bone of the named goal.
     Goal(Name),
 }
 
@@ -509,44 +549,72 @@ impl fmt::Display for BoneUse {
 /// Why a rig could not be resolved against a skeleton.
 #[derive(Clone, Debug, PartialEq)]
 pub enum RigError {
+    /// The rig names no root bone.
     MissingRoot,
+    /// A bone the rig names is not in the skeleton.
     UnknownBone {
+        /// The bone's name.
         bone: JointName,
+        /// What the rig uses the bone as.
         used_as: BoneUse,
     },
+    /// The motion root is not an ancestor of the root.
     MotionRootNotAbove {
+        /// The motion root's name.
         motion_root: JointName,
+        /// The root's name.
         root: JointName,
     },
+    /// A chain has no name.
     UnnamedChain {
+        /// The chain's index in the rig.
         index: usize,
     },
+    /// Two chains have the same name.
     DuplicateChain {
+        /// The repeated name.
         chain: Name,
     },
+    /// A chain's end bone is not its start or below it.
     ChainEndNotBelowStart {
+        /// The chain's name.
         chain: Name,
     },
+    /// A goal has no name.
     UnnamedGoal {
+        /// The goal's index in the rig.
         index: usize,
     },
+    /// Two goals have the same name.
     DuplicateGoal {
+        /// The repeated name.
         goal: Name,
     },
+    /// A goal's bone has no parent and grandparent to bend.
     GoalTooHigh {
+        /// The goal's name.
         goal: Name,
     },
+    /// A goal's chain would bend the root or the motion root.
     GoalBendsRoot {
+        /// The goal's name.
         goal: Name,
     },
+    /// The reference pose is a clip frame, but its clip is not loaded.
     MissingClip,
+    /// The reference frame's time is not finite.
     InvalidTime {
+        /// The time given.
         time: f32,
     },
+    /// The reference clip has channels for no bone of the skeleton.
     ClipNotForSkeleton,
+    /// The root is not above the model origin in the reference pose.
     RootHeight {
+        /// The root's height, in metres.
         height: f32,
     },
+    /// The skeleton itself is invalid.
     Skeleton(SkeletonError),
 }
 
@@ -974,7 +1042,9 @@ impl PoseRetarget {
 /// Which side of a retarget a skeleton, rig or pose is on, for errors.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RetargetSide {
+    /// The skeleton the pose is retargeted from.
     Source,
+    /// The skeleton the pose is retargeted onto.
     Target,
 }
 
@@ -990,16 +1060,25 @@ impl fmt::Display for RetargetSide {
 /// Why a retarget could not be built or applied.
 #[derive(Clone, Debug, PartialEq)]
 pub enum RetargetError {
+    /// A rig does not fit the skeleton it was given.
     RigNotForSkeleton {
+        /// Which rig.
         side: RetargetSide,
     },
+    /// The two rigs share no chain name.
     NoSharedChain,
+    /// A pose's joint count is not its skeleton's bone count.
     PoseLength {
+        /// Which pose.
         side: RetargetSide,
+        /// The skeleton's bone count.
         expected: usize,
+        /// The pose's joint count.
         actual: usize,
     },
+    /// A goal setting names a goal the two rigs do not both have.
     UnknownGoal {
+        /// The goal's name.
         goal: Name,
     },
 }
@@ -1042,9 +1121,14 @@ impl std::error::Error for RetargetError {}
 #[derive(Clone, Default, Reflect, Serialize, Deserialize)]
 #[reflect(AnimationNode)]
 pub struct RetargetNode {
+    /// The graph played on the source rig's skeleton.
     pub graph: AssetHandle<AnimationGraph>,
+    /// The rig of the skeleton the graph's clips were made for.
     pub source: AssetHandle<RetargetRig>,
+    /// The rig of the player's skeleton.
     pub target: AssetHandle<RetargetRig>,
+    /// How goals both rigs name are solved; a goal without settings solves at full weight, with
+    /// no softness and no hinge.
     pub goals: Vec<RetargetGoalSettings>,
 }
 
