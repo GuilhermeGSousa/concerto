@@ -1,29 +1,40 @@
+use concerto_animation::player::AnimationPlayer;
 use concerto_ecs::{
-    CommandQueue, Component, Entity, Query, ResMut, Without,
+    CommandQueue, Component, Entity, Query, ResMut, With, Without,
     reflect::{ReflectComponent, ReflectSceneComponent},
-    signal::{On, Signal},
+    signal::{
+        On, Signal,
+        listener::{IntoListener, Listener},
+    },
 };
 use concerto_foundation::time::Time;
 use concerto_physics::{physics_state::PhysicsState, ragdoll::RagdollId};
 use concerto_reflect::{Reflect, ReflectDefault};
 
 use crate::{
-    asset::Segment,
+    asset::{PartStrength, Segment},
     balance::Balance,
     behaviour::{BodyState, PhysicalState},
-    character::{CharacterRagdoll, RagdollBody, RagdollMode},
+    character::{CharacterRagdoll, Held, RagdollBody, RagdollMode},
     fall::Fall,
     hit::{BodyHit, Flinch},
+    messages::{BodyDead, Death},
     sensing::BodySense,
     shot::Shot,
     stagger::Stagger,
 };
 
+const DYING_STIFFNESS: f32 = 400.0;
+const DYING_TORQUE: f32 = 120.0;
+
 /// The game says a character is dying.
 ///
 /// Its strength drains over `seconds`, from the hands and feet inwards, and
-/// it is `Dead` when none is left. Zero seconds is an instant kill. The
-/// engine has no health; the game decides when.
+/// it is [`Dead`] when none is left. Zero seconds is an instant kill. The
+/// engine has no health; the game decides when. In
+/// [`RagdollMode::Graph`] it reaches the character's animation graph as a
+/// [`Death`] message, which a [`DyingNode`](crate::node::DyingNode) acts on. A
+/// `Die` sent to a [`Settled`] body is dropped, even if a hit wakes it later.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Die {
     /// The dying character.
@@ -69,6 +80,22 @@ impl Dying {
         }
     }
 
+    pub(crate) fn advance(&mut self, dt: f32) -> bool {
+        self.elapsed += dt;
+        self.elapsed >= self.seconds
+    }
+
+    pub(crate) fn drain(&self, segment: Segment, mut held: Held) -> Held {
+        let left = self.left(segment);
+        if held.kinematic {
+            held = Held::of(PartStrength::powered(DYING_STIFFNESS, DYING_TORQUE));
+        }
+        held.stiffness *= left;
+        held.damping *= left;
+        held.torque_limit *= left;
+        held
+    }
+
     /// The share of its strength a part of `segment` has left, from 1 to 0: hands and feet are spent first, the trunk last.
     pub fn left(&self, segment: Segment) -> f32 {
         if self.seconds <= 0.0 {
@@ -82,6 +109,23 @@ impl Dying {
         };
         (1.0 - self.elapsed / self.seconds / spent_at).clamp(0.0, 1.0)
     }
+}
+
+/// A character whose strength drained to nothing; inserted when it dies, and read by the settling of its body. It is never removed: death is final.
+///
+/// A [`Dying`] character gets it when its strength runs out, and a character in
+/// [`RagdollMode::Graph`] when a [`BodyDead`] signal reaches it. It brings a
+/// [`BodySense`], so the body knows when it lies at rest.
+#[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[require(BodySense)]
+pub struct Dead;
+
+/// The listener every character ragdoll carries: marks the character [`Dead`] when a [`BodyDead`] signal reaches it.
+pub fn mark_dead() -> Listener<BodyDead> {
+    (|on: On<BodyDead>, mut cmd: CommandQueue| {
+        cmd.insert(Dead, on.entity());
+    })
+    .into_listener()
 }
 
 /// A dead body that lies at rest.
@@ -122,6 +166,7 @@ fn kill(
     cmd: &mut CommandQueue,
 ) {
     character.go_limp();
+    cmd.insert(Dead, entity);
     if let Some(physical) = physical
         && physical.state != BodyState::Dead
     {
@@ -150,7 +195,8 @@ fn kill(
 /// Starts a character dying when the game says so.
 ///
 /// With zero seconds it is limp and `Dead` at once. A character that is
-/// already dying dies no slower.
+/// already dying dies no slower. A character in [`RagdollMode::Graph`] is left
+/// to its graph; see [`forward_death`].
 pub fn die_when_told(
     on: On<Die>,
     mut characters: Query<(
@@ -166,6 +212,9 @@ pub fn die_when_told(
     else {
         return;
     };
+    if character.mode == RagdollMode::Graph {
+        return;
+    }
     if physical
         .as_ref()
         .is_some_and(|physical| physical.state == BodyState::Dead)
@@ -190,6 +239,22 @@ pub fn die_when_told(
     }
 }
 
+/// Sends a [`Death`] message to the animation graph of a character in [`RagdollMode::Graph`] that the game says is dying; a [`Settled`] body is skipped and the death is lost.
+pub fn forward_death(
+    on: On<Die>,
+    mut players: Query<(&CharacterRagdoll, &mut AnimationPlayer), Without<Settled>>,
+) {
+    let die = *on.signal();
+    let Some((character, mut player)) = players.get_entity_mut(die.character) else {
+        return;
+    };
+    if character.mode == RagdollMode::Graph {
+        player.send(Death {
+            seconds: die.seconds,
+        });
+    }
+}
+
 /// Drains every dying character, each fixed step in `BehaviourSet`.
 ///
 /// The drive weakens the character's parts by `Dying::left`. When nothing is
@@ -211,8 +276,7 @@ pub fn drain_dying(
             character.mode = RagdollMode::Powered;
             character.weight = 1.0;
         }
-        dying.elapsed += dt;
-        if dying.elapsed >= dying.seconds {
+        if dying.advance(dt) {
             kill(
                 entity,
                 &mut character,
@@ -225,16 +289,16 @@ pub fn drain_dying(
     }
 }
 
-/// Freezes every dead body that lies at rest, each fixed step after the body is sensed.
+/// Freezes every [`Dead`] body that lies at rest, each fixed step after the body is sensed.
 ///
 /// It marks the body `Settled` and triggers `BodySettled`.
 pub fn settle_dead_bodies(
-    characters: Query<(Entity, &PhysicalState, &BodySense, &RagdollId), Without<Settled>>,
+    characters: Query<(Entity, &BodySense, &RagdollId), (With<Dead>, Without<Settled>)>,
     mut state: ResMut<PhysicsState>,
     mut cmd: CommandQueue,
 ) {
-    for (entity, physical, sense, id) in characters.iter() {
-        if physical.state != BodyState::Dead || !sense.at_rest {
+    for (entity, sense, id) in characters.iter() {
+        if !sense.at_rest {
             continue;
         }
         state.set_ragdoll_frozen(*id, true);
