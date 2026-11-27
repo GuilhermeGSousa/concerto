@@ -954,8 +954,9 @@ The claims blend over the balance's targets and strengths, and balance keeps
 its force and torque. The node does not apply the bullet's impulse; the hit
 routing does. It raises one `Wounded { part, share }` for each `Shot` that
 weakens a part, which reaches the character, where the `Wounds` every
-`CharacterRagdoll` carries keeps it after the shot ends: `strength_of(part)` is the share of its strength each
-part kept, for the game to turn into a limp or a guarded arm. A `HoldNode`
+`CharacterRagdoll` carries keeps it after the shot ends: `strength_of(part)` is
+the share of its strength each part kept, for the game to turn into a limp or a
+guarded arm. A `HoldNode`
 scales its muscles by it. It raises `Steadied` when its balance settles and
 `Toppled` when it gives up.
 
@@ -1024,8 +1025,11 @@ The character's graph receives a `Death { seconds }` message, and a
   animation is simulated in full from the first step;
 - when nothing is left it raises `BodyDead`, so the graph moves on with
   `OnMessage` of it into a state with a `LimpNode`. Every
-  character ragdoll carries a listener that inserts a `Dead` component when
-  `BodyDead` reaches it, and nothing removes it;
+  character ragdoll carries a `Listener<BodyDead>` that inserts a `Dead`
+  component when `BodyDead` reaches it, and nothing removes it. An entity holds
+  one listener per type, so a `Listener<BodyDead>` of your own on the character
+  replaces the ragdoll's and the corpse never settles; react to the `Dead` it
+  inserts with a global `On<Add<Dead>>` instead (issue #1093);
 - zero seconds does all of that at once, which a head shot wants.
 
 Every state the character can die from needs its own `OnMessage` transition
@@ -1625,9 +1629,9 @@ context also gives the player's `blackboard()`, `root()`, `skeleton()` and
 
 A node gives root motion with `root_motion(state, input, context, bone_ids,
 inputs)`, which returns a `RootMotion`. `update_animation_players` calls it for
-every node after the whole graph's `update`, from the leaves up, with the node's `UpdateInput`, so `inputs` holds
-each input's root motion and the weight its node carries, and the state is the
-one `update` just left. The default returns the first input's, or
+every node after the whole graph's `update`, from the leaves up, with the
+node's `UpdateInput`, so `inputs` holds each input's root motion and the weight
+its node carries, and the state is the one `update` just left. The default returns the first input's, or
 `RootMotion::IDENTITY` for a node with none, so a node that only changes the pose
 overrides nothing. A node that makes motion overrides it, as a clip does with the
 delta of its root since the last frame, and a node that combines inputs weights
@@ -1746,13 +1750,19 @@ and is never consumed, and a node never sees a raised message in
 `context.messages()`. At the root, `animate_targets` triggers each message the
 graph raised in its last update on the player's entity, as its own type and in
 the order raised and after the clip events, so a `Listener<M>` on the
-character hears what the state machines heard. It takes the list as it
-triggers it, so each message is triggered once, and it does so for every
-player, one paused or without a `SkeletonComponent` included. The clip
+character hears what the state machines heard. An entity holds one `Listener<S>`
+per type, and a global listener does not hear a signal triggered on an entity.
+`CharacterRagdoll` occupies the character's `Listener<BodyDead>` and
+`Listener<Wounded>`, and inserting your own replaces the ragdoll's, so the
+corpse never settles and the wounds go unkept: a game reacts to a death with a
+global `On<Add<Dead>>` and to a wound by reading `Changed<Wounds>` (issue
+#1093).
+`animate_targets` takes the list as it triggers it, so each message is
+triggered once, and it does so for every player, one paused or without a `SkeletonComponent` included. The clip
 events a clip raises stop at the root: they reach the game once, as their
 weighted `AnimationSignal`. `ClipEnded` does not stop there, so the
-character's listener for it hears every wrap of every clip in the graph. A state machine's
-`OnMessage` transitions also fire on what its current state raised in the
+character's listener for it hears every wrap of every clip in the graph. A
+state machine's `OnMessage` transitions also fire on what its current state raised in the
 previous frame's update, so a raise moves its machine one frame later; a
 state that is fading out still raises to the machine's container, but not to
 the machine's own triggers. A state's collection empties when the machine

@@ -165,6 +165,10 @@ fn is_arm(segment: Segment) -> bool {
     )
 }
 
+pub(crate) fn wounds(segment: Segment) -> bool {
+    segment != Segment::Head
+}
+
 fn is_leg(segment: Segment) -> bool {
     matches!(segment, Segment::Thigh | Segment::Shin | Segment::Foot)
 }
@@ -191,12 +195,6 @@ impl Arm {
     }
 }
 
-/// What a shot's step hands back: the claims on the parts.
-#[derive(Default)]
-pub(crate) struct ShotOut {
-    pub(crate) claims: ClaimsOut,
-}
-
 pub(crate) struct ShotController<'a> {
     pub(crate) settings: &'a ShotSettings,
     pub(crate) wounds: &'a mut [Wound],
@@ -208,13 +206,13 @@ impl ShotController<'_> {
         view: BodyView<'_>,
         physics: &PhysicsState,
         dt: f32,
-        out: &mut ShotOut,
+        claims: &mut ClaimsOut,
     ) -> Option<Hindrance> {
         let resolved = view.resolved();
         let landmarks = resolved.landmarks();
         let settings = &resolved.settings().parts;
         let count = settings.len();
-        out.claims.reset(count);
+        claims.reset(count);
         let animated = view.animated();
         let mut pose = Vec::new();
         physics.ragdoll_pose(view.ragdoll_id(), &mut pose);
@@ -267,7 +265,7 @@ impl ShotController<'_> {
         };
         hand_to_wound(reaction, wounds, &posed, &mut muscles);
         look_at_wound(reaction, wounds, &posed, &mut muscles);
-        claim_muscles(reaction, &muscles, &mut out.claims);
+        claim_muscles(reaction, &muscles, claims);
         Some(legs)
     }
 }
@@ -296,7 +294,7 @@ fn weaken_wounded(
     let mut legs = Hindrance::default();
     for wound in struck {
         let segment = resolved.segment(wound.part);
-        if segment == Segment::Head {
+        if !wounds(segment) {
             continue;
         }
         let healed = if reaction.recover > 0.0 {

@@ -52,7 +52,7 @@ struct Downs(usize);
 #[derive(Resource, Default)]
 struct Deaths(usize);
 
-fn count_deaths(_: On<Add<Dead>>, mut deaths: ResMut<Deaths>) {
+fn count_marked_dead(_: On<Add<Dead>>, mut deaths: ResMut<Deaths>) {
     deaths.0 += 1;
 }
 
@@ -114,7 +114,7 @@ impl Stage {
         }
         app.register_plugin(RagdollPlugin);
         app.add_listener(count_settles)
-            .add_listener(count_deaths)
+            .add_listener(count_marked_dead)
             .insert_resource(Deaths::default())
             .insert_resource(Settles::default())
             .insert_resource(Downs::default());

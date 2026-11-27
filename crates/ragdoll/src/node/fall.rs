@@ -179,7 +179,7 @@ impl AnimationNode for FallNode {
             let lying = body
                 .sense()
                 .is_some_and(|sense| sense.at_rest && sense.lean > LYING);
-            let step = FallController {
+            let relaxed = FallController {
                 settings: &self.settings,
                 strength,
                 run: &mut state.run,
@@ -192,7 +192,7 @@ impl AnimationNode for FallNode {
                 &mut state.claims,
             );
             state.limp = strength <= 0.0;
-            if step.is_some_and(|step| step.relaxed) {
+            if relaxed {
                 state.limp = true;
                 state.landed.decide(BodyDown);
             }
@@ -224,7 +224,7 @@ impl EditorAnimationNode for FallNode {
     fn describe(&self, state: &FallState) -> Option<String> {
         let text = match state.landed.get() {
             Some(_) => format!("landed and relaxed at {}", self.profile),
-            None if state.run.landed.is_some() => {
+            None if state.run.landed() => {
                 format!("landed, relaxing at {}", self.profile)
             }
             None => format!("falling at {}", self.profile),

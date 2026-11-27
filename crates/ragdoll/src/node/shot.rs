@@ -11,17 +11,18 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{
-    asset::{Segment, StrengthProfile},
+    asset::StrengthProfile,
     attributes::{MotorCommand, PhysicsAmount},
     generate::BRACED,
     messages::{self, Wounded},
     node::{
         Decided,
         balance::{
-            BalanceController, BalanceEnd, BalanceRun, BalanceSettings, CommandsOut, layered,
+            BalanceController, BalanceEnd, BalanceRun, BalanceSettings, ClaimsOut, CommandsOut,
+            layered,
         },
     },
-    shot::{ShotController, ShotOut, ShotSettings, Wound},
+    shot::{ShotController, ShotSettings, Wound, wounds},
     view::{BodyInput, BodyView},
 };
 
@@ -70,13 +71,7 @@ impl ShotNode {
         profile: Option<&StrengthProfile>,
         part: usize,
     ) -> Option<MotorCommand> {
-        layered(
-            &state.commands,
-            state.out.claims.get(part),
-            body,
-            profile,
-            part,
-        )
+        layered(&state.commands, state.claims.get(part), body, profile, part)
     }
 }
 
@@ -87,7 +82,7 @@ pub struct ShotState {
     wounds: Vec<Wound>,
     balance: BalanceRun,
     commands: CommandsOut,
-    out: ShotOut,
+    claims: ClaimsOut,
     ended: Decided<BalanceEnd>,
 }
 
@@ -128,7 +123,7 @@ impl AnimationNode for ShotNode {
             };
             state.started = true;
             let segment = body.resolved().segment(shot.part);
-            if segment != Segment::Head {
+            if wounds(segment) {
                 context.raise(Wounded {
                     part: shot.part,
                     share: self.settings.lasting_share(segment),
@@ -201,7 +196,7 @@ impl AnimationNode for ShotNode {
                 settings: &self.settings,
                 wounds: &mut state.wounds,
             }
-            .step(body, physics, dt, &mut state.out)
+            .step(body, physics, dt, &mut state.claims)
             .unwrap_or_default();
             if let Some(end) = (BalanceController {
                 settings: &self.balance,
@@ -213,7 +208,7 @@ impl AnimationNode for ShotNode {
             }
         } else {
             state.commands.clear();
-            state.out.claims.clear();
+            state.claims.clear();
         }
         let commands = output
             .attributes_mut()

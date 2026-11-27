@@ -72,7 +72,13 @@ impl Default for FallSettings {
 pub(crate) struct FallRun {
     left_down: Option<f32>,
     right_down: Option<f32>,
-    pub(crate) landed: Option<f32>,
+    landed: Option<f32>,
+}
+
+impl FallRun {
+    pub(crate) fn landed(&self) -> bool {
+        self.landed.is_some()
+    }
 }
 
 struct Arm {
@@ -113,10 +119,6 @@ fn horizontal(vector: Vec3) -> Vec3 {
     Vec3::new(vector.x, 0.0, vector.z)
 }
 
-pub(crate) struct FallStep {
-    pub(crate) relaxed: bool,
-}
-
 pub(crate) struct FallController<'a> {
     pub(crate) settings: &'a FallSettings,
     pub(crate) strength: f32,
@@ -131,7 +133,7 @@ impl FallController<'_> {
         dt: f32,
         lying: bool,
         claims: &mut ClaimsOut,
-    ) -> Option<FallStep> {
+    ) -> bool {
         let fall = self.settings;
         let run = &mut *self.run;
         let resolved = view.resolved();
@@ -145,10 +147,10 @@ impl FallController<'_> {
         let (Some(pelvis), Some(chest), Some(sense)) =
             (landmarks.pelvis, landmarks.chest, view.sense())
         else {
-            return None;
+            return false;
         };
         if pose.len() != count || animated.len() != count {
-            return None;
+            return false;
         }
         let entity = view.entity();
         let bodies = physics.ragdoll_bodies(view.ragdoll_id());
@@ -168,7 +170,7 @@ impl FallController<'_> {
             let landed = run.landed.map_or(0.0, |landed| landed + dt);
             run.landed = Some(landed);
             if landed >= fall.relax_seconds {
-                return Some(FallStep { relaxed: true });
+                return true;
             }
         }
         let relaxed = run.landed.map_or(1.0, |landed| {
@@ -331,6 +333,6 @@ impl FallController<'_> {
             claims.claim(leg.foot, 1.0, PartCommand::held(muscle(fall.legs)));
         }
 
-        Some(FallStep { relaxed: false })
+        false
     }
 }
