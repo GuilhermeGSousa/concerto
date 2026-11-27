@@ -139,14 +139,24 @@ impl BakedDatabase {
 /// channels it is built from, and once derived, the baked frames.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct MotionDatabase {
+    /// The skeleton the clips animate.
     pub skeleton: AssetHandle<Skeleton>,
+    /// The clips to bake, in order.
     pub entries: Vec<MotionEntry>,
+    /// The frames baked per second of database time; positive.
     pub rate: f32,
+    /// How many seconds of clip each second of database time covers; positive, 1 plays clips as
+    /// authored.
     pub speed: f32,
+    /// Which joints place and orient the simulation bone.
     pub simulation: SimulationBoneSettings,
+    /// How the trajectory the channels see is sampled.
     pub trajectory: TrajectorySettings,
+    /// The feature channels, in the order their values are stored per frame.
     pub channels: Vec<FeatureChannelData>,
+    /// The plane mirrored entries are mirrored across.
     pub mirror_axis: MirrorAxis,
+    /// The baked frames, once derived; not saved with the definition.
     #[serde(skip)]
     pub baked: Option<BakedDatabase>,
 }
@@ -563,24 +573,89 @@ impl DerivedData for MotionDatabase {
 /// Why a motion database could not be baked, or a baked frame's pose could not be sampled.
 #[derive(Clone, Debug, PartialEq)]
 pub enum BakeError {
+    /// The skeleton has no joint of this name.
     MissingJoint(String),
-    ClipHasNoBones { entry: usize },
-    ClipCountMismatch { expected: usize, actual: usize },
-    BoneCountMismatch { expected: usize, actual: usize },
-    FrameOutOfRange { frame: usize, frame_count: usize },
+    /// An entry's clip animates none of the skeleton's bones.
+    ClipHasNoBones {
+        /// The entry's index.
+        entry: usize,
+    },
+    /// The number of clips given is not the number of entries.
+    ClipCountMismatch {
+        /// The number of entries.
+        expected: usize,
+        /// The number of clips given.
+        actual: usize,
+    },
+    /// A skeleton or pose has a different number of bones than the database.
+    BoneCountMismatch {
+        /// The database's bone count.
+        expected: usize,
+        /// The bone count given.
+        actual: usize,
+    },
+    /// A frame index is past the baked frames.
+    FrameOutOfRange {
+        /// The frame asked for.
+        frame: usize,
+        /// The number of baked frames.
+        frame_count: usize,
+    },
+    /// A channel's type is not registered as a feature channel.
     UnregisteredChannel(String),
+    /// A channel is still stored, not yet built against a type registry.
     UnloadedChannel(String),
-    ChannelValue { type_name: String, reason: String },
-    RangeTooShort { entry: usize, frames: usize },
-    InvalidRange { entry: usize },
-    InvalidWindow { name: &'static str, window: usize },
+    /// A channel could not be built, or does not fit the skeleton or trajectory.
+    ChannelValue {
+        /// The channel's type name.
+        type_name: String,
+        /// Why it failed.
+        reason: String,
+    },
+    /// An entry bakes fewer than 2 frames.
+    RangeTooShort {
+        /// The entry's index.
+        entry: usize,
+        /// The frames it would bake.
+        frames: usize,
+    },
+    /// An entry's range is outside its clip or does not start before it ends.
+    InvalidRange {
+        /// The entry's index.
+        entry: usize,
+    },
+    /// A smoothing window is even or not greater than 3.
+    InvalidWindow {
+        /// The setting's name.
+        name: &'static str,
+        /// The window given, in frames.
+        window: usize,
+    },
+    /// The rate is not positive.
     InvalidRate(f32),
+    /// The speed is not positive.
     InvalidSpeed(f32),
+    /// The trajectory's sample interval is not positive.
     InvalidSampleDt(f32),
+    /// A channel's weight is not positive and finite.
     InvalidWeight(f32),
-    ChannelCountMismatch { expected: usize, actual: usize },
-    TrajectoryTooShort { needed: usize, actual: usize },
+    /// A feature query has a different number of channels than the database.
+    ChannelCountMismatch {
+        /// The query's channel count.
+        expected: usize,
+        /// The database's channel count.
+        actual: usize,
+    },
+    /// A channel reads more trajectory samples than the trajectory has.
+    TrajectoryTooShort {
+        /// The samples the channel reads.
+        needed: usize,
+        /// The samples the trajectory has.
+        actual: usize,
+    },
+    /// A mirrored entry's pose cannot be mirrored.
     Mirror(MirrorError),
+    /// The database has not been derived yet.
     NotBaked,
 }
 

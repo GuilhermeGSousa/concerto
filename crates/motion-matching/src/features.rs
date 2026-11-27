@@ -51,7 +51,9 @@ fn check_samples(samples: &[usize], trajectory: &TrajectorySettings) -> Result<(
 #[derive(Reflect, Clone, Debug, PartialEq)]
 #[reflect(FeatureChannel)]
 pub struct BonePositions {
+    /// The bones, by name; a bone the skeleton lacks fails the bake.
     pub bones: Vec<JointName>,
+    /// How strongly the group counts against the others; positive and finite.
     pub weight: f32,
 }
 
@@ -110,7 +112,9 @@ impl FeatureChannel for BonePositions {
 #[derive(Reflect, Clone, Debug, PartialEq)]
 #[reflect(FeatureChannel)]
 pub struct BoneVelocities {
+    /// The bones, by name; a bone the skeleton lacks fails the bake.
     pub bones: Vec<JointName>,
+    /// How strongly the group counts against the others; positive and finite.
     pub weight: f32,
 }
 
@@ -172,7 +176,9 @@ impl FeatureChannel for BoneVelocities {
 #[derive(Reflect, Clone, Debug, PartialEq)]
 #[reflect(FeatureChannel)]
 pub struct TrajectoryPositions {
+    /// The indices of the trajectory samples, each below the trajectory's sample count.
     pub samples: Vec<usize>,
+    /// How strongly the group counts against the others; positive and finite.
     pub weight: f32,
 }
 
@@ -238,7 +244,9 @@ impl FeatureChannel for TrajectoryPositions {
 #[derive(Reflect, Clone, Debug, PartialEq)]
 #[reflect(FeatureChannel)]
 pub struct TrajectoryDirections {
+    /// The indices of the trajectory samples, each below the trajectory's sample count.
     pub samples: Vec<usize>,
+    /// How strongly the group counts against the others; positive and finite.
     pub weight: f32,
 }
 
