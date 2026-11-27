@@ -1,3 +1,5 @@
+//! The inspector's editor of asset handles: a button naming the asset, which opens a menu of the
+//! project's assets of the handle's kind.
 use std::{any::Any, sync::Arc};
 
 use concerto_app::{App, Plugin, schedule_groups::LateUpdate};
@@ -42,6 +44,7 @@ pub struct AssetPicker {
 }
 
 impl AssetPicker {
+    /// A picker for the handle type `handle` describes.
     pub fn new(handle: ReflectAssetHandle) -> Self {
         Self { handle }
     }

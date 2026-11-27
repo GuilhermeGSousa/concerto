@@ -26,10 +26,14 @@ use crate::project::ProjectState;
 use crate::scene::SceneState;
 use crate::tabs::{TabScroll, TabStrip, TabStripContent};
 
+/// The id the editor's name, top left, is registered under in the [`PanelRegistry`].
 pub const BRAND_ID: &str = "concerto.brand";
 const BRAND_SIZE: f32 = 20.0;
+/// The id the status line is registered under in the [`PanelRegistry`].
 pub const CHATTER_ID: &str = "concerto.chatter";
 
+/// Adds the editor's name, the document tab strip and the status line, which shows the project's
+/// status.
 pub struct ShellPlugin;
 
 impl Plugin for ShellPlugin {

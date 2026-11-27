@@ -24,6 +24,7 @@ use crate::{
 /// Whether the editor draws every scene it edits unlit, for every edit `App`, kept for the session.
 #[derive(Resource, Default)]
 pub struct ShadingChoice {
+    /// `true` draws every edited scene by base colour and emission alone.
     pub unlit: bool,
 }
 
