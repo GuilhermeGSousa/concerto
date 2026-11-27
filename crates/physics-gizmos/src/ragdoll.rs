@@ -36,7 +36,7 @@ pub(crate) fn draw_ragdoll(
                     * settings.parts[parent].pose.rotation.inverse(),
                 child_rotation: pose[index].rotation * part.pose.rotation.inverse(),
             };
-            draw_joint(gizmos, &frame);
+            frame.draw(gizmos);
         }
     }
 }
@@ -73,65 +73,67 @@ pub(crate) struct JointFrame<'a> {
     pub(crate) child_rotation: Quat,
 }
 
-fn draw_joint(gizmos: &mut DebugGizmos, frame: &JointFrame) {
-    let joint = frame.joint;
-    let Some(twist) = joint.twist_axis.try_normalize() else {
-        return;
-    };
-    let plane = (joint.plane_axis - twist * joint.plane_axis.dot(twist))
-        .try_normalize()
-        .unwrap_or_else(|| twist.any_orthonormal_vector());
-    let normal = twist.cross(plane);
-    let parent = |axis: Vec3| frame.parent_rotation * axis;
-    let (twist_w, plane_w, normal_w) = (parent(twist), parent(plane), parent(normal));
-    let origin = frame.position;
+impl JointFrame<'_> {
+    pub(crate) fn draw(&self, gizmos: &mut DebugGizmos) {
+        let joint = self.joint;
+        let Some(twist) = joint.twist_axis.try_normalize() else {
+            return;
+        };
+        let plane = (joint.plane_axis - twist * joint.plane_axis.dot(twist))
+            .try_normalize()
+            .unwrap_or_else(|| twist.any_orthonormal_vector());
+        let normal = twist.cross(plane);
+        let parent = |axis: Vec3| self.parent_rotation * axis;
+        let (twist_w, plane_w, normal_w) = (parent(twist), parent(plane), parent(normal));
+        let origin = self.position;
 
-    gizmos.line(origin, origin + twist_w * FRAME_SIZE, Color::BLUE);
-    gizmos.line(origin, origin + plane_w * FRAME_SIZE, Color::RED);
-    gizmos.line(origin, origin + normal_w * FRAME_SIZE, Color::GREEN);
+        gizmos.line(origin, origin + twist_w * FRAME_SIZE, Color::BLUE);
+        gizmos.line(origin, origin + plane_w * FRAME_SIZE, Color::RED);
+        gizmos.line(origin, origin + normal_w * FRAME_SIZE, Color::GREEN);
 
-    let rim = |angle: f32| {
-        let (sin, cos) = angle.sin_cos();
-        let swing = Quat::from_scaled_axis(
-            normal_w * joint.normal_half_cone * cos + plane_w * joint.plane_half_cone * sin,
-        );
-        origin + swing * twist_w * CONE_LENGTH
-    };
-    let mut previous = rim(0.0);
-    for step in 1..=CONE_STEPS {
-        let next = rim(TAU * step as f32 / CONE_STEPS as f32);
-        gizmos.line(previous, next, SWING_COLOR);
-        previous = next;
-    }
-    for rib in 0..CONE_RIBS {
+        let rim = |angle: f32| {
+            let (sin, cos) = angle.sin_cos();
+            let swing = Quat::from_scaled_axis(
+                normal_w * joint.normal_half_cone * cos + plane_w * joint.plane_half_cone * sin,
+            );
+            origin + swing * twist_w * CONE_LENGTH
+        };
+        let mut previous = rim(0.0);
+        for step in 1..=CONE_STEPS {
+            let next = rim(TAU * step as f32 / CONE_STEPS as f32);
+            gizmos.line(previous, next, SWING_COLOR);
+            previous = next;
+        }
+        for rib in 0..CONE_RIBS {
+            gizmos.line(
+                origin,
+                rim(TAU * rib as f32 / CONE_RIBS as f32),
+                SWING_COLOR,
+            );
+        }
+
+        let twist_origin = origin + twist_w * CONE_LENGTH * 0.5;
+        let from_min = Quat::from_axis_angle(twist_w, joint.twist_min) * plane_w * TWIST_RADIUS;
+        gizmos.line(twist_origin, twist_origin + from_min, TWIST_COLOR);
         gizmos.line(
-            origin,
-            rim(TAU * rib as f32 / CONE_RIBS as f32),
-            SWING_COLOR,
+            twist_origin,
+            twist_origin + Quat::from_axis_angle(twist_w, joint.twist_max) * plane_w * TWIST_RADIUS,
+            TWIST_COLOR,
+        );
+        gizmos.arc(
+            twist_origin,
+            twist_w,
+            from_min,
+            joint.twist_max - joint.twist_min,
+            TWIST_COLOR,
+        );
+
+        let child = |axis: Vec3| self.child_rotation * axis;
+        gizmos.line(origin, origin + child(twist) * CONE_LENGTH, CURRENT_COLOR);
+        gizmos.line(
+            twist_origin,
+            twist_origin + child(plane) * TWIST_RADIUS,
+            CURRENT_COLOR,
         );
     }
-
-    let twist_origin = origin + twist_w * CONE_LENGTH * 0.5;
-    let from_min = Quat::from_axis_angle(twist_w, joint.twist_min) * plane_w * TWIST_RADIUS;
-    gizmos.line(twist_origin, twist_origin + from_min, TWIST_COLOR);
-    gizmos.line(
-        twist_origin,
-        twist_origin + Quat::from_axis_angle(twist_w, joint.twist_max) * plane_w * TWIST_RADIUS,
-        TWIST_COLOR,
-    );
-    gizmos.arc(
-        twist_origin,
-        twist_w,
-        from_min,
-        joint.twist_max - joint.twist_min,
-        TWIST_COLOR,
-    );
-
-    let child = |axis: Vec3| frame.child_rotation * axis;
-    gizmos.line(origin, origin + child(twist) * CONE_LENGTH, CURRENT_COLOR);
-    gizmos.line(
-        twist_origin,
-        twist_origin + child(plane) * TWIST_RADIUS,
-        CURRENT_COLOR,
-    );
 }
