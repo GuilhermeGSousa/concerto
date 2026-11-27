@@ -173,9 +173,17 @@ the checks for the owner in its review comment.
 
 ## Code rules
 
-**Comments.** Only public API carries comments, as doc comments: `///` on a
-public item, and `//!` at the top of a crate or a public module. Write them to
-the Rust API guidelines and the rustdoc conventions:
+**Comments.** Every public item and every crate root carries a doc comment,
+and nothing else carries a comment: `///` on a public item, and `//!` at the
+top of each target root (`lib.rs`, `main.rs`, `build.rs`, `src/bin/*`,
+`benches/*`, `examples/*`, `tests/*`) and of a public module. The workspace
+lints enforce it: `missing_docs` for the items and roots, and clippy's
+`missing_errors_doc`, `missing_panics_doc` and `missing_safety_doc` for the
+sections below. `concerto-jolt-ffi`, `concerto-benches` and the three
+examples are exempt from `missing_docs` and opt out with
+`#![allow(missing_docs, reason = "...")]` at each of their target roots; the
+other lints still apply to them. Write the docs to the Rust API guidelines and
+the rustdoc conventions:
 
 - Open with a one-sentence summary of what the item is or does. Add
   paragraphs only for what the signature and the summary do not say:
@@ -243,10 +251,13 @@ Something to be done is a signal. If change detection cannot express the case,
 say so in the spec and propose the fix to change detection; do not work around
 it with a counter.
 
-**Warnings are errors.** `[workspace.lints.rust] warnings = "deny"` is set and
-every package inherits it with `[lints] workspace = true`, so an unused import
+**Warnings are errors.** `[workspace.lints.rust]` sets `warnings` and
+`missing_docs` to `deny`, `[workspace.lints.clippy]` denies
+`missing_errors_doc`, `missing_panics_doc`, `missing_safety_doc` and
+`undocumented_unsafe_blocks`, and every package inherits both tables with
+`[lints] workspace = true`, so an unused import or an undocumented public item
 fails the build of any crate. A new crate's `Cargo.toml` carries those two
-lines.
+lines, and each of its target roots starts with a `//!` line.
 
 **Match the code around you.** Naming, module layout, error handling, and test
 style follow the file you are in.
