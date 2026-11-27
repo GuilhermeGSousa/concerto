@@ -28,6 +28,31 @@ impl Ray {
     }
 }
 
+impl Ray {
+    fn triangle_hit(&self, a: Vec3, b: Vec3, c: Vec3) -> Option<f32> {
+        let edge_ab = b - a;
+        let edge_ac = c - a;
+        let p = self.direction.cross(edge_ac);
+        let determinant = edge_ab.dot(p);
+        if determinant.abs() < 1e-12 {
+            return None;
+        }
+        let inverse = 1.0 / determinant;
+        let from_a = self.origin - a;
+        let u = from_a.dot(p) * inverse;
+        if !(0.0..=1.0).contains(&u) {
+            return None;
+        }
+        let q = from_a.cross(edge_ab);
+        let v = self.direction.dot(q) * inverse;
+        if v < 0.0 || u + v > 1.0 {
+            return None;
+        }
+        let t = edge_ac.dot(q) * inverse;
+        (t > 0.0).then_some(t)
+    }
+}
+
 impl Aabb {
     /// Where the ray enters the box: zero when it starts inside, `None` on a miss.
     pub fn ray_entry(&self, ray: &Ray) -> Option<f32> {
@@ -71,7 +96,7 @@ impl Mesh {
             ) else {
                 continue;
             };
-            if let Some(t) = triangle_hit(ray, a, b, c) {
+            if let Some(t) = ray.triangle_hit(a, b, c) {
                 if nearest.is_none_or(|best| t < best) {
                     nearest = Some(t);
                 }
@@ -79,27 +104,4 @@ impl Mesh {
         }
         nearest
     }
-}
-
-fn triangle_hit(ray: &Ray, a: Vec3, b: Vec3, c: Vec3) -> Option<f32> {
-    let edge_ab = b - a;
-    let edge_ac = c - a;
-    let p = ray.direction.cross(edge_ac);
-    let determinant = edge_ab.dot(p);
-    if determinant.abs() < 1e-12 {
-        return None;
-    }
-    let inverse = 1.0 / determinant;
-    let from_a = ray.origin - a;
-    let u = from_a.dot(p) * inverse;
-    if !(0.0..=1.0).contains(&u) {
-        return None;
-    }
-    let q = from_a.cross(edge_ab);
-    let v = ray.direction.dot(q) * inverse;
-    if v < 0.0 || u + v > 1.0 {
-        return None;
-    }
-    let t = edge_ac.dot(q) * inverse;
-    (t > 0.0).then_some(t)
 }
