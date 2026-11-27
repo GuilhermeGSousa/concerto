@@ -58,6 +58,25 @@ impl Default for MotionMatchingGizmos {
     }
 }
 
+impl MotionMatchingGizmos {
+    fn remember(&mut self, delta: f32, position: Vec3) {
+        if delta <= 0.0 {
+            return;
+        }
+        for (age, _) in self.trail.iter_mut() {
+            *age += delta;
+        }
+        self.trail.push_back((0.0, position));
+        while self
+            .trail
+            .front()
+            .is_some_and(|(age, _)| *age > HISTORY_SECONDS)
+        {
+            self.trail.pop_front();
+        }
+    }
+}
+
 /// Draws [`MotionMatchingGizmos`] in game time.
 ///
 /// Register it after `DefaultPlugins`.
@@ -155,19 +174,6 @@ pub fn query_shapes(
     placed_channels(state, database, skeleton, &baked, &query.features, bone)
 }
 
-fn remember(trail: &mut VecDeque<(f32, Vec3)>, delta: f32, position: Vec3) {
-    if delta <= 0.0 {
-        return;
-    }
-    for (age, _) in trail.iter_mut() {
-        *age += delta;
-    }
-    trail.push_back((0.0, position));
-    while trail.front().is_some_and(|(age, _)| *age > HISTORY_SECONDS) {
-        trail.pop_front();
-    }
-}
-
 fn draw_channels(
     gizmos: &mut DebugGizmos,
     bone: &Transform,
@@ -215,11 +221,7 @@ pub fn draw_motion_matching(
             draw_simulation(&mut gizmos, &bone);
             gizmos.line(bone.translation, character.translation(), SIMULATION_COLOR);
         }
-        remember(
-            &mut shown.trail,
-            time.delta().as_secs_f32(),
-            bone.translation,
-        );
+        shown.remember(time.delta().as_secs_f32(), bone.translation);
         if shown.history {
             gizmos.linestrip(
                 shown.trail.iter().map(|(_, position)| *position),
