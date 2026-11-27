@@ -74,6 +74,56 @@ pub enum Engine {
     Checkout(PathBuf),
 }
 
+impl Engine {
+    fn of_editor(editor: &Path) -> Result<Self> {
+        let manifest = editor.join("Cargo.toml");
+        let unknown = || {
+            format!(
+                "{} does not say which engine it uses; pass --engine <path>",
+                manifest.display()
+            )
+        };
+        let document = read_manifest(&manifest)?.with_context(unknown)?;
+        let dependency = document
+            .get("dependencies")
+            .and_then(|dependencies| dependencies.get("concerto-editor"))
+            .with_context(unknown)?;
+        if dependency.is_str() {
+            return Ok(Self::Published);
+        }
+        let table = dependency.as_table_like().with_context(unknown)?;
+        let Some(path) = table.get("path") else {
+            ensure!(
+                table.contains_key("version")
+                    && !["git", "registry"]
+                        .iter()
+                        .any(|key| table.contains_key(key)),
+                unknown()
+            );
+            return Ok(Self::Published);
+        };
+        let path = absolute(&editor.join(path.as_str().with_context(unknown)?))?;
+        ensure!(path.ends_with("crates/editor"), unknown());
+        let checkout = path.parent().and_then(Path::parent).with_context(unknown)?;
+        Ok(Self::Checkout(checkout.to_path_buf()))
+    }
+
+    fn resolve(self) -> Result<Option<PathBuf>> {
+        match self {
+            Self::Published => Ok(None),
+            Self::Checkout(path) => {
+                let path = absolute(&path)?;
+                ensure!(
+                    path.is_dir(),
+                    "the engine checkout {} does not exist",
+                    path.display()
+                );
+                Ok(Some(path))
+            }
+        }
+    }
+}
+
 /// A parsed command line.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
@@ -88,6 +138,76 @@ pub enum Command {
     Build(BuildOptions),
     /// `run`: builds the game natively and runs it.
     Run(RunOptions),
+}
+
+impl Command {
+    fn parse_build(command: &str, mut args: impl Iterator<Item = String>) -> Result<Command> {
+        let run = command == "run";
+        let mut game_args = Vec::new();
+        let mut dir = None;
+        let mut cook = false;
+        let mut release = false;
+        let mut wasm = false;
+        let mut public_url = None;
+        let mut dist = None;
+        while let Some(arg) = args.next() {
+            match arg.as_str() {
+                "--" if run => {
+                    game_args.extend(args.by_ref());
+                    break;
+                }
+                "--target" | "--public-url" | "--dist" if run => {
+                    bail!("{arg} applies to `build`; `run` builds and runs natively")
+                }
+                "--cook" => cook = true,
+                "--release" => release = true,
+                "--target" => {
+                    let target = args.next().context("--target needs a target triple")?;
+                    ensure!(
+                        target == WASM_TARGET,
+                        "`build` builds natively or for --target {WASM_TARGET}, not `{target}`"
+                    );
+                    wasm = true;
+                }
+                "--public-url" => {
+                    public_url = Some(args.next().context("--public-url needs a URL")?)
+                }
+                "--dist" => {
+                    dist = Some(PathBuf::from(
+                        args.next().context("--dist needs a directory")?,
+                    ))
+                }
+                "--engine" => bail!("--engine applies to `new` and `editor`, not `{command}`"),
+                _ if arg.starts_with('-') => bail!("unknown option `{arg}`"),
+                _ if dir.is_none() => dir = Some(PathBuf::from(arg)),
+                _ => bail!("unexpected argument `{arg}`"),
+            }
+        }
+        ensure!(
+            wasm || public_url.is_none(),
+            "--public-url applies only with --target {WASM_TARGET}"
+        );
+        ensure!(
+            wasm || dist.is_none(),
+            "--dist applies only with --target {WASM_TARGET}"
+        );
+        let options = BuildOptions {
+            dir: dir.unwrap_or_else(|| PathBuf::from(".")),
+            cook,
+            release,
+            wasm,
+            public_url,
+            dist,
+        };
+        Ok(if run {
+            Command::Run(RunOptions {
+                build: options,
+                args: game_args,
+            })
+        } else {
+            Command::Build(options)
+        })
+    }
 }
 
 /// What `build` was asked for.
@@ -218,7 +338,7 @@ where
     }
     let command = args.next().context("missing a command")?;
     if command == "build" || command == "run" {
-        return parse_build(&command, args);
+        return Command::parse_build(&command, args);
     }
     ensure!(
         command == "new" || command == "editor",
@@ -268,72 +388,6 @@ pub fn run(command: Command) -> Result<Report> {
         Command::Build(options) => build(options),
         Command::Run(options) => run_game(options),
     }
-}
-
-fn parse_build(command: &str, mut args: impl Iterator<Item = String>) -> Result<Command> {
-    let run = command == "run";
-    let mut game_args = Vec::new();
-    let mut dir = None;
-    let mut cook = false;
-    let mut release = false;
-    let mut wasm = false;
-    let mut public_url = None;
-    let mut dist = None;
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--" if run => {
-                game_args.extend(args.by_ref());
-                break;
-            }
-            "--target" | "--public-url" | "--dist" if run => {
-                bail!("{arg} applies to `build`; `run` builds and runs natively")
-            }
-            "--cook" => cook = true,
-            "--release" => release = true,
-            "--target" => {
-                let target = args.next().context("--target needs a target triple")?;
-                ensure!(
-                    target == WASM_TARGET,
-                    "`build` builds natively or for --target {WASM_TARGET}, not `{target}`"
-                );
-                wasm = true;
-            }
-            "--public-url" => public_url = Some(args.next().context("--public-url needs a URL")?),
-            "--dist" => {
-                dist = Some(PathBuf::from(
-                    args.next().context("--dist needs a directory")?,
-                ))
-            }
-            "--engine" => bail!("--engine applies to `new` and `editor`, not `{command}`"),
-            _ if arg.starts_with('-') => bail!("unknown option `{arg}`"),
-            _ if dir.is_none() => dir = Some(PathBuf::from(arg)),
-            _ => bail!("unexpected argument `{arg}`"),
-        }
-    }
-    ensure!(
-        wasm || public_url.is_none(),
-        "--public-url applies only with --target {WASM_TARGET}"
-    );
-    ensure!(
-        wasm || dist.is_none(),
-        "--dist applies only with --target {WASM_TARGET}"
-    );
-    let options = BuildOptions {
-        dir: dir.unwrap_or_else(|| PathBuf::from(".")),
-        cook,
-        release,
-        wasm,
-        public_url,
-        dist,
-    };
-    Ok(if run {
-        Command::Run(RunOptions {
-            build: options,
-            args: game_args,
-        })
-    } else {
-        Command::Build(options)
-    })
 }
 
 /// Turns `options` into the steps that build `package`, whose Cargo target directory is `target_dir`.
@@ -696,8 +750,8 @@ pub fn new_project(dir: impl AsRef<Path>, engine: Engine) -> Result<Report> {
         );
     }
     let created = !dir.exists();
-    let checkout = resolve(engine)?;
-    let workspace = workspace_of(&dir)?;
+    let checkout = engine.resolve()?;
+    let workspace = Workspace::of(&dir)?;
     let own_workspace = if workspace.is_some() {
         ""
     } else {
@@ -721,7 +775,7 @@ pub fn new_project(dir: impl AsRef<Path>, engine: Engine) -> Result<Report> {
         dir: dir.clone(),
         name: name.clone(),
         crate_name: crate_name.clone(),
-        plugins: editor_plugins(&manifest, &name)?,
+        plugins: EditorPlugin::list(&manifest, &name)?,
     };
     let mut report = Report::default();
     let written = GAME_FILES
@@ -729,14 +783,11 @@ pub fn new_project(dir: impl AsRef<Path>, engine: Engine) -> Result<Report> {
         .try_for_each(|(path, template)| {
             write_file(&dir.join(path), &render(template, &vars), &mut report)
         })
-        .and_then(|()| write_editor(&game, checkout.as_deref(), &mut report))
+        .and_then(|()| game.write_editor(checkout.as_deref(), &mut report))
         .and_then(|()| match workspace {
-            Some(workspace) => join_workspace(
-                &dir,
-                workspace,
-                &[dir.clone(), dir.join("editor")],
-                &mut report,
-            ),
+            Some(workspace) => {
+                workspace.join(&dir, &[dir.clone(), dir.join("editor")], &mut report)
+            }
             None => Ok(()),
         });
     if let Err(error) = written {
@@ -778,18 +829,19 @@ fn remove_project(dir: &Path, created: bool) -> std::io::Result<()> {
 /// be resolved, and when a file or a workspace manifest cannot be written.
 pub fn add_editor(dir: impl AsRef<Path>, engine: Engine) -> Result<Report> {
     let dir = absolute(dir.as_ref())?;
-    let game = read_game(&dir)?;
+    let game = Game::read(&dir)?;
     ensure!(
         !dir.join("editor").exists(),
         "{} already exists; --update rewrites its generated files",
         dir.join("editor").display()
     );
-    let checkout = resolve(engine)?;
-    let workspace = workspace_of(&dir)?;
+    let checkout = engine.resolve()?;
+    let workspace = Workspace::of(&dir)?;
     let mut report = Report::default();
-    let added =
-        write_editor(&game, checkout.as_deref(), &mut report).and_then(|()| match workspace {
-            Some(workspace) => join_workspace(&dir, workspace, &[dir.join("editor")], &mut report),
+    let added = game
+        .write_editor(checkout.as_deref(), &mut report)
+        .and_then(|()| match workspace {
+            Some(workspace) => workspace.join(&dir, &[dir.join("editor")], &mut report),
             None => declare_own_workspace(&dir, &mut report),
         });
     if let Err(error) = added {
@@ -821,7 +873,7 @@ pub fn add_editor(dir: impl AsRef<Path>, engine: Engine) -> Result<Report> {
 /// or resolved, and when a file cannot be written.
 pub fn update_editor(dir: impl AsRef<Path>, engine: Option<Engine>) -> Result<Report> {
     let dir = absolute(dir.as_ref())?;
-    let game = read_game(&dir)?;
+    let game = Game::read(&dir)?;
     let editor = dir.join("editor");
     ensure!(
         editor.is_dir(),
@@ -830,11 +882,11 @@ pub fn update_editor(dir: impl AsRef<Path>, engine: Option<Engine>) -> Result<Re
     );
     let engine = match engine {
         Some(engine) => engine,
-        None => engine_of_editor(&editor)?,
+        None => Engine::of_editor(&editor)?,
     };
-    let checkout = resolve(engine)?;
+    let checkout = engine.resolve()?;
     let mut report = Report::default();
-    write_editor(&game, checkout.as_deref(), &mut report)?;
+    game.write_editor(checkout.as_deref(), &mut report)?;
     warn_if_published(checkout.as_deref(), &mut report);
     Ok(report)
 }
@@ -846,6 +898,70 @@ struct Game {
     plugins: Vec<EditorPlugin>,
 }
 
+impl Game {
+    fn read(dir: &Path) -> Result<Game> {
+        let manifest_path = dir.join("Cargo.toml");
+        let manifest: DocumentMut = fs::read_to_string(&manifest_path)
+            .with_context(|| format!("{} has no Cargo.toml", dir.display()))?
+            .parse()
+            .with_context(|| format!("{} is not valid TOML", manifest_path.display()))?;
+        let name = manifest
+            .get("package")
+            .and_then(|package| package.get("name"))
+            .and_then(Item::as_str)
+            .with_context(|| format!("{} has no package name", manifest_path.display()))?
+            .to_string();
+        let crate_name = manifest
+            .get("lib")
+            .and_then(|lib| lib.get("name"))
+            .and_then(Item::as_str)
+            .map_or_else(|| name.replace('-', "_"), str::to_string);
+        ensure!(
+            dir.join("src/lib.rs").is_file(),
+            "{} has no library: the editor calls the game's recipe from src/lib.rs",
+            dir.display()
+        );
+        let plugins = EditorPlugin::list(&manifest, &name)
+            .with_context(|| format!("the editor plugins in {}", manifest_path.display()))?;
+        Ok(Game {
+            dir: dir.to_path_buf(),
+            name,
+            crate_name,
+            plugins,
+        })
+    }
+
+    fn write_editor(&self, checkout: Option<&Path>, report: &mut Report) -> Result<()> {
+        let dir = &self.dir;
+        let editor = dependency(checkout, "crates/editor", &dir.join("editor"), dir);
+        let mut plugin_dependencies = String::new();
+        for plugin in &self.plugins {
+            let dependency = plugin.dependency(dir, checkout)?;
+            plugin_dependencies.push_str(&format!("\n{} = {dependency}", plugin.package));
+        }
+        let plugins = plugin_list(&self.plugins);
+        let vars = [
+            ("name", self.name.as_str()),
+            ("crate", self.crate_name.as_str()),
+            ("concerto_editor", editor.as_str()),
+            ("plugin_dependencies", plugin_dependencies.as_str()),
+            ("plugins", plugins.as_str()),
+        ];
+        let main = if self.plugins.is_empty() {
+            EDITOR_MAIN
+        } else {
+            EDITOR_MAIN_WITH_PLUGINS
+        };
+        for (path, template) in [
+            ("editor/Cargo.toml", EDITOR_MANIFEST),
+            ("editor/src/main.rs", main),
+        ] {
+            write_file(&dir.join(path), &render(template, &vars), report)?;
+        }
+        Ok(())
+    }
+}
+
 struct EditorPlugin {
     package: String,
     install: String,
@@ -853,108 +969,101 @@ struct EditorPlugin {
     path: Option<String>,
 }
 
-fn read_game(dir: &Path) -> Result<Game> {
-    let manifest_path = dir.join("Cargo.toml");
-    let manifest: DocumentMut = fs::read_to_string(&manifest_path)
-        .with_context(|| format!("{} has no Cargo.toml", dir.display()))?
-        .parse()
-        .with_context(|| format!("{} is not valid TOML", manifest_path.display()))?;
-    let name = manifest
-        .get("package")
-        .and_then(|package| package.get("name"))
-        .and_then(Item::as_str)
-        .with_context(|| format!("{} has no package name", manifest_path.display()))?
-        .to_string();
-    let crate_name = manifest
-        .get("lib")
-        .and_then(|lib| lib.get("name"))
-        .and_then(Item::as_str)
-        .map_or_else(|| name.replace('-', "_"), str::to_string);
-    ensure!(
-        dir.join("src/lib.rs").is_file(),
-        "{} has no library: the editor calls the game's recipe from src/lib.rs",
-        dir.display()
-    );
-    let plugins = editor_plugins(&manifest, &name)
-        .with_context(|| format!("the editor plugins in {}", manifest_path.display()))?;
-    Ok(Game {
-        dir: dir.to_path_buf(),
-        name,
-        crate_name,
-        plugins,
-    })
-}
-
-fn editor_plugins(manifest: &DocumentMut, game: &str) -> Result<Vec<EditorPlugin>> {
-    let Some(list) = manifest
-        .get("package")
-        .and_then(|package| package.get("metadata"))
-        .and_then(|metadata| metadata.get("concerto"))
-        .and_then(|concerto| concerto.get("editor"))
-        .and_then(|editor| editor.get("plugins"))
-    else {
-        return Ok(Vec::new());
-    };
-    let list = list
-        .as_array()
-        .context("`plugins` must be an array of `{ package, install }` tables")?;
-    let mut taken = vec![game.to_string(), "concerto-editor".to_string()];
-    let mut plugins = Vec::new();
-    for entry in list {
-        let plugin = editor_plugin(entry, &taken)?;
-        taken.push(plugin.package.clone());
-        plugins.push(plugin);
+impl EditorPlugin {
+    fn list(manifest: &DocumentMut, game: &str) -> Result<Vec<EditorPlugin>> {
+        let Some(list) = manifest
+            .get("package")
+            .and_then(|package| package.get("metadata"))
+            .and_then(|metadata| metadata.get("concerto"))
+            .and_then(|concerto| concerto.get("editor"))
+            .and_then(|editor| editor.get("plugins"))
+        else {
+            return Ok(Vec::new());
+        };
+        let list = list
+            .as_array()
+            .context("`plugins` must be an array of `{ package, install }` tables")?;
+        let mut taken = vec![game.to_string(), "concerto-editor".to_string()];
+        let mut plugins = Vec::new();
+        for entry in list {
+            let plugin = Self::parse(entry, &taken)?;
+            taken.push(plugin.package.clone());
+            plugins.push(plugin);
+        }
+        Ok(plugins)
     }
-    Ok(plugins)
-}
 
-fn editor_plugin(entry: &Value, taken: &[String]) -> Result<EditorPlugin> {
-    let shown = entry.to_string();
-    let shown = shown.trim();
-    let table = entry
-        .as_inline_table()
-        .with_context(|| format!("`{shown}` is not a `{{ package, install }}` table"))?;
-    if let Some((key, _)) = table.iter().find(|(key, _)| !PLUGIN_KEYS.contains(key)) {
-        bail!("`{shown}` has an unknown key `{key}`");
+    fn parse(entry: &Value, taken: &[String]) -> Result<Self> {
+        let shown = entry.to_string();
+        let shown = shown.trim();
+        let table = entry
+            .as_inline_table()
+            .with_context(|| format!("`{shown}` is not a `{{ package, install }}` table"))?;
+        if let Some((key, _)) = table.iter().find(|(key, _)| !PLUGIN_KEYS.contains(key)) {
+            bail!("`{shown}` has an unknown key `{key}`");
+        }
+        let text = |key: &str| {
+            table
+                .get(key)
+                .map(|value| {
+                    value
+                        .as_str()
+                        .map(str::to_string)
+                        .with_context(|| format!("`{shown}` has a `{key}` that is not a string"))
+                })
+                .transpose()
+        };
+        let package = text("package")?.with_context(|| format!("`{shown}` has no `package`"))?;
+        let install = text("install")?.with_context(|| format!("`{shown}` has no `install`"))?;
+        let version = text("version")?;
+        let path = text("path")?;
+        ensure!(
+            is_package_name(&package),
+            "`{shown}` does not name a Cargo package"
+        );
+        ensure!(
+            !taken.contains(&package),
+            "`{shown}` names `{package}`, which the editor already depends on"
+        );
+        ensure!(
+            is_rust_path(&install),
+            "`{shown}` has an `install` that is not a Rust path such as `{}::install`",
+            package.replace('-', "_")
+        );
+        ensure!(
+            version.is_some() || path.is_some() || engine_crate(&package).is_some(),
+            "`{shown}` is not a `concerto-<dir>` package, so it must give `version` or `path`"
+        );
+        Ok(Self {
+            package,
+            install,
+            version,
+            path,
+        })
     }
-    let text = |key: &str| {
-        table
-            .get(key)
-            .map(|value| {
-                value
-                    .as_str()
-                    .map(str::to_string)
-                    .with_context(|| format!("`{shown}` has a `{key}` that is not a string"))
-            })
-            .transpose()
-    };
-    let package = text("package")?.with_context(|| format!("`{shown}` has no `package`"))?;
-    let install = text("install")?.with_context(|| format!("`{shown}` has no `install`"))?;
-    let version = text("version")?;
-    let path = text("path")?;
-    ensure!(
-        is_package_name(&package),
-        "`{shown}` does not name a Cargo package"
-    );
-    ensure!(
-        !taken.contains(&package),
-        "`{shown}` names `{package}`, which the editor already depends on"
-    );
-    ensure!(
-        is_rust_path(&install),
-        "`{shown}` has an `install` that is not a Rust path such as `{}::install`",
-        package.replace('-', "_")
-    );
-    ensure!(
-        version.is_some() || path.is_some() || engine_crate(&package).is_some(),
-        "`{shown}` is not a `concerto-<dir>` package, so it must give `version` or `path`"
-    );
-    Ok(EditorPlugin {
-        package,
-        install,
-        version,
-        path,
-    })
+
+    fn dependency(&self, game: &Path, checkout: Option<&Path>) -> Result<String> {
+        let editor = game.join("editor");
+        if let (None, None, Some(crate_dir)) =
+            (&self.version, &self.path, engine_crate(&self.package))
+        {
+            return Ok(dependency(checkout, &crate_dir, &editor, game));
+        }
+        let mut table = InlineTable::new();
+        if let Some(version) = &self.version {
+            table.insert("version", version.as_str().into());
+        }
+        if let Some(path) = &self.path {
+            let written = if Path::new(path).has_root() {
+                path.clone()
+            } else {
+                relative(&editor, &absolute(&game.join(path))?)
+            };
+            table.insert("path", written.as_str().into());
+        }
+        table.fmt();
+        Ok(table.to_string())
+    }
 }
 
 fn is_rust_path(path: &str) -> bool {
@@ -979,33 +1088,6 @@ fn engine_crate(package: &str) -> Option<String> {
         .map(|dir| format!("crates/{dir}"))
 }
 
-fn plugin_dependency(
-    plugin: &EditorPlugin,
-    game: &Path,
-    checkout: Option<&Path>,
-) -> Result<String> {
-    let editor = game.join("editor");
-    if let (None, None, Some(crate_dir)) =
-        (&plugin.version, &plugin.path, engine_crate(&plugin.package))
-    {
-        return Ok(dependency(checkout, &crate_dir, &editor, game));
-    }
-    let mut table = InlineTable::new();
-    if let Some(version) = &plugin.version {
-        table.insert("version", version.as_str().into());
-    }
-    if let Some(path) = &plugin.path {
-        let written = if Path::new(path).has_root() {
-            path.clone()
-        } else {
-            relative(&editor, &absolute(&game.join(path))?)
-        };
-        table.insert("path", written.as_str().into());
-    }
-    table.fmt();
-    Ok(table.to_string())
-}
-
 fn plugin_list(plugins: &[EditorPlugin]) -> String {
     let installs: Vec<&str> = plugins
         .iter()
@@ -1020,69 +1102,6 @@ fn plugin_list(plugins: &[EditorPlugin]) -> String {
             installs.join(",\n            ")
         )
     }
-}
-
-fn engine_of_editor(editor: &Path) -> Result<Engine> {
-    let manifest = editor.join("Cargo.toml");
-    let unknown = || {
-        format!(
-            "{} does not say which engine it uses; pass --engine <path>",
-            manifest.display()
-        )
-    };
-    let document = read_manifest(&manifest)?.with_context(unknown)?;
-    let dependency = document
-        .get("dependencies")
-        .and_then(|dependencies| dependencies.get("concerto-editor"))
-        .with_context(unknown)?;
-    if dependency.is_str() {
-        return Ok(Engine::Published);
-    }
-    let table = dependency.as_table_like().with_context(unknown)?;
-    let Some(path) = table.get("path") else {
-        ensure!(
-            table.contains_key("version")
-                && !["git", "registry"]
-                    .iter()
-                    .any(|key| table.contains_key(key)),
-            unknown()
-        );
-        return Ok(Engine::Published);
-    };
-    let path = absolute(&editor.join(path.as_str().with_context(unknown)?))?;
-    ensure!(path.ends_with("crates/editor"), unknown());
-    let checkout = path.parent().and_then(Path::parent).with_context(unknown)?;
-    Ok(Engine::Checkout(checkout.to_path_buf()))
-}
-
-fn write_editor(game: &Game, checkout: Option<&Path>, report: &mut Report) -> Result<()> {
-    let dir = &game.dir;
-    let editor = dependency(checkout, "crates/editor", &dir.join("editor"), dir);
-    let mut plugin_dependencies = String::new();
-    for plugin in &game.plugins {
-        let dependency = plugin_dependency(plugin, dir, checkout)?;
-        plugin_dependencies.push_str(&format!("\n{} = {dependency}", plugin.package));
-    }
-    let plugins = plugin_list(&game.plugins);
-    let vars = [
-        ("name", game.name.as_str()),
-        ("crate", game.crate_name.as_str()),
-        ("concerto_editor", editor.as_str()),
-        ("plugin_dependencies", plugin_dependencies.as_str()),
-        ("plugins", plugins.as_str()),
-    ];
-    let main = if game.plugins.is_empty() {
-        EDITOR_MAIN
-    } else {
-        EDITOR_MAIN_WITH_PLUGINS
-    };
-    for (path, template) in [
-        ("editor/Cargo.toml", EDITOR_MANIFEST),
-        ("editor/src/main.rs", main),
-    ] {
-        write_file(&dir.join(path), &render(template, &vars), report)?;
-    }
-    Ok(())
 }
 
 fn warn_if_published(checkout: Option<&Path>, report: &mut Report) {
@@ -1128,21 +1147,6 @@ fn write_file(path: &Path, contents: &str, report: &mut Report) -> Result<()> {
     fs::write(path, contents).with_context(|| format!("writing {}", path.display()))?;
     report.written.push(path.to_path_buf());
     Ok(())
-}
-
-fn resolve(engine: Engine) -> Result<Option<PathBuf>> {
-    match engine {
-        Engine::Published => Ok(None),
-        Engine::Checkout(path) => {
-            let path = absolute(&path)?;
-            ensure!(
-                path.is_dir(),
-                "the engine checkout {} does not exist",
-                path.display()
-            );
-            Ok(Some(path))
-        }
-    }
 }
 
 fn dependency(
@@ -1256,6 +1260,95 @@ struct Workspace {
     document: DocumentMut,
 }
 
+impl Workspace {
+    fn of(game: &Path) -> Result<Option<Self>> {
+        let own = game.join("Cargo.toml");
+        if let Some(document) = read_manifest(&own)? {
+            if workspace_table(&document).is_some() {
+                return Ok(Some(Self {
+                    root: game.to_path_buf(),
+                    manifest: own,
+                    document,
+                }));
+            }
+        }
+        for root in game.ancestors().skip(1) {
+            let manifest = root.join("Cargo.toml");
+            let Some(document) = read_manifest(&manifest)? else {
+                continue;
+            };
+            let Some(table) = workspace_table(&document) else {
+                continue;
+            };
+            let game_path = slashed(game.strip_prefix(root)?);
+            let game_parts = parts(&game_path);
+            let excluded = strings(table.get("exclude"))
+                .iter()
+                .any(|path| game_parts.starts_with(&parts(path)));
+            if excluded {
+                return Ok(None);
+            }
+            return Ok(Some(Self {
+                root: root.to_path_buf(),
+                manifest,
+                document,
+            }));
+        }
+        Ok(None)
+    }
+
+    fn join(mut self, game: &Path, crates: &[PathBuf], report: &mut Report) -> Result<()> {
+        let table = self
+            .document
+            .get_mut("workspace")
+            .and_then(Item::as_table_like_mut)
+            .context("the workspace table vanished")?;
+        if table.get("members").is_none() {
+            table.insert("members", toml_edit::value(Array::new()));
+        }
+        let members = table
+            .get_mut("members")
+            .and_then(Item::as_array_mut)
+            .with_context(|| {
+                format!(
+                    "the workspace's members in {} are not an array",
+                    self.manifest.display()
+                )
+            })?;
+        let mut patterns = members
+            .iter()
+            .filter_map(Value::as_str)
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        let game_path = slashed(game.strip_prefix(&self.root)?);
+        let mut changed = false;
+        for path in crates {
+            let path = slashed(path.strip_prefix(&self.root)?);
+            if patterns.iter().any(|pattern| matches(pattern, &path)) {
+                continue;
+            }
+            let member = patterns
+                .iter()
+                .find_map(|pattern| {
+                    let parent = pattern.strip_suffix("/*")?;
+                    let covers = !parent.contains(['*', '?', '['])
+                        && matches(pattern, &game_path)
+                        && path == format!("{game_path}/editor");
+                    covers.then(|| format!("{pattern}/editor"))
+                })
+                .unwrap_or(path);
+            push_member(members, &member);
+            patterns.push(member);
+            changed = true;
+        }
+        if changed {
+            fs::write(&self.manifest, self.document.to_string())?;
+            report.edited.push(self.manifest);
+        }
+        Ok(())
+    }
+}
+
 fn read_manifest(path: &Path) -> Result<Option<DocumentMut>> {
     if !path.is_file() {
         return Ok(None);
@@ -1270,42 +1363,6 @@ fn workspace_table(document: &DocumentMut) -> Option<&dyn TableLike> {
     document.get("workspace").and_then(Item::as_table_like)
 }
 
-fn workspace_of(game: &Path) -> Result<Option<Workspace>> {
-    let own = game.join("Cargo.toml");
-    if let Some(document) = read_manifest(&own)? {
-        if workspace_table(&document).is_some() {
-            return Ok(Some(Workspace {
-                root: game.to_path_buf(),
-                manifest: own,
-                document,
-            }));
-        }
-    }
-    for root in game.ancestors().skip(1) {
-        let manifest = root.join("Cargo.toml");
-        let Some(document) = read_manifest(&manifest)? else {
-            continue;
-        };
-        let Some(table) = workspace_table(&document) else {
-            continue;
-        };
-        let game_path = slashed(game.strip_prefix(root)?);
-        let game_parts = parts(&game_path);
-        let excluded = strings(table.get("exclude"))
-            .iter()
-            .any(|path| game_parts.starts_with(&parts(path)));
-        if excluded {
-            return Ok(None);
-        }
-        return Ok(Some(Workspace {
-            root: root.to_path_buf(),
-            manifest,
-            document,
-        }));
-    }
-    Ok(None)
-}
-
 fn declare_own_workspace(game: &Path, report: &mut Report) -> Result<()> {
     let manifest = game.join("Cargo.toml");
     let mut document = read_manifest(&manifest)?.context("the game has no Cargo.toml")?;
@@ -1318,62 +1375,6 @@ fn declare_own_workspace(game: &Path, report: &mut Report) -> Result<()> {
     document.insert("workspace", Item::Table(table));
     fs::write(&manifest, document.to_string())?;
     report.edited.push(manifest);
-    Ok(())
-}
-
-fn join_workspace(
-    game: &Path,
-    mut workspace: Workspace,
-    crates: &[PathBuf],
-    report: &mut Report,
-) -> Result<()> {
-    let table = workspace
-        .document
-        .get_mut("workspace")
-        .and_then(Item::as_table_like_mut)
-        .context("the workspace table vanished")?;
-    if table.get("members").is_none() {
-        table.insert("members", toml_edit::value(Array::new()));
-    }
-    let members = table
-        .get_mut("members")
-        .and_then(Item::as_array_mut)
-        .with_context(|| {
-            format!(
-                "the workspace's members in {} are not an array",
-                workspace.manifest.display()
-            )
-        })?;
-    let mut patterns = members
-        .iter()
-        .filter_map(Value::as_str)
-        .map(str::to_string)
-        .collect::<Vec<_>>();
-    let game_path = slashed(game.strip_prefix(&workspace.root)?);
-    let mut changed = false;
-    for path in crates {
-        let path = slashed(path.strip_prefix(&workspace.root)?);
-        if patterns.iter().any(|pattern| matches(pattern, &path)) {
-            continue;
-        }
-        let member = patterns
-            .iter()
-            .find_map(|pattern| {
-                let parent = pattern.strip_suffix("/*")?;
-                let covers = !parent.contains(['*', '?', '['])
-                    && matches(pattern, &game_path)
-                    && path == format!("{game_path}/editor");
-                covers.then(|| format!("{pattern}/editor"))
-            })
-            .unwrap_or(path);
-        push_member(members, &member);
-        patterns.push(member);
-        changed = true;
-    }
-    if changed {
-        fs::write(&workspace.manifest, workspace.document.to_string())?;
-        report.edited.push(workspace.manifest);
-    }
     Ok(())
 }
 
