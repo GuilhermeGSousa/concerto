@@ -128,23 +128,23 @@ impl Importer for GltfImporter {
             buffers: &buffers,
         };
 
-        track_externals(&source, ctx);
+        source.track_externals(ctx);
 
         let SourceMaterials {
             needed_textures,
             materials,
-        } = read_materials(&document, ctx);
-        emit_textures(&source, &needed_textures, ctx)?;
+        } = SourceMaterials::read(&document, ctx);
+        source.emit_textures(&needed_textures, ctx)?;
 
         for (index, material) in materials.iter().enumerate() {
             ctx.emit(&format!("material/{index}"), material)?;
         }
 
-        let mesh_prims = emit_meshes(&source, materials.len(), ctx)?;
+        let mesh_prims = source.emit_meshes(materials.len(), ctx)?;
 
         let hierarchy = NodeHierarchy::of(&document);
-        let EmittedSkins { skins, roots } = emit_skeletons(&source, &hierarchy, ctx)?;
-        emit_animations(&source, settings, &hierarchy.paths, roots, ctx)?;
+        let EmittedSkins { skins, roots } = source.emit_skeletons(&hierarchy, ctx)?;
+        source.emit_animations(settings, &hierarchy.paths, roots, ctx)?;
 
         let mut scene = SceneBuild {
             nodes: Vec::new(),
@@ -184,11 +184,346 @@ impl GltfSource<'_> {
             message,
         }
     }
+
+    fn track_externals(&self, ctx: &mut ImportContext) {
+        // Track every external `.bin`/image `uri` the document pulls in, so
+        // editing one and re-running `import` regenerates instead of shipping
+        // stale imported output. Embedded `data:` URIs need no tracking — a
+        // change there changes the `.gltf`'s own hash.
+        for buffer in self.document.buffers() {
+            if let gltf::buffer::Source::Uri(uri) = buffer.source() {
+                track_external(ctx, self.dir, uri);
+            }
+        }
+        for image in self.document.images() {
+            if let gltf::image::Source::Uri { uri, .. } = image.source() {
+                track_external(ctx, self.dir, uri);
+            }
+        }
+    }
+
+    fn emit_textures(
+        &self,
+        needed_textures: &BTreeMap<TextureKey, TextureRole>,
+        ctx: &mut ImportContext,
+    ) -> Result<(), ImportError> {
+        let images: Vec<gltf::Image<'_>> = self.document.images().collect();
+        for (key, role) in needed_textures {
+            let unkept = |message: String| {
+                self.malformed(format!(
+                    "failed to keep GLTF image {}: {message}",
+                    key.image_index
+                ))
+            };
+            let bytes =
+                image_bytes(&images[key.image_index], self.buffers, self.dir).map_err(unkept)?;
+            let name = texture_name(key.image_index, key.srgb);
+            let ImportedTexture {
+                texture,
+                source: texture_source,
+            } = imported_texture(ctx, &name, *role, bytes, None).map_err(unkept)?;
+            ctx.emit_with(&name, &texture, &texture_source)?;
+        }
+        Ok(())
+    }
+
+    fn emit_meshes(
+        &self,
+        default_material_index: usize,
+        ctx: &mut ImportContext,
+    ) -> Result<Vec<Vec<PrimRef>>, ImportError> {
+        // Primitives with no material index share one default `StandardMaterial`
+        // emitted after the real ones (index == document.materials().count()).
+        let mut default_material_used = false;
+
+        let mut mesh_counter: usize = 0;
+        let mut mesh_prims: Vec<Vec<PrimRef>> = Vec::new();
+        for mesh in self.document.meshes() {
+            let mut prims = Vec::new();
+            for gltf_primitive in mesh.primitives() {
+                let m = load_primitive(self.path, mesh.name(), self.buffers, &gltf_primitive)?;
+                ctx.emit(&format!("mesh/{mesh_counter}"), &m)?;
+
+                let material_sub_asset = match gltf_primitive.material().index() {
+                    Some(material_index) => material_index,
+                    None => {
+                        default_material_used = true;
+                        default_material_index
+                    }
+                };
+                prims.push(PrimRef {
+                    mesh_sub_asset: mesh_counter,
+                    material_sub_asset,
+                });
+                mesh_counter += 1;
+            }
+            mesh_prims.push(prims);
+        }
+
+        if default_material_used {
+            ctx.emit(
+                &format!("material/{default_material_index}"),
+                &StandardMaterial::default(),
+            )?;
+        }
+        Ok(mesh_prims)
+    }
+
+    fn emit_skeletons(
+        &self,
+        hierarchy: &NodeHierarchy,
+        ctx: &mut ImportContext,
+    ) -> Result<EmittedSkins, ImportError> {
+        // Skins -> `skeleton/N` sub-assets. A skin with no inverse bind
+        // matrices is unusable, so it is skipped and its node gets no
+        // `SkeletonComponent`. `SkinInfo` is looked up by `skeleton_index`, not
+        // vector position, so a skipped skin cannot misalign the rest.
+        let mut skins: Vec<SkinInfo> = Vec::new();
+        let mut roots: BTreeSet<Uuid> = BTreeSet::new();
+        for (skin_index, skin) in self.document.skins().enumerate() {
+            let Some(skeleton) = self.skeleton_of(hierarchy, skin_index, &skin)? else {
+                continue;
+            };
+            ctx.emit(&format!("skeleton/{skin_index}"), &skeleton)?;
+            roots.extend(
+                skeleton
+                    .parents
+                    .iter()
+                    .zip(skeleton.bone_ids.iter())
+                    .filter(|(parent, _)| parent.is_none())
+                    .map(|(_, id)| *id),
+            );
+
+            skins.push(SkinInfo {
+                skeleton_index: skin_index,
+                bones: skin
+                    .joints()
+                    .map(|joint| SceneEntityRef::Index(joint.index()))
+                    .collect(),
+            });
+        }
+        Ok(EmittedSkins { skins, roots })
+    }
+
+    fn skeleton_of(
+        &self,
+        hierarchy: &NodeHierarchy,
+        skin_index: usize,
+        skin: &gltf::Skin<'_>,
+    ) -> Result<Option<Skeleton>, ImportError> {
+        let buffers = self.buffers;
+        let Some(inverse_bind_matrices) = skin
+            .reader(|buffer| Some(&buffers[buffer.index()]))
+            .read_inverse_bind_matrices()
+            .map(|iter| {
+                iter.map(|pose| Mat4::from_cols_array_2d(&pose))
+                    .collect::<Vec<_>>()
+            })
+        else {
+            return Ok(None);
+        };
+
+        let Some(bone_ids) = joint_bone_ids(skin, &hierarchy.paths) else {
+            return Ok(None);
+        };
+
+        let JointLayout {
+            parents,
+            names,
+            rest_pose,
+        } = self.joint_layout(&hierarchy.parents, skin_index, skin)?;
+
+        let skeleton = Skeleton::new(inverse_bind_matrices, parents, names, rest_pose, bone_ids)
+            .map_err(|err| ImportError::MalformedSource {
+                source_path: self.path.to_path_buf(),
+                message: format!("skin {skin_index}: {err}"),
+            })?;
+        Ok(Some(skeleton))
+    }
+
+    fn joint_layout(
+        &self,
+        node_parents: &HashMap<usize, usize>,
+        skin_index: usize,
+        skin: &gltf::Skin<'_>,
+    ) -> Result<JointLayout, ImportError> {
+        let source_path = self.path;
+        let bone_count = skin.joints().count();
+        let mut joint_positions: HashMap<usize, usize> = HashMap::new();
+        for (position, joint) in skin.joints().enumerate() {
+            joint_positions.entry(joint.index()).or_insert(position);
+        }
+        let mut parents: Vec<Option<u16>> = Vec::with_capacity(bone_count);
+        let mut names: Vec<Name> = Vec::with_capacity(bone_count);
+        let mut rest_pose: Vec<JointPose> = Vec::with_capacity(bone_count);
+        for (position, joint) in skin.joints().enumerate() {
+            let parent_position = node_parents
+                .get(&joint.index())
+                .and_then(|parent| joint_positions.get(parent).map(|at| (*parent, *at)));
+            if let Some((parent_node, parent_position)) = parent_position
+                && parent_position >= position
+            {
+                return Err(ImportError::MalformedSource {
+                    source_path: source_path.to_path_buf(),
+                    message: format!(
+                        "skin {skin_index}: joint {} is listed before its parent joint {parent_node}; joints must be ordered parents first",
+                        joint.index()
+                    ),
+                });
+            }
+            let parent = parent_position
+                .map(|(_, at)| {
+                    u16::try_from(at).map_err(|_| ImportError::MalformedSource {
+                        source_path: source_path.to_path_buf(),
+                        message: format!(
+                            "skin {skin_index}: joint {} has a parent at position {at}, past the {} bones a skeleton can address",
+                            joint.index(),
+                            u16::MAX as usize + 1
+                        ),
+                    })
+                })
+                .transpose()?;
+            parents.push(parent);
+            names.push(
+                joint
+                    .name()
+                    .map(Name::new)
+                    .unwrap_or_else(|| Name::new(&format!("joint_{}", joint.index()))),
+            );
+            let (translation, rotation, scale) = joint.transform().decomposed();
+            rest_pose.push(JointPose {
+                translation: Vec3::from_array(translation),
+                rotation: Quat::from_array(rotation),
+                scale: Vec3::from_array(scale),
+            });
+        }
+        Ok(JointLayout {
+            parents,
+            names,
+            rest_pose,
+        })
+    }
+
+    fn check_clip_settings(
+        &self,
+        settings: &GltfSettings,
+        animation_names: &[String],
+    ) -> Result<(), ImportError> {
+        if let Some(name) = settings
+            .events
+            .keys()
+            .find(|name| !animation_names.contains(name))
+        {
+            return Err(self.malformed(format!(
+                "events are set for clip `{name}`, which this file does not emit; its clips are {animation_names:?}"
+            )));
+        }
+        if let Some(name) = settings
+            .additive
+            .keys()
+            .find(|name| !animation_names.contains(name))
+        {
+            return Err(self.malformed(format!(
+                "additive is set for clip `{name}`, which this file does not emit; its clips are {animation_names:?}"
+            )));
+        }
+        Ok(())
+    }
+
+    fn emit_animations(
+        &self,
+        settings: &GltfSettings,
+        node_paths: &HashMap<usize, NodePathInfo>,
+        roots: BTreeSet<Uuid>,
+        ctx: &mut ImportContext,
+    ) -> Result<(), ImportError> {
+        // Animations -> `animation/{name}` sub-assets. Channel targets are keyed by
+        // the same path hash as the skeleton bones, so clips and skeletons
+        // agree on identity. Clip ids are not recorded in `referenced_assets`:
+        // nothing in the imported scene points at a clip yet (a later task wires
+        // that), and the import's reference-integrity pass only checks that
+        // recorded references resolve, not that every sub-asset is referenced.
+        let document = self.document;
+        let requested_clip_names: Vec<Option<&str>> =
+            document.animations().map(|a| a.name()).collect();
+        let animation_names = clip_names(&requested_clip_names);
+        self.check_clip_settings(settings, &animation_names)?;
+        let roots: Vec<Uuid> = roots.into_iter().collect();
+        for (animation_index, (animation, animation_name)) in
+            document.animations().zip(&animation_names).enumerate()
+        {
+            let mut animation_clip = AnimationClip::default();
+
+            for channel in animation.channels() {
+                add_channel(&mut animation_clip, &channel, self.buffers, node_paths);
+            }
+
+            if let Some(events) = settings.events.get(animation_name) {
+                animation_clip
+                    .add_animation_events(events)
+                    .map_err(|message| {
+                        self.malformed(format!("clip `{animation_name}`: {message}"))
+                    })?;
+            }
+
+            if let Some(additive) = settings.additive.get(animation_name) {
+                let additive = additive
+                    .additive(animation_clip.duration(), roots.clone())
+                    .map_err(|message| {
+                        self.malformed(format!("clip `{animation_name}`: {message}"))
+                    })?;
+                animation_clip.set_additive(additive);
+            }
+
+            let index_name = animation_index.to_string();
+            if !animation_names.contains(&index_name) {
+                ctx.renamed_from(
+                    &format!("animation/{animation_name}"),
+                    &format!("animation/{index_name}"),
+                );
+            }
+            ctx.emit(&format!("animation/{animation_name}"), &animation_clip)?;
+        }
+        Ok(())
+    }
 }
 
 struct SourceMaterials {
     needed_textures: BTreeMap<TextureKey, TextureRole>,
     materials: Vec<StandardMaterial>,
+}
+
+impl SourceMaterials {
+    fn read(document: &gltf::Document, ctx: &ImportContext) -> Self {
+        // Color textures (base color, emissive) are sRGB-encoded while data
+        // textures (normal, metallic-roughness, occlusion) are linear. An
+        // image can be referenced in both roles, so texture sub-assets are
+        // keyed per (image, color space) pair.
+        let mut needed_textures: BTreeMap<TextureKey, TextureRole> = BTreeMap::new();
+        let mut materials: Vec<StandardMaterial> = Vec::new();
+        {
+            let mut texture_ref =
+                |texture: gltf::Texture<'_>, role: TextureRole| -> AssetHandle<Texture> {
+                    let image_index = texture.source().index();
+                    let srgb = role == TextureRole::Color;
+                    let kept = needed_textures
+                        .entry(TextureKey { image_index, srgb })
+                        .or_insert(role);
+                    if role == TextureRole::Data {
+                        *kept = role;
+                    }
+                    AssetHandle::weak(ctx.sub_asset_id(&texture_name(image_index, srgb)))
+                };
+
+            for gltf_material in document.materials() {
+                materials.push(standard_material(&gltf_material, &mut texture_ref));
+            }
+        }
+        Self {
+            needed_textures,
+            materials,
+        }
+    }
 }
 
 struct NodeHierarchy {
@@ -215,54 +550,6 @@ struct SkinBinding {
 struct SceneBuild {
     nodes: Vec<SceneNode>,
     referenced_assets: Vec<AssetId>,
-}
-
-fn track_externals(source: &GltfSource, ctx: &mut ImportContext) {
-    // Track every external `.bin`/image `uri` the document pulls in, so
-    // editing one and re-running `import` regenerates instead of shipping
-    // stale imported output. Embedded `data:` URIs need no tracking — a
-    // change there changes the `.gltf`'s own hash.
-    for buffer in source.document.buffers() {
-        if let gltf::buffer::Source::Uri(uri) = buffer.source() {
-            track_external(ctx, source.dir, uri);
-        }
-    }
-    for image in source.document.images() {
-        if let gltf::image::Source::Uri { uri, .. } = image.source() {
-            track_external(ctx, source.dir, uri);
-        }
-    }
-}
-
-fn read_materials(document: &gltf::Document, ctx: &ImportContext) -> SourceMaterials {
-    // Color textures (base color, emissive) are sRGB-encoded while data
-    // textures (normal, metallic-roughness, occlusion) are linear. An
-    // image can be referenced in both roles, so texture sub-assets are
-    // keyed per (image, color space) pair.
-    let mut needed_textures: BTreeMap<TextureKey, TextureRole> = BTreeMap::new();
-    let mut materials: Vec<StandardMaterial> = Vec::new();
-    {
-        let mut texture_ref =
-            |texture: gltf::Texture<'_>, role: TextureRole| -> AssetHandle<Texture> {
-                let image_index = texture.source().index();
-                let srgb = role == TextureRole::Color;
-                let kept = needed_textures
-                    .entry(TextureKey { image_index, srgb })
-                    .or_insert(role);
-                if role == TextureRole::Data {
-                    *kept = role;
-                }
-                AssetHandle::weak(ctx.sub_asset_id(&texture_name(image_index, srgb)))
-            };
-
-        for gltf_material in document.materials() {
-            materials.push(standard_material(&gltf_material, &mut texture_ref));
-        }
-    }
-    SourceMaterials {
-        needed_textures,
-        materials,
-    }
 }
 
 fn standard_material(
@@ -305,73 +592,6 @@ fn standard_material(
     material
 }
 
-fn emit_textures(
-    source: &GltfSource,
-    needed_textures: &BTreeMap<TextureKey, TextureRole>,
-    ctx: &mut ImportContext,
-) -> Result<(), ImportError> {
-    let images: Vec<gltf::Image<'_>> = source.document.images().collect();
-    for (key, role) in needed_textures {
-        let unkept = |message: String| {
-            source.malformed(format!(
-                "failed to keep GLTF image {}: {message}",
-                key.image_index
-            ))
-        };
-        let bytes =
-            image_bytes(&images[key.image_index], source.buffers, source.dir).map_err(unkept)?;
-        let name = texture_name(key.image_index, key.srgb);
-        let ImportedTexture {
-            texture,
-            source: texture_source,
-        } = imported_texture(ctx, &name, *role, bytes, None).map_err(unkept)?;
-        ctx.emit_with(&name, &texture, &texture_source)?;
-    }
-    Ok(())
-}
-
-fn emit_meshes(
-    source: &GltfSource,
-    default_material_index: usize,
-    ctx: &mut ImportContext,
-) -> Result<Vec<Vec<PrimRef>>, ImportError> {
-    // Primitives with no material index share one default `StandardMaterial`
-    // emitted after the real ones (index == document.materials().count()).
-    let mut default_material_used = false;
-
-    let mut mesh_counter: usize = 0;
-    let mut mesh_prims: Vec<Vec<PrimRef>> = Vec::new();
-    for mesh in source.document.meshes() {
-        let mut prims = Vec::new();
-        for gltf_primitive in mesh.primitives() {
-            let m = load_primitive(source.path, mesh.name(), source.buffers, &gltf_primitive)?;
-            ctx.emit(&format!("mesh/{mesh_counter}"), &m)?;
-
-            let material_sub_asset = match gltf_primitive.material().index() {
-                Some(material_index) => material_index,
-                None => {
-                    default_material_used = true;
-                    default_material_index
-                }
-            };
-            prims.push(PrimRef {
-                mesh_sub_asset: mesh_counter,
-                material_sub_asset,
-            });
-            mesh_counter += 1;
-        }
-        mesh_prims.push(prims);
-    }
-
-    if default_material_used {
-        ctx.emit(
-            &format!("material/{default_material_index}"),
-            &StandardMaterial::default(),
-        )?;
-    }
-    Ok(mesh_prims)
-}
-
 impl NodeHierarchy {
     fn of(document: &gltf::Document) -> Self {
         // Name path per node, from every scene root. Bone ids are hashed from
@@ -394,78 +614,6 @@ impl NodeHierarchy {
     }
 }
 
-fn emit_skeletons(
-    source: &GltfSource,
-    hierarchy: &NodeHierarchy,
-    ctx: &mut ImportContext,
-) -> Result<EmittedSkins, ImportError> {
-    // Skins -> `skeleton/N` sub-assets. A skin with no inverse bind
-    // matrices is unusable, so it is skipped and its node gets no
-    // `SkeletonComponent`. `SkinInfo` is looked up by `skeleton_index`, not
-    // vector position, so a skipped skin cannot misalign the rest.
-    let mut skins: Vec<SkinInfo> = Vec::new();
-    let mut roots: BTreeSet<Uuid> = BTreeSet::new();
-    for (skin_index, skin) in source.document.skins().enumerate() {
-        let Some(skeleton) = skeleton_of(source, hierarchy, skin_index, &skin)? else {
-            continue;
-        };
-        ctx.emit(&format!("skeleton/{skin_index}"), &skeleton)?;
-        roots.extend(
-            skeleton
-                .parents
-                .iter()
-                .zip(skeleton.bone_ids.iter())
-                .filter(|(parent, _)| parent.is_none())
-                .map(|(_, id)| *id),
-        );
-
-        skins.push(SkinInfo {
-            skeleton_index: skin_index,
-            bones: skin
-                .joints()
-                .map(|joint| SceneEntityRef::Index(joint.index()))
-                .collect(),
-        });
-    }
-    Ok(EmittedSkins { skins, roots })
-}
-
-fn skeleton_of(
-    source: &GltfSource,
-    hierarchy: &NodeHierarchy,
-    skin_index: usize,
-    skin: &gltf::Skin<'_>,
-) -> Result<Option<Skeleton>, ImportError> {
-    let buffers = source.buffers;
-    let Some(inverse_bind_matrices) = skin
-        .reader(|buffer| Some(&buffers[buffer.index()]))
-        .read_inverse_bind_matrices()
-        .map(|iter| {
-            iter.map(|pose| Mat4::from_cols_array_2d(&pose))
-                .collect::<Vec<_>>()
-        })
-    else {
-        return Ok(None);
-    };
-
-    let Some(bone_ids) = joint_bone_ids(skin, &hierarchy.paths) else {
-        return Ok(None);
-    };
-
-    let JointLayout {
-        parents,
-        names,
-        rest_pose,
-    } = joint_layout(source, &hierarchy.parents, skin_index, skin)?;
-
-    let skeleton = Skeleton::new(inverse_bind_matrices, parents, names, rest_pose, bone_ids)
-        .map_err(|err| ImportError::MalformedSource {
-            source_path: source.path.to_path_buf(),
-            message: format!("skin {skin_index}: {err}"),
-        })?;
-    Ok(Some(skeleton))
-}
-
 fn joint_bone_ids(
     skin: &gltf::Skin<'_>,
     node_paths: &HashMap<usize, NodePathInfo>,
@@ -485,151 +633,6 @@ fn joint_bone_ids(
         }
     }
     Some(bone_ids)
-}
-
-fn joint_layout(
-    source: &GltfSource,
-    node_parents: &HashMap<usize, usize>,
-    skin_index: usize,
-    skin: &gltf::Skin<'_>,
-) -> Result<JointLayout, ImportError> {
-    let source_path = source.path;
-    let bone_count = skin.joints().count();
-    let mut joint_positions: HashMap<usize, usize> = HashMap::new();
-    for (position, joint) in skin.joints().enumerate() {
-        joint_positions.entry(joint.index()).or_insert(position);
-    }
-    let mut parents: Vec<Option<u16>> = Vec::with_capacity(bone_count);
-    let mut names: Vec<Name> = Vec::with_capacity(bone_count);
-    let mut rest_pose: Vec<JointPose> = Vec::with_capacity(bone_count);
-    for (position, joint) in skin.joints().enumerate() {
-        let parent_position = node_parents
-            .get(&joint.index())
-            .and_then(|parent| joint_positions.get(parent).map(|at| (*parent, *at)));
-        if let Some((parent_node, parent_position)) = parent_position
-            && parent_position >= position
-        {
-            return Err(ImportError::MalformedSource {
-                source_path: source_path.to_path_buf(),
-                message: format!(
-                    "skin {skin_index}: joint {} is listed before its parent joint {parent_node}; joints must be ordered parents first",
-                    joint.index()
-                ),
-            });
-        }
-        let parent = parent_position
-            .map(|(_, at)| {
-                u16::try_from(at).map_err(|_| ImportError::MalformedSource {
-                    source_path: source_path.to_path_buf(),
-                    message: format!(
-                        "skin {skin_index}: joint {} has a parent at position {at}, past the {} bones a skeleton can address",
-                        joint.index(),
-                        u16::MAX as usize + 1
-                    ),
-                })
-            })
-            .transpose()?;
-        parents.push(parent);
-        names.push(
-            joint
-                .name()
-                .map(Name::new)
-                .unwrap_or_else(|| Name::new(&format!("joint_{}", joint.index()))),
-        );
-        let (translation, rotation, scale) = joint.transform().decomposed();
-        rest_pose.push(JointPose {
-            translation: Vec3::from_array(translation),
-            rotation: Quat::from_array(rotation),
-            scale: Vec3::from_array(scale),
-        });
-    }
-    Ok(JointLayout {
-        parents,
-        names,
-        rest_pose,
-    })
-}
-
-fn check_clip_settings(
-    source: &GltfSource,
-    settings: &GltfSettings,
-    animation_names: &[String],
-) -> Result<(), ImportError> {
-    if let Some(name) = settings
-        .events
-        .keys()
-        .find(|name| !animation_names.contains(name))
-    {
-        return Err(source.malformed(format!(
-            "events are set for clip `{name}`, which this file does not emit; its clips are {animation_names:?}"
-        )));
-    }
-    if let Some(name) = settings
-        .additive
-        .keys()
-        .find(|name| !animation_names.contains(name))
-    {
-        return Err(source.malformed(format!(
-            "additive is set for clip `{name}`, which this file does not emit; its clips are {animation_names:?}"
-        )));
-    }
-    Ok(())
-}
-
-fn emit_animations(
-    source: &GltfSource,
-    settings: &GltfSettings,
-    node_paths: &HashMap<usize, NodePathInfo>,
-    roots: BTreeSet<Uuid>,
-    ctx: &mut ImportContext,
-) -> Result<(), ImportError> {
-    // Animations -> `animation/{name}` sub-assets. Channel targets are keyed by
-    // the same path hash as the skeleton bones, so clips and skeletons
-    // agree on identity. Clip ids are not recorded in `referenced_assets`:
-    // nothing in the imported scene points at a clip yet (a later task wires
-    // that), and the import's reference-integrity pass only checks that
-    // recorded references resolve, not that every sub-asset is referenced.
-    let document = source.document;
-    let requested_clip_names: Vec<Option<&str>> = document.animations().map(|a| a.name()).collect();
-    let animation_names = clip_names(&requested_clip_names);
-    check_clip_settings(source, settings, &animation_names)?;
-    let roots: Vec<Uuid> = roots.into_iter().collect();
-    for (animation_index, (animation, animation_name)) in
-        document.animations().zip(&animation_names).enumerate()
-    {
-        let mut animation_clip = AnimationClip::default();
-
-        for channel in animation.channels() {
-            add_channel(&mut animation_clip, &channel, source.buffers, node_paths);
-        }
-
-        if let Some(events) = settings.events.get(animation_name) {
-            animation_clip
-                .add_animation_events(events)
-                .map_err(|message| {
-                    source.malformed(format!("clip `{animation_name}`: {message}"))
-                })?;
-        }
-
-        if let Some(additive) = settings.additive.get(animation_name) {
-            let additive = additive
-                .additive(animation_clip.duration(), roots.clone())
-                .map_err(|message| {
-                    source.malformed(format!("clip `{animation_name}`: {message}"))
-                })?;
-            animation_clip.set_additive(additive);
-        }
-
-        let index_name = animation_index.to_string();
-        if !animation_names.contains(&index_name) {
-            ctx.renamed_from(
-                &format!("animation/{animation_name}"),
-                &format!("animation/{index_name}"),
-            );
-        }
-        ctx.emit(&format!("animation/{animation_name}"), &animation_clip)?;
-    }
-    Ok(())
 }
 
 fn add_channel(
