@@ -3,7 +3,9 @@ use crate::{PropertyVisitor, PropertyVisitorMut, Reflect, ReflectMut, ReflectRef
 /// One step of a [`PropertyPath`]: a field by name, tuple fields being `"0"`, `"1"`, …, or a list element by index.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum PathSegment {
+    /// A field by name.
     Field(&'static str),
+    /// A list element by index.
     Index(usize),
 }
 
@@ -34,14 +36,21 @@ impl std::fmt::Display for PathSegment {
     }
 }
 
+/// A path from a reflected root to one of its fields or list elements, such as
+/// `transform.translation.x`.
+///
+/// The empty path addresses the root itself. It displays with its segments joined by `.`.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct PropertyPath(Vec<PathSegment>);
 
 impl PropertyPath {
+    /// Creates a path from its segments, which may be field names (`&'static str`) or list indices
+    /// (`usize`).
     pub fn new(segments: impl IntoIterator<Item = impl Into<PathSegment>>) -> Self {
         Self(segments.into_iter().map(Into::into).collect())
     }
 
+    /// Returns the segments, root first.
     pub fn segments(&self) -> &[PathSegment] {
         &self.0
     }
@@ -58,10 +67,12 @@ impl PropertyPath {
             .unwrap_or("")
     }
 
+    /// Returns the number of segments.
     pub fn depth(&self) -> usize {
         self.0.len()
     }
 
+    /// Returns the segment at `index`, root first, or `None` when the path is shorter.
     pub fn get_depth(&self, index: usize) -> Option<PathSegment> {
         self.0.get(index).copied()
     }
@@ -84,6 +95,7 @@ impl std::fmt::Display for PropertyPath {
 /// An empty path always addresses the root, so only a non-empty path can fail.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PathError {
+    /// No field or element is at the path.
     NotFound,
 }
 

@@ -1,3 +1,6 @@
+//! The `Reflect` derive macro; use it through `concerto_reflect::Reflect`, or
+//! `concerto::reflect::Reflect` from a crate that depends on `concerto`.
+
 use proc_macro::TokenStream;
 use proc_macro_crate::{FoundCrate, crate_name};
 use quote::{quote, quote_spanned};
