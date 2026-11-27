@@ -50,6 +50,7 @@ pub trait Plugin: Send + Sync + 'static {
     /// Called after all plugins are ready; perform final, order-sensitive setup here.
     fn finish(&self, _app: &mut App) {}
 
+    /// Returns the plugin's name for logs and profiling, by default its Rust type path.
     fn name(&self) -> &'static str {
         std::any::type_name::<Self>()
     }

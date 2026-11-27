@@ -41,8 +41,10 @@ pub struct Marked<M>(PhantomData<M>);
 
 /// Marks a system or a listener to run in an edit `App` as well as in a game `App`.
 pub trait AtEditTime<Marker> {
+    /// The marked system config or listener.
     type Output;
 
+    /// Marks the system or listener to run in an edit `App` too.
     fn at_edit_time(self) -> Self::Output;
 }
 
@@ -67,8 +69,10 @@ impl<S: Signal, M, T: IntoListener<S, M>> AtEditTime<ListenerMarker<S, M>> for T
 
 /// Marks a system or a listener to run in a preview `App` as well as in a game `App`.
 pub trait AtPreviewTime<Marker> {
+    /// The marked system config or listener.
     type Output;
 
+    /// Marks the system or listener to run in a preview `App` too.
     fn at_preview_time(self) -> Self::Output;
 }
 
@@ -93,6 +97,7 @@ impl<S: Signal, M, T: IntoListener<S, M>> AtPreviewTime<ListenerMarker<S, M>> fo
 
 /// A listener [`App::add_listener`](crate::App::add_listener) accepts: a plain one, an [`EditTimeListener`] or a [`PreviewTimeListener`].
 pub trait AppListener<S: Signal, M> {
+    /// Adds the listener to `world` if an `App` in `mode` keeps it.
     fn add_to(self, world: &mut World, mode: AppMode);
 }
 

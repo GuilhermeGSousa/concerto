@@ -11,6 +11,8 @@ use derive_more::{Deref, DerefMut};
 
 use crate::schedule_groups::Extract;
 
+/// The function that copies data from the main world, the first argument, into the render world,
+/// the second, between their frames.
 pub type ExtractFn = Box<dyn FnMut(&mut World, &mut World) + Send + Sync>;
 
 #[derive(Deref, Default, Resource)]
