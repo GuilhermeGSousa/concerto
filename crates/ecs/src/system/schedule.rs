@@ -157,7 +157,7 @@ impl Schedule {
         schedule_graph.add_implicit_edges(registered);
         let order = schedule_graph.reduce_transitively();
 
-        let compiled_data = build_compiled_data(self.systems, &graph, &nodes, &order);
+        let compiled_data = CompiledScheduleData::build(self.systems, &graph, &nodes, &order);
 
         CompiledSchedule {
             executor: Box::new(T::init(&compiled_data)),
@@ -471,56 +471,58 @@ impl ScheduleGraph<'_> {
     }
 }
 
-fn build_compiled_data(
-    systems: Vec<BoxedSystem>,
-    graph: &SystemDependencyGraph,
-    nodes: &[SystemNodeIndex],
-    order: &[usize],
-) -> CompiledScheduleData {
-    let mut position = vec![0; order.len()];
-    for (new, &old) in order.iter().enumerate() {
-        position[old] = new;
-    }
-    let node = |old: usize| graph.node_weight(*nodes[old]).unwrap();
+impl CompiledScheduleData {
+    fn build(
+        systems: Vec<BoxedSystem>,
+        graph: &SystemDependencyGraph,
+        nodes: &[SystemNodeIndex],
+        order: &[usize],
+    ) -> Self {
+        let mut position = vec![0; order.len()];
+        for (new, &old) in order.iter().enumerate() {
+            position[old] = new;
+        }
+        let node = |old: usize| graph.node_weight(*nodes[old]).unwrap();
 
-    let mut slots: Vec<Option<BoxedSystem>> = systems.into_iter().map(Some).collect();
-    let systems = order
-        .iter()
-        .map(|&old| slots[old].take().unwrap())
-        .collect();
+        let mut slots: Vec<Option<BoxedSystem>> = systems.into_iter().map(Some).collect();
+        let systems = order
+            .iter()
+            .map(|&old| slots[old].take().unwrap())
+            .collect();
 
-    let dependency_count = order
-        .iter()
-        .map(|&old| {
-            graph
-                .neighbors_directed(*nodes[old], Direction::Incoming)
-                .count()
-        })
-        .collect();
+        let dependency_count = order
+            .iter()
+            .map(|&old| {
+                graph
+                    .neighbors_directed(*nodes[old], Direction::Incoming)
+                    .count()
+            })
+            .collect();
 
-    let dependants = order
-        .iter()
-        .map(|&old| {
-            graph
-                .neighbors_directed(*nodes[old], Direction::Outgoing)
-                .map(|next| position[*graph.node_weight(next).unwrap().index()])
-                .collect()
-        })
-        .collect();
+        let dependants = order
+            .iter()
+            .map(|&old| {
+                graph
+                    .neighbors_directed(*nodes[old], Direction::Outgoing)
+                    .map(|next| position[*graph.node_weight(next).unwrap().index()])
+                    .collect()
+            })
+            .collect();
 
-    let system_access = order
-        .iter()
-        .map(|&old| node(old).access().clone())
-        .collect();
+        let system_access = order
+            .iter()
+            .map(|&old| node(old).access().clone())
+            .collect();
 
-    let system_meta = order.iter().map(|&old| node(old).meta().clone()).collect();
+        let system_meta = order.iter().map(|&old| node(old).meta().clone()).collect();
 
-    CompiledScheduleData {
-        systems,
-        dependency_count,
-        dependants,
-        system_access,
-        system_meta,
+        Self {
+            systems,
+            dependency_count,
+            dependants,
+            system_access,
+            system_meta,
+        }
     }
 }
 

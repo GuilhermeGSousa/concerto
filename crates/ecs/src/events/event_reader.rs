@@ -45,7 +45,7 @@ impl<'w, 's, T: Event> EventReader<'w, 's, T> {
 
     /// Number of events this reader has not read yet.
     pub fn len(&self) -> usize {
-        self.channel.event_count - self.cursor.last_event_count.max(oldest_id(&self.channel))
+        self.channel.event_count - self.cursor.last_event_count.max(self.channel.oldest_id())
     }
 
     /// Returns whether this reader has read every buffered event.
@@ -57,10 +57,6 @@ impl<'w, 's, T: Event> EventReader<'w, 's, T> {
     pub fn clear(&mut self) {
         self.cursor.last_event_count = self.channel.event_count;
     }
-}
-
-fn oldest_id<T: Event>(channel: &EventChannel<T>) -> usize {
-    channel.events_a.start_event_count
 }
 
 impl<T> SystemInput for EventReader<'_, '_, T>

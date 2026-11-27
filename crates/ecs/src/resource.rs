@@ -114,7 +114,7 @@ impl<'world, T: Resource> Res<'world, T> {
         let world = unsafe { world.world() };
         let data = world
             .get_resource_data::<T>()
-            .ok_or_else(|| missing::<T>())?;
+            .ok_or_else(|| ValidationError::missing_resource::<T>())?;
         Ok(Self {
             value: data.get(),
             added_tick: &data.added_tick,
@@ -122,10 +122,6 @@ impl<'world, T: Resource> Res<'world, T> {
             ticks,
         })
     }
-}
-
-fn missing<T: Resource>() -> ValidationError {
-    ValidationError::missing::<T>("the resource does not exist")
 }
 
 impl<T: Resource> Res<'_, T> {
@@ -242,7 +238,7 @@ impl<'world, T: Resource> ResMut<'world, T> {
         let world = unsafe { world.world_mut() };
         let (value, added_tick, changed_tick) = world
             .get_resource_data_mut::<T>()
-            .ok_or_else(|| missing::<T>())?
+            .ok_or_else(|| ValidationError::missing_resource::<T>())?
             .parts_mut();
 
         Ok(Self {

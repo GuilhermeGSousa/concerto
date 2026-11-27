@@ -61,6 +61,10 @@ impl ValidationError {
         Self::new::<T>(ValidationKind::Missing, message)
     }
 
+    pub(crate) fn missing_resource<T: ?Sized>() -> Self {
+        Self::missing::<T>("the resource does not exist")
+    }
+
     fn new<T: ?Sized>(kind: ValidationKind, message: impl Into<Cow<'static, str>>) -> Self {
         Self {
             input: std::any::type_name::<T>(),

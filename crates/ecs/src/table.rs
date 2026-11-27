@@ -6,7 +6,7 @@ use std::{
 use any_vec::{AnyVec, any_value::AnyValueWrapper};
 
 use crate::{
-    component::{CheckChangeTicks, Component, ComponentId, SystemTicks, Tick},
+    component::{CheckChangeTicks, Component, ComponentId, RequiredComponent, SystemTicks, Tick},
     entity::Entity,
     utilities::TypeIdMap,
 };
@@ -148,6 +148,14 @@ pub struct Table {
 }
 
 impl Table {
+    pub(crate) fn add_required_columns(&mut self, required: &[RequiredComponent]) {
+        for entry in required {
+            if !self.has_column(entry.id()) {
+                entry.add_column(self);
+            }
+        }
+    }
+
     /// Creates a table with no columns and no rows.
     pub fn new() -> Self {
         Self {
