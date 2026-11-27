@@ -358,6 +358,11 @@ impl RagdollBody {
         &self.bones
     }
 
+    /// The world pose of every part after the last physics step, in part order.
+    pub fn simulated_pose(&self) -> &[BodyPose] {
+        &self.current
+    }
+
     /// The world pose of every part between the last two fixed steps: `alpha` 0 is the step before last, 1 the last.
     pub fn interpolated_pose(&self, alpha: f32) -> Vec<BodyPose> {
         self.previous

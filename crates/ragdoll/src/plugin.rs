@@ -31,8 +31,8 @@ use crate::{
     },
     fall::{Fall, FallReaction, fall_bodies, fall_when_falling},
     hit::{HitReaction, flinch_when_hit, update_flinches},
-    messages::{BodyDead, Death, Hit, Recovered, apply_impulses, route_hits},
-    node::{DyingNode, FlinchNode, HoldNode, LimpNode},
+    messages::{BodyDead, Death, Hit, Recovered, Steadied, Toppled, apply_impulses, route_hits},
+    node::{BalanceNode, DyingNode, FlinchNode, HoldNode, LimpNode},
     sensing::sense_bodies,
     shot::{ShotReaction, end_shots, note_shot_balance_ended, react_when_shot, shot_bodies},
     stagger::{Stagger, end_staggers, note_balance_ended, stagger_bodies},
@@ -43,8 +43,9 @@ use crate::{
 /// The body follows its animation, is powered towards it or falls limp, and
 /// is drawn on its skeleton by weight; or, in the graph mode, does and is
 /// drawn as its animation graph's physics attributes say. It registers the
-/// [`HoldNode`], [`LimpNode`], [`FlinchNode`] and [`DyingNode`] graph nodes and
-/// the [`Hit`], [`Recovered`], [`Death`] and [`BodyDead`] messages, and sends a
+/// [`HoldNode`], [`LimpNode`], [`FlinchNode`], [`DyingNode`] and [`BalanceNode`]
+/// graph nodes and the [`Hit`], [`Recovered`], [`Death`], [`BodyDead`],
+/// [`Steadied`] and [`Toppled`] messages, and sends a
 /// graph-mode character's hits and death to its graph. Register the plugin
 /// after `PhysicsPlugin` and `AnimationPlugin`.
 ///
@@ -61,11 +62,14 @@ impl Plugin for RagdollPlugin {
         app.register_animation_node::<HoldNode>()
             .register_animation_node::<LimpNode>()
             .register_animation_node::<FlinchNode>()
-            .register_animation_node::<DyingNode>();
+            .register_animation_node::<DyingNode>()
+            .register_animation_node::<BalanceNode>();
         app.register_animation_message::<Hit>()
             .register_animation_message::<Recovered>()
             .register_animation_message::<Death>()
-            .register_animation_message::<BodyDead>();
+            .register_animation_message::<BodyDead>()
+            .register_animation_message::<Steadied>()
+            .register_animation_message::<Toppled>();
         app.add_listener(route_hits.at_preview_time()).add_system(
             LateFixedUpdate,
             apply_impulses

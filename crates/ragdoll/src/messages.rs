@@ -37,6 +37,28 @@ pub struct Death {
 
 impl AnimationMessage for Death {}
 
+/// Raised by a [`BalanceNode`](crate::node::BalanceNode) once the body has stood still on its feet, and triggered on the character.
+#[derive(Clone, Debug, Default, PartialEq, Reflect)]
+#[reflect(Default)]
+pub struct Steadied;
+
+impl Signal for Steadied {}
+
+impl EntitySignal for Steadied {}
+
+impl AnimationMessage for Steadied {}
+
+/// Raised by a [`BalanceNode`](crate::node::BalanceNode) once it has given up keeping the body on its feet, and triggered on the character.
+#[derive(Clone, Debug, Default, PartialEq, Reflect)]
+#[reflect(Default)]
+pub struct Toppled;
+
+impl Signal for Toppled {}
+
+impl EntitySignal for Toppled {}
+
+impl AnimationMessage for Toppled {}
+
 /// Raised by a [`FlinchNode`](crate::node::FlinchNode) once the body has recovered from its hit, and triggered on the character.
 #[derive(Clone, Debug, Default, PartialEq, Reflect)]
 #[reflect(Default)]
