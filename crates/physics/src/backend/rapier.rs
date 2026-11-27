@@ -85,12 +85,14 @@ fn to_rapier_pose(transform: &Transform) -> rapier3d::math::Pose {
     )
 }
 
-fn to_interaction_groups(layers: CollisionLayers) -> InteractionGroups {
-    InteractionGroups::new(
-        Group::from_bits_truncate(layers.memberships.mask()),
-        Group::from_bits_truncate(layers.filter.mask()),
-        InteractionTestMode::And,
-    )
+impl CollisionLayers {
+    fn to_interaction_groups(self) -> InteractionGroups {
+        InteractionGroups::new(
+            Group::from_bits_truncate(self.memberships.mask()),
+            Group::from_bits_truncate(self.filter.mask()),
+            InteractionTestMode::And,
+        )
+    }
 }
 
 fn in_layers(collider: &rapier3d::geometry::Collider, layers: Layers) -> bool {
@@ -103,22 +105,24 @@ fn collides(a: &rapier3d::geometry::Collider, b: &rapier3d::geometry::Collider) 
     a.memberships.bits() & b.filter.bits() != 0 && b.memberships.bits() & a.filter.bits() != 0
 }
 
-/// Locks every degree of freedom `dofs` does not allow.
-fn to_locked_axes(dofs: AllowedDofs) -> LockedAxes {
-    let mut locked = LockedAxes::empty();
-    for (axis, lock) in [
-        (AllowedDofs::TRANSLATION_X, LockedAxes::TRANSLATION_LOCKED_X),
-        (AllowedDofs::TRANSLATION_Y, LockedAxes::TRANSLATION_LOCKED_Y),
-        (AllowedDofs::TRANSLATION_Z, LockedAxes::TRANSLATION_LOCKED_Z),
-        (AllowedDofs::ROTATION_X, LockedAxes::ROTATION_LOCKED_X),
-        (AllowedDofs::ROTATION_Y, LockedAxes::ROTATION_LOCKED_Y),
-        (AllowedDofs::ROTATION_Z, LockedAxes::ROTATION_LOCKED_Z),
-    ] {
-        if !dofs.contains(axis) {
-            locked |= lock;
+impl AllowedDofs {
+    /// Locks every degree of freedom this set does not allow.
+    fn to_locked_axes(self) -> LockedAxes {
+        let mut locked = LockedAxes::empty();
+        for (axis, lock) in [
+            (AllowedDofs::TRANSLATION_X, LockedAxes::TRANSLATION_LOCKED_X),
+            (AllowedDofs::TRANSLATION_Y, LockedAxes::TRANSLATION_LOCKED_Y),
+            (AllowedDofs::TRANSLATION_Z, LockedAxes::TRANSLATION_LOCKED_Z),
+            (AllowedDofs::ROTATION_X, LockedAxes::ROTATION_LOCKED_X),
+            (AllowedDofs::ROTATION_Y, LockedAxes::ROTATION_LOCKED_Y),
+            (AllowedDofs::ROTATION_Z, LockedAxes::ROTATION_LOCKED_Z),
+        ] {
+            if !self.contains(axis) {
+                locked |= lock;
+            }
         }
+        locked
     }
-    locked
 }
 
 #[derive(Default)]
@@ -369,7 +373,7 @@ impl PhysicsBackend for RapierBackend {
         .pose(to_rapier_pose(transform))
         .gravity_scale(gravity_scale);
         if let Some(rigid_body) = rigid_body {
-            body_builder = body_builder.locked_axes(to_locked_axes(rigid_body.allowed_dofs));
+            body_builder = body_builder.locked_axes(rigid_body.allowed_dofs.to_locked_axes());
         }
         let handle = self.bodies.insert(body_builder);
 
@@ -378,7 +382,7 @@ impl PhysicsBackend for RapierBackend {
         let mut collider_builder =
             ColliderBuilder::new(scaled_shape(&collider.shape().0, transform.scale))
                 .density(density)
-                .collision_groups(to_interaction_groups(layers));
+                .collision_groups(layers.to_interaction_groups());
         if let Some(offset) = offset {
             // The offset is the collider's pose relative to the body, so it
             // shifts the geometry without showing up in `body_transform`.
@@ -560,7 +564,7 @@ impl PhysicsBackend for RapierBackend {
         rigid_body.wake_up(true);
         for handle in rigid_body.colliders().to_vec() {
             if let Some(collider) = self.colliders.get_mut(handle) {
-                collider.set_collision_groups(to_interaction_groups(layers));
+                collider.set_collision_groups(layers.to_interaction_groups());
             }
         }
     }
