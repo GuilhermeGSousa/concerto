@@ -14,7 +14,7 @@ use crate::{
     character::{CharacterRagdoll, RagdollBody, RagdollMode},
     dying::Settled,
     generate::FLINCH,
-    shot::{ShotReaction, takes_shot},
+    shot::ShotReaction,
 };
 
 /// A character's body was hit on this part of its ragdoll, at this world point, with this impulse in N·s.
@@ -175,7 +175,7 @@ pub fn flinch_when_hit(
         return;
     };
     if hit.part >= body.resolved().part_count()
-        || takes_shot(&hit, &character, shot.is_some(), physical)
+        || hit.takes_shot(&character, shot.is_some(), physical)
     {
         return;
     }

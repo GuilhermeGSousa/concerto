@@ -19,7 +19,7 @@ use crate::{
     },
     character::{CharacterRagdoll, RagdollBody, RagdollMode},
     generate::BRACED,
-    ik::{Chain, bent_spine, reach_hinged},
+    ik::{Chain, bent_spine},
     resolve::Limbs,
     sensing::BodySense,
 };
@@ -375,12 +375,12 @@ pub fn fall_bodies(
             let goal = root
                 + (landing + horizontal(outward) * fall.spread - root)
                     .clamp_length_max(length * fall.reach.clamp(0.1, 1.0));
-            let aimed = reach_hinged(
-                &Chain {
-                    upper: arm.upper,
-                    lower: arm.lower,
-                    end: arm.hand,
-                },
+            let aimed = Chain {
+                upper: arm.upper,
+                lower: arm.lower,
+                end: arm.hand,
+            }
+            .reach_hinged(
                 settings,
                 &rest,
                 &carried,
