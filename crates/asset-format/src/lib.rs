@@ -144,6 +144,233 @@ impl ContentAssetHeader {
     }
 }
 
+impl ContentAssetHeader {
+    fn decode(bytes: &[u8]) -> anyhow::Result<Self> {
+        let mut rest = bytes;
+        let version: u32 = bincode::deserialize_from(&mut rest)
+            .context("failed to deserialize content asset header")?;
+        match version {
+            8 => {
+                let header: Self =
+                    bincode::deserialize(rest).context("failed to deserialize content asset header")?;
+                header.check_directory(None)?;
+                Ok(header)
+            }
+            7 => {
+                let header: HeaderV7 = bincode::deserialize(rest)
+                    .context("failed to deserialize version 7 content asset header")?;
+                let header = ContentAssetHeader {
+                    asset_id: header.asset_id,
+                    references: header.references,
+                    kind: header.kind,
+                    kind_version: header.kind_version,
+                    provenance: header.provenance,
+                    uncooked: None,
+                    derived: header.derived,
+                    embedded: header
+                        .embedded
+                        .into_iter()
+                        .map(|asset| EmbeddedAsset {
+                            asset_id: asset.asset_id,
+                            references: asset.references,
+                            kind: asset.kind,
+                            kind_version: asset.kind_version,
+                            provenance: asset.provenance,
+                            uncooked: None,
+                            derived: asset.derived,
+                            offset: asset.offset,
+                            len: asset.len,
+                        })
+                        .collect(),
+                };
+                header.check_directory(None)?;
+                Ok(header)
+            }
+            6 => {
+                let header: HeaderV6 = bincode::deserialize(rest)
+                    .context("failed to deserialize version 6 content asset header")?;
+                Ok(ContentAssetHeader {
+                    asset_id: header.asset_id,
+                    references: header.references,
+                    kind: header.kind,
+                    kind_version: header.kind_version,
+                    provenance: header.provenance,
+                    uncooked: None,
+                    derived: header.derived,
+                    embedded: Vec::new(),
+                })
+            }
+            5 => {
+                let header: HeaderV5 = bincode::deserialize(rest)
+                    .context("failed to deserialize version 5 content asset header")?;
+                Ok(ContentAssetHeader {
+                    asset_id: header.asset_id,
+                    references: header.references,
+                    kind: header.kind,
+                    kind_version: header.kind_version,
+                    provenance: header.provenance,
+                    uncooked: None,
+                    derived: None,
+                    embedded: Vec::new(),
+                })
+            }
+            4 => {
+                let header: HeaderV4 = bincode::deserialize(rest)
+                    .context("failed to deserialize version 4 content asset header")?;
+                Ok(ContentAssetHeader {
+                    asset_id: header.asset_id,
+                    references: header.references,
+                    kind: header.kind,
+                    kind_version: 1,
+                    provenance: header.provenance,
+                    uncooked: None,
+                    derived: None,
+                    embedded: Vec::new(),
+                })
+            }
+            other => bail!(
+                "unsupported content asset format version {other} (this build reads versions 4 to 8)"
+            ),
+        }
+    }
+
+    fn check_directory(&self, body_len: Option<u64>) -> anyhow::Result<()> {
+        let mut ids = HashSet::from([self.asset_id]);
+        let mut names = HashSet::new();
+        let limit = match body_len {
+            Some(body_len) => Some(self.sections_start(body_len)?),
+            None => None,
+        };
+        let mut cursor = self.derived.map_or(0, |section| section.len);
+        for asset in &self.embedded {
+            let name = asset.name();
+            if !names.insert(name) {
+                bail!(
+                    "content asset directory is malformed: two embedded assets are named '{name}'"
+                );
+            }
+            if !ids.insert(asset.asset_id) {
+                bail!(
+                    "content asset directory is malformed: asset id {} appears twice, the second time on '{name}'",
+                    asset.asset_id.simple_hex()
+                );
+            }
+            if asset.offset < cursor {
+                bail!(
+                    "content asset directory is malformed: embedded asset '{name}' overlaps the asset before it"
+                );
+            }
+            let end = asset
+                .offset
+                .checked_add(asset.len)
+                .and_then(|end| end.checked_add(asset.derived.map_or(0, |section| section.len)))
+                .with_context(|| {
+                    format!(
+                        "content asset directory is malformed: the byte range of embedded asset '{name}' overflows"
+                    )
+                })?;
+            if let Some(limit) = limit.filter(|limit| end > *limit) {
+                bail!(
+                    "content asset truncated: embedded asset '{name}' runs to byte {end} of the {limit} that follow the header and come before the uncooked sections"
+                );
+            }
+            cursor = end;
+        }
+        let gap = limit
+            .filter(|_| !self.embedded.is_empty() && self.has_uncooked())
+            .map_or(0, |limit| limit - cursor);
+        if gap != 0 {
+            bail!(
+                "content asset directory is malformed: {gap} bytes lie between the last embedded asset and the uncooked sections"
+            );
+        }
+        Ok(())
+    }
+
+    fn sections_start(&self, body_len: u64) -> anyhow::Result<u64> {
+        let sections = self
+            .embedded
+            .iter()
+            .map(EmbeddedAsset::uncooked_len)
+            .try_fold(self.uncooked_len(), u64::checked_add);
+        sections
+            .and_then(|sections| body_len.checked_sub(sections))
+            .with_context(|| {
+                format!(
+                    "content asset truncated: its uncooked sections claim more than the {body_len} bytes that follow the header"
+                )
+            })
+    }
+
+    fn section_start(&self, embedded_as: Option<&str>, body_len: u64) -> anyhow::Result<u64> {
+        let start = self.sections_start(body_len)?;
+        let Some(name) = embedded_as else {
+            return Ok(start);
+        };
+        let index = self
+            .embedded
+            .iter()
+            .position(|asset| asset.name() == name)
+            .with_context(|| format!("content asset holds no embedded asset named '{name}'"))?;
+        let before: u64 = self.embedded[..index]
+            .iter()
+            .map(EmbeddedAsset::uncooked_len)
+            .sum();
+        Ok(start + self.uncooked_len() + before)
+    }
+
+    fn refuse_a_directory(&self) -> anyhow::Result<()> {
+        if !self.embedded.is_empty() {
+            bail!("a content asset header that lists embedded assets needs their payloads; write it with write_content_asset_with_embedded");
+        }
+        Ok(())
+    }
+
+    fn named_asset(&self, name: &str) -> anyhow::Result<&EmbeddedAsset> {
+        let Some(asset) = self.embedded.iter().find(|asset| asset.name() == name) else {
+            let held: Vec<&str> = self.embedded.iter().map(EmbeddedAsset::name).collect();
+            bail!(
+                "content asset holds no embedded asset named '{name}'; it holds [{}]",
+                held.join(", ")
+            );
+        };
+        Ok(asset)
+    }
+
+    fn without_sections(&self) -> ContentAssetHeader {
+        ContentAssetHeader {
+            uncooked: None,
+            embedded: self
+                .embedded
+                .iter()
+                .map(|asset| EmbeddedAsset {
+                    uncooked: None,
+                    ..asset.clone()
+                })
+                .collect(),
+            ..self.clone()
+        }
+    }
+
+    fn frame(&self, pieces: &[&[u8]]) -> anyhow::Result<Vec<u8>> {
+        let header_bytes = bincode::serialize(&(CONTENT_FORMAT_VERSION, self))
+            .context("failed to serialize content asset header")?;
+
+        let header_len =
+            u32::try_from(header_bytes.len()).context("content asset header exceeds 4 GiB")?;
+
+        let body_len: usize = pieces.iter().map(|piece| piece.len()).sum();
+        let mut out = Vec::with_capacity(8 + header_bytes.len() + body_len);
+        out.extend_from_slice(&CONTENT_ASSET_MAGIC);
+        out.extend_from_slice(&header_len.to_le_bytes());
+        out.extend_from_slice(&header_bytes);
+        for piece in pieces {
+            out.extend_from_slice(piece);
+        }
+        Ok(out)
+    }
+}
+
 /// An asset stored inside another asset's file: what its own header would hold, and where its payload is.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EmbeddedAsset {
@@ -328,182 +555,6 @@ struct HeaderV4 {
     provenance: Option<ImportProvenance>,
 }
 
-fn decode_header(bytes: &[u8]) -> anyhow::Result<ContentAssetHeader> {
-    let mut rest = bytes;
-    let version: u32 = bincode::deserialize_from(&mut rest)
-        .context("failed to deserialize content asset header")?;
-    match version {
-        8 => {
-            let header: ContentAssetHeader =
-                bincode::deserialize(rest).context("failed to deserialize content asset header")?;
-            check_directory(&header, None)?;
-            Ok(header)
-        }
-        7 => {
-            let header: HeaderV7 = bincode::deserialize(rest)
-                .context("failed to deserialize version 7 content asset header")?;
-            let header = ContentAssetHeader {
-                asset_id: header.asset_id,
-                references: header.references,
-                kind: header.kind,
-                kind_version: header.kind_version,
-                provenance: header.provenance,
-                uncooked: None,
-                derived: header.derived,
-                embedded: header
-                    .embedded
-                    .into_iter()
-                    .map(|asset| EmbeddedAsset {
-                        asset_id: asset.asset_id,
-                        references: asset.references,
-                        kind: asset.kind,
-                        kind_version: asset.kind_version,
-                        provenance: asset.provenance,
-                        uncooked: None,
-                        derived: asset.derived,
-                        offset: asset.offset,
-                        len: asset.len,
-                    })
-                    .collect(),
-            };
-            check_directory(&header, None)?;
-            Ok(header)
-        }
-        6 => {
-            let header: HeaderV6 = bincode::deserialize(rest)
-                .context("failed to deserialize version 6 content asset header")?;
-            Ok(ContentAssetHeader {
-                asset_id: header.asset_id,
-                references: header.references,
-                kind: header.kind,
-                kind_version: header.kind_version,
-                provenance: header.provenance,
-                uncooked: None,
-                derived: header.derived,
-                embedded: Vec::new(),
-            })
-        }
-        5 => {
-            let header: HeaderV5 = bincode::deserialize(rest)
-                .context("failed to deserialize version 5 content asset header")?;
-            Ok(ContentAssetHeader {
-                asset_id: header.asset_id,
-                references: header.references,
-                kind: header.kind,
-                kind_version: header.kind_version,
-                provenance: header.provenance,
-                uncooked: None,
-                derived: None,
-                embedded: Vec::new(),
-            })
-        }
-        4 => {
-            let header: HeaderV4 = bincode::deserialize(rest)
-                .context("failed to deserialize version 4 content asset header")?;
-            Ok(ContentAssetHeader {
-                asset_id: header.asset_id,
-                references: header.references,
-                kind: header.kind,
-                kind_version: 1,
-                provenance: header.provenance,
-                uncooked: None,
-                derived: None,
-                embedded: Vec::new(),
-            })
-        }
-        other => bail!(
-            "unsupported content asset format version {other} (this build reads versions 4 to 8)"
-        ),
-    }
-}
-
-fn check_directory(header: &ContentAssetHeader, body_len: Option<u64>) -> anyhow::Result<()> {
-    let mut ids = HashSet::from([header.asset_id]);
-    let mut names = HashSet::new();
-    let limit = match body_len {
-        Some(body_len) => Some(sections_start(header, body_len)?),
-        None => None,
-    };
-    let mut cursor = header.derived.map_or(0, |section| section.len);
-    for asset in &header.embedded {
-        let name = asset.name();
-        if !names.insert(name) {
-            bail!("content asset directory is malformed: two embedded assets are named '{name}'");
-        }
-        if !ids.insert(asset.asset_id) {
-            bail!(
-                "content asset directory is malformed: asset id {} appears twice, the second time on '{name}'",
-                asset.asset_id.simple_hex()
-            );
-        }
-        if asset.offset < cursor {
-            bail!(
-                "content asset directory is malformed: embedded asset '{name}' overlaps the asset before it"
-            );
-        }
-        let end = asset
-            .offset
-            .checked_add(asset.len)
-            .and_then(|end| end.checked_add(asset.derived.map_or(0, |section| section.len)))
-            .with_context(|| {
-                format!(
-                    "content asset directory is malformed: the byte range of embedded asset '{name}' overflows"
-                )
-            })?;
-        if let Some(limit) = limit.filter(|limit| end > *limit) {
-            bail!(
-                "content asset truncated: embedded asset '{name}' runs to byte {end} of the {limit} that follow the header and come before the uncooked sections"
-            );
-        }
-        cursor = end;
-    }
-    let gap = limit
-        .filter(|_| !header.embedded.is_empty() && header.has_uncooked())
-        .map_or(0, |limit| limit - cursor);
-    if gap != 0 {
-        bail!(
-            "content asset directory is malformed: {gap} bytes lie between the last embedded asset and the uncooked sections"
-        );
-    }
-    Ok(())
-}
-
-fn sections_start(header: &ContentAssetHeader, body_len: u64) -> anyhow::Result<u64> {
-    let sections = header
-        .embedded
-        .iter()
-        .map(EmbeddedAsset::uncooked_len)
-        .try_fold(header.uncooked_len(), u64::checked_add);
-    sections
-        .and_then(|sections| body_len.checked_sub(sections))
-        .with_context(|| {
-            format!(
-                "content asset truncated: its uncooked sections claim more than the {body_len} bytes that follow the header"
-            )
-        })
-}
-
-fn section_start(
-    header: &ContentAssetHeader,
-    embedded_as: Option<&str>,
-    body_len: u64,
-) -> anyhow::Result<u64> {
-    let start = sections_start(header, body_len)?;
-    let Some(name) = embedded_as else {
-        return Ok(start);
-    };
-    let index = header
-        .embedded
-        .iter()
-        .position(|asset| asset.name() == name)
-        .with_context(|| format!("content asset holds no embedded asset named '{name}'"))?;
-    let before: u64 = header.embedded[..index]
-        .iter()
-        .map(EmbeddedAsset::uncooked_len)
-        .sum();
-    Ok(start + header.uncooked_len() + before)
-}
-
 /// The offline source, and the sub-asset within it, that `import` produced a content asset from.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ImportProvenance {
@@ -527,8 +578,8 @@ pub fn write_content_asset(header: &ContentAssetHeader, payload: &[u8]) -> anyho
     if header.uncooked.is_some() {
         bail!("a content asset header with an uncooked section needs its bytes; write it with write_content_asset_with_uncooked");
     }
-    refuse_a_directory(header)?;
-    frame_content_asset(header, &[payload])
+    header.refuse_a_directory()?;
+    header.frame(&[payload])
 }
 
 /// Writes a loose file with `uncooked` as its section, encoded at `version`.
@@ -546,7 +597,7 @@ pub fn write_content_asset_with_uncooked(
     if header.derived.is_some() {
         bail!("a content asset written with an uncooked section cannot carry a derived section");
     }
-    refuse_a_directory(header)?;
+    header.refuse_a_directory()?;
     let header = ContentAssetHeader {
         uncooked: Some(UncookedSection {
             len: uncooked.len() as u64,
@@ -554,14 +605,7 @@ pub fn write_content_asset_with_uncooked(
         }),
         ..header.clone()
     };
-    frame_content_asset(&header, &[payload, uncooked])
-}
-
-fn refuse_a_directory(header: &ContentAssetHeader) -> anyhow::Result<()> {
-    if !header.embedded.is_empty() {
-        bail!("a content asset header that lists embedded assets needs their payloads; write it with write_content_asset_with_embedded");
-    }
-    Ok(())
+    header.frame(&[payload, uncooked])
 }
 
 /// Writes a host file with `embedded` stored inside it.
@@ -634,8 +678,8 @@ pub fn write_content_asset_with_embedded(
         embedded: directory,
         ..header.clone()
     };
-    check_directory(&header, None)?;
-    frame_content_asset(&header, &pieces)
+    header.check_directory(None)?;
+    header.frame(&pieces)
 }
 
 /// Writes a content asset whose payload is followed by the blob of `section`, with no uncooked section.
@@ -649,7 +693,7 @@ pub fn write_cooked_content_asset(
     payload: &[u8],
     section: CookedSection<'_>,
 ) -> anyhow::Result<Vec<u8>> {
-    refuse_a_directory(header)?;
+    header.refuse_a_directory()?;
     let header = ContentAssetHeader {
         uncooked: None,
         derived: Some(DerivedSection {
@@ -659,25 +703,7 @@ pub fn write_cooked_content_asset(
         }),
         ..header.clone()
     };
-    frame_content_asset(&header, &[payload, section.blob])
-}
-
-fn frame_content_asset(header: &ContentAssetHeader, pieces: &[&[u8]]) -> anyhow::Result<Vec<u8>> {
-    let header_bytes = bincode::serialize(&(CONTENT_FORMAT_VERSION, header))
-        .context("failed to serialize content asset header")?;
-
-    let header_len =
-        u32::try_from(header_bytes.len()).context("content asset header exceeds 4 GiB")?;
-
-    let body_len: usize = pieces.iter().map(|piece| piece.len()).sum();
-    let mut out = Vec::with_capacity(8 + header_bytes.len() + body_len);
-    out.extend_from_slice(&CONTENT_ASSET_MAGIC);
-    out.extend_from_slice(&header_len.to_le_bytes());
-    out.extend_from_slice(&header_bytes);
-    for piece in pieces {
-        out.extend_from_slice(piece);
-    }
-    Ok(out)
+    header.frame(&[payload, section.blob])
 }
 
 /// Reads the header and payload of a content asset file.
@@ -723,7 +749,7 @@ struct HostExtent {
 impl HostExtent {
     fn of(header: &ContentAssetHeader, body_len: u64) -> anyhow::Result<Self> {
         let blob_len = header.derived.map_or(0, |section| section.len);
-        let section_start = sections_start(header, body_len)?;
+        let section_start = header.sections_start(body_len)?;
         let host_end = header
             .embedded
             .first()
@@ -821,9 +847,9 @@ impl<'a> ContentFile<'a> {
             );
         }
 
-        let header = decode_header(&bytes[8..header_end])?;
+        let header = ContentAssetHeader::decode(&bytes[8..header_end])?;
         let body = &bytes[header_end..];
-        check_directory(&header, Some(body.len() as u64))?;
+        header.check_directory(Some(body.len() as u64))?;
         Ok(Self { header, body })
     }
 
@@ -865,7 +891,7 @@ impl<'a> ContentFile<'a> {
         &'file self,
         asset: &'file EmbeddedAsset,
     ) -> anyhow::Result<AssetRecord<'file>> {
-        let asset = named_asset(&self.header, asset.name())?;
+        let asset = self.header.named_asset(asset.name())?;
         let outside = || {
             format!(
                 "embedded asset '{}' is not in this file's directory",
@@ -878,7 +904,8 @@ impl<'a> ContentFile<'a> {
         let bytes = self.body.get(start..blob_end).with_context(outside)?;
         let (payload, blob) = bytes.split_at(asset.len as usize);
         let section_start =
-            section_start(&self.header, Some(asset.name()), self.body.len() as u64)? as usize;
+            self.header
+                .section_start(Some(asset.name()), self.body.len() as u64)? as usize;
         let section = self
             .body
             .get(section_start..section_start + asset.uncooked_len() as usize)
@@ -909,55 +936,20 @@ pub fn asset_record(file: &[u8], embedded_as: Option<&str>) -> anyhow::Result<Ve
             embedded: Vec::new(),
             ..parts.header
         };
-        return frame_content_asset(
-            &header,
-            &[
-                parts.payload,
-                parts.derived_blob.unwrap_or(&[]),
-                parts.uncooked.unwrap_or(&[]),
-            ],
-        );
+        return header.frame(&[
+            parts.payload,
+            parts.derived_blob.unwrap_or(&[]),
+            parts.uncooked.unwrap_or(&[]),
+        ]);
     };
     let file = ContentFile::parse(file)?;
-    let asset = named_asset(&file.header, name)?;
+    let asset = file.header.named_asset(name)?;
     let record = file.embedded(asset)?;
-    frame_content_asset(
-        &asset.record_header(),
-        &[
-            record.payload,
-            record.cooked.map_or(&[], |cooked| cooked.blob),
-            record.uncooked.map_or(&[], |section| section.bytes),
-        ],
-    )
-}
-
-fn named_asset<'header>(
-    header: &'header ContentAssetHeader,
-    name: &str,
-) -> anyhow::Result<&'header EmbeddedAsset> {
-    let Some(asset) = header.embedded.iter().find(|asset| asset.name() == name) else {
-        let held: Vec<&str> = header.embedded.iter().map(EmbeddedAsset::name).collect();
-        bail!(
-            "content asset holds no embedded asset named '{name}'; it holds [{}]",
-            held.join(", ")
-        );
-    };
-    Ok(asset)
-}
-
-fn without_sections(header: &ContentAssetHeader) -> ContentAssetHeader {
-    ContentAssetHeader {
-        uncooked: None,
-        embedded: header
-            .embedded
-            .iter()
-            .map(|asset| EmbeddedAsset {
-                uncooked: None,
-                ..asset.clone()
-            })
-            .collect(),
-        ..header.clone()
-    }
+    asset.record_header().frame(&[
+        record.payload,
+        record.cooked.map_or(&[], |cooked| cooked.blob),
+        record.uncooked.map_or(&[], |section| section.bytes),
+    ])
 }
 
 /// The file with every uncooked section removed.
@@ -974,7 +966,10 @@ pub fn without_uncooked(file: &[u8]) -> anyhow::Result<Vec<u8>> {
         return Ok(file.to_vec());
     }
     let kept = HostExtent::of(&parsed.header, parsed.body.len() as u64)?.section_start;
-    frame_content_asset(&without_sections(&parsed.header), &[&parsed.body[..kept]])
+    parsed
+        .header
+        .without_sections()
+        .frame(&[&parsed.body[..kept]])
 }
 
 struct OpenedContentAsset {
@@ -1034,10 +1029,11 @@ impl OpenedContentAsset {
     }
 
     fn header(&self, path: &Path) -> anyhow::Result<ContentAssetHeader> {
-        let header = decode_header(&self.header_bytes)
+        let header = ContentAssetHeader::decode(&self.header_bytes)
             .with_context(|| format!("failed to read the header of '{}'", path.display()))?;
         if !header.embedded.is_empty() {
-            check_directory(&header, Some(self.body_len))
+            header
+                .check_directory(Some(self.body_len))
                 .with_context(|| format!("failed to read the header of '{}'", path.display()))?;
         }
         Ok(header)
@@ -1066,13 +1062,13 @@ pub fn read_content_without_uncooked(path: &Path) -> std::io::Result<Vec<u8>> {
         return std::fs::read(path);
     };
     let body_len = opened.body_len;
-    let stripped = decode_header(&opened.header_bytes)
+    let stripped = ContentAssetHeader::decode(&opened.header_bytes)
         .ok()
         .filter(ContentAssetHeader::has_uncooked)
         .and_then(|header| {
-            check_directory(&header, Some(body_len)).ok()?;
+            header.check_directory(Some(body_len)).ok()?;
             let kept = HostExtent::of(&header, body_len).ok()?.section_start as u64;
-            let framed = frame_content_asset(&without_sections(&header), &[]).ok()?;
+            let framed = header.without_sections().frame(&[]).ok()?;
             Some(Stripped { framed, kept })
         });
     let Some(Stripped {
@@ -1109,7 +1105,8 @@ pub fn read_uncooked_section(
     let record = match embedded_as {
         None => header.record_header(None),
         Some(name) => Some(
-            named_asset(&header, name)
+            header
+                .named_asset(name)
                 .with_context(in_file)?
                 .record_header(),
         ),
@@ -1120,7 +1117,9 @@ pub fn read_uncooked_section(
     let Some(section) = record.uncooked else {
         return Ok(None);
     };
-    let start = section_start(&header, embedded_as, opened.body_len).with_context(in_file)?;
+    let start = header
+        .section_start(embedded_as, opened.body_len)
+        .with_context(in_file)?;
     let mut bytes = Vec::new();
     opened
         .read_body(start..start + section.len, &mut bytes)
