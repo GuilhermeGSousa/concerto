@@ -1,3 +1,7 @@
+//! The Concerto engine for character-driven, cinematic games: every engine crate re-exported under
+//! a short name, the [`DefaultPlugins`] that set them up, and [`run`], which opens a window and runs
+//! a game built from them.
+
 pub use concerto_animation as animation;
 pub use concerto_app as app;
 pub use concerto_audio as audio;
