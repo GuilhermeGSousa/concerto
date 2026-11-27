@@ -19,6 +19,7 @@ use concerto_ecs::entity::Entity;
 use concerto_ecs::resource::{ResMut, Resource};
 use concerto_ecs::signal::{
     On,
+    lifecycle::Add,
     listener::{IntoListener, Listener},
 };
 use concerto_foundation::assets::{
@@ -35,7 +36,7 @@ use concerto_ragdoll::testing::{
     SpawnedHumanoid, humanoid_skeleton, reference_humanoid, spawn_humanoid,
 };
 use concerto_ragdoll::{
-    BalanceNode, BalanceSettings, BalanceState, BodyDead, BodyDown, BodySettled, CharacterRagdoll,
+    BalanceNode, BalanceSettings, BalanceState, BodyDown, BodySettled, CharacterRagdoll, Dead,
     LimpNode, MotorCommand, RagdollBody, RagdollPlugin, StaggerNode, StaggerState,
     messages::{Steadied, Toppled},
 };
@@ -51,7 +52,7 @@ struct Downs(usize);
 #[derive(Resource, Default)]
 struct Deaths(usize);
 
-fn count_deaths(_: On<BodyDead>, mut deaths: ResMut<Deaths>) {
+fn count_deaths(_: On<Add<Dead>>, mut deaths: ResMut<Deaths>) {
     deaths.0 += 1;
 }
 

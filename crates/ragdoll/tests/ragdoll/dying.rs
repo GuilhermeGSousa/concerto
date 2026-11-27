@@ -133,7 +133,10 @@ fn a_dying_body_drains_settles_into_a_static_pose_and_wakes_only_when_hit_hard()
         report(&stage)
     );
     stage.run(285);
-    assert!(has::<Dead>(&stage) && stage.in_state(name!("dead")));
+    assert!(
+        stage.deaths() == 1 && has::<Dead>(&stage) && stage.in_state(name!("dead")),
+        "a drained body raises BodyDead once and enters dead"
+    );
     let report = report(&stage);
     assert!(
         report.contains("graph states: dead") && !report.contains("drained"),
@@ -160,11 +163,10 @@ fn a_dying_body_drains_settles_into_a_static_pose_and_wakes_only_when_hit_hard()
     );
     assert_eq!(stage.settles(), 1);
 
-    let deaths = stage.deaths();
     die(&mut stage, 1.0);
     stage.run(30);
     assert!(
-        stage.deaths() == deaths
+        stage.deaths() == 1
             && stage.entries() == [name!("alive"), name!("dying"), name!("dead")]
             && bones(&stage) == lying,
         "a Die sent to a settled body neither kills it again nor drains it again"

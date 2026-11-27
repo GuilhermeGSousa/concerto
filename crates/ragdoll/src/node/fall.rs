@@ -224,6 +224,9 @@ impl EditorAnimationNode for FallNode {
     fn describe(&self, state: &FallState) -> Option<String> {
         let text = match state.landed.get() {
             Some(_) => format!("landed and relaxed at {}", self.profile),
+            None if state.run.landed.is_some() => {
+                format!("landed, relaxing at {}", self.profile)
+            }
             None => format!("falling at {}", self.profile),
         };
         Some(text)

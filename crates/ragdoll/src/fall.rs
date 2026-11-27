@@ -72,7 +72,7 @@ impl Default for FallSettings {
 pub(crate) struct FallRun {
     left_down: Option<f32>,
     right_down: Option<f32>,
-    landed: Option<f32>,
+    pub(crate) landed: Option<f32>,
 }
 
 struct Arm {
