@@ -35,6 +35,12 @@ fix the entry in the same commit as the change that made it false.
   of skeletons whose bones moved. A descendant's `GlobalTransform` written by
   other code is therefore not put back until its `Transform`, its parent or an
   ancestor changes; a root's is put back on the next run.
+- **Before propagation, a `GlobalTransform` is last frame's.** Propagation runs
+  once, in `LateUpdate`, so a system ordered before it that places something
+  under a parent moved this frame, such as an interpolated capsule, reads where
+  that parent was. `transform::parent_world_of` composes the ancestors' current
+  `Transform`s instead. The animation player uses it for the skeleton's
+  model-to-world space, and `write_ragdoll_poses` uses it to draw the body.
 - **Commands are seen only by systems explicitly ordered after their
   producer.** A system's commands apply before every system ordered after it
   through `.after`, `.before`, a chain or a set order, before any `&mut World`
