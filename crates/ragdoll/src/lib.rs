@@ -2,10 +2,10 @@
 //!
 //! A [`CharacterRagdoll`] follows its animation, is powered towards it, or falls limp, as its
 //! [`RagdollMode`] says. In [`RagdollMode::Graph`] the character's animation graph drives the
-//! body bone by bone instead: nodes such as [`HoldNode`], [`LimpNode`] and [`DyingNode`] write
-//! a [`PhysicsAmount`] and a [`MotorCommand`] for each bone in the graph's drive pass, and
-//! [`drive::drive_from_graph`] applies them each physics step. The graph hears what happens to
-//! the body through the [`messages`] the crate registers.
+//! body bone by bone instead: nodes such as [`HoldNode`], [`LimpNode`], [`FlinchNode`] and
+//! [`DyingNode`] write a [`PhysicsAmount`] and a [`MotorCommand`] for each bone in the graph's
+//! drive pass, and [`drive::drive_from_graph`] applies them each physics step. The graph hears
+//! what happens to the body through the [`messages`] the crate registers.
 
 /// The ragdoll asset: the parts, shapes, joints and strength profiles of one skeleton's body.
 pub mod asset;
@@ -28,7 +28,7 @@ pub mod generate;
 /// Blows on a character's body and the flinch they cause.
 pub mod hit;
 mod ik;
-/// The animation messages that tell a character's graph what happens to its body, and that its nodes raise.
+/// The animation messages that tell a character's graph what happens to its body, and that its nodes raise, and how hits reach the graph.
 pub mod messages;
 /// Animation graph nodes that drive a character's ragdoll.
 pub mod node;
@@ -69,8 +69,8 @@ pub use generate::{
     BRACED, FLINCH, GenerateError, HumanoidChains, HumanoidSettings, LIMP, generate_humanoid,
 };
 pub use hit::{BodyHit, Flinch, FlinchRecord, HitKind, HitReaction};
-pub use messages::{BodyDead, Death};
-pub use node::{DyingNode, DyingState, HoldNode, HoldState, LimpNode};
+pub use messages::{BodyDead, Death, Hit, PendingImpulses};
+pub use node::{DyingNode, DyingState, FlinchNode, FlinchState, HoldNode, HoldState, LimpNode};
 pub use overlap::PartOverlap;
 pub use plugin::RagdollPlugin;
 pub use resolve::{Landmarks, Limbs, RagdollError, ResolvedRagdoll};

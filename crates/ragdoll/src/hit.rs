@@ -149,7 +149,8 @@ fn dip(scales: &mut [f32], body: &RagdollBody, reaction: &HitReaction, part: usi
 /// Starts or restarts a character's flinch when it is hit.
 ///
 /// A character without a [`HitReaction`], or whose ragdoll is limp or
-/// powered by something else, only takes the impulse.
+/// powered by something else, only takes the impulse. A character in
+/// [`RagdollMode::Graph`] is left to [`route_hits`](crate::messages::route_hits).
 pub fn flinch_when_hit(
     on: On<BodyHit>,
     mut characters: Query<
@@ -174,7 +175,8 @@ pub fn flinch_when_hit(
     else {
         return;
     };
-    if hit.part >= body.resolved().part_count()
+    if character.mode == RagdollMode::Graph
+        || hit.part >= body.resolved().part_count()
         || takes_shot(&hit, &character, shot.is_some(), physical)
     {
         return;
