@@ -45,6 +45,7 @@ use uuid::Uuid;
 // imported intensity by this factor to undo that conversion.
 const LUMINOUS_EFFICACY: f32 = 683.0;
 
+/// The [`Importer`] of `.gltf` and `.glb` sources, registered under the name `gltf`.
 pub struct GltfImporter;
 
 /// Importer settings read from the `[settings]` table of a glTF source's sidecar.
