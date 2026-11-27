@@ -47,50 +47,52 @@ fn root(index: usize) -> BodyPose {
     BodyPose::from_translation(Vec3::new(column * SPACING, 0.5, row * SPACING))
 }
 
-fn crowd(humanoid: &ReferenceHumanoid, count: usize, mode: Mode) -> Crowd {
-    let mut world = RagdollWorld::new();
-    let parts = humanoid.resolved.part_count();
-    let mut placed = Vec::new();
-    let mut targets = Vec::new();
-    for index in 0..count {
-        let ragdoll = world.place(&humanoid.resolved, root(index));
-        let target: Vec<BodyPose> = humanoid
-            .resolved
-            .settings()
-            .parts
-            .iter()
-            .map(|part| root(index).then(part.pose))
-            .collect();
-        match mode {
-            Mode::Limp => {}
-            Mode::Settled => world.state().set_ragdoll_frozen(ragdoll.id, true),
-            Mode::Kinematic => {
-                for part in 0..parts {
+impl Crowd {
+    fn new(humanoid: &ReferenceHumanoid, count: usize, mode: Mode) -> Self {
+        let mut world = RagdollWorld::new();
+        let parts = humanoid.resolved.part_count();
+        let mut placed = Vec::new();
+        let mut targets = Vec::new();
+        for index in 0..count {
+            let ragdoll = world.place(&humanoid.resolved, root(index));
+            let target: Vec<BodyPose> = humanoid
+                .resolved
+                .settings()
+                .parts
+                .iter()
+                .map(|part| root(index).then(part.pose))
+                .collect();
+            match mode {
+                Mode::Limp => {}
+                Mode::Settled => world.state().set_ragdoll_frozen(ragdoll.id, true),
+                Mode::Kinematic => {
+                    for part in 0..parts {
+                        world.state().set_ragdoll_part_motion(
+                            ragdoll.id,
+                            part,
+                            MotionType::Kinematic,
+                        );
+                    }
+                }
+                Mode::Powered => {
                     world
                         .state()
-                        .set_ragdoll_part_motion(ragdoll.id, part, MotionType::Kinematic);
+                        .set_ragdoll_part_motion(ragdoll.id, 0, MotionType::Kinematic);
+                    world.state().drive_ragdoll_motors(ragdoll.id, &target);
                 }
             }
-            Mode::Powered => {
-                world
-                    .state()
-                    .set_ragdoll_part_motion(ragdoll.id, 0, MotionType::Kinematic);
-                world.state().drive_ragdoll_motors(ragdoll.id, &target);
-            }
+            placed.push(ragdoll);
+            targets.push(target);
         }
-        placed.push(ragdoll);
-        targets.push(target);
+        Crowd {
+            world,
+            placed,
+            targets,
+            mode,
+            steps: 0,
+        }
     }
-    Crowd {
-        world,
-        placed,
-        targets,
-        mode,
-        steps: 0,
-    }
-}
 
-impl Crowd {
     fn step(&mut self) {
         let phase = self.steps as f32 * 0.2;
         for (ragdoll, target) in self.placed.iter().zip(&self.targets) {
@@ -144,7 +146,7 @@ fn fixed_step(c: &mut Criterion) {
     let mut group = c.benchmark_group("ragdoll_fixed_step");
     for mode in [Mode::Limp, Mode::Kinematic, Mode::Powered, Mode::Settled] {
         for count in COUNTS {
-            let mut crowd = crowd(&humanoid, count, mode);
+            let mut crowd = Crowd::new(&humanoid, count, mode);
             group.bench_function(BenchmarkId::new(mode.name(), count), |b| {
                 b.iter(|| crowd.step());
             });

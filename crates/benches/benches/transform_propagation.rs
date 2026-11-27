@@ -18,40 +18,30 @@ struct Scene {
     entities: Vec<Entity>,
 }
 
-fn scene() -> Scene {
-    let mut world = World::new();
-    world.register_component::<Transform>();
-    world.register_component::<ChildOf>();
-    world.register_component::<Children>();
+impl Scene {
+    fn new() -> Self {
+        let mut world = World::new();
+        world.register_component::<Transform>();
+        world.register_component::<ChildOf>();
+        world.register_component::<Children>();
 
-    let mut entities = Vec::new();
-    for _ in 0..HIERARCHIES {
-        let root = world.spawn(Transform::from_translation(Vec3::X));
-        entities.push(root);
-        for _ in 0..CHILDREN {
-            let child = world.spawn(Transform::from_translation(Vec3::Y));
-            world.entity_mut(root).add_child(child);
-            entities.push(child);
-            for _ in 0..GRANDCHILDREN {
-                let grandchild = world.spawn(Transform::from_translation(Vec3::Z));
-                world.entity_mut(child).add_child(grandchild);
-                entities.push(grandchild);
+        let mut entities = Vec::new();
+        for _ in 0..HIERARCHIES {
+            let root = world.spawn(Transform::from_translation(Vec3::X));
+            entities.push(root);
+            for _ in 0..CHILDREN {
+                let child = world.spawn(Transform::from_translation(Vec3::Y));
+                world.entity_mut(root).add_child(child);
+                entities.push(child);
+                for _ in 0..GRANDCHILDREN {
+                    let grandchild = world.spawn(Transform::from_translation(Vec3::Z));
+                    world.entity_mut(child).add_child(grandchild);
+                    entities.push(grandchild);
+                }
             }
         }
-    }
 
-    Scene { world, entities }
-}
-
-fn settled() -> Settled {
-    let mut scene = scene();
-    let mut system = propagate_global_transforms.into_system();
-    system.initialize(&mut scene.world);
-    system.run_and_apply((), &mut scene.world);
-    Settled {
-        scene,
-        system: Box::new(system),
-        height: 0.0,
+        Scene { world, entities }
     }
 }
 
@@ -62,6 +52,18 @@ struct Settled {
 }
 
 impl Settled {
+    fn new() -> Self {
+        let mut scene = Scene::new();
+        let mut system = propagate_global_transforms.into_system();
+        system.initialize(&mut scene.world);
+        system.run_and_apply((), &mut scene.world);
+        Settled {
+            scene,
+            system: Box::new(system),
+            height: 0.0,
+        }
+    }
+
     fn run(&mut self) {
         self.system.run_and_apply((), &mut self.scene.world);
     }
@@ -82,12 +84,12 @@ fn transform_propagation(c: &mut Criterion) {
     let mut group = c.benchmark_group("transform_propagation");
 
     group.bench_function("static_scene", |b| {
-        let mut settled = settled();
+        let mut settled = Settled::new();
         b.iter(|| settled.run());
     });
 
     group.bench_function("one_leaf_moved", |b| {
-        let mut settled = settled();
+        let mut settled = Settled::new();
         b.iter(|| {
             settled.raise(1);
             settled.run();
@@ -95,7 +97,7 @@ fn transform_propagation(c: &mut Criterion) {
     });
 
     group.bench_function("every_entity_moved", |b| {
-        let mut settled = settled();
+        let mut settled = Settled::new();
         let every = settled.scene.entities.len();
         b.iter(|| {
             settled.raise(every);
