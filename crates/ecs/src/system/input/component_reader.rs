@@ -13,6 +13,8 @@ pub struct ComponentMetadata<'w> {
 }
 
 impl<'w> ComponentMetadata<'w> {
+    /// Creates a reader over `world` for use outside systems; change checks look back to the last
+    /// [`World::tick`].
     pub fn new(world: &'w World) -> Self {
         Self {
             world: world.as_unsafe_world_cell(),
@@ -32,14 +34,17 @@ impl<'w> ComponentMetadata<'w> {
         self.read().structural_version(entity)
     }
 
+    /// Returns whether `entity` is alive.
     pub fn entity_is_valid(&self, entity: Entity) -> bool {
         self.read().entity_is_valid(entity)
     }
 
+    /// Returns the ids of the components `entity` has, or an empty slice when it is not alive.
     pub fn component_ids(&self, entity: Entity) -> &'w [ComponentId] {
         self.read().component_ids(entity)
     }
 
+    /// Returns the registration of the component type `id`, or `None` when it was never registered.
     pub fn registration(
         &self,
         id: ComponentId,
@@ -47,6 +52,7 @@ impl<'w> ComponentMetadata<'w> {
         self.read().registration(id)
     }
 
+    /// Returns the component `T` on `entity`, or `None` when it has none.
     pub fn get<T: Component>(&self, entity: Entity) -> Option<&'w T> {
         self.read().get_component_for_entity::<T>(entity)
     }

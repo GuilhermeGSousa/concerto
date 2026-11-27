@@ -7,6 +7,9 @@ use crate::{
     world::UnsafeWorldCell,
 };
 
+/// A query's matching archetypes, cached and extended as the world gains archetypes.
+///
+/// Get one from [`World::query`] to run a query outside a system.
 pub struct QueryState<T: QueryData, F: QueryFilter = ()> {
     data_state: T::State,
     filter_state: F::State,
@@ -61,6 +64,8 @@ impl<T: QueryData, F: QueryFilter> QueryState<T, F> {
         self.matched_archetypes.contains(archetype)
     }
 
+    /// Returns an iterator over the matching entities' items; change filters compare against the
+    /// world's ticks outside systems.
     pub fn iter<'world, 'state>(
         &'state mut self,
         world: &'world mut World,

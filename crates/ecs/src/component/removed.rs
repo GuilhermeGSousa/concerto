@@ -20,6 +20,7 @@ use crate::{
 /// One removal of `T` from `entity`, explicit or by despawn.
 #[derive(Event)]
 pub struct ComponentRemoved<T: Component> {
+    /// The entity that lost the component.
     pub entity: Entity,
     marker: PhantomData<fn() -> T>,
 }

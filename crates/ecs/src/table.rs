@@ -11,6 +11,8 @@ use crate::{
     utilities::TypeIdMap,
 };
 
+/// The values of one component type for every row of a [`Table`], with the tick each was added and
+/// last changed.
 pub struct Column {
     data: AnyVec,
     added_ticks: Vec<Tick>,
@@ -18,6 +20,7 @@ pub struct Column {
 }
 
 impl Column {
+    /// Creates an empty column for `T`.
     pub fn new<T: Component>() -> Self {
         Self {
             data: AnyVec::new::<T>(),
@@ -35,12 +38,14 @@ impl Column {
         }
     }
 
+    /// Appends `value`, stamping it added and changed at `tick`.
     pub fn push<T: Component>(&mut self, value: T, tick: u32) {
         self.data.push(AnyValueWrapper::new(value));
         self.added_ticks.push(Tick::new(tick));
         self.changed_ticks.push(Tick::new(tick));
     }
 
+    /// Overwrites the value at `row` and stamps it changed at `tick`.
     pub fn insert<T: Component>(&mut self, value: T, tick: u32, row: TableRowIndex) {
         if let Some(mut element) = self.data.get_mut(*row)
             && let Some(slot) = element.downcast_mut::<T>()
@@ -65,10 +70,12 @@ impl Column {
         self.changed_ticks.swap_remove(*row);
     }
 
+    /// Returns the number of values.
     pub fn len(&self) -> usize {
         self.data.len()
     }
 
+    /// Returns whether the column holds no values.
     pub fn is_empty(&self) -> bool {
         self.data.is_empty()
     }
@@ -122,6 +129,7 @@ impl Column {
         }
     }
 
+    /// Stamps the value at `row` changed at `current_tick`.
     pub fn set_changed(&mut self, row: TableRowIndex, current_tick: u32) {
         self.changed_ticks[*row].set(current_tick);
     }
@@ -133,12 +141,14 @@ impl Column {
     }
 }
 
+/// The component columns of an archetype and the entity in each row.
 pub struct Table {
     columns: TypeIdMap<Column>,
     entities: Vec<Entity>,
 }
 
 impl Table {
+    /// Creates a table with no columns and no rows.
     pub fn new() -> Self {
         Self {
             columns: TypeIdMap::default(),
@@ -158,6 +168,7 @@ impl Table {
         }
     }
 
+    /// Adds an empty column for `T`, replacing any column for `T` already there.
     pub fn add_column<T: Component>(&mut self) {
         self.columns
             .insert(ComponentId::of::<T>(), Column::new::<T>());
@@ -173,6 +184,8 @@ impl Table {
         }
     }
 
+    /// Appends `entity` as a new row; the components for that row are pushed to the columns
+    /// separately.
     pub fn add_entity(&mut self, entity: Entity) {
         self.entities.push(entity);
     }
@@ -203,26 +216,33 @@ impl Table {
         self.entities.swap_remove(*row);
     }
 
+    /// Returns the number of rows.
     pub fn get_row_count(&self) -> usize {
         self.entities.len()
     }
 
+    /// Returns whether the table has a column for the component `type_id`.
     pub fn has_column(&self, type_id: ComponentId) -> bool {
         self.columns.contains_key(&type_id)
     }
 
+    /// Returns the column for the component `type_id`, or `None` when the table has none.
     pub fn get_column(&self, type_id: ComponentId) -> Option<&Column> {
         self.columns.get(&type_id)
     }
 
+    /// Returns the column for the component `type_id` mutably, or `None` when the table has none.
     pub fn get_column_mut(&mut self, type_id: ComponentId) -> Option<&mut Column> {
         self.columns.get_mut(&type_id)
     }
 
+    /// Returns the entity in each row, in row order.
     pub fn entities(&self) -> &[Entity] {
         &self.entities
     }
 
+    /// Returns whether the component at `row` was added since the system with `ticks` last ran;
+    /// `false` when the table has no such column.
     pub fn was_added(
         &self,
         row: TableRowIndex,
@@ -250,6 +270,8 @@ impl Table {
             .any(|tick| current_tick.wrapping_sub(**tick) <= age)
     }
 
+    /// Returns whether the component at `row` was added or changed since the system with `ticks`
+    /// last ran; `false` when the table has no such column.
     pub fn was_changed(
         &self,
         row: TableRowIndex,
@@ -275,10 +297,12 @@ impl Default for Table {
     }
 }
 
+/// The index of a row in a [`Table`].
 #[derive(Clone, Copy, PartialEq)]
 pub struct TableRowIndex(usize);
 
 impl TableRowIndex {
+    /// Creates a row index.
     pub const fn new(index: usize) -> TableRowIndex {
         TableRowIndex(index)
     }

@@ -17,14 +17,17 @@ use crate::component::Component;
 pub struct Name(String);
 
 impl Name {
+    /// Creates a name from `name`.
     pub fn new(name: impl Into<String>) -> Self {
         Self(name.into())
     }
 
+    /// Returns the name as text.
     pub fn as_str(&self) -> &str {
         &self.0
     }
 
+    /// Replaces the name with `name`.
     pub fn set(&mut self, name: impl Into<String>) {
         self.0 = name.into();
     }

@@ -48,6 +48,7 @@ impl<'w, 's, T: Event> EventReader<'w, 's, T> {
         self.channel.event_count - self.cursor.last_event_count.max(oldest_id(&self.channel))
     }
 
+    /// Returns whether this reader has read every buffered event.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
@@ -92,6 +93,7 @@ where
     }
 }
 
+/// An iterator over the events an [`EventReader`] has not read yet, oldest first.
 pub struct EventIterator<'a, T: Event + 'static> {
     iter: Chain<Iter<'a, T>, Iter<'a, T>>,
 }

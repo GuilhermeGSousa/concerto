@@ -1,14 +1,24 @@
+/// [`SystemAccess`], what a system reads and writes, from which the scheduler decides what may run
+/// in parallel.
 pub mod access;
+/// [`SystemConfig`], a system with its ordering, sets and tags, as a schedule takes it.
 pub mod config;
+/// Executors that run a compiled schedule's systems, on one thread or across the compute pool.
 pub mod executor;
 mod graph;
+/// System parameters: the [`SystemInput`] trait and the parameters that are not queries, resources
+/// or commands.
 pub mod input;
+/// [`SystemMetadata`], properties of a system that constrain where it may run.
 pub mod meta;
 mod reachability;
+/// [`Schedule`](schedule::Schedule), a set of systems compiled into an order and run on a world.
 pub mod schedule;
+/// [`SystemSet`], a named group of systems ordered as a unit.
 pub mod set;
 mod stand_in;
 mod sync_point;
+/// [`SystemTag`], a label that selects which systems a schedule compiles, without affecting order.
 pub mod tag;
 
 use std::{any::TypeId, marker::PhantomData};
@@ -32,16 +42,21 @@ use crate::{
     world::{UnsafeWorldCell, World},
 };
 
+/// A type-erased system that takes no argument, as a schedule stores it.
 pub type BoxedSystem = Box<dyn System<In = ()>>;
 
+/// The argument a system of type `S` takes, with its borrow lifetime set to `'a`.
 pub type SysArg<'a, S> = SystemArgData<'a, <S as System>::In>;
 
 /// A unit of work a [`Schedule`](crate::Schedule) runs against a [`World`].
 ///
 /// Functions become systems through [`IntoSystem`]; implementing this directly is rarely needed.
 pub trait System: Send + Sync + 'static {
+    /// The argument the system takes when run: `()` for an ordinary system,
+    /// [`On`](crate::signal::On) for a listener.
     type In: SystemArg;
 
+    /// Returns the system's name, for logs and errors; for a function, its Rust path.
     fn name(&self) -> &'static str;
 
     /// Returns the id used to name this system as an ordering target.
@@ -49,15 +64,21 @@ pub trait System: Send + Sync + 'static {
         TypeId::of::<Self>()
     }
 
+    /// Sets up the system's parameter state on `world`; call once before the first run.
+    ///
+    /// [`FunctionSystem`] panics here, naming the conflict, when its parameters alias.
     fn initialize(&mut self, world: &mut World);
 
+    /// Adds what the system reads and writes to the access, and where it may run to the metadata.
     fn fill_access(&self, _meta: &mut SystemMetadata, _access: &mut SystemAccess);
 
+    /// Runs the system on `world`, then applies its deferred commands.
     fn run_and_apply(&mut self, args: SysArg<'_, Self>, world: &mut World) {
         self.run(args, world);
         self.apply(world);
     }
 
+    /// Runs the system on `world` without applying its deferred commands.
     fn run(&mut self, args: SysArg<'_, Self>, world: &mut World) {
         let world_cell = world.as_unsafe_world_cell_mut();
         // SAFETY: the exclusive borrow of `world` rules out any other running system.
@@ -71,6 +92,7 @@ pub trait System: Send + Sync + 'static {
     /// No system with conflicting access may run on the same world at the same time.
     unsafe fn run_unsafe(&mut self, args: SysArg<'_, Self>, world: UnsafeWorldCell);
 
+    /// Applies the commands and other deferred changes the system queued while it ran.
     fn apply(&mut self, world: &mut World);
 
     /// Clamps the ticks this system stores that are older than the check allows.
@@ -112,9 +134,12 @@ impl System for BoxedSystem {
 
 /// A function that can run as a [`System`], optionally taking a leading [`SystemArg`].
 pub trait SystemFunction<Marker>: Send + Sync + 'static {
+    /// The argument the function takes before its parameters, or `()` when it takes none.
     type In: SystemArg;
+    /// The function's parameters, as a tuple of [`SystemInput`]s.
     type Inputs: SystemInput;
 
+    /// Calls the function with `args` and its parameters' data for this run.
     fn call(
         &mut self,
         args: SystemArgData<'_, Self::In>,
@@ -162,7 +187,11 @@ where
     }
 }
 
+/// A [`System`] built from a function whose parameters are [`SystemInput`]s.
+///
+/// A run is skipped while a parameter declines, with a warning when the data it needs is missing.
 pub struct FunctionSystem<F: SystemFunction<Marker>, Marker> {
+    /// The function the system calls.
     pub func: F,
     system_state: Option<<F::Inputs as SystemInput>::State>,
     last_run: Tick,
@@ -170,6 +199,7 @@ pub struct FunctionSystem<F: SystemFunction<Marker>, Marker> {
 }
 
 impl<F: SystemFunction<Marker>, Marker> FunctionSystem<F, Marker> {
+    /// Wraps `func`; [`System::initialize`] must run before the first run.
     pub fn new(func: F) -> Self {
         Self {
             func,
@@ -261,7 +291,9 @@ where
 
 /// Converts a function, closure or [`System`] into a [`BoxedSystem`].
 pub trait IntoSystem<Args: SystemArg, Marker>: Sized {
+    /// The system it converts into.
     type System: System<In = Args>;
+    /// Converts into the system.
     fn into_system(self) -> Self::System;
 
     /// Converts into a type-erased [`BoxedSystem`].
@@ -272,6 +304,7 @@ pub trait IntoSystem<Args: SystemArg, Marker>: Sized {
         Box::new(self.into_system())
     }
 
+    /// Binds `args` as the argument of every run, giving a system that takes none.
     fn with_args(self, args: Args) -> SystemWithArgs<Self::System, Args>
     where
         Args: for<'i> SystemArg<Arg<'i> = Args> + 'static,
@@ -280,6 +313,8 @@ pub trait IntoSystem<Args: SystemArg, Marker>: Sized {
     }
 }
 
+/// A system that takes an argument, run with a fixed copy of it each time; built by
+/// [`IntoSystem::with_args`].
 pub struct SystemWithArgs<S, Args>
 where
     S: System<In = Args>,

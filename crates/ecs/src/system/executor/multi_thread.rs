@@ -24,6 +24,8 @@ use crate::{
     world::UnsafeWorldCell,
 };
 
+/// A resource holding the main thread's executor, on which the multi-threaded executor runs systems
+/// that must stay on the main thread.
 #[derive(Resource, Clone)]
 pub struct MainThreadExecutor(pub Arc<ThreadExecutor<'static>>);
 

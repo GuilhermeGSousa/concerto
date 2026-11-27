@@ -18,6 +18,7 @@ impl BuildHasher for NoOpHash {
     }
 }
 
+/// A map keyed by [`TypeId`], which hashes it without rehashing.
 pub type TypeIdMap<V> = HashMap<TypeId, V, NoOpHash>;
 
 /// A [`Hasher`] for types that already contain a high-quality hash, which it passes through
@@ -44,30 +45,37 @@ impl Hasher for NoOpHasher {
     }
 }
 
+/// An [`UnsafeCell`] that is `Sync` when its value is, for sharing between threads that rule out
+/// data races themselves.
 pub struct SyncUnsafeCell<T: ?Sized>(UnsafeCell<T>);
 
 // SAFETY: like `std`'s unstable `SyncUnsafeCell`, sharing it is sound because every access to the inner value goes through `unsafe` code that must rule out data races.
 unsafe impl<T: ?Sized + Sync> Sync for SyncUnsafeCell<T> {}
 
 impl<T> SyncUnsafeCell<T> {
+    /// Wraps `value`.
     pub const fn new(value: T) -> Self {
         Self(UnsafeCell::new(value))
     }
 
+    /// Returns the wrapped value.
     pub fn into_inner(self) -> T {
         self.0.into_inner()
     }
 
+    /// Returns a raw pointer to the wrapped value; reading or writing through it must not race.
     pub const fn get(&self) -> *mut T {
         self.0.get()
     }
 
+    /// Returns the wrapped value mutably, through the exclusive borrow of the cell.
     pub const fn get_mut(&mut self) -> &mut T {
         self.0.get_mut()
     }
 }
 
 impl<T: ?Sized> SyncUnsafeCell<T> {
+    /// Views an exclusive borrow of a value as an exclusive borrow of a cell holding it.
     pub fn from_mut(t: &mut T) -> &mut SyncUnsafeCell<T> {
         let ptr = ptr::from_mut(t) as *mut SyncUnsafeCell<T>;
 
@@ -77,6 +85,7 @@ impl<T: ?Sized> SyncUnsafeCell<T> {
 }
 
 impl<T> SyncUnsafeCell<[T]> {
+    /// Views a cell holding a slice as a slice of cells, one per element.
     pub fn as_slice_of_cells(&self) -> &[SyncUnsafeCell<T>] {
         let self_ptr: *const SyncUnsafeCell<[T]> = ptr::from_ref(self);
         let slice_ptr = self_ptr as *const [SyncUnsafeCell<T>];
@@ -97,6 +106,10 @@ impl<T> From<T> for SyncUnsafeCell<T> {
     }
 }
 
+/// A wrapper that is `Sync` for any value, by allowing shared access only when the value is itself
+/// `Sync`.
+///
+/// It lets a system keep `Send` but not `Sync` state.
 #[repr(transparent)]
 pub struct SyncCell<T: ?Sized>(T);
 
@@ -113,6 +126,7 @@ impl<T: Sized> SyncCell<T> {
 }
 
 impl<T: ?Sized> SyncCell<T> {
+    /// Returns the wrapped value mutably.
     pub fn get(&mut self) -> &mut T {
         &mut self.0
     }

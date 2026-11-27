@@ -13,6 +13,7 @@ macro_rules! lifecycle_signal {
     ($(#[$doc:meta])* $name:ident) => {
         $(#[$doc])*
         pub struct $name<T: Component> {
+            /// The entity whose component the signal is about.
             pub entity: Entity,
             marker: PhantomData<fn() -> T>,
         }

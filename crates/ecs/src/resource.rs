@@ -90,6 +90,7 @@ const STORED_UNDER_ITS_TYPE: &str = "a resource is stored under its own type id"
 /// A system taking it is skipped with a warning while the resource is missing; take
 /// `Option<Res<T>>` for a resource that may be absent.
 pub struct Res<'world, T: Resource> {
+    /// The borrowed resource.
     pub value: &'world T,
     added_tick: &'world Tick,
     changed_tick: &'world Tick,
@@ -128,6 +129,7 @@ fn missing<T: Resource>() -> ValidationError {
 }
 
 impl<T: Resource> Res<'_, T> {
+    /// Returns the tick at which the resource was last changed.
     pub fn changed_tick(&self) -> Tick {
         *self.changed_tick
     }
@@ -214,6 +216,8 @@ where
 ///
 /// A system taking it is skipped with a warning while the resource is missing.
 pub struct ResMut<'world, T: Resource> {
+    /// The borrowed resource; a write through this field, like one through
+    /// [`bypass_change_detection`](ResMut::bypass_change_detection), does not mark it changed.
     pub value: &'world mut T,
     added_tick: &'world Tick,
     changed_tick: &'world mut Tick,
@@ -250,6 +254,7 @@ impl<'world, T: Resource> ResMut<'world, T> {
         })
     }
 
+    /// Marks the resource changed without writing to it.
     pub fn mark_changed(&mut self) {
         self.deref_mut();
     }
@@ -259,6 +264,7 @@ impl<'world, T: Resource> ResMut<'world, T> {
         self.value
     }
 
+    /// Returns the tick at which the resource was last changed.
     pub fn changed_tick(&self) -> Tick {
         *self.changed_tick
     }

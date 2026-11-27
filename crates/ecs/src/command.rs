@@ -16,20 +16,25 @@ use crate::{
     world::World,
 };
 
+/// Commands scoped to one entity, from [`CommandQueue::spawn`] or [`CommandQueue::entity`].
 pub struct EntityCommandQueue<'a> {
     entity: Entity,
     command_queue: CommandQueue<'a, 'a>,
 }
 
 impl<'a> EntityCommandQueue<'a> {
+    /// Returns the entity these commands act on; a spawned entity is reserved and usable at once,
+    /// though its components arrive only when commands are applied.
     pub fn entity(&self) -> Entity {
         self.entity
     }
 
+    /// Spawns a child of this entity with `components`.
     pub fn add_child<T: IntoBundle<Bundle: 'static>>(&mut self, components: T) -> &mut Self {
         self.add_child_with(components, |_| {})
     }
 
+    /// Spawns a child of this entity with `components`, then calls `f` with the child's commands.
     pub fn add_child_with<T: IntoBundle<Bundle: 'static>>(
         &mut self,
         components: T,
@@ -52,6 +57,7 @@ impl<'a> EntityCommandQueue<'a> {
         self.command_queue.entity(child)
     }
 
+    /// Queues despawning every descendant of this entity, keeping the entity itself.
     pub fn despawn_children(mut self) -> Self {
         self.command_queue.push(DespawnChildren {
             parent: self.entity,
@@ -59,10 +65,12 @@ impl<'a> EntityCommandQueue<'a> {
         self
     }
 
+    /// Queues inserting `component`, or a bundle, onto this entity, replacing any it already has.
     pub fn insert<T: IntoBundle<Bundle: 'static>>(&mut self, component: T) {
         self.command_queue.insert(component, self.entity);
     }
 
+    /// Queues despawning this entity and its descendants.
     pub fn despawn(mut self) {
         self.command_queue.despawn(self.entity());
     }
@@ -74,6 +82,11 @@ impl<'a> EntityCommandQueue<'a> {
     }
 }
 
+/// A system parameter that queues changes to the world, applied with exclusive access before any
+/// system ordered after this one runs, and at the latest when the schedule run ends.
+///
+/// This is how a system makes structural changes: spawning, despawning, inserting and removing
+/// components, inserting resources, and triggering signals.
 pub struct CommandQueue<'world, 'state> {
     queue_state: &'state mut CommandQueueState,
     entities: &'world EntityStore,
@@ -97,6 +110,7 @@ impl<'w, 's> CommandQueue<'w, 's> {
         }
     }
 
+    /// Reserves an entity and queues spawning it with `components`, returning its commands.
     pub fn spawn<T: IntoBundle<Bundle: 'static>>(
         &mut self,
         components: T,
@@ -125,10 +139,13 @@ impl<'w, 's> CommandQueue<'w, 's> {
         }
     }
 
+    /// Queues despawning `entity` and its descendants.
     pub fn despawn(&mut self, entity: Entity) {
         self.queue_state.push(DespawnCommand::new(entity));
     }
 
+    /// Queues inserting `component`, or a bundle, onto `entity`; nothing happens if `entity` no
+    /// longer exists when it is applied.
     pub fn insert<T: IntoBundle<Bundle: 'static>>(&mut self, component: T, entity: Entity) {
         self.queue_state.push(InsertCommand {
             component: component.into_bundle(),
@@ -136,6 +153,7 @@ impl<'w, 's> CommandQueue<'w, 's> {
         });
     }
 
+    /// Queues removing the component `T` from `entity`.
     pub fn remove<T: Component>(&mut self, entity: Entity) {
         self.queue_state.push(RemoveCommand::<T> {
             entity,
@@ -143,6 +161,7 @@ impl<'w, 's> CommandQueue<'w, 's> {
         });
     }
 
+    /// Queues making `child` a child of `parent` by inserting [`ChildOf`] on it.
     pub fn add_child(&mut self, parent: Entity, child: Entity) {
         self.insert(ChildOf::new(parent), child);
     }
@@ -159,6 +178,7 @@ impl<'w, 's> CommandQueue<'w, 's> {
         self.queue_state.push(TriggerCommand(signal));
     }
 
+    /// Queues inserting `resource`, replacing any resource of the same type.
     pub fn insert_resource<T: Resource>(&mut self, resource: T) {
         self.queue_state.push(InsertResource::<T>::new(resource));
     }
@@ -218,6 +238,7 @@ pub struct CommandQueueState {
 }
 
 impl CommandQueueState {
+    /// Creates an empty queue.
     pub fn new() -> Self {
         CommandQueueState {
             bytes: Vec::new(),
@@ -225,6 +246,7 @@ impl CommandQueueState {
         }
     }
 
+    /// Appends `command` to the queue.
     pub fn push<C: Command + 'static>(&mut self, command: C) {
         let offset = self.bytes.len();
         self.bytes.reserve(size_of::<C>());
@@ -268,6 +290,7 @@ impl CommandQueueState {
         Some((ptr, consume))
     }
 
+    /// Returns whether no command is queued.
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
@@ -282,6 +305,7 @@ impl CommandQueueState {
             }));
     }
 
+    /// Returns the number of queued commands.
     pub fn len(&self) -> usize {
         self.entries.len()
     }
@@ -356,7 +380,9 @@ impl SystemInput for CommandQueue<'_, '_> {
     }
 }
 
+/// A change to the world, queued now and run later with exclusive access.
 pub trait Command: Send + Sync {
+    /// Applies the change to `world`.
     fn execute(self, world: &mut World);
 }
 

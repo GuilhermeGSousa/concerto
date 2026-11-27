@@ -87,6 +87,7 @@ impl<T: Event + 'static> EventChannel<T> {
         self.events_a.events.len() + self.events_b.events.len()
     }
 
+    /// Returns whether no event is buffered.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
