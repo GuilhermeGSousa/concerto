@@ -200,38 +200,39 @@ struct ActiveMesh<'a> {
     query: &'a NavMeshQuery,
 }
 
-fn loaded_query<'a>(
-    navmeshes: &'a AssetStore<NavMesh>,
-    component: &NavMeshComponent,
-) -> Option<&'a NavMeshQuery> {
-    let navmesh = navmeshes.get(&component.handle)?;
-    if navmesh.data()?.polygons.is_empty() {
-        return None;
+impl NavMeshComponent {
+    fn loaded_query<'a>(&self, navmeshes: &'a AssetStore<NavMesh>) -> Option<&'a NavMeshQuery> {
+        let navmesh = navmeshes.get(&self.handle)?;
+        if navmesh.data()?.polygons.is_empty() {
+            return None;
+        }
+        navmesh.query()
     }
-    navmesh.query()
 }
 
-fn mesh_path(query: &NavMeshQuery, from: Vec3, point: &NavGraphPoint) -> Option<NavPath> {
-    if !point.enabled {
-        return None;
-    }
-    let mut positions = query.path(from, point.position)?;
-    if positions.is_empty() {
-        positions.push(point.position);
-    }
-    let length = positions
-        .iter()
-        .scan(from, |previous, corner| {
-            let leg = previous.distance(*corner);
-            *previous = *corner;
-            Some(leg)
+impl NavPath {
+    fn on_mesh(query: &NavMeshQuery, from: Vec3, point: &NavGraphPoint) -> Option<Self> {
+        if !point.enabled {
+            return None;
+        }
+        let mut positions = query.path(from, point.position)?;
+        if positions.is_empty() {
+            positions.push(point.position);
+        }
+        let length = positions
+            .iter()
+            .scan(from, |previous, corner| {
+                let leg = previous.distance(*corner);
+                *previous = *corner;
+                Some(leg)
+            })
+            .sum();
+        Some(Self {
+            destination: point.entity,
+            positions,
+            length,
         })
-        .sum();
-    Some(NavPath {
-        destination: point.entity,
-        positions,
-        length,
-    })
+    }
 }
 
 /// Plans a route for each agent that needs one.
@@ -275,7 +276,7 @@ pub fn plan_nav_routes(
             Some(ActiveMesh {
                 entity,
                 id: component.handle.id(),
-                query: loaded_query(&navmeshes, component)?,
+                query: component.loaded_query(&navmeshes)?,
             })
         })
         .min_by_key(|mesh| mesh.entity.index());
@@ -311,7 +312,7 @@ pub fn plan_nav_routes(
         let path = match &mesh {
             Some(mesh) => point
                 .and_then(|point| graph.point(point))
-                .and_then(|point| mesh_path(mesh.query, transform.translation(), point)),
+                .and_then(|point| NavPath::on_mesh(mesh.query, transform.translation(), point)),
             None => point.and_then(|point| graph.path_from(transform.translation(), point)),
         };
         match path {
@@ -366,7 +367,7 @@ pub fn steer_nav_agents(
     for (agent, settings, destination, transform, mut route, mut steering) in agents.iter_mut() {
         let position = transform.translation();
         let last = route.path.positions.len() - 1;
-        while route.next < last && waypoint_reached(&route, position, settings.arrival_radius) {
+        while route.next < last && route.waypoint_reached(position, settings.arrival_radius) {
             route.next += 1;
         }
         let target = route.path.positions[route.next];
@@ -396,18 +397,20 @@ pub fn steer_nav_agents(
     }
 }
 
-fn waypoint_reached(route: &NavRoute, position: Vec3, arrival_radius: f32) -> bool {
-    let positions = &route.path.positions;
-    let waypoint = positions[route.next];
-    if horizontal_distance(position, waypoint) <= arrival_radius {
-        return true;
+impl NavRoute {
+    fn waypoint_reached(&self, position: Vec3, arrival_radius: f32) -> bool {
+        let positions = &self.path.positions;
+        let waypoint = positions[self.next];
+        if horizontal_distance(position, waypoint) <= arrival_radius {
+            return true;
+        }
+        if self.next == 0 {
+            return false;
+        }
+        let from = positions[self.next - 1];
+        let segment = Vec2::new(waypoint.x - from.x, waypoint.z - from.z);
+        let along = Vec2::new(position.x - from.x, position.z - from.z);
+        let length_squared = segment.length_squared();
+        length_squared > f32::EPSILON && along.dot(segment) > length_squared
     }
-    if route.next == 0 {
-        return false;
-    }
-    let from = positions[route.next - 1];
-    let segment = Vec2::new(waypoint.x - from.x, waypoint.z - from.z);
-    let along = Vec2::new(position.x - from.x, position.z - from.z);
-    let length_squared = segment.length_squared();
-    length_squared > f32::EPSILON && along.dot(segment) > length_squared
 }

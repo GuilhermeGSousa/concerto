@@ -18,7 +18,7 @@ use crate::{
     bake::bake,
     navmesh::{NavMeshData, NavMeshGeometry, NavMeshSettings},
     query::NavMeshQuery,
-    scene_colliders::{add_scene, collider_meshes},
+    scene_colliders::collider_meshes,
 };
 
 #[derive(Clone, Debug)]
@@ -182,7 +182,7 @@ impl DerivedData for NavMesh {
         }
         let mut geometry = NavMeshGeometry::new();
         for (index, id) in scenes.iter().enumerate() {
-            add_scene(&mut geometry, &inputs.decode::<Scene>(*id)?, &meshes)?;
+            geometry.add_scene(&inputs.decode::<Scene>(*id)?, &meshes)?;
             progress(index + 1, scenes.len() + 1);
         }
         let data = bake(&geometry, &self.settings)?;

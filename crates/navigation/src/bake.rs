@@ -23,7 +23,7 @@ pub fn bake(
     geometry: &NavMeshGeometry,
     settings: &NavMeshSettings,
 ) -> Result<NavMeshData, NavMeshBakeError> {
-    validate(settings)?;
+    settings.validate()?;
     if geometry.is_empty() {
         return Ok(NavMeshData::default());
     }
@@ -60,22 +60,22 @@ pub fn bake(
         cell_height: settings.cell_height,
     }
     .build()
-    .map_err(|error| generation("building the heightfield", error))?;
+    .map_err(|error| NavMeshBakeError::generation("building the heightfield", error))?;
     heightfield
         .rasterize_triangles(&trimesh, walkable_climb)
-        .map_err(|error| generation("rasterizing", error))?;
+        .map_err(|error| NavMeshBakeError::generation("rasterizing", error))?;
     heightfield.filter_low_hanging_walkable_obstacles(walkable_climb);
     heightfield.filter_ledge_spans(walkable_height, walkable_climb);
     heightfield.filter_walkable_low_height_spans(walkable_height);
 
     let mut compact = heightfield
         .into_compact(walkable_height, walkable_climb)
-        .map_err(|error| generation("compacting the heightfield", error))?;
+        .map_err(|error| NavMeshBakeError::generation("compacting the heightfield", error))?;
     compact.erode_walkable_area(walkable_radius);
     compact.build_distance_field();
     compact
         .build_regions(0, MIN_REGION_AREA, MERGE_REGION_AREA)
-        .map_err(|error| generation("building regions", error))?;
+        .map_err(|error| NavMeshBakeError::generation("building regions", error))?;
     let contours = compact.build_contours(
         MAX_SIMPLIFICATION_ERROR,
         walkable_radius.saturating_mul(EDGE_LENGTH_FACTOR),
@@ -92,30 +92,34 @@ pub fn bake(
     }
     let mesh = contours
         .into_polygon_mesh(MAX_VERTICES_PER_POLYGON)
-        .map_err(|error| generation("building polygons", error))?;
-    Ok(convert(&mesh))
+        .map_err(|error| NavMeshBakeError::generation("building polygons", error))?;
+    Ok(NavMeshData::from_polygons(&mesh))
 }
 
-fn validate(settings: &NavMeshSettings) -> Result<(), NavMeshBakeError> {
-    positive("cell_size", settings.cell_size)?;
-    positive("cell_height", settings.cell_height)?;
-    positive("agent_height", settings.agent_height)?;
-    non_negative("agent_radius", settings.agent_radius)?;
-    non_negative("step_height", settings.step_height)?;
-    if !(0.0..90.0).contains(&settings.max_slope) {
-        return Err(invalid(format!(
-            "max_slope is {}, it must be from 0 up to 90 degrees",
-            settings.max_slope
-        )));
+impl NavMeshSettings {
+    pub(crate) fn validate(&self) -> Result<(), NavMeshBakeError> {
+        positive("cell_size", self.cell_size)?;
+        positive("cell_height", self.cell_height)?;
+        positive("agent_height", self.agent_height)?;
+        non_negative("agent_radius", self.agent_radius)?;
+        non_negative("step_height", self.step_height)?;
+        if !(0.0..90.0).contains(&self.max_slope) {
+            return Err(NavMeshBakeError::invalid(format!(
+                "max_slope is {}, it must be from 0 up to 90 degrees",
+                self.max_slope
+            )));
+        }
+        Ok(())
     }
-    Ok(())
 }
 
 fn positive(name: &str, value: f32) -> Result<(), NavMeshBakeError> {
     if value.is_finite() && value > 0.0 {
         Ok(())
     } else {
-        Err(invalid(format!("{name} is {value}, it must be above 0")))
+        Err(NavMeshBakeError::invalid(format!(
+            "{name} is {value}, it must be above 0"
+        )))
     }
 }
 
@@ -123,40 +127,49 @@ fn non_negative(name: &str, value: f32) -> Result<(), NavMeshBakeError> {
     if value.is_finite() && value >= 0.0 {
         Ok(())
     } else {
-        Err(invalid(format!("{name} is {value}, it must be 0 or more")))
+        Err(NavMeshBakeError::invalid(format!(
+            "{name} is {value}, it must be 0 or more"
+        )))
     }
 }
 
-fn invalid(reason: String) -> NavMeshBakeError {
-    NavMeshBakeError::InvalidSettings { reason }
-}
-
-fn generation(stage: &'static str, error: impl std::fmt::Display) -> NavMeshBakeError {
-    NavMeshBakeError::Generation {
-        stage,
-        message: error.to_string(),
+impl NavMeshBakeError {
+    pub(crate) fn invalid(reason: String) -> NavMeshBakeError {
+        NavMeshBakeError::InvalidSettings { reason }
     }
-}
 
-fn convert(mesh: &PolygonNavmesh) -> NavMeshData {
-    let scale = Vec3::new(mesh.cell_size, mesh.cell_height, mesh.cell_size);
-    let mut remap = vec![u32::MAX; mesh.vertices.len()];
-    let mut data = NavMeshData::default();
-    for polygon in mesh.polygons() {
-        let vertices: Vec<u32> = polygon
-            .map(|index| {
-                let slot = &mut remap[index as usize];
-                if *slot == u32::MAX {
-                    *slot = data.vertices.len() as u32;
-                    let cell = mesh.vertices[index as usize].as_vec3();
-                    data.vertices.push(mesh.aabb.min + cell * scale);
-                }
-                *slot
-            })
-            .collect();
-        if vertices.len() >= 3 {
-            data.polygons.push(NavPolygon { vertices });
+    pub(crate) fn generation(
+        stage: &'static str,
+        error: impl std::fmt::Display,
+    ) -> NavMeshBakeError {
+        NavMeshBakeError::Generation {
+            stage,
+            message: error.to_string(),
         }
     }
-    data
+}
+
+impl NavMeshData {
+    pub(crate) fn from_polygons(mesh: &PolygonNavmesh) -> Self {
+        let scale = Vec3::new(mesh.cell_size, mesh.cell_height, mesh.cell_size);
+        let mut remap = vec![u32::MAX; mesh.vertices.len()];
+        let mut data = NavMeshData::default();
+        for polygon in mesh.polygons() {
+            let vertices: Vec<u32> = polygon
+                .map(|index| {
+                    let slot = &mut remap[index as usize];
+                    if *slot == u32::MAX {
+                        *slot = data.vertices.len() as u32;
+                        let cell = mesh.vertices[index as usize].as_vec3();
+                        data.vertices.push(mesh.aabb.min + cell * scale);
+                    }
+                    *slot
+                })
+                .collect();
+            if vertices.len() >= 3 {
+                data.polygons.push(NavPolygon { vertices });
+            }
+        }
+        data
+    }
 }

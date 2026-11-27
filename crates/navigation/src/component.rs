@@ -28,24 +28,26 @@ pub struct NavMeshStatus {
     pub max: Vec3,
 }
 
-fn status_of(data: &NavMeshData) -> NavMeshStatus {
-    let polygons = data.polygons.len() as u32;
-    if data.vertices.is_empty() {
-        return NavMeshStatus {
+impl NavMeshStatus {
+    fn of(data: &NavMeshData) -> Self {
+        let polygons = data.polygons.len() as u32;
+        if data.vertices.is_empty() {
+            return Self {
+                polygons,
+                ..NavMeshStatus::default()
+            };
+        }
+        Self {
             polygons,
-            ..NavMeshStatus::default()
-        };
-    }
-    NavMeshStatus {
-        polygons,
-        min: data
-            .vertices
-            .iter()
-            .fold(Vec3::splat(f32::MAX), |min, vertex| min.min(*vertex)),
-        max: data
-            .vertices
-            .iter()
-            .fold(Vec3::splat(f32::MIN), |max, vertex| max.max(*vertex)),
+            min: data
+                .vertices
+                .iter()
+                .fold(Vec3::splat(f32::MAX), |min, vertex| min.min(*vertex)),
+            max: data
+                .vertices
+                .iter()
+                .fold(Vec3::splat(f32::MIN), |max, vertex| max.max(*vertex)),
+        }
     }
 }
 
@@ -61,7 +63,7 @@ pub fn update_nav_mesh_status(
         let current = navmeshes
             .get(&component.handle)
             .and_then(NavMesh::data)
-            .map(status_of);
+            .map(NavMeshStatus::of);
         match (current, status) {
             (Some(current), Some(status)) if current == *status => {}
             (Some(current), _) => cmd.insert(current, entity),
