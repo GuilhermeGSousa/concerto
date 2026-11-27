@@ -1,4 +1,5 @@
 //! One standing humanoid and a key for every physical behaviour, with its state on screen.
+#![allow(missing_docs, reason = "example binary, not public API")]
 
 use concerto::{
     DefaultPlugins,

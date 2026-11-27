@@ -89,6 +89,7 @@ proptest = "1"
 
 [workspace.lints.rust]
 warnings = "deny"
+missing_docs = "deny"
 
 [workspace.lints.clippy]
 missing_errors_doc = "deny"

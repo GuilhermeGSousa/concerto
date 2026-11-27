@@ -1,5 +1,6 @@
 //! The UI showcase: every `ui` primitive on one screen.
 #![allow(clippy::too_many_arguments)]
+#![allow(missing_docs, reason = "example binary, not public API")]
 
 use concerto::{
     DefaultPlugins,
