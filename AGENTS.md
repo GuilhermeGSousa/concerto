@@ -263,6 +263,12 @@ lines, and each of its target roots starts with a `//!` line.
 **Match the code around you.** Naming, module layout, error handling, and test
 style follow the file you are in.
 
+**Methods over free helpers.** A helper whose main subject is one of our
+types, because it takes the type first or returns it, is a method, an
+associated function or a constructor on that type, not a free function beside
+it. Free functions stay for maths, for logic that belongs to no single type,
+and for ECS systems and listeners, which must be free functions.
+
 **No tuples as types.** Don't use a tuple such as `(u32, f32)` as a field
 type, a collection element, a return type or a parameter, in tests too. Name
 each field in a struct, and give it methods where they read better.
