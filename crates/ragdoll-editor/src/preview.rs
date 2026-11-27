@@ -125,7 +125,9 @@ impl RagdollStage {
         let character = CharacterRagdoll::new(AssetHandle::weak(id));
         Some(match mode {
             RagdollMode::FollowsAnimation => character,
-            RagdollMode::Limp | RagdollMode::Powered => character.with_mode(mode).with_weight(1.0),
+            RagdollMode::Limp | RagdollMode::Powered | RagdollMode::Graph => {
+                character.with_mode(mode).with_weight(1.0)
+            }
         })
     }
 }

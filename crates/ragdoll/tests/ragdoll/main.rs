@@ -8,6 +8,7 @@ mod common;
 mod dying;
 mod fall;
 mod generate;
+mod graph;
 mod shot;
 mod stability;
 mod stagger;

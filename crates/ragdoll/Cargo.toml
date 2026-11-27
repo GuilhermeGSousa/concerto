@@ -7,7 +7,7 @@ repository.workspace = true
 license.workspace = true
 
 [features]
-test-support = ["dep:uuid"]
+test-support = []
 
 [dependencies]
 anyhow = "1.0.97"
@@ -22,7 +22,7 @@ concerto-reflect.workspace = true
 glam = { workspace = true, features = ["serde"] }
 log = "0.4"
 serde = { version = "1", features = ["derive"] }
-uuid = { version = "1.18.1", features = ["v5"], optional = true }
+uuid = { version = "1.18.1", features = ["v5"] }
 
 [dev-dependencies]
 bincode = "1.3"

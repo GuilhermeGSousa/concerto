@@ -139,6 +139,13 @@ pub struct Wounds {
 }
 
 impl Wounds {
+    pub(crate) fn none() -> &'static Wounds {
+        static NONE: Wounds = Wounds {
+            strength: Vec::new(),
+        };
+        &NONE
+    }
+
     /// The share of its strength `part` keeps, from 0 to 1; 1 for a part that was never hit.
     pub fn strength_of(&self, part: usize) -> f32 {
         self.strength.get(part).copied().unwrap_or(1.0)
