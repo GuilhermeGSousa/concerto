@@ -902,22 +902,37 @@ pub fn record_ragdoll_poses(
     }
 }
 
-fn blend(animated: Mat4, simulated: BodyPose, weight: f32) -> Mat4 {
-    let (scale, rotation, translation) = animated.to_scale_rotation_translation();
-    Mat4::from_scale_rotation_translation(
-        scale,
-        rotation.slerp(simulated.rotation, weight),
-        translation.lerp(simulated.translation, weight),
-    )
+struct Drawn {
+    animated: Mat4,
+    under_parent: Mat4,
+    root: bool,
+}
+
+impl Drawn {
+    fn blend(self, simulated: BodyPose, weight: f32) -> Mat4 {
+        let (scale, rotation, translation) = self.animated.to_scale_rotation_translation();
+        let translation = if self.root {
+            translation.lerp(simulated.translation, weight)
+        } else {
+            self.under_parent.w_axis.truncate()
+        };
+        Mat4::from_scale_rotation_translation(
+            scale,
+            rotation.slerp(simulated.rotation, weight),
+            translation,
+        )
+    }
 }
 
 /// Writes each ragdoll's pose onto its bones, each frame after the animation has written the bones and before transforms propagate.
 ///
 /// It notes the animated pose of every part, then writes the ragdoll's pose,
 /// interpolated between the last two fixed steps, by each part's weight, or in
-/// the graph mode by its bone's physics amount. A bone with no part keeps its
-/// animated pose under its parent, so fingers and a face still animate on a
-/// limp body.
+/// the graph mode by its bone's physics amount. A bone's world rotation is
+/// slerped from its own animated one toward its part's, and it keeps its
+/// animated offset from its drawn parent, so no bone stretches; only the root
+/// part's place is blended. A bone with no part keeps its animated pose under
+/// its drawn parent, so fingers and a face still animate on a limp body.
 pub fn write_ragdoll_poses(
     mut characters: Query<(
         &CharacterRagdoll,
@@ -940,6 +955,13 @@ pub fn write_ragdoll_poses(
             .map(|part| character.drawn(player, &body, part))
             .collect();
         let simulated = body.interpolated_pose(alpha);
+        let root_parts: Vec<bool> = body
+            .resolved
+            .settings()
+            .parts
+            .iter()
+            .map(|part| part.parent.is_none())
+            .collect();
         let mut part_of_bone: Vec<Option<usize>> = vec![None; body.skeleton_bones.len()];
         for (part, bone) in body.resolved.bones().iter().enumerate() {
             part_of_bone[*bone] = Some(part);
@@ -959,28 +981,37 @@ pub fn write_ragdoll_poses(
             .collect();
         let mut world: Vec<Mat4> = Vec::with_capacity(body.skeleton_bones.len());
         let mut model: Vec<Mat4> = Vec::with_capacity(body.skeleton_bones.len());
+        let mut chain_roots: Vec<Mat4> = Vec::with_capacity(body.skeleton_bones.len());
         for (bone, entity) in body.skeleton_bones.clone().into_iter().enumerate() {
             let Some(mut local) = locals.get_entity_mut(entity) else {
                 world.push(Mat4::IDENTITY);
                 model.push(Mat4::IDENTITY);
+                chain_roots.push(Mat4::IDENTITY);
                 continue;
             };
             let animated_local = local.compute_matrix();
             let parent = match skeleton.parents[bone] {
                 Some(parent) => {
                     model.push(model[parent as usize] * animated_local);
+                    chain_roots.push(chain_roots[parent as usize]);
                     world[parent as usize]
                 }
                 None => {
                     model.push(animated_local);
+                    chain_roots.push(root_parents[bone]);
                     root_parents[bone]
                 }
             };
-            let animated = parent * animated_local;
             let weight = part_of_bone[bone].map_or(0.0, |part| weights[part]);
+            let under_parent = parent * animated_local;
             let drawn = match part_of_bone[bone] {
-                Some(part) if weight > 0.0 => blend(animated, simulated[part], weight),
-                _ => animated,
+                Some(part) if weight > 0.0 => Drawn {
+                    animated: chain_roots[bone] * model[bone],
+                    under_parent,
+                    root: root_parts[part],
+                }
+                .blend(simulated[part], weight),
+                _ => under_parent,
             };
             if weight > 0.0 {
                 let (_, rotation, translation) =
