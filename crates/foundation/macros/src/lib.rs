@@ -1,3 +1,6 @@
+//! Procedural macros for `concerto-foundation`: the `Asset`, `Blendable` and `AsAny` derives and
+//! the backing of `asset_id!`; use them through its re-exports.
+
 extern crate proc_macro;
 extern crate syn;
 

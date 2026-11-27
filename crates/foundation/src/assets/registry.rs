@@ -14,6 +14,7 @@ use super::{Asset, AssetId};
 /// One content asset on disk: its id, where it is, and what kind of asset it holds.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AssetEntry {
+    /// The asset's persistent id.
     pub id: AssetId,
     /// The project-relative path, `/`-separated (`"content/hero/body.gasset"`).
     pub address: String,
@@ -115,6 +116,7 @@ pub struct AssetRegistry {
 }
 
 impl AssetRegistry {
+    /// Creates an empty registry.
     pub fn new() -> Self {
         Self::default()
     }
@@ -183,6 +185,7 @@ impl AssetRegistry {
         write_registry(&entries)
     }
 
+    /// Returns the entry for `id`, or `None` when no content asset has it.
     pub fn get(&self, id: AssetId) -> Option<&AssetEntry> {
         self.entries.get(&id)
     }

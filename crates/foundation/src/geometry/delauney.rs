@@ -1,9 +1,13 @@
 use glam::{Vec2, Vec3};
 
+/// A triangle of a [`Triangulation2D`], as indices into its [`points`](Triangulation2D::points).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Triangle {
+    /// The index of the first vertex.
     pub a: usize,
+    /// The index of the second vertex.
     pub b: usize,
+    /// The index of the third vertex.
     pub c: usize,
 }
 
@@ -39,10 +43,12 @@ impl Triangulation2D {
         Self { points, triangles }
     }
 
+    /// Returns the points the triangulation was built over, in their original order.
     pub fn points(&self) -> &[Vec2] {
         &self.points
     }
 
+    /// Returns the triangles.
     pub fn triangles(&self) -> &[Triangle] {
         &self.triangles
     }

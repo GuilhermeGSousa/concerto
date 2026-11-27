@@ -19,12 +19,15 @@ use concerto_reflect::{
 use crossbeam_channel::Sender;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
+/// Sent when an asset stops being referenced.
 #[derive(Clone, Event)]
 pub enum AssetLifetimeEvent {
+    /// The last strong handle to the asset with this id was dropped.
     Dropped(AssetId),
 }
 
 impl AssetLifetimeEvent {
+    /// Returns the id of the asset the event is about.
     pub fn id(&self) -> AssetId {
         match self {
             AssetLifetimeEvent::Dropped(id) => *id,
@@ -35,6 +38,7 @@ impl AssetLifetimeEvent {
 /// Sent when an asset of type `A`, loaded or added, lands in its `AssetStore<A>`.
 #[derive(Event)]
 pub struct AssetLoaded<A: Asset> {
+    /// The id of the asset that landed.
     pub id: AssetId,
     _asset: PhantomData<fn() -> A>,
 }
@@ -53,9 +57,12 @@ impl<A: Asset> AssetLoaded<A> {
 /// The reason is in the log.
 #[derive(Event, Clone)]
 pub struct AssetLoadFailed {
+    /// The id that was asked for.
     pub id: AssetId,
 }
 
+/// The shared part of a strong [`AssetHandle`]; dropping the last one reports the asset
+/// unreferenced.
 pub struct StrongAssetHandle {
     pub(crate) id: AssetId,
     pub(crate) lifetime_sender: Sender<AssetLifetimeEvent>,
@@ -88,7 +95,9 @@ impl Debug for StrongAssetHandle {
 /// Deserializing always produces a `Weak` handle, since deserialization has no
 /// [`AssetServer`] to resolve a `Strong` handle against.
 pub enum AssetHandle<A: Asset> {
+    /// Keeps the asset alive while any strong handle to it exists.
     Strong(Arc<StrongAssetHandle>, PhantomData<A>),
+    /// Names the asset by id without keeping it alive.
     Weak(AssetId, PhantomData<A>),
 }
 
@@ -97,10 +106,12 @@ impl<A: Asset> AssetHandle<A> {
         AssetHandle::Strong(handle, PhantomData)
     }
 
+    /// Creates a weak handle to `id`.
     pub fn weak(id: AssetId) -> Self {
         AssetHandle::Weak(id, PhantomData)
     }
 
+    /// Returns the id of the asset the handle refers to.
     pub fn id(&self) -> AssetId {
         match self {
             AssetHandle::Strong(handle, _) => handle.id,
@@ -215,7 +226,9 @@ impl<A: Asset> JsonLeaf for AssetHandle<A> {
 /// Why [`ReflectAssetHandle::set`] left a value unchanged.
 #[derive(Debug, PartialEq, Eq)]
 pub enum SetHandleError {
+    /// The value is not an `AssetHandle` of this type.
     NotThisHandle,
+    /// The server neither loads nor names the asset's kind.
     AssetNotRegistered,
 }
 

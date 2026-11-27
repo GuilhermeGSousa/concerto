@@ -78,6 +78,7 @@ impl AssetLoadEvent {
     }
 }
 
+/// What [`LoadableAsset::on_load`] receives: the server, the asset's id and the type registry.
 pub struct AssetLoadContext {
     asset_server: AssetServer,
     asset_id: AssetId,
@@ -85,10 +86,12 @@ pub struct AssetLoadContext {
 }
 
 impl AssetLoadContext {
+    /// Returns the server that is loading the asset.
     pub fn asset_server(&self) -> &AssetServer {
         &self.asset_server
     }
 
+    /// Returns the id of the asset being loaded.
     pub fn asset_id(&self) -> AssetId {
         self.asset_id
     }
@@ -245,12 +248,16 @@ struct ContentState {
     registry: Arc<AssetRegistry>,
 }
 
+/// Loads content assets by id on the load pool and hands each to its [`AssetStore`].
+///
+/// A resource; clones share the same server.
 #[derive(Resource, Clone)]
 pub struct AssetServer {
     data: Arc<AssetServerData>,
 }
 
 impl AssetServer {
+    /// Creates a server over the platform's default content root.
     pub fn new() -> Self {
         Self::with_content_root(ContentAssetRoot::default_for_platform())
     }
