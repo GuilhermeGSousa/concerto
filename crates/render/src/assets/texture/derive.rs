@@ -15,52 +15,51 @@ pub(crate) struct ResolvedTexture {
     pub(crate) format: TextureFormat,
 }
 
-pub(crate) fn resolve(
-    role: TextureRole,
-    settings: &TextureSettings,
-    has_alpha: bool,
-) -> anyhow::Result<ResolvedTexture> {
-    let compression = match (settings.compression, role) {
-        (Compression::Auto, TextureRole::Color) if has_alpha => Compression::Bc7,
-        (Compression::Auto, TextureRole::Color) => Compression::Bc1,
-        (Compression::Auto, TextureRole::Normal) => Compression::Bc5,
-        (Compression::Auto, TextureRole::Data) => Compression::Bc7,
-        (compression, _) => compression,
-    };
-    let srgb = settings.color_space_for(role) == ColorSpace::Srgb;
-    let format = match (compression, srgb) {
-        (Compression::Bc7, true) => TextureFormat::Bc7RgbaUnormSrgb,
-        (Compression::Bc7, false) => TextureFormat::Bc7RgbaUnorm,
-        (Compression::Bc1, true) => TextureFormat::Bc1RgbaUnormSrgb,
-        (Compression::Bc1, false) => TextureFormat::Bc1RgbaUnorm,
-        (Compression::Uncompressed, true) => TextureFormat::Rgba8UnormSrgb,
-        (Compression::Uncompressed, false) => TextureFormat::Rgba8Unorm,
-        (Compression::Bc5 | Compression::Bc4, true) => anyhow::bail!(
-            "{compression:?} has no sRGB form; set the texture's colour space to Linear"
-        ),
-        (Compression::Bc5, false) => TextureFormat::Bc5RgUnorm,
-        (Compression::Bc4, false) => TextureFormat::Bc4RUnorm,
-        (Compression::Auto, _) => unreachable!("Auto resolves above"),
-    };
-    Ok(ResolvedTexture {
-        compression,
-        format,
-    })
+impl ResolvedTexture {
+    pub(crate) fn resolve(
+        role: TextureRole,
+        settings: &TextureSettings,
+        has_alpha: bool,
+    ) -> anyhow::Result<Self> {
+        let compression = match (settings.compression, role) {
+            (Compression::Auto, TextureRole::Color) if has_alpha => Compression::Bc7,
+            (Compression::Auto, TextureRole::Color) => Compression::Bc1,
+            (Compression::Auto, TextureRole::Normal) => Compression::Bc5,
+            (Compression::Auto, TextureRole::Data) => Compression::Bc7,
+            (compression, _) => compression,
+        };
+        let srgb = settings.color_space_for(role) == ColorSpace::Srgb;
+        let format = match (compression, srgb) {
+            (Compression::Bc7, true) => TextureFormat::Bc7RgbaUnormSrgb,
+            (Compression::Bc7, false) => TextureFormat::Bc7RgbaUnorm,
+            (Compression::Bc1, true) => TextureFormat::Bc1RgbaUnormSrgb,
+            (Compression::Bc1, false) => TextureFormat::Bc1RgbaUnorm,
+            (Compression::Uncompressed, true) => TextureFormat::Rgba8UnormSrgb,
+            (Compression::Uncompressed, false) => TextureFormat::Rgba8Unorm,
+            (Compression::Bc5 | Compression::Bc4, true) => anyhow::bail!(
+                "{compression:?} has no sRGB form; set the texture's colour space to Linear"
+            ),
+            (Compression::Bc5, false) => TextureFormat::Bc5RgUnorm,
+            (Compression::Bc4, false) => TextureFormat::Bc4RUnorm,
+            (Compression::Auto, _) => unreachable!("Auto resolves above"),
+        };
+        Ok(Self {
+            compression,
+            format,
+        })
+    }
 }
 
-pub(crate) fn decode_source(source: &TextureSource) -> anyhow::Result<RgbaImage> {
-    let format = match source.encoding {
-        SourceEncoding::Png => ImageFormat::Png,
-        SourceEncoding::Jpeg => ImageFormat::Jpeg,
-    };
-    Ok(image::load_from_memory_with_format(&source.bytes, format)
-        .with_context(|| {
-            format!(
-                "failed to decode the texture's {:?} source",
-                source.encoding
-            )
-        })?
-        .to_rgba8())
+impl TextureSource {
+    pub(crate) fn decode(&self) -> anyhow::Result<RgbaImage> {
+        let format = match self.encoding {
+            SourceEncoding::Png => ImageFormat::Png,
+            SourceEncoding::Jpeg => ImageFormat::Jpeg,
+        };
+        Ok(image::load_from_memory_with_format(&self.bytes, format)
+            .with_context(|| format!("failed to decode the texture's {:?} source", self.encoding))?
+            .to_rgba8())
+    }
 }
 
 pub(crate) fn has_alpha(image: &RgbaImage) -> bool {
@@ -80,8 +79,8 @@ pub fn derive_levels(
     role: TextureRole,
     settings: &TextureSettings,
 ) -> anyhow::Result<TextureLevels> {
-    let image = decode_source(source)?;
-    let resolved = resolve(role, settings, has_alpha(&image))?;
+    let image = source.decode()?;
+    let resolved = ResolvedTexture::resolve(role, settings, has_alpha(&image))?;
     let compressed = resolved.compression != Compression::Uncompressed;
     let image = fit(image, settings.max_size.pixels(), compressed);
     let (width, height) = image.dimensions();

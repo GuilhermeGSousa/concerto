@@ -160,18 +160,18 @@ impl PixelRect {
         );
         pass.set_scissor_rect(self.x, self.y, self.width, self.height);
     }
-}
 
-/// The pixels a camera with `viewport` covers on a target of `target` size; the whole target for `None`.
-pub fn viewport_rect(viewport: Option<&Viewport>, target: UVec2) -> PixelRect {
-    match viewport {
-        Some(viewport) => viewport.to_pixels(target),
-        None => PixelRect {
-            x: 0,
-            y: 0,
-            width: target.x,
-            height: target.y,
-        },
+    /// The pixels a camera with `viewport` covers on a target of `target` size; the whole target for `None`.
+    pub fn covering(viewport: Option<&Viewport>, target: UVec2) -> Self {
+        match viewport {
+            Some(viewport) => viewport.to_pixels(target),
+            None => Self {
+                x: 0,
+                y: 0,
+                width: target.x,
+                height: target.y,
+            },
+        }
     }
 }
 
@@ -219,7 +219,7 @@ impl Camera {
 
     /// The pixels this camera covers on a target of `target` size.
     pub fn viewport_rect(&self, target: UVec2) -> PixelRect {
-        viewport_rect(self.viewport.as_ref(), target)
+        PixelRect::covering(self.viewport.as_ref(), target)
     }
 
     /// Returns the projection matrix from view space to clip space, with depth from 0 at
@@ -405,7 +405,7 @@ impl RenderCamera {
 
     /// The pixels this camera covers on a target of `target` size.
     pub fn viewport_rect(&self, target: UVec2) -> PixelRect {
-        viewport_rect(self.viewport.as_ref(), target)
+        PixelRect::covering(self.viewport.as_ref(), target)
     }
 
     pub(crate) fn rebind(
@@ -743,9 +743,7 @@ mod tests {
     use encase::ShaderType;
     use glam::{Mat4, UVec2, Vec2, Vec3, Vec4};
 
-    use super::{
-        sync_camera_aspect, viewport_rect, Camera, CameraUniform, PixelRect, RenderTarget, Viewport,
-    };
+    use super::{sync_camera_aspect, Camera, CameraUniform, PixelRect, RenderTarget, Viewport};
     use crate::layout_test::{float_words, uniform_words};
 
     fn rect(x: u32, y: u32, width: u32, height: u32) -> PixelRect {
@@ -833,7 +831,7 @@ mod tests {
             },
         ];
         for case in &cases {
-            let pixels = viewport_rect(case.viewport.as_ref(), case.target);
+            let pixels = PixelRect::covering(case.viewport.as_ref(), case.target);
             assert_eq!(pixels, case.rect, "{}", case.case);
             assert_eq!(pixels.is_empty(), case.aspect.is_none(), "{}", case.case);
             assert_eq!(pixels.aspect(), case.aspect, "{}", case.case);

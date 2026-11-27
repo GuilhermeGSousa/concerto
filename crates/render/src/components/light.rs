@@ -385,7 +385,7 @@ pub(crate) struct VisibleLights {
 impl VisibleLights {
     pub(crate) fn contains(&self, entity: Entity) -> bool {
         self.entities
-            .binary_search_by_key(&entity_order(&entity), entity_order)
+            .binary_search_by_key(&EntityOrder::of(&entity), EntityOrder::of)
             .is_ok()
     }
 }
@@ -396,10 +396,12 @@ pub(crate) struct EntityOrder {
     generation: u32,
 }
 
-pub(crate) fn entity_order(entity: &Entity) -> EntityOrder {
-    EntityOrder {
-        index: entity.index(),
-        generation: entity.generation().get(),
+impl EntityOrder {
+    pub(crate) fn of(entity: &Entity) -> Self {
+        Self {
+            index: entity.index(),
+            generation: entity.generation().get(),
+        }
     }
 }
 
@@ -424,7 +426,7 @@ pub(crate) fn cull_lights(
         .filter(|(_, light)| views.iter().any(|view| sees(view, light)))
         .map(|(entity, _)| entity)
         .collect();
-    entities.sort_by_key(entity_order);
+    entities.sort_by_key(EntityOrder::of);
     if visible.entities != entities {
         visible.entities = entities;
     }
