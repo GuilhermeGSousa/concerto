@@ -1538,6 +1538,13 @@ drive frame. The default gives the first input all of it, as the default
 overrides `drive_shares` with it. A retarget node does not drive the graph it
 plays.
 
+Whatever acts on physics reads `drive_attributes`, written each fixed step,
+and not `attributes`, written by the frame's `evaluate`: the two passes run at
+different rates, and during a transition, a layer change or a fade they can
+come from different blends, so reading both could pair one part's decision with
+another blend's command. `attributes` is for consumers that run at frame rate,
+such as effects and sounds that follow the drawn pose.
+
 A node gives root motion with `root_motion(state, input, context, bone_ids,
 inputs)`, which returns a `RootMotion`. `update_animation_players` calls it for
 every node after the whole graph's `update`, from the leaves up, with the node's `UpdateInput`, so `inputs` holds

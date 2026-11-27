@@ -80,6 +80,9 @@ impl AnimationPlayer {
     }
 
     /// The per-bone attributes of the frame the player last evaluated; none once its graph gives no frame.
+    ///
+    /// They are written once a frame, so they are for consumers that run at frame rate. Whatever
+    /// acts on physics reads [`Self::drive_attributes`] instead.
     pub fn attributes(&self) -> &PoseAttributes {
         &self.attributes
     }
@@ -130,6 +133,10 @@ impl AnimationPlayer {
     }
 
     /// The per-bone attributes of the last physics step's drive.
+    ///
+    /// They are written each fixed step by [`AnimationNode::drive`], and are the only attributes
+    /// whatever acts on physics reads, so every decision a step makes comes from one blend.
+    /// [`Self::attributes`] are written by the frame's evaluate, at another rate.
     pub fn drive_attributes(&self) -> &PoseAttributes {
         &self.drive_attributes
     }
