@@ -6,7 +6,9 @@ use crate::{events::WindowEvent, input::Input};
 /// How the pointer behaves over the drawing area.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CursorMode {
+    /// Whether the cursor is drawn over the window.
     pub visible: bool,
+    /// Whether the cursor is locked to the window, as a first-person camera wants.
     pub grabbed: bool,
 }
 
@@ -24,10 +26,13 @@ impl Default for CursorMode {
 /// A host applies what makes sense for it and ignores the rest.
 #[derive(Clone, Debug, PartialEq)]
 pub struct WindowSettings {
+    /// The text in the window's title bar.
     pub title: String,
+    /// Whether the system draws the window's title bar and border.
     pub decorations: bool,
     /// The smallest size a person can resize down to, in logical pixels.
     pub min_size: Option<Vec2>,
+    /// How the cursor behaves over the window.
     pub cursor: CursorMode,
     /// When set, the window's own close button only emits `WindowEvent::CloseRequested`.
     pub intercept_close: bool,
@@ -48,11 +53,15 @@ impl Default for WindowSettings {
 /// A one-shot request that the host carries out once.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum WindowCommand {
+    /// Minimise the window.
     Minimise,
+    /// Maximise the window (`true`) or restore it (`false`).
     SetMaximised(bool),
     /// A new size in logical pixels; the result arrives as `WindowEvent::Resized`.
     RequestSize(Vec2),
+    /// Bring the window to the front and give it keyboard focus.
     Focus,
+    /// Close the window and end the host's event loop.
     Close,
 }
 
@@ -63,11 +72,13 @@ pub struct Window {
     scale_factor: f64,
     focused: bool,
     maximised: bool,
+    /// What the game asks of the window; the host applies it each frame.
     pub settings: WindowSettings,
     commands: Vec<WindowCommand>,
 }
 
 impl Window {
+    /// Creates a focused, unmaximised window of `size` physical pixels with default settings.
     pub fn new(size: (u32, u32), scale_factor: f64) -> Self {
         Self {
             size,
@@ -79,6 +90,7 @@ impl Window {
         }
     }
 
+    /// Returns the drawable size in physical pixels, the same as [`Self::physical_size`].
     pub fn size(&self) -> (u32, u32) {
         self.size
     }
@@ -88,10 +100,12 @@ impl Window {
         self.size
     }
 
+    /// Returns the drawable width in physical pixels.
     pub fn width(&self) -> u32 {
         self.size.0
     }
 
+    /// Returns the drawable height in physical pixels.
     pub fn height(&self) -> u32 {
         self.size.1
     }
@@ -117,10 +131,12 @@ impl Window {
         self.physical_to_logical(input.mouse_position())
     }
 
+    /// Whether the window has keyboard focus.
     pub fn is_focused(&self) -> bool {
         self.focused
     }
 
+    /// Whether the window is maximised.
     pub fn is_maximised(&self) -> bool {
         self.maximised
     }

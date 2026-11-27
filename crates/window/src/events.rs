@@ -15,57 +15,92 @@ use crate::{
 /// How far a wheel or trackpad scrolled.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ScrollDelta {
+    /// A distance in lines or rows, as a mouse wheel reports it; positive `y` scrolls up.
     Lines(Vec2),
+    /// A distance in physical pixels, as a trackpad reports it; positive `y` scrolls up.
     Pixels(Vec2),
 }
 
 /// Something a host tells an `App` about its window or its input devices.
 #[derive(Event, Clone, Debug, PartialEq)]
 pub enum WindowEvent {
+    /// The drawing area changed size.
     Resized {
+        /// The new width in physical pixels.
         width: u32,
+        /// The new height in physical pixels.
         height: u32,
     },
+    /// The number of physical pixels per logical pixel changed, for example on moving to another
+    /// monitor.
     ScaleFactorChanged(f64),
+    /// The window gained (`true`) or lost (`false`) keyboard focus.
     Focused(bool),
+    /// The window was maximised (`true`) or restored (`false`).
     Maximised(bool),
+    /// A person asked to close the window; the host closes it unless
+    /// [`WindowSettings::intercept_close`](crate::plugin::WindowSettings::intercept_close) is set.
     CloseRequested,
+    /// A key went down, repeated, or came up.
     Key {
+        /// The key, by its position on the keyboard.
         key: PhysicalKey,
+        /// Whether the key went down; `false` when it came up.
         pressed: bool,
+        /// The text the press types, without control characters; `None` on release.
         text: Option<String>,
     },
+    /// A mouse button went down or came up.
     MouseButton {
+        /// The button.
         button: MouseButton,
+        /// Whether the button went down; `false` when it came up.
         pressed: bool,
     },
     /// Physical pixels from the top-left of the drawing area.
     CursorMoved {
+        /// The cursor's new position.
         position: Vec2,
     },
+    /// The mouse moved, read from the device rather than the cursor, so it keeps coming while
+    /// the cursor is grabbed.
     MouseMotion {
+        /// The movement since the last event, in the device's own unaccelerated units.
         delta: Vec2,
     },
+    /// The wheel or trackpad scrolled.
     MouseWheel {
+        /// How far it scrolled.
         delta: ScrollDelta,
     },
+    /// A gamepad was connected.
     GamepadConnected {
+        /// The id the pad is known by until it disconnects.
         id: GamepadId,
+        /// The name the pad's driver reports.
         name: String,
     },
+    /// A gamepad was disconnected.
     GamepadDisconnected {
+        /// The pad's id.
         id: GamepadId,
     },
     /// The button's raw value, 0..1.
     GamepadButton {
+        /// The pad's id.
         id: GamepadId,
+        /// The button that changed.
         button: GamepadButton,
+        /// The new value, 0 released and 1 fully pressed.
         value: f32,
     },
     /// The axis's raw value, -1..1.
     GamepadAxis {
+        /// The pad's id.
         id: GamepadId,
+        /// The axis that moved.
         axis: GamepadAxis,
+        /// The new value, from -1 to 1, before any dead zone.
         value: f32,
     },
 }
@@ -73,8 +108,18 @@ pub enum WindowEvent {
 /// A pad that `Input` gained or lost this frame.
 #[derive(Event, Clone, Debug, PartialEq)]
 pub enum GamepadConnection {
-    Connected { id: GamepadId, name: String },
-    Disconnected { id: GamepadId },
+    /// The pad was connected.
+    Connected {
+        /// The id the pad is known by until it disconnects.
+        id: GamepadId,
+        /// The name the pad's driver reports.
+        name: String,
+    },
+    /// The pad was disconnected.
+    Disconnected {
+        /// The pad's id.
+        id: GamepadId,
+    },
 }
 
 /// The set that folds window events into `Input`.
@@ -90,6 +135,7 @@ pub struct FoldInput;
 /// cursor position always fold.
 #[derive(Resource, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct InputGate {
+    /// Whether key and mouse events fold this frame.
     pub open: bool,
 }
 
