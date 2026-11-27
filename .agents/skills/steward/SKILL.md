@@ -20,8 +20,9 @@ how to act on a PR event.
   `cargo metadata --format-version 1 > /dev/null`; a merge that brings in a
   `Cargo.toml` change runs it too, and commits `Cargo.lock` if it changed.
 - Never merge the PR. The owner merges.
-- A cloud session checks with `cargo fmt --all -- --check` and
-  `python3 .github/scripts/test_budget.py` only, plus
+- A cloud session checks with `cargo fmt --all -- --check`,
+  `python3 .github/scripts/test_budget.py` and
+  `python3 .github/scripts/dependencies.py` only, plus
   `cargo metadata --format-version 1 > /dev/null` when a `Cargo.toml` changed,
   and leaves clippy, tests and wasm to CI.
 - A CI job that failed without starting, with an annotation about billing or

@@ -89,6 +89,7 @@ of these pass, in this order. They are the CI jobs, with CI's flags.
 ```sh
 cargo fmt --all -- --check
 python3 .github/scripts/test_budget.py
+python3 .github/scripts/dependencies.py
 cargo deny check bans advisories
 CARGO_BUILD_WARNINGS=deny cargo clippy --locked --workspace --all-targets -- -D warnings
 cargo clippy --locked --workspace -- -A clippy::all -D clippy::cognitive_complexity
@@ -143,14 +144,15 @@ in the debugger; `--profile profiling` is the fully optimized build, and the
 one to measure performance with.
 
 While a plan is in progress, each task runs a gate scoped to the crates it
-touched: `cargo fmt --all -- --check` and the test budget, then the clippy and test lines above
+touched: `cargo fmt --all -- --check`, the test budget and the dependency
+layers, then the clippy and test lines above
 with `-p <crate>` for each crate in place of `--workspace` (and the Rapier
 lines when physics is one of them). The full gate runs once, after the last
 task and before the branch review.
 
 Report each command you ran with its result. If one fails, say so and show the
 output. A command you did not run is reported as not run. A change to Markdown
-alone needs none of them. A cloud pipeline session runs only the first two, and
+alone needs none of them. A cloud pipeline session runs only the first three, and
 the `cargo metadata` step below when a `Cargo.toml` changed, and leaves the
 rest to CI. When CI could not start its jobs, for want of Actions minutes, the
 session goes on and reports those commands as not run.
@@ -321,8 +323,19 @@ editor's MCP tools.
 
 - A game crate never depends on `concerto-editor`. The editor hosts the game;
   whatever a game says about editing must be reachable from engine crates.
+- Each workspace package sits in a layer and depends only on the layers it is
+  allowed, in normal, build and dev dependencies alike.
+  `python3 .github/scripts/dependencies.py` checks it.
+
+  | Layer | Packages | May depend on |
+  |---|---|---|
+  | engine | every package not listed below, the root `concerto` included | engine |
+  | gizmos | `concerto-*-gizmos` | engine, gizmos |
+  | editor | `concerto-editor`, `concerto-*-editor` | engine, gizmos, editor |
+  | example | packages under `examples/` | engine, gizmos |
 - Jolt is the native physics backend and Rapier is the web one. Do not make
-  Jolt build for wasm.
+  Jolt build for wasm. `python3 .github/scripts/dependencies.py` fails when the
+  root `concerto` crate reaches `concerto-jolt-ffi` on `wasm32-unknown-unknown`.
 - Render-world systems are added with `add_render_system`. `add_system` with
   `Extract`, `Render`, or `LateRender` puts the system in the main world, where
   those schedules never run.

@@ -134,6 +134,17 @@ jobs:
       - name: Check the test budget
         run: python3 .github/scripts/test_budget.py
 
+  dependency_layers:
+    name: Dependency layers
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install stable Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Check the dependency layers
+        run: python3 .github/scripts/dependencies.py
+
   format:
     name: Format
     runs-on: ubuntu-latest
