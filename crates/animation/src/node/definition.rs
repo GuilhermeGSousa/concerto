@@ -86,8 +86,10 @@ pub trait AnimationNode: Reflect + Send + Sync + 'static {
     /// What the node asks of physics this step, from its state and its inputs' drive frames.
     ///
     /// Only attributes are read and written; joints are unused. `inputs` holds the drive frames of
-    /// the node's inputs in slot order, each with its node's weight. The default copies the first
-    /// input's attributes.
+    /// the node's inputs in slot order, each with its node's weight. The default blends the
+    /// attributes of the inputs with a positive weight by those weights, as
+    /// [`Self::drive_shares`] shares them out. Override it, with `drive_shares`, in a node that
+    /// computes its own blend, like a blend space or a layer.
     fn drive(
         &self,
         _state: &mut Self::State,
@@ -98,8 +100,16 @@ pub trait AnimationNode: Reflect + Send + Sync + 'static {
         _pool: &mut FramePool,
         output: &mut AnimationFrame,
     ) {
-        if let Some(input) = inputs.first() {
-            output.attributes_mut().copy_from(input.frame.attributes());
+        let mut weighted = inputs.iter().filter(|input| input.weight > 0.0);
+        let Some(first) = weighted.next() else {
+            return;
+        };
+        let attributes = output.attributes_mut();
+        attributes.copy_from(first.frame.attributes());
+        let mut total_weight = first.weight;
+        for input in weighted {
+            total_weight += input.weight;
+            attributes.blend(input.frame.attributes(), input.weight / total_weight);
         }
     }
 
@@ -108,13 +118,13 @@ pub trait AnimationNode: Reflect + Send + Sync + 'static {
     /// `shares` comes in holding the weight of each input's node, in slot order, and leaves
     /// holding each input's share of this node's drive frame, from 0 to 1. Before any node
     /// drives, the walk multiplies the shares down the graph into each node's
-    /// [`DriveContext::weight`]; `context` carries this node's. The default gives the first input
-    /// all of it, as the default [`Self::drive`] copies it, so a node that overrides `drive` to
-    /// blend its inputs overrides this too.
+    /// [`DriveContext::weight`]; `context` carries this node's. The default normalizes the
+    /// positive weights to sum to 1 and zeroes the rest, as the default [`Self::drive`] blends
+    /// them. A node that overrides `drive` to compute its own blend overrides this too.
     fn drive_shares(&self, _state: &Self::State, _context: &DriveContext<'_>, shares: &mut [f32]) {
-        if let Some((first, rest)) = shares.split_first_mut() {
-            *first = 1.0;
-            rest.fill(0.0);
+        let total: f32 = shares.iter().filter(|weight| **weight > 0.0).sum();
+        for share in shares {
+            *share = if *share > 0.0 { *share / total } else { 0.0 };
         }
     }
 

@@ -1533,9 +1533,10 @@ cannot carry out, or wind down as its state fades. The walk works the weights
 out from the root down before any node drives, asking each node for
 `drive_shares(state, context, shares)`: `shares` holds its inputs' node weights
 in slot order, and the node overwrites them with each input's share of its
-drive frame. The default gives the first input all of it, as the default
-`drive` copies it, so a node that overrides `drive` to blend its inputs
-overrides `drive_shares` with it. A retarget node does not drive the graph it
+drive frame. The default gives each input with a positive weight its weight
+over their sum, as the default `drive` blends them, so a node that overrides
+`drive` to compute its own blend, like a blend space or a layer, overrides
+`drive_shares` with it. A retarget node does not drive the graph it
 plays.
 
 Whatever acts on physics reads `drive_attributes`, written each fixed step,

@@ -7,7 +7,7 @@ use uuid::Uuid;
 use crate::{
     blackboard::AnimationBlackboard,
     clip::{AnimationChannel, AnimationClip, KeyCursor},
-    evaluation::{AnimationGraphContext, DriveContext, RootBone},
+    evaluation::{AnimationGraphContext, RootBone},
     param::Param,
     pose::{
         AnimationFrame, EvaluatedFrame, FiredEvent, FramePool, JointPose, RootMotion,
@@ -169,36 +169,6 @@ impl AnimationNode for BlendNode {
         for input in weighted {
             total_weight += input.weight;
             output.blend(&input.frame, input.weight / total_weight);
-        }
-    }
-
-    fn drive(
-        &self,
-        _: &mut (),
-        _: &(),
-        _: &DriveContext<'_>,
-        _: &[Uuid],
-        inputs: &[EvaluatedFrame],
-        _: &mut FramePool,
-        output: &mut AnimationFrame,
-    ) {
-        let mut weighted = inputs.iter().filter(|input| input.weight > 0.0);
-        let Some(first) = weighted.next() else {
-            return;
-        };
-        let attributes = output.attributes_mut();
-        attributes.copy_from(first.frame.attributes());
-        let mut total_weight = first.weight;
-        for input in weighted {
-            total_weight += input.weight;
-            attributes.blend(input.frame.attributes(), input.weight / total_weight);
-        }
-    }
-
-    fn drive_shares(&self, _: &(), _: &DriveContext<'_>, shares: &mut [f32]) {
-        let total: f32 = shares.iter().filter(|weight| **weight > 0.0).sum();
-        for share in shares {
-            *share = if *share > 0.0 { *share / total } else { 0.0 };
         }
     }
 
