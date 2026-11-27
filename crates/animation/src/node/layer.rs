@@ -181,6 +181,7 @@ impl AnimationNode for LayerNode {
                 blend_mesh(state, skeleton, weight, &base.frame, &overlay.frame, output)
             }
         }
+        blend_attributes(&state.mask.weights, weight, &overlay.frame, output);
     }
 
     fn reset(&self, _: &mut LayerState) {}
@@ -205,6 +206,22 @@ fn blend_local(weights: &[f32], layer: f32, overlay: &AnimationFrame, output: &m
             continue;
         };
         blend_joint(joint, target, weight);
+    }
+}
+
+fn blend_attributes(
+    weights: &[f32],
+    layer: f32,
+    overlay: &AnimationFrame,
+    output: &mut AnimationFrame,
+) {
+    for (bone, mask_weight) in weights.iter().enumerate() {
+        let weight = mask_weight * layer;
+        if weight > 0.0 {
+            output
+                .attributes_mut()
+                .blend_bone(overlay.attributes(), bone, weight);
+        }
     }
 }
 

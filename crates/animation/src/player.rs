@@ -16,6 +16,7 @@ use concerto_reflect::Reflect;
 use glam::{Affine3A, Vec2, Vec3};
 
 use crate::{
+    attribute::PoseAttributes,
     blackboard::AnimationBlackboard,
     evaluation::{AnimationGraphContext, RootBone},
     graph::{AnimationGraph, AnimationGraphState, AnimationNodeIndex, NodeVisit},
@@ -57,6 +58,7 @@ pub struct AnimationPlayer {
     paused: bool,
     event_threshold: f32,
     pub(crate) fired: Vec<FiredEvent>,
+    attributes: PoseAttributes,
 }
 
 impl AnimationPlayer {
@@ -70,7 +72,13 @@ impl AnimationPlayer {
             paused: false,
             event_threshold: 0.0,
             fired: Vec::new(),
+            attributes: PoseAttributes::default(),
         }
+    }
+
+    /// The per-bone attributes of the frame the player last evaluated; none once its graph gives no frame.
+    pub fn attributes(&self) -> &PoseAttributes {
+        &self.attributes
     }
 
     /// Drops clip events whose source weighs no more than `threshold` in the final frame; 0 by default.
@@ -279,6 +287,7 @@ impl AnimationPlayer {
             &mut output_frame,
         ) {
             // No graph evaluated — keep the bones' current (default) pose.
+            self.attributes.clear();
             self.frame_pool.release(output_frame);
             return false;
         }
@@ -306,6 +315,7 @@ impl AnimationPlayer {
             }
         }
 
+        std::mem::swap(&mut self.attributes, output_frame.attributes_mut());
         self.frame_pool.release(output_frame);
         true
     }

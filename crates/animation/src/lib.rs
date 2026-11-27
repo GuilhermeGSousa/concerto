@@ -7,6 +7,8 @@
 //! with a skeleton an [`AnimationHandleComponent`](player::AnimationHandleComponent), and set the
 //! parameters its nodes read on the player.
 
+/// Typed per-bone values that travel with a pose and blend through every combiner.
+pub mod attribute;
 /// The named parameters a player gives its graph's nodes.
 pub mod blackboard;
 /// Animation clips: keyed joint channels, clip events and additive settings.
