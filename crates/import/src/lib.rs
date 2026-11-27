@@ -112,9 +112,9 @@ impl ContentScan {
         source: &Path,
         destination: &str,
     ) -> anyhow::Result<StagedSettings> {
-        let placement = placement(source, destination, &self.project_root)?;
+        let placement = Placement::resolve(source, destination, &self.project_root)?;
         let importer = importer_of(&placement.source, &placement.placed)?;
-        let metadata = source_metadata(
+        let metadata = SourceMetadata::for_source(
             importer,
             &placement.placed,
             &placement.project_root,
@@ -179,6 +179,26 @@ fn described(section: &EmittedUncooked) -> UncookedSection {
 struct HostFile {
     id: AssetId,
     address: String,
+}
+
+impl HostFile {
+    fn remove_strays(
+        &self,
+        embedded: &[EmbeddedOutput],
+        registry: &mut AssetRegistry,
+        removed: &mut Vec<AssetId>,
+    ) {
+        let kept: HashSet<AssetId> = embedded.iter().map(|o| o.header.asset_id).collect();
+        let strays: Vec<AssetId> = registry
+            .in_file(self.id)
+            .filter(|entry| entry.embedded_in.is_some() && !kept.contains(&entry.id))
+            .map(|entry| entry.id)
+            .collect();
+        for id in strays {
+            registry.remove(id);
+            removed.push(id);
+        }
+    }
 }
 
 struct Pruned {
@@ -259,7 +279,7 @@ pub fn import_source_into(
 ) -> anyhow::Result<ImportedSource> {
     config.validate()?;
     std::fs::create_dir_all(project_root)?;
-    let placement = placement(source, destination, project_root)?;
+    let placement = Placement::resolve(source, destination, project_root)?;
     import_placed(
         &placement.source,
         &placement.placed,
@@ -275,34 +295,36 @@ struct Placement {
     project_root: PathBuf,
 }
 
-fn placement(source: &Path, destination: &str, project_root: &Path) -> anyhow::Result<Placement> {
-    let source = source
-        .canonicalize()
-        .with_context(|| format!("resolving source '{}'", source.display()))?;
-    let relative = Path::new(destination);
-    if destination.is_empty()
-        || destination.ends_with(['/', '\\'])
-        || relative.is_absolute()
-        || relative
-            .components()
-            .any(|part| !matches!(part, Component::Normal(_)))
-    {
-        bail!("destination '{destination}' must be a file inside the project, without '.' or '..'");
+impl Placement {
+    fn resolve(source: &Path, destination: &str, project_root: &Path) -> anyhow::Result<Placement> {
+        let source = source
+            .canonicalize()
+            .with_context(|| format!("resolving source '{}'", source.display()))?;
+        let relative = Path::new(destination);
+        if destination.is_empty()
+            || destination.ends_with(['/', '\\'])
+            || relative.is_absolute()
+            || relative
+                .components()
+                .any(|part| !matches!(part, Component::Normal(_)))
+        {
+            bail!("destination '{destination}' must be a file inside the project, without '.' or '..'");
+        }
+        let extension = extension_of(&source);
+        if extension_of(relative) != extension {
+            bail!("destination '{destination}' must keep the source's extension '.{extension}'");
+        }
+        let project_root = project_root.canonicalize()?;
+        let placed = placed_path(&project_root.join(relative));
+        if !placed.starts_with(&project_root) {
+            bail!("destination '{destination}' resolves outside the project");
+        }
+        Ok(Placement {
+            source,
+            placed,
+            project_root,
+        })
     }
-    let extension = extension_of(&source);
-    if extension_of(relative) != extension {
-        bail!("destination '{destination}' must keep the source's extension '.{extension}'");
-    }
-    let project_root = project_root.canonicalize()?;
-    let placed = placed_path(&project_root.join(relative));
-    if !placed.starts_with(&project_root) {
-        bail!("destination '{destination}' resolves outside the project");
-    }
-    Ok(Placement {
-        source,
-        placed,
-        project_root,
-    })
 }
 
 fn extension_of(path: &Path) -> String {
@@ -359,87 +381,39 @@ struct Existing {
     metadata: SourceMetadata,
 }
 
-fn existing(
-    importer: &dyn ErasedImporter,
-    source: &Path,
-    project_root: &Path,
-    config: &ContentConfig,
-) -> anyhow::Result<Existing> {
-    // Fail on malformed headers and duplicate IDs before touching any output.
-    let registry = AssetRegistry::from_content_tree(project_root, &config.root, &config.extension)?;
-    let mut files: HashMap<AssetId, ContentAssetHeader> = HashMap::new();
-    let mut headers = HashMap::new();
-    for entry in registry.iter() {
-        let file = match files.entry(entry.file()) {
-            Entry::Occupied(file) => file.into_mut(),
-            Entry::Vacant(file) => file.insert(read_content_asset_header(
-                &project_root.join(&entry.address),
-            )?),
-        };
-        let header = file
-            .record_header(entry.embedded_in.as_ref().map(|held| held.name.as_str()))
-            .with_context(|| format!("'{}' is not in its file's directory", entry.location()))?;
-        headers.insert(entry.id, header);
-    }
-    let metadata = source_metadata(importer, source, project_root, &registry)?;
-    Ok(Existing {
-        registry,
-        headers,
-        metadata,
-    })
-}
-
-fn source_metadata(
-    importer: &dyn ErasedImporter,
-    source: &Path,
-    project_root: &Path,
-    registry: &AssetRegistry,
-) -> anyhow::Result<SourceMetadata> {
-    let importer_name = importer.name();
-    let sidecar = sidecar_path(source);
-    Ok(if sidecar.try_exists()? {
-        let metadata = SourceMetadata::load(&sidecar)?;
-        if metadata.importer != importer_name {
-            bail!(
-                "source metadata '{}' selects importer '{}', expected '{importer_name}'",
-                sidecar.display(),
-                metadata.importer
-            );
-        }
-        metadata
-    } else {
-        // Adopt legacy outputs only through matching provenance, never merely
-        // because a generated destination is already occupied.
-        let mut outputs = BTreeMap::new();
+impl Existing {
+    fn of(
+        importer: &dyn ErasedImporter,
+        source: &Path,
+        project_root: &Path,
+        config: &ContentConfig,
+    ) -> anyhow::Result<Existing> {
+        // Fail on malformed headers and duplicate IDs before touching any output.
+        let registry =
+            AssetRegistry::from_content_tree(project_root, &config.root, &config.extension)?;
+        let mut files: HashMap<AssetId, ContentAssetHeader> = HashMap::new();
+        let mut headers = HashMap::new();
         for entry in registry.iter() {
-            if let Some(provenance) = &entry.provenance {
-                if metadata::provenance_path(&provenance.source, project_root) == source
-                    && outputs
-                        .insert(
-                            provenance.sub_asset.clone(),
-                            OutputMetadata {
-                                asset_id: entry.id,
-                                file: false,
-                            },
-                        )
-                        .is_some()
-                {
-                    bail!(
-                        "ambiguous legacy ownership: source '{}' has multiple outputs named '{}'",
-                        source.display(),
-                        provenance.sub_asset
-                    );
-                }
-            }
+            let file = match files.entry(entry.file()) {
+                Entry::Occupied(file) => file.into_mut(),
+                Entry::Vacant(file) => file.insert(read_content_asset_header(
+                    &project_root.join(&entry.address),
+                )?),
+            };
+            let header = file
+                .record_header(entry.embedded_in.as_ref().map(|held| held.name.as_str()))
+                .with_context(|| {
+                    format!("'{}' is not in its file's directory", entry.location())
+                })?;
+            headers.insert(entry.id, header);
         }
-        SourceMetadata {
-            version: 1,
-            source_id: AssetId::new(),
-            importer: importer_name.to_string(),
-            outputs,
-            settings: toml::Table::new(),
-        }
-    })
+        let metadata = SourceMetadata::for_source(importer, source, project_root, &registry)?;
+        Ok(Existing {
+            registry,
+            headers,
+            metadata,
+        })
+    }
 }
 
 fn previous_outputs(
@@ -481,9 +455,290 @@ struct ImportSite<'a> {
     headers: HashMap<AssetId, ContentAssetHeader>,
 }
 
+impl ImportSite<'_> {
+    fn host_file(
+        &self,
+        registry: &AssetRegistry,
+        sub_assets: &[EmittedSubAsset],
+    ) -> anyhow::Result<Option<HostFile>> {
+        Ok(match sub_assets.iter().find(|s| s.name == HOST) {
+            Some(host) => {
+                let address = loose_address(
+                    registry,
+                    self.config,
+                    self.relative_source,
+                    host.asset_id,
+                    HOST,
+                );
+                if self
+                    .headers
+                    .get(&host.asset_id)
+                    .is_some_and(|header| header.provenance.is_none())
+                {
+                    bail!(
+                        "'{address}' was saved from the editor and holds this import's scene id, so the import cannot store its meshes, materials and skeletons there; delete the [outputs.scene] table from '{}', move '{address}' if it sits at '{}', and import again",
+                        self.sidecar.display(),
+                        content_address(self.config, self.relative_source, HOST)
+                    );
+                }
+                Some(HostFile {
+                    id: host.asset_id,
+                    address,
+                })
+            }
+            None => None,
+        })
+    }
+
+    fn loose_destination(
+        &self,
+        registry: &AssetRegistry,
+        sub_asset: &EmittedSubAsset,
+        destinations: &mut HashSet<String>,
+    ) -> anyhow::Result<String> {
+        let address = loose_address(
+            registry,
+            self.config,
+            self.relative_source,
+            sub_asset.asset_id,
+            &sub_asset.name,
+        );
+        if !destinations.insert(address.clone()) {
+            bail!("multiple sub-assets would write '{address}'");
+        }
+        if let Some(existing) = registry.id_for_address(&address) {
+            if existing != sub_asset.asset_id {
+                bail!("destination '{address}' is owned by another asset; choose a different source destination or move that asset");
+            }
+        } else if self.project_root.join(&address).try_exists()? {
+            bail!("destination '{address}' is occupied by a file or directory outside the validated content index");
+        }
+        Ok(address)
+    }
+
+    fn store_output<'a>(
+        &self,
+        registry: &AssetRegistry,
+        sub_asset: &'a EmittedSubAsset,
+        target: &OutputTarget,
+        plan: &mut OutputPlan<'a>,
+    ) -> anyhow::Result<()> {
+        let header = target.header;
+        let uncooked = sub_asset.uncooked.as_ref();
+        if target.embedded_in.is_some() {
+            if let Some(loose) = registry
+                .get(sub_asset.asset_id)
+                .filter(|entry| entry.embedded_in.is_none())
+            {
+                plan.superseded.push(self.project_root.join(&loose.address));
+            }
+            plan.embedded.push(EmbeddedOutput {
+                header: ContentAssetHeader {
+                    uncooked: uncooked.map(described),
+                    ..header.clone()
+                },
+                payload: &sub_asset.bytes,
+                uncooked: uncooked.map(|section| section.bytes.as_slice()),
+            });
+        } else if sub_asset.name == HOST {
+            if uncooked.is_some() {
+                bail!(
+                    "the importer emitted '{HOST}' with uncooked data, which the file that holds an import's embedded assets cannot carry; emit it with `emit`"
+                );
+            }
+            plan.host = Some(HostOutput {
+                path: self.project_root.join(target.address),
+                header: header.clone(),
+                payload: &sub_asset.bytes,
+            });
+        } else {
+            plan.files.push(PlannedFile {
+                path: self.project_root.join(target.address),
+                bytes: match uncooked {
+                    Some(uncooked) => write_content_asset_with_uncooked(
+                        header,
+                        &sub_asset.bytes,
+                        uncooked.version,
+                        &uncooked.bytes,
+                    )?,
+                    None => write_content_asset(header, &sub_asset.bytes)?,
+                },
+            });
+        }
+        Ok(())
+    }
+
+    fn plan_output<'a>(
+        &self,
+        emission: &Emission,
+        resolved: &BTreeMap<String, AssetId>,
+        sub_asset: &'a EmittedSubAsset,
+        registry: &mut AssetRegistry,
+        metadata: &mut SourceMetadata,
+        plan: &mut OutputPlan<'a>,
+    ) -> anyhow::Result<()> {
+        check_identity(sub_asset, resolved, plan)?;
+        if self
+            .headers
+            .get(&sub_asset.asset_id)
+            .is_some_and(|header| header.provenance.is_none())
+        {
+            log::warn!(
+                "'{}' was saved from the editor; leaving it untouched",
+                sub_asset.name
+            );
+            return Ok(());
+        }
+        let keeps_file = metadata
+            .outputs
+            .get(&sub_asset.name)
+            .is_some_and(|output| output.file);
+        let embedded_in = emission.host_file.as_ref().filter(|_| {
+            sub_asset.name != HOST && embeds_by_default(sub_asset.type_name) && !keeps_file
+        });
+        let address = match embedded_in {
+            Some(host_file) => host_file.address.clone(),
+            None => self.loose_destination(registry, sub_asset, &mut plan.destinations)?,
+        };
+        for reference in &sub_asset.references {
+            if !emission.emitted.contains(reference) {
+                log::warn!("'{}' references {reference:?}, which this source does not emit; leaving it unresolved (cross-source imports land in a later phase)", sub_asset.name);
+            }
+        }
+        let header = ContentAssetHeader {
+            asset_id: sub_asset.asset_id,
+            references: sub_asset.references.clone(),
+            kind: sub_asset.type_name.to_string(),
+            kind_version: sub_asset.kind_version,
+            provenance: Some(ImportProvenance {
+                source: self.provenance_source.clone(),
+                sub_asset: sub_asset.name.clone(),
+            }),
+            uncooked: None,
+            derived: None,
+            embedded: Vec::new(),
+        };
+        self.store_output(
+            registry,
+            sub_asset,
+            &OutputTarget {
+                embedded_in,
+                address: &address,
+                header: &header,
+            },
+            plan,
+        )?;
+        let entry = AssetEntry {
+            embedded_in: embedded_in.map(|host_file| EmbeddedIn {
+                host: host_file.id,
+                name: sub_asset.name.clone(),
+            }),
+            id: sub_asset.asset_id,
+            address,
+            kind: header.kind,
+            kind_version: Some(header.kind_version),
+            provenance: header.provenance,
+        };
+        registry.insert(entry.clone());
+        metadata.outputs.insert(
+            sub_asset.name.clone(),
+            OutputMetadata {
+                asset_id: sub_asset.asset_id,
+                file: keeps_file,
+            },
+        );
+        plan.written.push(entry);
+        Ok(())
+    }
+
+    fn prune_obsolete(
+        &self,
+        emitted: &HashSet<AssetId>,
+        registry: &mut AssetRegistry,
+        metadata: &mut SourceMetadata,
+    ) -> Removals {
+        let mut removed = Vec::new();
+        let mut deletions = Vec::new();
+        let obsolete: Vec<(String, AssetId)> = metadata
+            .outputs
+            .iter()
+            .filter(|(_, output)| !emitted.contains(&output.asset_id))
+            .map(|(key, output)| (key.clone(), output.asset_id))
+            .collect();
+        for (key, id) in obsolete {
+            let Some(header) = self.headers.get(&id) else {
+                metadata.outputs.remove(&key);
+                continue;
+            };
+            if header.provenance.is_none() {
+                log::warn!(
+                    "'{key}' is no longer emitted but was saved from the editor; leaving it in place"
+                );
+                continue;
+            }
+            let Some(entry) = registry.remove(id) else {
+                metadata.outputs.remove(&key);
+                continue;
+            };
+            metadata.outputs.remove(&key);
+            let file = entry
+                .embedded_in
+                .is_none()
+                .then(|| self.project_root.join(&entry.address));
+            deletions.push(Pruned { key, id, file });
+            removed.push(id);
+        }
+        Removals { removed, deletions }
+    }
+}
+
 struct ImporterRun {
     outputs: ImportOutputs,
     ids: Arc<Mutex<BTreeMap<String, AssetId>>>,
+}
+
+impl ImporterRun {
+    fn run(
+        importer: &dyn ErasedImporter,
+        read: &Path,
+        source: &Path,
+        settings: &dyn Reflect,
+        asset_settings: Option<&dyn Reflect>,
+        metadata: &SourceMetadata,
+        previous: PreviousOutputResolver,
+    ) -> anyhow::Result<ImporterRun> {
+        // The callback cannot return errors. All existing identities are validated
+        // beforehand; only allocating new identities happens during the import.
+        let ids: Arc<Mutex<BTreeMap<String, AssetId>>> = Arc::new(Mutex::new(
+            metadata
+                .outputs
+                .iter()
+                .map(|(key, output)| (key.clone(), output.asset_id))
+                .collect(),
+        ));
+        let memo = Arc::clone(&ids);
+        let resolver: SubAssetIdResolver = Box::new(move |sub_name, old_name| {
+            let mut memo = memo.lock().expect("sub-asset identity memo poisoned");
+            if let Some(id) = memo.get(sub_name) {
+                return *id;
+            }
+            let id = old_name
+                .and_then(|old_name| memo.get(old_name).copied())
+                .unwrap_or_default();
+            memo.insert(sub_name.to_string(), id);
+            id
+        });
+        let mut ctx = ImportContext::with_sub_asset_id_resolver(source.to_path_buf(), resolver)
+            .with_previous_outputs(previous);
+        importer
+            .import(read, settings, asset_settings, &mut ctx)
+            .map_err(|err| anyhow::anyhow!("{err:?}"))
+            .with_context(|| format!("importing '{}'", read.display()))?;
+        Ok(ImporterRun {
+            outputs: ctx.into_parts(),
+            ids,
+        })
+    }
 }
 
 struct Emission {
@@ -502,6 +757,28 @@ struct OutputPlan<'a> {
     superseded: Vec<PathBuf>,
 }
 
+impl OutputPlan<'_> {
+    fn plan_host_file(&mut self) -> anyhow::Result<()> {
+        if let Some(host) = self.host.take() {
+            let payloads: Vec<EmbeddedPayload> = self
+                .embedded
+                .iter()
+                .map(|output| EmbeddedPayload {
+                    header: output.header.clone(),
+                    payload: output.payload,
+                    uncooked: output.uncooked,
+                    derived_blob: None,
+                })
+                .collect();
+            self.files.push(PlannedFile {
+                bytes: write_content_asset_with_embedded(&host.header, host.payload, &payloads)?,
+                path: host.path,
+            });
+        }
+        Ok(())
+    }
+}
+
 fn resolve_settings(
     importer: &dyn ErasedImporter,
     metadata: &mut SourceMetadata,
@@ -516,82 +793,6 @@ fn resolve_settings(
             settings
         }
         None => sidecar_settings(importer, metadata, source)?,
-    })
-}
-
-fn run_importer(
-    importer: &dyn ErasedImporter,
-    read: &Path,
-    source: &Path,
-    settings: &dyn Reflect,
-    asset_settings: Option<&dyn Reflect>,
-    metadata: &SourceMetadata,
-    previous: PreviousOutputResolver,
-) -> anyhow::Result<ImporterRun> {
-    // The callback cannot return errors. All existing identities are validated
-    // beforehand; only allocating new identities happens during the import.
-    let ids: Arc<Mutex<BTreeMap<String, AssetId>>> = Arc::new(Mutex::new(
-        metadata
-            .outputs
-            .iter()
-            .map(|(key, output)| (key.clone(), output.asset_id))
-            .collect(),
-    ));
-    let memo = Arc::clone(&ids);
-    let resolver: SubAssetIdResolver = Box::new(move |sub_name, old_name| {
-        let mut memo = memo.lock().expect("sub-asset identity memo poisoned");
-        if let Some(id) = memo.get(sub_name) {
-            return *id;
-        }
-        let id = old_name
-            .and_then(|old_name| memo.get(old_name).copied())
-            .unwrap_or_default();
-        memo.insert(sub_name.to_string(), id);
-        id
-    });
-    let mut ctx = ImportContext::with_sub_asset_id_resolver(source.to_path_buf(), resolver)
-        .with_previous_outputs(previous);
-    importer
-        .import(read, settings, asset_settings, &mut ctx)
-        .map_err(|err| anyhow::anyhow!("{err:?}"))
-        .with_context(|| format!("importing '{}'", read.display()))?;
-    Ok(ImporterRun {
-        outputs: ctx.into_parts(),
-        ids,
-    })
-}
-
-fn host_file_of(
-    site: &ImportSite,
-    registry: &AssetRegistry,
-    sub_assets: &[EmittedSubAsset],
-) -> anyhow::Result<Option<HostFile>> {
-    Ok(match sub_assets.iter().find(|s| s.name == HOST) {
-        Some(host) => {
-            let address = loose_address(
-                registry,
-                site.config,
-                site.relative_source,
-                host.asset_id,
-                HOST,
-            );
-            if site
-                .headers
-                .get(&host.asset_id)
-                .is_some_and(|header| header.provenance.is_none())
-            {
-                bail!(
-                    "'{address}' was saved from the editor and holds this import's scene id, so the import cannot store its meshes, materials and skeletons there; delete the [outputs.scene] table from '{}', move '{address}' if it sits at '{}', and import again",
-                    site.sidecar.display(),
-                    content_address(site.config, site.relative_source, HOST)
-                );
-            }
-            Some(HostFile {
-                id: host.asset_id,
-                address,
-            })
-        }
-        None => None,
     })
 }
 
@@ -617,192 +818,10 @@ fn check_identity<'a>(
     Ok(())
 }
 
-fn loose_destination(
-    site: &ImportSite,
-    registry: &AssetRegistry,
-    sub_asset: &EmittedSubAsset,
-    destinations: &mut HashSet<String>,
-) -> anyhow::Result<String> {
-    let address = loose_address(
-        registry,
-        site.config,
-        site.relative_source,
-        sub_asset.asset_id,
-        &sub_asset.name,
-    );
-    if !destinations.insert(address.clone()) {
-        bail!("multiple sub-assets would write '{address}'");
-    }
-    if let Some(existing) = registry.id_for_address(&address) {
-        if existing != sub_asset.asset_id {
-            bail!("destination '{address}' is owned by another asset; choose a different source destination or move that asset");
-        }
-    } else if site.project_root.join(&address).try_exists()? {
-        bail!("destination '{address}' is occupied by a file or directory outside the validated content index");
-    }
-    Ok(address)
-}
-
 struct OutputTarget<'a> {
     embedded_in: Option<&'a HostFile>,
     address: &'a str,
     header: &'a ContentAssetHeader,
-}
-
-fn store_output<'a>(
-    site: &ImportSite,
-    registry: &AssetRegistry,
-    sub_asset: &'a EmittedSubAsset,
-    target: &OutputTarget,
-    plan: &mut OutputPlan<'a>,
-) -> anyhow::Result<()> {
-    let header = target.header;
-    let uncooked = sub_asset.uncooked.as_ref();
-    if target.embedded_in.is_some() {
-        if let Some(loose) = registry
-            .get(sub_asset.asset_id)
-            .filter(|entry| entry.embedded_in.is_none())
-        {
-            plan.superseded.push(site.project_root.join(&loose.address));
-        }
-        plan.embedded.push(EmbeddedOutput {
-            header: ContentAssetHeader {
-                uncooked: uncooked.map(described),
-                ..header.clone()
-            },
-            payload: &sub_asset.bytes,
-            uncooked: uncooked.map(|section| section.bytes.as_slice()),
-        });
-    } else if sub_asset.name == HOST {
-        if uncooked.is_some() {
-            bail!(
-                "the importer emitted '{HOST}' with uncooked data, which the file that holds an import's embedded assets cannot carry; emit it with `emit`"
-            );
-        }
-        plan.host = Some(HostOutput {
-            path: site.project_root.join(target.address),
-            header: header.clone(),
-            payload: &sub_asset.bytes,
-        });
-    } else {
-        plan.files.push(PlannedFile {
-            path: site.project_root.join(target.address),
-            bytes: match uncooked {
-                Some(uncooked) => write_content_asset_with_uncooked(
-                    header,
-                    &sub_asset.bytes,
-                    uncooked.version,
-                    &uncooked.bytes,
-                )?,
-                None => write_content_asset(header, &sub_asset.bytes)?,
-            },
-        });
-    }
-    Ok(())
-}
-
-fn plan_output<'a>(
-    site: &ImportSite,
-    emission: &Emission,
-    resolved: &BTreeMap<String, AssetId>,
-    sub_asset: &'a EmittedSubAsset,
-    registry: &mut AssetRegistry,
-    metadata: &mut SourceMetadata,
-    plan: &mut OutputPlan<'a>,
-) -> anyhow::Result<()> {
-    check_identity(sub_asset, resolved, plan)?;
-    if site
-        .headers
-        .get(&sub_asset.asset_id)
-        .is_some_and(|header| header.provenance.is_none())
-    {
-        log::warn!(
-            "'{}' was saved from the editor; leaving it untouched",
-            sub_asset.name
-        );
-        return Ok(());
-    }
-    let keeps_file = metadata
-        .outputs
-        .get(&sub_asset.name)
-        .is_some_and(|output| output.file);
-    let embedded_in = emission.host_file.as_ref().filter(|_| {
-        sub_asset.name != HOST && embeds_by_default(sub_asset.type_name) && !keeps_file
-    });
-    let address = match embedded_in {
-        Some(host_file) => host_file.address.clone(),
-        None => loose_destination(site, registry, sub_asset, &mut plan.destinations)?,
-    };
-    for reference in &sub_asset.references {
-        if !emission.emitted.contains(reference) {
-            log::warn!("'{}' references {reference:?}, which this source does not emit; leaving it unresolved (cross-source imports land in a later phase)", sub_asset.name);
-        }
-    }
-    let header = ContentAssetHeader {
-        asset_id: sub_asset.asset_id,
-        references: sub_asset.references.clone(),
-        kind: sub_asset.type_name.to_string(),
-        kind_version: sub_asset.kind_version,
-        provenance: Some(ImportProvenance {
-            source: site.provenance_source.clone(),
-            sub_asset: sub_asset.name.clone(),
-        }),
-        uncooked: None,
-        derived: None,
-        embedded: Vec::new(),
-    };
-    store_output(
-        site,
-        registry,
-        sub_asset,
-        &OutputTarget {
-            embedded_in,
-            address: &address,
-            header: &header,
-        },
-        plan,
-    )?;
-    let entry = AssetEntry {
-        embedded_in: embedded_in.map(|host_file| EmbeddedIn {
-            host: host_file.id,
-            name: sub_asset.name.clone(),
-        }),
-        id: sub_asset.asset_id,
-        address,
-        kind: header.kind,
-        kind_version: Some(header.kind_version),
-        provenance: header.provenance,
-    };
-    registry.insert(entry.clone());
-    metadata.outputs.insert(
-        sub_asset.name.clone(),
-        OutputMetadata {
-            asset_id: sub_asset.asset_id,
-            file: keeps_file,
-        },
-    );
-    plan.written.push(entry);
-    Ok(())
-}
-
-fn plan_host_file(plan: &mut OutputPlan) -> anyhow::Result<()> {
-    if let Some(host) = plan.host.take() {
-        let payloads: Vec<EmbeddedPayload> = plan
-            .embedded
-            .iter()
-            .map(|output| EmbeddedPayload {
-                header: output.header.clone(),
-                payload: output.payload,
-                uncooked: output.uncooked,
-                derived_blob: None,
-            })
-            .collect();
-        plan.files.push(PlannedFile {
-            bytes: write_content_asset_with_embedded(&host.header, host.payload, &payloads)?,
-            path: host.path,
-        });
-    }
-    Ok(())
 }
 
 fn apply_renames(outputs: &ImportOutputs, metadata: &mut SourceMetadata) {
@@ -826,87 +845,31 @@ struct Removals {
     deletions: Vec<Pruned>,
 }
 
-fn prune_obsolete(
-    site: &ImportSite,
-    emitted: &HashSet<AssetId>,
-    registry: &mut AssetRegistry,
-    metadata: &mut SourceMetadata,
-) -> Removals {
-    let mut removed = Vec::new();
-    let mut deletions = Vec::new();
-    let obsolete: Vec<(String, AssetId)> = metadata
-        .outputs
-        .iter()
-        .filter(|(_, output)| !emitted.contains(&output.asset_id))
-        .map(|(key, output)| (key.clone(), output.asset_id))
-        .collect();
-    for (key, id) in obsolete {
-        let Some(header) = site.headers.get(&id) else {
-            metadata.outputs.remove(&key);
-            continue;
-        };
-        if header.provenance.is_none() {
-            log::warn!(
-                "'{key}' is no longer emitted but was saved from the editor; leaving it in place"
-            );
-            continue;
-        }
-        let Some(entry) = registry.remove(id) else {
-            metadata.outputs.remove(&key);
-            continue;
-        };
-        metadata.outputs.remove(&key);
-        let file = entry
-            .embedded_in
-            .is_none()
-            .then(|| site.project_root.join(&entry.address));
-        deletions.push(Pruned { key, id, file });
-        removed.push(id);
-    }
-    Removals { removed, deletions }
-}
-
-fn remove_strays(
-    host_file: &HostFile,
-    embedded: &[EmbeddedOutput],
-    registry: &mut AssetRegistry,
-    removed: &mut Vec<AssetId>,
-) {
-    let kept: HashSet<AssetId> = embedded.iter().map(|o| o.header.asset_id).collect();
-    let strays: Vec<AssetId> = registry
-        .in_file(host_file.id)
-        .filter(|entry| entry.embedded_in.is_some() && !kept.contains(&entry.id))
-        .map(|entry| entry.id)
-        .collect();
-    for id in strays {
-        registry.remove(id);
-        removed.push(id);
-    }
-}
-
-fn warn_dangling_references(
-    removals: &Removals,
-    sub_assets: &[EmittedSubAsset],
-    written: &[AssetEntry],
-    headers: &HashMap<AssetId, ContentAssetHeader>,
-) {
-    let rewritten: HashSet<AssetId> = written.iter().map(|entry| entry.id).collect();
-    for Pruned { key, id, .. } in &removals.deletions {
-        let id = *id;
-        for sub_asset in sub_assets {
-            if rewritten.contains(&sub_asset.asset_id) && sub_asset.references.contains(&id) {
-                log::warn!(
-                    "'{key}' ({id:?}) is deleted but '{}' still references it",
-                    sub_asset.name
-                );
+impl Removals {
+    fn warn_dangling_references(
+        &self,
+        sub_assets: &[EmittedSubAsset],
+        written: &[AssetEntry],
+        headers: &HashMap<AssetId, ContentAssetHeader>,
+    ) {
+        let rewritten: HashSet<AssetId> = written.iter().map(|entry| entry.id).collect();
+        for Pruned { key, id, .. } in &self.deletions {
+            let id = *id;
+            for sub_asset in sub_assets {
+                if rewritten.contains(&sub_asset.asset_id) && sub_asset.references.contains(&id) {
+                    log::warn!(
+                        "'{key}' ({id:?}) is deleted but '{}' still references it",
+                        sub_asset.name
+                    );
+                }
             }
-        }
-        for (other, header) in headers {
-            if !rewritten.contains(other)
-                && !removals.removed.contains(other)
-                && header.references.contains(&id)
-            {
-                log::warn!("'{key}' ({id:?}) is deleted but {other:?} still references it");
+            for (other, header) in headers {
+                if !rewritten.contains(other)
+                    && !self.removed.contains(other)
+                    && header.references.contains(&id)
+                {
+                    log::warn!("'{key}' ({id:?}) is deleted but {other:?} still references it");
+                }
             }
         }
     }
@@ -997,7 +960,7 @@ fn import_with(
     let relative_source = source.strip_prefix(project_root).unwrap_or(source);
     let provenance_source = relative_source.to_string_lossy().replace('\\', "/");
     let sidecar = sidecar_path(source);
-    let existing = existing(importer, source, project_root, config)?;
+    let existing = Existing::of(importer, source, project_root, config)?;
     let previous = previous_outputs(&existing.registry, &existing.metadata, project_root);
     let Existing {
         mut registry,
@@ -1012,21 +975,14 @@ fn import_with(
         sidecar,
         headers,
     };
-    validate_ownership(
-        &metadata,
-        &site.sidecar,
-        source,
-        project_root,
-        config,
-        &site.headers,
-    )?;
+    metadata.validate_ownership(&site.sidecar, source, project_root, config, &site.headers)?;
     let ImportSettings {
         settings: given,
         asset_settings,
     } = settings;
     let settings = resolve_settings(importer, &mut metadata, given, source)?;
 
-    let ImporterRun { outputs, ids } = run_importer(
+    let ImporterRun { outputs, ids } = ImporterRun::run(
         importer,
         read,
         source,
@@ -1048,12 +1004,11 @@ fn import_with(
     };
     let emission = Emission {
         emitted,
-        host_file: host_file_of(&site, &registry, &outputs.sub_assets)?,
+        host_file: site.host_file(&registry, &outputs.sub_assets)?,
     };
     let resolved = ids.lock().expect("sub-asset identity memo poisoned");
     for sub_asset in &outputs.sub_assets {
-        plan_output(
-            &site,
+        site.plan_output(
             &emission,
             &resolved,
             sub_asset,
@@ -1063,18 +1018,13 @@ fn import_with(
         )?;
     }
     drop(resolved);
-    plan_host_file(&mut plan)?;
+    plan.plan_host_file()?;
     apply_renames(&outputs, &mut metadata);
-    let mut removals = prune_obsolete(&site, &emission.emitted, &mut registry, &mut metadata);
+    let mut removals = site.prune_obsolete(&emission.emitted, &mut registry, &mut metadata);
     if let Some(host_file) = &emission.host_file {
-        remove_strays(
-            host_file,
-            &plan.embedded,
-            &mut registry,
-            &mut removals.removed,
-        );
+        host_file.remove_strays(&plan.embedded, &mut registry, &mut removals.removed);
     }
-    warn_dangling_references(&removals, &outputs.sub_assets, &plan.written, &site.headers);
+    removals.warn_dangling_references(&outputs.sub_assets, &plan.written, &site.headers);
     let readable_dependencies = readable_dependencies(&outputs.dependencies, source);
     let copies = if read == source {
         Vec::new()
@@ -1171,63 +1121,6 @@ fn relative_to(path: &Path, base: &Path) -> Option<PathBuf> {
     Some(relative)
 }
 
-fn validate_ownership(
-    metadata: &SourceMetadata,
-    sidecar: &Path,
-    source: &Path,
-    root: &Path,
-    config: &ContentConfig,
-    headers: &HashMap<AssetId, ContentAssetHeader>,
-) -> anyhow::Result<()> {
-    let owned: HashSet<_> = metadata
-        .outputs
-        .values()
-        .map(|output| output.asset_id)
-        .collect();
-    let mut candidates = metadata::project_sidecars(root, &root.join(&config.root))?;
-    for (key, output) in &metadata.outputs {
-        if let Some(header) = headers.get(&output.asset_id) {
-            let Some(provenance) = &header.provenance else {
-                continue;
-            };
-            if provenance.sub_asset != *key {
-                bail!(
-                    "metadata output '{key}' conflicts with existing sub-asset '{}'",
-                    provenance.sub_asset
-                );
-            }
-            let previous_source = metadata::provenance_path(&provenance.source, root);
-            if previous_source != source && previous_source.try_exists()? {
-                bail!("metadata output '{key}' is already owned by source '{}'; copying a sidecar does not create new asset identities", previous_source.display());
-            }
-            candidates.push(sidecar_path(&previous_source));
-        }
-    }
-    candidates.sort();
-    candidates.dedup();
-    for candidate in candidates {
-        if candidate == sidecar || !candidate.try_exists()? {
-            continue;
-        }
-        let other = SourceMetadata::load(&candidate)?;
-        if other.source_id == metadata.source_id {
-            bail!("duplicate source identity in '{}' and '{}'; move the source and sidecar together, or remove copied metadata before importing a new source", sidecar.display(), candidate.display());
-        }
-        if other
-            .outputs
-            .values()
-            .any(|output| owned.contains(&output.asset_id))
-        {
-            bail!(
-                "output UUID ownership conflicts between '{}' and '{}'",
-                sidecar.display(),
-                candidate.display()
-            );
-        }
-    }
-    Ok(())
-}
-
 fn stage(path: &Path, bytes: &[u8]) -> anyhow::Result<tempfile::NamedTempFile> {
     let parent = path.parent().context("output path has no parent")?;
     std::fs::create_dir_all(parent).with_context(|| format!("creating '{}'", parent.display()))?;
@@ -1260,6 +1153,118 @@ fn replace(file: tempfile::NamedTempFile, path: &Path) -> anyhow::Result<()> {
         .map_err(|err| err.error)
         .with_context(|| format!("replacing '{}'", path.display()))?;
     Ok(())
+}
+
+impl SourceMetadata {
+    fn for_source(
+        importer: &dyn ErasedImporter,
+        source: &Path,
+        project_root: &Path,
+        registry: &AssetRegistry,
+    ) -> anyhow::Result<SourceMetadata> {
+        let importer_name = importer.name();
+        let sidecar = sidecar_path(source);
+        Ok(if sidecar.try_exists()? {
+            let metadata = SourceMetadata::load(&sidecar)?;
+            if metadata.importer != importer_name {
+                bail!(
+                    "source metadata '{}' selects importer '{}', expected '{importer_name}'",
+                    sidecar.display(),
+                    metadata.importer
+                );
+            }
+            metadata
+        } else {
+            // Adopt legacy outputs only through matching provenance, never merely
+            // because a generated destination is already occupied.
+            let mut outputs = BTreeMap::new();
+            for entry in registry.iter() {
+                if let Some(provenance) = &entry.provenance {
+                    if metadata::provenance_path(&provenance.source, project_root) == source
+                        && outputs
+                            .insert(
+                                provenance.sub_asset.clone(),
+                                OutputMetadata {
+                                    asset_id: entry.id,
+                                    file: false,
+                                },
+                            )
+                            .is_some()
+                    {
+                        bail!(
+                            "ambiguous legacy ownership: source '{}' has multiple outputs named '{}'",
+                            source.display(),
+                            provenance.sub_asset
+                        );
+                    }
+                }
+            }
+            SourceMetadata {
+                version: 1,
+                source_id: AssetId::new(),
+                importer: importer_name.to_string(),
+                outputs,
+                settings: toml::Table::new(),
+            }
+        })
+    }
+
+    fn validate_ownership(
+        &self,
+        sidecar: &Path,
+        source: &Path,
+        root: &Path,
+        config: &ContentConfig,
+        headers: &HashMap<AssetId, ContentAssetHeader>,
+    ) -> anyhow::Result<()> {
+        let owned: HashSet<_> = self
+            .outputs
+            .values()
+            .map(|output| output.asset_id)
+            .collect();
+        let mut candidates = metadata::project_sidecars(root, &root.join(&config.root))?;
+        for (key, output) in &self.outputs {
+            if let Some(header) = headers.get(&output.asset_id) {
+                let Some(provenance) = &header.provenance else {
+                    continue;
+                };
+                if provenance.sub_asset != *key {
+                    bail!(
+                        "metadata output '{key}' conflicts with existing sub-asset '{}'",
+                        provenance.sub_asset
+                    );
+                }
+                let previous_source = metadata::provenance_path(&provenance.source, root);
+                if previous_source != source && previous_source.try_exists()? {
+                    bail!("metadata output '{key}' is already owned by source '{}'; copying a sidecar does not create new asset identities", previous_source.display());
+                }
+                candidates.push(sidecar_path(&previous_source));
+            }
+        }
+        candidates.sort();
+        candidates.dedup();
+        for candidate in candidates {
+            if candidate == sidecar || !candidate.try_exists()? {
+                continue;
+            }
+            let other = SourceMetadata::load(&candidate)?;
+            if other.source_id == self.source_id {
+                bail!("duplicate source identity in '{}' and '{}'; move the source and sidecar together, or remove copied metadata before importing a new source", sidecar.display(), candidate.display());
+            }
+            if other
+                .outputs
+                .values()
+                .any(|output| owned.contains(&output.asset_id))
+            {
+                bail!(
+                    "output UUID ownership conflicts between '{}' and '{}'",
+                    sidecar.display(),
+                    candidate.display()
+                );
+            }
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
