@@ -29,6 +29,54 @@ pub struct RenderTexture {
 }
 
 impl RenderTexture {
+    fn solid(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        format: wgpu::TextureFormat,
+        texel: [u8; 4],
+    ) -> Self {
+        let size = wgpu::Extent3d {
+            width: 1,
+            height: 1,
+            depth_or_array_layers: 1,
+        };
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("fallback texture"),
+            size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                aspect: wgpu::TextureAspect::All,
+                texture: &texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+            },
+            &texel,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(4),
+                rows_per_image: Some(1),
+            },
+            size,
+        );
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("fallback texture sampler"),
+            ..Default::default()
+        });
+        Self {
+            texture,
+            view,
+            sampler,
+        }
+    }
+
     /// Returns the underlying GPU texture.
     pub fn texture(&self) -> &wgpu::Texture {
         &self.texture
@@ -261,19 +309,19 @@ impl FallbackTextures {
     /// Creates and uploads the three textures.
     pub fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
         Self {
-            color: solid_texture(
+            color: RenderTexture::solid(
                 device,
                 queue,
                 wgpu::TextureFormat::Rgba8UnormSrgb,
                 [255, 255, 255, 255],
             ),
-            normal: solid_texture(
+            normal: RenderTexture::solid(
                 device,
                 queue,
                 wgpu::TextureFormat::Rgba8Unorm,
                 [128, 128, 255, 255],
             ),
-            data: solid_texture(
+            data: RenderTexture::solid(
                 device,
                 queue,
                 wgpu::TextureFormat::Rgba8Unorm,
@@ -289,53 +337,5 @@ impl FallbackTextures {
             TextureRole::Normal => &self.normal,
             TextureRole::Data => &self.data,
         }
-    }
-}
-
-fn solid_texture(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    format: wgpu::TextureFormat,
-    texel: [u8; 4],
-) -> RenderTexture {
-    let size = wgpu::Extent3d {
-        width: 1,
-        height: 1,
-        depth_or_array_layers: 1,
-    };
-    let texture = device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("fallback texture"),
-        size,
-        mip_level_count: 1,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format,
-        usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
-        view_formats: &[],
-    });
-    queue.write_texture(
-        wgpu::TexelCopyTextureInfo {
-            aspect: wgpu::TextureAspect::All,
-            texture: &texture,
-            mip_level: 0,
-            origin: wgpu::Origin3d::ZERO,
-        },
-        &texel,
-        wgpu::TexelCopyBufferLayout {
-            offset: 0,
-            bytes_per_row: Some(4),
-            rows_per_image: Some(1),
-        },
-        size,
-    );
-    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-    let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-        label: Some("fallback texture sampler"),
-        ..Default::default()
-    });
-    RenderTexture {
-        texture,
-        view,
-        sampler,
     }
 }
