@@ -406,7 +406,9 @@ impl AnimationNode for AnimationClipNode {
             }
         }
         if state.clock.is_finished {
-            context.raise(ClipEnded);
+            context.raise_boxed(Box::new(ClipEnded {
+                clip: self.clip.clone(),
+            }));
         }
     }
 
@@ -533,9 +535,11 @@ fn sample_root(channels: &[AnimationChannel], rest: &JointPose, time: f32) -> Jo
 ///
 /// A loop that passes the clip's end goes back to the start time, dropping the overshoot.
 ///
-/// In `update` it raises [`ClipEnded`] on each frame its clip wraps or, played once, stops,
-/// and raises each clip event it crosses, whatever its weight; a state machine above it can
-/// transition on either with [`OnMessage`](state_machine::AnimationFSMTrigger::OnMessage).
+/// In `update` it raises a [`ClipEnded`] naming its clip on each frame the clip wraps or,
+/// played once, stops, and raises each clip event it crosses, whatever its weight; a state
+/// machine above it can transition on either with
+/// [`OnMessage`](state_machine::AnimationFSMTrigger::OnMessage). Neither reaches the
+/// character as a raised message.
 #[derive(Clone, Reflect, serde::Serialize, serde::Deserialize)]
 #[reflect(AnimationNode, Default)]
 pub struct AnimationClipNode {

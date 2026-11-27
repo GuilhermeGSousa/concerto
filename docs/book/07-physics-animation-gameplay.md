@@ -1125,7 +1125,8 @@ A graph is a tree of nodes under a result node:
   `AnimationFSMTrigger::on_message::<M>()`, which fires on a message of type
   `M` that the game sent the player this frame or that the current state
   raised (see [Messages and signals](#messages-and-signals));
-  `on_message::<ClipEnded>()` leaves a state once a clip in it ends. Each
+  `on_message::<ClipEnded>()` leaves a state once any clip in it ends, and
+  `on_message_value(&ClipEnded { clip })` once that clip ends. Each
   transition takes a
   `blend_time`, and the machine's `TransitionBlender` (set with
   `.blender(..)` on the builder) decides what it means: `CrossFade`, the
@@ -1622,8 +1623,9 @@ character hears what the state machines heard. `animate_targets` takes the
 list as it triggers it, so each message is triggered once, and it does so for
 every player, one paused or without a `SkeletonComponent` included. The clip
 events a clip raises stop at the root: they reach the game once, as their
-weighted `AnimationSignal`. `ClipEnded` does not stop there, so the
-character's listener for it hears every wrap of every clip in the graph.
+weighted `AnimationSignal`. `ClipEnded` stops there too and is not a signal,
+so nothing on the character hears it: game code follows the machine's states,
+with `in_state`, rather than the ends of its clips.
 
 A state machine checks its transitions twice in each update. Before it updates
 its states, it tries every transition of its current state, its `OnMessage`
@@ -1644,9 +1646,15 @@ container, but not to the machine's own triggers. Resetting a state machine,
 which entering the state that holds it does, puts it back in its entry state
 and resets every one of its states, nested machines included, so a machine
 inside a state starts from its entry state, with its clips from the start,
-each time that state is entered. `AnimationClipNode` raises `ClipEnded` on
-each frame its clip wraps, or, played once, stops, so
-`OnMessage(ClipEnded)` leaves a state when its clip ends.
+each time that state is entered. `AnimationClipNode` raises
+`ClipEnded { clip }`, naming the clip it plays, on each frame that clip wraps,
+or, played once, stops. `on_message::<ClipEnded>()` leaves a state when any
+clip below it ends, a looping clip's wrap or a clip at weight 0 included, which
+suits a state that plays one clip. A state that plays several waits on the one
+that matters with `on_message_value(&ClipEnded { clip: attack.clone() })`: a
+state that plays a one-shot attack beside a looping breath then stays through
+every wrap of the breath and leaves when the attack ends. The clip is matched
+by its asset id, so a strong or weak handle to it does the same.
 
 `AnimationClipNode` also raises each clip event its clock crosses, in key
 order, whatever the clip's weight; the value is the one that later reaches the

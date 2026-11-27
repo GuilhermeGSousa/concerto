@@ -3,26 +3,36 @@ use std::any::{Any, TypeId};
 use concerto_ecs::{
     Entity, Query, Res,
     reflect::AppTypeRegistry,
-    signal::{EntitySignal, On, Signal},
+    signal::{On, Signal},
 };
+use concerto_foundation::assets::handle::AssetHandle;
 use concerto_reflect::{
     PropertyVisitorMut, Reflect, ReflectDefault, ReflectedValue, TypeData, TypeRegistration,
     TypeRegistry, ValueWarning, apply_value, json_to_value,
 };
 
-use crate::player::AnimationPlayer;
+use crate::{clip::AnimationClip, player::AnimationPlayer};
 
 /// A value an animation graph can receive, queued with `AnimationPlayer::send`; register it with `register_animation_message`.
 pub trait AnimationMessage: Reflect + Clone {}
 
-/// Raised by a clip node on each frame its clip wraps, or, played once, stops.
+/// Raised inside the graph by a clip node on each frame its clip wraps, or, played once, stops.
+///
+/// A state machine above the clip node moves on it with
+/// [`on_message`](crate::node::state_machine::AnimationFSMTrigger::on_message), which any
+/// clip below the state ends, or with
+/// [`on_message_value`](crate::node::state_machine::AnimationFSMTrigger::on_message_value) of a
+/// `ClipEnded` naming one clip, which only that clip ends: a state that plays a one-shot beside
+/// a looping clip then leaves when the one-shot ends, not when the loop wraps.
+///
+/// It never leaves the player's graph and is not a signal, so nothing on the character hears
+/// it; game code follows the machine's states instead.
 #[derive(Clone, Default, Reflect)]
 #[reflect(Default)]
-pub struct ClipEnded;
-
-impl Signal for ClipEnded {}
-
-impl EntitySignal for ClipEnded {}
+pub struct ClipEnded {
+    /// The clip that ended, as the clip node plays it.
+    pub clip: AssetHandle<AnimationClip>,
+}
 
 impl AnimationMessage for ClipEnded {}
 

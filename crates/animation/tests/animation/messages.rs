@@ -10,7 +10,7 @@ use concerto_animation::{
         AnimationMessage, ClipEnded, MessageType, SendAnimationMessage, SendReflectedMessage,
     },
     node::{
-        AnimationClipNode, AnimationNode, AnimationPlayMode, EditorAnimationNode,
+        AnimationClipNode, AnimationNode, AnimationPlayMode, BlendNode, EditorAnimationNode,
         ReflectAnimationNode,
         state_machine::{AnimationFSMTrigger, AnimationStateMachine},
     },
@@ -155,7 +155,7 @@ fn event_named(event: &str) -> AnimationEvent {
     }
 }
 
-fn evented_clip(event: &str, at: f32, length: f32) -> AnimationClip {
+fn still_clip(length: f32) -> AnimationClip {
     let mut clip = AnimationClip::default();
     clip.add_channel(
         Uuid::from_u128(1),
@@ -164,17 +164,26 @@ fn evented_clip(event: &str, at: f32, length: f32) -> AnimationClip {
             AnimationChanelOutput::from_translation([[0.0; 3], [0.0; 3]].into_iter()),
         ),
     );
+    clip
+}
+
+fn evented_clip(event: &str, at: f32, length: f32) -> AnimationClip {
+    let mut clip = still_clip(length);
     clip.add_event(at, event_named(event));
     clip
 }
 
+fn playing_clip(app: &mut App, clip: AnimationClip) -> AnimationGraph {
+    let clip = insert(app, clip);
+    AnimationGraph::from_node(AnimationClipNode::new(clip))
+}
+
 fn waiting_machine(
     app: &mut App,
-    clip: AnimationClip,
+    playing: AnimationGraph,
     trigger: AnimationFSMTrigger,
 ) -> AnimationGraph {
-    let clip = insert(app, clip);
-    let playing = graph(app, AnimationGraph::from_node(AnimationClipNode::new(clip)));
+    let playing = graph(app, playing);
     let moved = graph(app, AnimationGraph::new());
     let machine =
         AnimationStateMachine::from_initial_state(name!("Waiting"), playing, |transition| {
@@ -185,8 +194,8 @@ fn waiting_machine(
     stored(AnimationGraph::from_node(machine))
 }
 
-fn spawn_waiting(app: &mut App, clip: AnimationClip, trigger: AnimationFSMTrigger) -> Entity {
-    let machine = waiting_machine(app, clip, trigger);
+fn spawn_waiting(app: &mut App, playing: AnimationGraph, trigger: AnimationFSMTrigger) -> Entity {
+    let machine = waiting_machine(app, playing, trigger);
     let machine = graph(app, machine);
     app.main_mut().world_mut().spawn((
         AnimationPlayer::new(1),
@@ -771,17 +780,12 @@ fn messages_move_the_graph_and_nodes_answer_with_raised_messages_and_signals() {
     );
 
     let wanted = AnimationFSMTrigger::on_message_value(&event_named("jump_apex")).unwrap();
-    let apex = spawn_waiting(
-        &mut stage.app,
-        evented_clip("jump_apex", 0.1, 0.2),
-        wanted.clone(),
-    );
-    let other = spawn_waiting(
-        &mut stage.app,
-        evented_clip("other", 0.1, 0.2),
-        wanted.clone(),
-    );
-    let first = spawn_waiting(&mut stage.app, evented_clip("jump_apex", 0.0, 10.0), wanted);
+    let apex = playing_clip(&mut stage.app, evented_clip("jump_apex", 0.1, 0.2));
+    let apex = spawn_waiting(&mut stage.app, apex, wanted.clone());
+    let other = playing_clip(&mut stage.app, evented_clip("other", 0.1, 0.2));
+    let other = spawn_waiting(&mut stage.app, other, wanted.clone());
+    let first = playing_clip(&mut stage.app, evented_clip("jump_apex", 0.0, 10.0));
+    let first = spawn_waiting(&mut stage.app, first, wanted);
     stage.frame();
     stage.frame();
     stage.frame();
@@ -806,6 +810,35 @@ fn messages_move_the_graph_and_nodes_answer_with_raised_messages_and_signals() {
         "a crossed clip event reaches its machine and is not triggered as a signal on the character"
     );
 
+    let breath = insert(&mut stage.app, still_clip(0.08));
+    let attack = insert(&mut stage.app, still_clip(0.3));
+    let mut layered = AnimationGraph::new();
+    layered
+        .result_node()
+        .input(BlendNode {})
+        .add_input(AnimationClipNode::new(breath))
+        .add_input(
+            AnimationClipNode::new(attack.clone()).with_play_mode(AnimationPlayMode::PlayOnce),
+        );
+    let attacker = spawn_waiting(
+        &mut stage.app,
+        layered,
+        AnimationFSMTrigger::on_message_value(&ClipEnded { clip: attack }).unwrap(),
+    );
+    stage.advance(0.0);
+    stage.advance(0.15);
+    stage.advance(0.1);
+    assert!(
+        stage.in_state_of(attacker, name!("Waiting")),
+        "a state waiting on its one-shot clip stays through the wraps of a looping clip beside it"
+    );
+    stage.advance(0.1);
+    stage.advance(0.0);
+    assert!(
+        stage.in_state_of(attacker, name!("Moved")),
+        "a state waiting on its one-shot clip leaves once that clip ends"
+    );
+
     let mistyped = AnimationFSMTrigger::OnMessage {
         message: MessageType::of::<AnimationEvent>(),
         value: Some(ReflectedValue::Struct(vec![(
@@ -813,7 +846,8 @@ fn messages_move_the_graph_and_nodes_answer_with_raised_messages_and_signals() {
             ReflectedValue::Struct(Vec::new()),
         )])),
     };
-    let mut checked = waiting_machine(&mut stage.app, AnimationClip::default(), mistyped);
+    let untimed = playing_clip(&mut stage.app, AnimationClip::default());
+    let mut checked = waiting_machine(&mut stage.app, untimed, mistyped);
     let registry = stage.app.get_resource::<AppTypeRegistry>().unwrap().read();
     checked.make_live(&registry, None).unwrap();
     assert!(

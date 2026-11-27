@@ -19,8 +19,8 @@ use concerto_foundation::assets::handle::LiveLeaves;
 use concerto_foundation::assets::{asset_store::AssetStore, handle::AssetHandle};
 use concerto_name::Name;
 use concerto_reflect::{
-    EncodeError, Reflect, ReflectDefault, ReflectedValue, TypeRegistry, ValueWarning, apply_value,
-    to_value,
+    EncodeError, Reflect, ReflectDefault, ReflectedValue, TypeRegistry, ValueWarning,
+    apply_value_with, to_value,
 };
 use derive_more::Deref;
 use glam::Vec2;
@@ -642,7 +642,7 @@ impl AnimationNode for AnimationStateMachine {
     type UpdateInput = Res<'static, AssetStore<AnimationGraph>>;
     type EvaluateInput = Res<'static, AssetStore<AnimationGraph>>;
 
-    fn make_live(&mut self, registry: &TypeRegistry, _: &mut LiveLeaves) -> Vec<ValueWarning> {
+    fn make_live(&mut self, registry: &TypeRegistry, leaves: &mut LiveLeaves) -> Vec<ValueWarning> {
         let mut warnings = Vec::new();
         for transition in self.transitions.iter().flatten() {
             let AnimationFSMTrigger::OnMessage {
@@ -664,7 +664,7 @@ impl AnimationNode for AnimationStateMachine {
                 continue;
             };
             warnings.extend(
-                apply_value(probe.as_mut(), wanted)
+                apply_value_with(probe.as_mut(), wanted, leaves)
                     .into_iter()
                     .map(|warning| ValueWarning {
                         path: message.path().to_owned(),

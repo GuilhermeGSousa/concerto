@@ -503,7 +503,7 @@ with its name, its subtitle the name of the graph it plays or `no graph` in the
 warning colour, and the initial state with the badge `initial`; an arrow per
 transition, labelled with its trigger: `Instant`, `<param> = <value>`,
 `<param> ≠ 0`, or `on <message>` with the last segment of the message's type
-path, such as `on ClipEnded` for a state that leaves when its clip ends; a
+path, such as `on ClipEnded` for a state that leaves when a clip in it ends; a
 trigger that wants a value shows the value's fields after the type.
 
 - A right click on empty space offers New state, which puts the keyboard in
