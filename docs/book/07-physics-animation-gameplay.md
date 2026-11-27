@@ -700,15 +700,17 @@ A behaviour that comes to an end raises a message saying how, and a state
 machine moves on with `OnMessage` of its type. The behaviour decides in
 `drive`, during a physics step, and raises the message once, in its next
 `update`, however many steps the frame ran; its machine moves in the update
-after that. `RagdollPlugin` registers them, the messages `Hit`, `Shot`,
-`Stagger` and `Death` they read, and the messages they raise:
+after that. What a behaviour raises also reaches the character's own
+listeners, as the same typed signal. `RagdollPlugin` registers them, the
+messages `Hit`, `Shot`, `Stagger` and `Death` they read, and the messages they
+raise:
 
 | Nodes | Raise |
 |---|---|
 | `BalanceNode`, `StaggerNode`, `ShotNode` | `Steadied` when the body stands still, `Toppled` when it gives up |
-| `FallNode` | `Landed` once it has landed and relaxed |
+| `FallNode` | `BodyDown` once it has landed and relaxed |
 | `FlinchNode` | `Recovered` once the flinch is over |
-| `DyingNode` | `Drained` once nothing is left, beside its `BodyDead` signal |
+| `DyingNode` | `BodyDead` once nothing is left |
 
 `HoldNode` and `LimpNode` raise nothing; a state holding one ends by another
 trigger.
@@ -781,11 +783,11 @@ let machine = AnimationStateMachine::from_initial_state(name!("walk"), walk, |to
         .to(name!("fall"), AnimationFSMTrigger::on_message::<Toppled>(), 0.0);
 })
 .state(name!("fall"), fall, |to| {
-    to.to(name!("down"), AnimationFSMTrigger::on_message::<Landed>(), 0.0);
+    to.to(name!("down"), AnimationFSMTrigger::on_message::<BodyDown>(), 0.0);
 })
 .state(name!("down"), down, |_| {})
 .state(name!("dying"), dying, |to| {
-    to.to(name!("dead"), AnimationFSMTrigger::on_message::<Drained>(), 0.0);
+    to.to(name!("dead"), AnimationFSMTrigger::on_message::<BodyDead>(), 0.0);
 })
 .state(name!("dead"), dead, |_| {})
 .build();
@@ -950,9 +952,9 @@ embeds a balance, its `balance` settings, and with its `settings`, a
 
 The claims blend over the balance's targets and strengths, and balance keeps
 its force and torque. The node does not apply the bullet's impulse; the hit
-routing does. It emits `Wounded { part, share }` on the character for each
-part it weakens, which the `Wounds` every `CharacterRagdoll` carries keeps
-after the shot ends: `strength_of(part)` is the share of its strength each
+routing does. It raises one `Wounded { part, share }` for each `Shot` that
+weakens a part, which reaches the character, where the `Wounds` every
+`CharacterRagdoll` carries keeps it after the shot ends: `strength_of(part)` is the share of its strength each
 part kept, for the game to turn into a limp or a guarded arm. A `HoldNode`
 scales its muscles by it. It raises `Steadied` when its balance settles and
 `Toppled` when it gives up.
@@ -987,15 +989,15 @@ braced on every part and:
   fold.
 - **Landing.** Once the body is slower than 0.5 m/s, and either its chest or
   pelvis touches something or it lies (trunk leaning past 1 rad) on any part
-  other than a foot, it has landed and emits `BodyDown` on the character. A
-  body that comes to rest on its side, propped on an arm and a leg, lands too.
-  The strength then drains to `resting` over `relax_seconds`, the body goes
-  limp, keeping its muscles' stiffness with no torque, and the node raises
-  `Landed`, so the graph moves on with `OnMessage` of it into a state with a
-  `LimpNode`.
+  other than a foot, it has landed. A body that comes to rest on its side,
+  propped on an arm and a leg, lands too. The strength then drains to
+  `resting` over `relax_seconds`, the body goes limp, keeping its muscles'
+  stiffness with no torque, and the node raises `BodyDown`, so the graph moves
+  on with `OnMessage` of it into a state with a `LimpNode`, and the
+  character's listeners hear it.
 
 A `strength` of 0 is limp from the first step, but the node still waits for
-the landing to emit `BodyDown` and raise `Landed`. Hands are held to the ground by
+the landing to raise `BodyDown`. Hands are held to the ground by
 friction, not by a constraint. A fall from a height, where a roll is the right
 answer, is not handled. On the reference humanoid pushed over with 270 N·s,
 forward or backward, the braced fall's peak contact impulse on the head is
@@ -1020,9 +1022,8 @@ The character's graph receives a `Death { seconds }` message, and a
   spent at 40% of the time, forearms and shins at 60%, upper arms, thighs and
   the head at 80%, the trunk at the end. A character that was following its
   animation is simulated in full from the first step;
-- when nothing is left it emits `BodyDead` on the character and raises
-  `Drained`, so the graph moves on with `OnMessage` of it into a state with a
-  `LimpNode`. Every
+- when nothing is left it raises `BodyDead`, so the graph moves on with
+  `OnMessage` of it into a state with a `LimpNode`. Every
   character ragdoll carries a listener that inserts a `Dead` component when
   `BodyDead` reaches it, and nothing removes it;
 - zero seconds does all of that at once, which a head shot wants.
@@ -1620,8 +1621,7 @@ state machine drives the states it plays without advancing. Under
 inertialization the drive frame is the destination's alone. A node advances its
 physics-side state in `drive` at the step's `DriveContext::delta_time`; the
 context also gives the player's `blackboard()`, `root()`, `skeleton()` and
-`entity()`, and `emit(signal)` queues a signal as in the other passes, and `bone_ids` are the
-skeleton's, as in `evaluate`; `model_to_world` is `None` in a drive step.
+`entity()`, and `bone_ids` are the skeleton's, as in `evaluate`; `model_to_world` is `None` in a drive step.
 
 A node gives root motion with `root_motion(state, input, context, bone_ids,
 inputs)`, which returns a `RootMotion`. `update_animation_players` calls it for
@@ -1682,19 +1682,24 @@ until `assets.add(graph)` has run.
 #### Messages and signals
 
 A message is a value a graph reacts to: a type that derives `Reflect` and
-`Clone`, implements the marker trait `AnimationMessage`, and is registered
-with `app.register_animation_message::<M>()`, which registers the type as a
+`Clone`, implements `Signal`, `EntitySignal` and the marker trait
+`AnimationMessage`, and is registered with
+`app.register_animation_message::<M>()`, which registers the type as a
 message. Call it before anything else registers `M`; a type registered
-earlier is not marked as a message, which the call warns about.
+earlier is not marked as a message, which the call warns about. A message is
+an entity signal because what a graph raises reaches the character as one.
 
 ```rust
 use concerto::animation::message::AnimationMessage;
+use concerto::ecs::signal::{EntitySignal, Signal};
 
 #[derive(Clone, Default, Reflect)]
 struct Hit {
     strength: f32,
 }
 
+impl Signal for Hit {}
+impl EntitySignal for Hit {}
 impl AnimationMessage for Hit {}
 
 app.register_animation_message::<Hit>();
@@ -1702,7 +1707,10 @@ app.register_animation_message::<Hit>();
 
 `AnimationPlayer::send(message)` queues it, and so does the signal `SendAnimationMessage { character, message }`,
 for code that holds no player: a listener the registration adds queues it on
-the character's player, and does nothing when the character has none. The
+the character's player, and does nothing when the character has none. A sent
+message reaches the graph only: it is not triggered on the character, and
+triggering a message on the character yourself, with `cmd.trigger`, does not
+reach the graph. The
 player's next update walks its graph with the whole queue in the context:
 `context.messages()` gives every queued message in the order sent, and
 `context.message::<M>()` those of type `M`. Every node that updates reads
@@ -1727,15 +1735,23 @@ A stored state machine that names a trigger the engine no longer has, such as
 transition's trigger, usually as `OnMessage` of `ClipEnded` or of the message
 the node now raises, and save the graph again.
 
-A node tells the containers above it what happened with
-`context.raise(message)`, for any `AnimationMessage`, in `update`; a raise
+A node tells the containers above it, and through them the character, what
+happened with `context.raise(message)`, for any `AnimationMessage`, in `update`; a raise
 from `evaluate` or `root_motion` is dropped, and `drive` has no `raise`. A
 node raises once, on the frame its condition becomes true, not on every frame
 it holds. Each state machine, slot and retarget the node plays in collects
 what each of its states, entries or inner graph raised in this update and
 raises it again to its own container, so the message reaches every ancestor
-and is never consumed; what the player's graph raises is dropped, and a node
-never sees a raised message in `context.messages()`. A state machine's
+and is never consumed, and a node never sees a raised message in
+`context.messages()`. At the root, `animate_targets` triggers each message the
+graph raised in its last update on the player's entity, as its own type and in
+the order raised and after the clip events, so a `Listener<M>` on the
+character hears what the state machines heard. It takes the list as it
+triggers it, so each message is triggered once, and it does so for every
+player, one paused or without a `SkeletonComponent` included. The clip
+events a clip raises stop at the root: they reach the game once, as their
+weighted `AnimationSignal`. `ClipEnded` does not stop there, so the
+character's listener for it hears every wrap of every clip in the graph. A state machine's
 `OnMessage` transitions also fire on what its current state raised in the
 previous frame's update, so a raise moves its machine one frame later; a
 state that is fading out still raises to the machine's container, but not to
@@ -1766,21 +1782,15 @@ its state and raises it in its next `update`, with a flag in its state saying
 it has been raised: `drive` runs zero, one or several times a frame, so a
 result raised from there would be lost or repeated. The ragdoll behaviours
 end this way, so their machine moves two updates after the step that decided
-it.
+it. A result kept this way is lost when its node is not updated in the next
+update: when inertialization drops the state that holds it, when that state is
+re-entered and reset, or when a second `Death` resets a dying node first.
 
 One frame can bring both a message the game sent and one the current state
 raised in the previous frame, such as a second `Stagger` and the `Toppled` of
 the first. The machine then takes whichever matching `OnMessage` transition
 comes first in the state's list, so order a state's transitions by which
 should win.
-
-A node tells the game what happened with `context.emit(signal)`, for any
-`EntitySignal`, from any pass: `create_state`, `update`, `root_motion`, `evaluate` or `drive`. The signals go to a per-player outbox,
-not into the frame, so one emitted by a state the machine leaves at once still
-arrives, and `animate_targets` triggers every signal in it on the player's
-entity each frame, in the order they were emitted, after the clip events. It
-does so for every player, one without a `SkeletonComponent` or paused
-included; only evaluating needs a skeleton and an unpaused player.
 
 `AnimationPlayer::in_state(graphs, name)` says whether a state machine playing
 in the player's graph is in the state `name`.
@@ -1924,9 +1934,10 @@ The clip node also raises each event its clock crosses as a message to the
 state machines and slots above it, whatever its weight, so a transition can
 wait for one with `on_message_value` (see [Messages and
 signals](#messages-and-signals)). A game's event type that a transition
-waits for, or that `send_animation_message` sends, also implements
-`AnimationMessage` and is registered with `register_animation_message`, as
-`AnimationEvent` is.
+waits for, or that `send_animation_message` sends, also implements `Signal`,
+`EntitySignal` and `AnimationMessage` and is registered with
+`register_animation_message`, as `AnimationEvent` is. The raised copy stops at
+the graph's root; the game hears the event only as its `AnimationSignal`.
 
 `AnimationSignal<S>` holds the event as `signal`, the clip time it sits at as
 `time`, the `weight` of its source in the final frame, and `mirrored`, set when
