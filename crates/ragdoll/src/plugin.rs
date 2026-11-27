@@ -28,7 +28,8 @@ use crate::{
     dying::{Dying, Settled, die_when_told, drain_dying, settle_dead_bodies, wake_when_hit},
     fall::{Fall, FallReaction, fall_bodies, fall_when_falling},
     hit::{HitReaction, flinch_when_hit, update_flinches},
-    node::{HoldNode, LimpNode},
+    messages::{Hit, Recovered, apply_impulses, route_hits},
+    node::{FlinchNode, HoldNode, LimpNode},
     sensing::sense_bodies,
     shot::{ShotReaction, end_shots, note_shot_balance_ended, react_when_shot, shot_bodies},
     stagger::{Stagger, end_staggers, note_balance_ended, stagger_bodies},
@@ -39,7 +40,9 @@ use crate::{
 /// The body follows its animation, is powered towards it or falls limp, and
 /// is drawn on its skeleton by weight; or, in the graph mode, does and is
 /// drawn as its animation graph's physics attributes say. It registers the
-/// [`HoldNode`] and [`LimpNode`] graph nodes. Register the plugin after
+/// [`HoldNode`], [`LimpNode`] and [`FlinchNode`] graph nodes and the [`Hit`]
+/// and [`Recovered`] messages, and sends a graph-mode character's hits to its
+/// graph. Register the plugin after
 /// `PhysicsPlugin` and `AnimationPlugin`.
 ///
 /// Its systems also run in a preview `App`, where they do nothing until the
@@ -53,7 +56,17 @@ impl Plugin for RagdollPlugin {
         app.register_type::<AssetHandle<Ragdoll>>();
         app.register_type::<CharacterRagdoll>();
         app.register_animation_node::<HoldNode>()
-            .register_animation_node::<LimpNode>();
+            .register_animation_node::<LimpNode>()
+            .register_animation_node::<FlinchNode>();
+        app.register_animation_message::<Hit>()
+            .register_animation_message::<Recovered>();
+        app.add_listener(route_hits.at_preview_time()).add_system(
+            LateFixedUpdate,
+            apply_impulses
+                .after(drive_from_graph)
+                .before(step_simulation)
+                .at_preview_time(),
+        );
         app.register_type::<HitReaction>();
         app.add_listener(flinch_when_hit.at_preview_time())
             .add_system(

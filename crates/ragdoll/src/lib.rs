@@ -2,7 +2,7 @@
 //!
 //! A [`CharacterRagdoll`] follows its animation, is powered towards it, or falls limp, as its
 //! [`RagdollMode`] says. In [`RagdollMode::Graph`] the character's animation graph drives the
-//! body bone by bone instead: nodes such as [`HoldNode`] and [`LimpNode`] write a
+//! body bone by bone instead: nodes such as [`HoldNode`], [`LimpNode`] and [`FlinchNode`] write a
 //! [`PhysicsAmount`] and a [`MotorCommand`] for each bone in the graph's drive pass, and
 //! [`drive::drive_from_graph`] applies them each physics step.
 
@@ -27,6 +27,8 @@ pub mod generate;
 /// Blows on a character's body and the flinch they cause.
 pub mod hit;
 mod ik;
+/// The messages a character's animation graph exchanges about its body, and how hits reach the graph.
+pub mod messages;
 /// Animation graph nodes that drive a character's ragdoll.
 pub mod node;
 /// Finding parts whose shapes overlap in the rest pose.
@@ -66,7 +68,8 @@ pub use generate::{
     BRACED, FLINCH, GenerateError, HumanoidChains, HumanoidSettings, LIMP, generate_humanoid,
 };
 pub use hit::{BodyHit, Flinch, FlinchRecord, HitKind, HitReaction};
-pub use node::{HoldNode, HoldState, LimpNode};
+pub use messages::{Hit, PendingImpulses};
+pub use node::{FlinchNode, FlinchState, HoldNode, HoldState, LimpNode};
 pub use overlap::PartOverlap;
 pub use plugin::RagdollPlugin;
 pub use resolve::{Landmarks, Limbs, RagdollError, ResolvedRagdoll};

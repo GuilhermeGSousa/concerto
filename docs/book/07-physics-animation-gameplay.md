@@ -657,7 +657,7 @@ interrupted mid-fade holds a command's target and muscle but drops its force
 and torque, which `MotorCommand::frozen` returns, so a held fade does not keep
 pushing.
 
-`RagdollPlugin` registers two nodes that write them. Each takes the pose to act
+`RagdollPlugin` registers three nodes that write them. Each takes the pose to act
 on as its input, passes it through, and reads the character's body through a
 `BodyInput` query, its typed drive input, as a `BodyView`. A character without
 a ragdoll has no view, and the node only passes its pose through.
@@ -687,6 +687,26 @@ player.set_float_param(name!("leg_hurt"), 0.5);
 with a torque limit of 0, keeping the stiffness its input asked for so a motor
 taking hold again does not jump. Cross-fading into a state with it and back
 out blends the body down and up again without a cut.
+
+`FlinchNode` is the graph's flinch. A blow, a `BodyHit` of `HitKind::Blow`, on
+a character in this mode reaches its graph as a `Hit` message, from
+`concerto::ragdoll::messages`, and the impulse of any hit waits, for up to ten
+steps, until the struck part is dynamic. On
+each `Hit` the node powers the parts of its `profile`, `flinch` by default,
+drops the struck part's strength to `dip` and its neighbours' to
+`neighbour_dip`, and draws them from physics in full for `hold` seconds after
+the last hit, then over `settle` seconds back to the animation, when it raises
+`Recovered`. Play it from a slot entry that starts on one and ends on the
+other:
+
+```rust
+let flinch = SlotNode::new().with_entry(
+    SlotEntry::new(name!("flinch"), FlinchNode::default())
+        .with_on(MessageType::of::<Hit>())
+        .with_out(MessageType::of::<Recovered>()),
+);
+graph.result_node().input(flinch).input(AnimationClipNode::new(walk));
+```
 
 #### A hit
 

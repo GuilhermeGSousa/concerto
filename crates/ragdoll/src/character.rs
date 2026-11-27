@@ -37,6 +37,7 @@ use crate::{
     behaviour::{BodyDrive, Claim},
     dying::{Dying, Settled},
     hit::Flinch,
+    messages::PendingImpulses,
     resolve::ResolvedRagdoll,
 };
 
@@ -93,6 +94,7 @@ pub struct PartWeight {
 /// have loaded.
 #[derive(Component, Reflect, Clone, Debug, PartialEq)]
 #[reflect(Component, Default, SceneComponent)]
+#[require(PendingImpulses)]
 pub struct CharacterRagdoll {
     /// The ragdoll asset of the skeleton.
     pub ragdoll: AssetHandle<Ragdoll>,
