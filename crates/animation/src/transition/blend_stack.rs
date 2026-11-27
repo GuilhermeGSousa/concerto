@@ -75,21 +75,31 @@ impl BlendStack {
         &self,
         pool: &mut FramePool,
         output: &mut AnimationFrame,
-        mut play: impl FnMut(Source, &mut FramePool, &mut AnimationFrame),
+        mut play: impl FnMut(Source, f32, &mut FramePool, &mut AnimationFrame),
         blend: impl Fn(&mut AnimationFrame, &AnimationFrame, f32),
     ) {
         let Some((base, fading_in)) = self.entries.split_first() else {
             return;
         };
 
-        play(base.source, pool, output);
+        play(base.source, self.share(0), pool, output);
 
-        for entry in fading_in {
+        for (index, entry) in fading_in.iter().enumerate() {
             let mut layer = pool.acquire();
-            play(entry.source, pool, &mut layer);
+            play(entry.source, self.share(index + 1), pool, &mut layer);
             blend(output, &layer, entry.weight);
             pool.release(layer);
         }
+    }
+
+    fn share(&self, index: usize) -> f32 {
+        let own = match index {
+            0 => 1.0,
+            _ => self.entries[index].weight,
+        };
+        self.entries[index + 1..]
+            .iter()
+            .fold(own, |share, later| share * (1.0 - later.weight))
     }
 
     fn holds(&self, graph: GraphId) -> bool {
@@ -149,7 +159,7 @@ impl AnimationTransitionBlender for BlendStack {
         self.mix(
             pool,
             output,
-            |source, pool, frame| match source {
+            |source, _, pool, frame| match source {
                 Source::Graph(graph_id) => {
                     if let Some(graph_state) = graph_states.get_mut(graph_id) {
                         graph_state.evaluate(graphs, context, bone_ids, pool, frame);
@@ -182,10 +192,10 @@ impl AnimationTransitionBlender for BlendStack {
         self.mix(
             pool,
             output,
-            |source, pool, frame| match source {
+            |source, share, pool, frame| match source {
                 Source::Graph(graph_id) => {
                     if let Some(graph_state) = graph_states.get_mut(graph_id) {
-                        graph_state.drive(graphs, context, bone_ids, pool, frame);
+                        graph_state.drive(graphs, &context.scaled(share), bone_ids, pool, frame);
                     }
                 }
                 Source::Snapshot(_) => frame.attributes_mut().copy_from(snapshot),

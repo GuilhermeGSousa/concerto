@@ -105,9 +105,10 @@ impl<'a> AnimationGraphContext<'a> {
     }
 }
 
-/// What every node of one player's graph is driven with in one physics step: the step's length and the player's blackboard, root, skeleton and entity.
+/// What every node of one player's graph is driven with in one physics step: the step's length, the node's weight, and the player's blackboard, root, skeleton and entity.
 pub struct DriveContext<'a> {
     pub(crate) delta_time: f32,
+    pub(crate) weight: f32,
     pub(crate) graph: &'a AnimationGraphContext<'a>,
 }
 
@@ -115,6 +116,24 @@ impl<'a> DriveContext<'a> {
     /// The length of the physics step, in seconds.
     pub fn delta_time(&self) -> f32 {
         self.delta_time
+    }
+
+    /// How much of the node's drive frame reaches the player's on this step, from 0 to 1.
+    ///
+    /// It is the product of the shares every combiner above the node gives it, 1 at the root of
+    /// the player's graph: an input's weight among a blend's or a blend space's inputs, a layer's
+    /// weight for its overlay, and a state's weight in a cross-fade, including a state fading out.
+    /// A controller reads it to scale what it asks of physics to the part it will get, to stop
+    /// planning what it cannot carry out, or to wind down while its state fades out.
+    pub fn weight(&self) -> f32 {
+        self.weight
+    }
+
+    pub(crate) fn scaled(&self, share: f32) -> DriveContext<'a> {
+        DriveContext {
+            weight: self.weight * share,
+            ..*self
+        }
     }
 
     /// The player's blackboard.

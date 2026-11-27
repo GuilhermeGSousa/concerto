@@ -110,6 +110,7 @@ impl AnimationPlayer {
         let bone_ids = skeleton.map_or(&[][..], |skeleton| &skeleton.bone_ids);
         let context = DriveContext {
             delta_time,
+            weight: 1.0,
             graph: &graph,
         };
         let mut output = self.frame_pool.acquire();

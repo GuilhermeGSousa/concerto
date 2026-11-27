@@ -205,6 +205,17 @@ impl AnimationNode for LayerNode {
         }
     }
 
+    fn drive_shares(&self, _: &LayerState, context: &DriveContext<'_>, shares: &mut [f32]) {
+        let weight = effective_weight(self.weight, self.weight_param, context.blackboard());
+        for (slot, share) in shares.iter_mut().enumerate() {
+            *share = match slot {
+                0 => 1.0,
+                1 => weight,
+                _ => 0.0,
+            };
+        }
+    }
+
     fn reset(&self, _: &mut LayerState) {}
 }
 

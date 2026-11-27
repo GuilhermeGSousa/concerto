@@ -81,12 +81,26 @@ impl PoseAttribute for SeenBones {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct DriveWeight(f32);
+
+impl PoseAttribute for DriveWeight {
+    fn neutral() -> Self {
+        DriveWeight(0.0)
+    }
+
+    fn blend(&mut self, _: f32, other: &Self, _: f32) {
+        self.0 = self.0.max(other.0);
+    }
+}
+
 #[derive(Default, Reflect)]
 #[reflect(AnimationNode)]
 struct SetAmount {
     value: f32,
     rate: f32,
     bones: Vec<usize>,
+    weight_on: Option<usize>,
 }
 
 impl SetAmount {
@@ -95,6 +109,7 @@ impl SetAmount {
             value,
             rate: 0.0,
             bones: bones.to_vec(),
+            weight_on: None,
         }
     }
 
@@ -103,11 +118,17 @@ impl SetAmount {
         self
     }
 
+    fn reporting_weight_on(mut self, bone: usize) -> Self {
+        self.weight_on = Some(bone);
+        self
+    }
+
     fn write(&self, elapsed: f32, output: &mut AnimationFrame) {
         let bone_count = output.len();
+        let value = self.value + self.rate * elapsed;
         let amounts = output.attributes_mut().channel_mut::<Amount>(bone_count);
         for bone in &self.bones {
-            amounts[*bone] = Amount(self.value + self.rate * elapsed);
+            amounts[*bone] = Amount(value);
         }
     }
 }
@@ -166,6 +187,11 @@ impl AnimationNode for SetAmount {
             .attributes_mut()
             .channel_mut::<SeenBones>(bone_count)
             .fill(SeenBones(seen));
+        if let Some(bone) = self.weight_on {
+            output
+                .attributes_mut()
+                .channel_mut::<DriveWeight>(bone_count)[bone] = DriveWeight(context.weight());
+        }
     }
 
     fn reset(&self, elapsed: &mut f32) {
@@ -461,7 +487,9 @@ fn attributes_travel_with_the_pose_through_every_blend() {
 
     let mut blended = AnimationGraph::new();
     let blend = blended.result_node().input(BlendNode {}).index();
-    let set = blended.add_node(SetAmount::on(1.0, &[1]), blend).index();
+    let set = blended
+        .add_node(SetAmount::on(1.0, &[1]).reporting_weight_on(1), blend)
+        .index();
     let clip = blended.add_node(stage.clip_node(), blend).index();
     let blend_player = stage.player(blended);
 
@@ -471,13 +499,12 @@ fn attributes_travel_with_the_pose_through_every_blend() {
     layered.result_node().add_layer_input(
         LayerNode::new(mask).with_weight(0.5),
         clip_node,
-        SetAmount::on(1.0, &ALL_BONES),
+        SetAmount::on(1.0, &ALL_BONES).reporting_weight_on(2),
     );
     let layer_player = stage.player(layered);
 
-    let clip_graph = single(stage.clip_node());
     let cross_fade = stage.machine(
-        clip_graph,
+        single(SetAmount::on(0.0, &[0]).reporting_weight_on(0)),
         single(SetAmount::on(1.0, &ALL_BONES)),
         TransitionBlender::CrossFade,
         1.0,
@@ -515,6 +542,16 @@ fn attributes_travel_with_the_pose_through_every_blend() {
     assert_eq!(stage.driven(blend_player), [0.0, 0.25, 0.0]);
     assert_eq!(stage.driven(layer_player), [0.0, 0.0, 0.5]);
     assert_eq!(
+        stage.drive(blend_player).get::<DriveWeight>(1),
+        DriveWeight(0.25),
+        "a node a blend gives a quarter of its frame drives at weight 0.25"
+    );
+    assert_eq!(
+        stage.drive(layer_player).get::<DriveWeight>(2),
+        DriveWeight(0.5),
+        "a layer's overlay drives at the layer's weight"
+    );
+    assert_eq!(
         stage.drive(additive_player).get::<SeenBones>(0),
         SeenBones(BONES as f32),
         "a node's drive sees the player's skeleton and its bone ids"
@@ -541,6 +578,11 @@ fn attributes_travel_with_the_pose_through_every_blend() {
         "halfway through the cross-fade the amount is {halfway}"
     );
     assert_eq!(stage.driven(cross_fade), stage.amounts(cross_fade));
+    let fading_out = stage.drive(cross_fade).get::<DriveWeight>(0).0;
+    assert!(
+        (fading_out + halfway - 1.0).abs() < 1e-5,
+        "the state a cross-fade leaves drives at the weight it has left, {fading_out} with the fade at {halfway}"
+    );
 
     stage.advance(0.5);
     let settled = stage.amounts(inertialized)[0];

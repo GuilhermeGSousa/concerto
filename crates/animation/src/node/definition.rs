@@ -103,6 +103,21 @@ pub trait AnimationNode: Reflect + Send + Sync + 'static {
         }
     }
 
+    /// How much of each input's drive frame [`Self::drive`] carries into the node's, written over `shares`.
+    ///
+    /// `shares` comes in holding the weight of each input's node, in slot order, and leaves
+    /// holding each input's share of this node's drive frame, from 0 to 1. Before any node
+    /// drives, the walk multiplies the shares down the graph into each node's
+    /// [`DriveContext::weight`]; `context` carries this node's. The default gives the first input
+    /// all of it, as the default [`Self::drive`] copies it, so a node that overrides `drive` to
+    /// blend its inputs overrides this too.
+    fn drive_shares(&self, _state: &Self::State, _context: &DriveContext<'_>, shares: &mut [f32]) {
+        if let Some((first, rest)) = shares.split_first_mut() {
+            *first = 1.0;
+            rest.fill(0.0);
+        }
+    }
+
     /// Puts the state back to where [`Self::create_state`] left it, as when a state machine
     /// enters the node's state again.
     fn reset(&self, state: &mut Self::State);
@@ -232,6 +247,9 @@ pub trait ErasedAnimationNode: Send + Sync {
         output: &mut AnimationFrame,
     );
 
+    /// Each input's share of the node's drive frame; see [`AnimationNode::drive_shares`].
+    fn drive_shares(&self, state: &NodeState, context: &DriveContext<'_>, shares: &mut [f32]);
+
     /// Resets the state; see [`AnimationNode::reset`].
     fn reset(&self, state: &mut NodeState);
 
@@ -352,6 +370,13 @@ impl<T: EditorAnimationNode> ErasedAnimationNode for T {
             && let Some(input) = fetched::<T, T::DriveInput>(context.graph)
         {
             AnimationNode::drive(self, state, input, context, bone_ids, inputs, pool, output);
+        }
+    }
+
+    fn drive_shares(&self, state: &NodeState, context: &DriveContext<'_>, shares: &mut [f32]) {
+        match state.downcast_ref::<T::State>() {
+            Some(state) => AnimationNode::drive_shares(self, state, context, shares),
+            None => shares.fill(0.0),
         }
     }
 

@@ -948,7 +948,7 @@ impl AnimationGraphState {
             graphs,
             pool,
             output_frame,
-            |node, state, inputs, pool, output| {
+            |_, node, state, inputs, pool, output| {
                 node.evaluate(state, context, bone_ids, inputs, pool, output);
             },
         )
@@ -962,14 +962,46 @@ impl AnimationGraphState {
         pool: &mut FramePool,
         output_frame: &mut AnimationFrame,
     ) -> bool {
+        let Some(graph) = self.get_animation_graph(graphs) else {
+            return false;
+        };
+        let weights = self.drive_weights(graph, context);
         self.walk(
             graphs,
             pool,
             output_frame,
-            |node, state, inputs, pool, output| {
-                node.drive(state, context, bone_ids, inputs, pool, output);
+            |node_index, node, state, inputs, pool, output| {
+                let context = context.scaled(weights[node_index.index()]);
+                node.drive(state, &context, bone_ids, inputs, pool, output);
             },
         )
+    }
+
+    fn drive_weights(&self, graph: &AnimationGraph, context: &DriveContext<'_>) -> Vec<f32> {
+        let mut weights = vec![0.0; graph.nodes.node_count()];
+        weights[graph.result_node.index()] = 1.0;
+        let mut shares = Vec::new();
+        for node_index in graph.iter() {
+            let (Some(node), Some(active)) = (
+                graph.live_node(node_index),
+                self.graph_state.get(&node_index),
+            ) else {
+                continue;
+            };
+            let weight = weights[node_index.index()];
+            let inputs = graph.inputs(node_index);
+            shares.clear();
+            shares.extend(inputs.iter().map(|input| {
+                self.graph_state
+                    .get(input)
+                    .map_or(1.0, |input| input.weight)
+            }));
+            node.drive_shares(&active.node_state, &context.scaled(weight), &mut shares);
+            for (input, share) in inputs.iter().zip(&shares) {
+                weights[input.index()] += weight * share;
+            }
+        }
+        weights
     }
 
     fn walk(
@@ -978,6 +1010,7 @@ impl AnimationGraphState {
         pool: &mut FramePool,
         output_frame: &mut AnimationFrame,
         mut visit: impl FnMut(
+            AnimationNodeIndex,
             &dyn ErasedAnimationNode,
             &mut NodeState,
             &[EvaluatedFrame],
@@ -1002,6 +1035,7 @@ impl AnimationGraphState {
             if let Some(node) = graph.live_node(node_index) {
                 if let Some(node_state) = self.get_active_node_state_mut(&node_index) {
                     visit(
+                        node_index,
                         node,
                         &mut node_state.node_state,
                         graph_evaluator.view_stack(stack_start),

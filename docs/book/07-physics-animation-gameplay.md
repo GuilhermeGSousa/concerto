@@ -1516,6 +1516,22 @@ context also gives the player's `blackboard()`, `root()`, `skeleton()` and
 may not name what the drive writes, the `AnimationPlayer`; one that does panics
 when `drive_animation_players` is initialized.
 
+`DriveContext::weight` is how much of the node's drive frame reaches the
+player's: the product of the shares every combiner above it gives it, 1 at the
+root. A blend gives each input its weight over the sum of the positive ones, a
+blend space each corner its barycentric share, a layer its overlay the layer's
+weight and its base 1, and a cross-fade each state its share of the stack,
+so a state fading out drives at the weight it has left. A node that drives at
+less than full weight can scale what it asks of physics, stop planning what it
+cannot carry out, or wind down as its state fades. The walk works the weights
+out from the root down before any node drives, asking each node for
+`drive_shares(state, context, shares)`: `shares` holds its inputs' node weights
+in slot order, and the node overwrites them with each input's share of its
+drive frame. The default gives the first input all of it, as the default
+`drive` copies it, so a node that overrides `drive` to blend its inputs
+overrides `drive_shares` with it. A retarget node does not drive the graph it
+plays.
+
 A node gives root motion with `root_motion(state, input, context, bone_ids,
 inputs)`, which returns a `RootMotion`. `update_animation_players` calls it for
 every node after the whole graph's `update`, from the leaves up, with the node's `UpdateInput`, so `inputs` holds

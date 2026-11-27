@@ -195,6 +195,13 @@ impl AnimationNode for BlendNode {
         }
     }
 
+    fn drive_shares(&self, _: &(), _: &DriveContext<'_>, shares: &mut [f32]) {
+        let total: f32 = shares.iter().filter(|weight| **weight > 0.0).sum();
+        for share in shares {
+            *share = if *share > 0.0 { *share / total } else { 0.0 };
+        }
+    }
+
     fn root_motion(
         &self,
         _: &mut (),

@@ -173,6 +173,23 @@ impl AnimationNode for BlendSpace2DNode {
         attributes.blend(inputs[corners.c].frame.attributes(), corners.c_share);
     }
 
+    fn drive_shares(
+        &self,
+        state: &BlendSpace2DInstanceNode,
+        _: &DriveContext<'_>,
+        shares: &mut [f32],
+    ) {
+        let corners = corners(state).filter(|_| shares.len() == self.points().len());
+        shares.fill(0.0);
+        let Some(corners) = corners.filter(|_| !shares.is_empty()) else {
+            return;
+        };
+        let b_share = corners.b_share.unwrap_or(0.0);
+        shares[corners.a] += (1.0 - b_share) * (1.0 - corners.c_share);
+        shares[corners.b] += b_share * (1.0 - corners.c_share);
+        shares[corners.c] += corners.c_share;
+    }
+
     fn root_motion(
         &self,
         state: &mut BlendSpace2DInstanceNode,
