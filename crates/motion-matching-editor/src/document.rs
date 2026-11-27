@@ -298,26 +298,28 @@ pub fn read_definition(root: &Path, asset: &AssetEntry) -> anyhow::Result<Motion
     Ok(decode_content_asset::<MotionDatabase>(&bytes)?.1)
 }
 
-fn hold_definition(
-    state: &mut DefinitionDocument,
-    mut definition: MotionDatabase,
-    channels: Option<Vec<HeldChannel>>,
-) {
-    if let Some(channels) = &channels {
-        definition.channels = channels.iter().map(HeldChannel::data).collect();
+impl DefinitionDocument {
+    fn hold_definition(
+        &mut self,
+        mut definition: MotionDatabase,
+        channels: Option<Vec<HeldChannel>>,
+    ) {
+        if let Some(channels) = &channels {
+            definition.channels = channels.iter().map(HeldChannel::data).collect();
+        }
+        self.settings = channels
+            .is_some()
+            .then(|| DatabaseSettings::of(&definition));
+        self.channels = channels.unwrap_or_default();
+        self.skeleton = definition.skeleton.clone();
+        self.entries = definition.entries.clone();
+        self.selected_entry = (!definition.entries.is_empty()).then_some(0);
+        self.entry_facts.clear();
+        self.shown_skeleton = None;
+        self.time = 0.0;
+        self.sought_entry = None;
+        self.loaded = Some(definition);
     }
-    state.settings = channels
-        .is_some()
-        .then(|| DatabaseSettings::of(&definition));
-    state.channels = channels.unwrap_or_default();
-    state.skeleton = definition.skeleton.clone();
-    state.entries = definition.entries.clone();
-    state.selected_entry = (!definition.entries.is_empty()).then_some(0);
-    state.entry_facts.clear();
-    state.shown_skeleton = None;
-    state.time = 0.0;
-    state.sought_entry = None;
-    state.loaded = Some(definition);
 }
 
 fn live_channels(
@@ -368,7 +370,7 @@ pub(crate) fn load_definition(
                 continue;
             }
         };
-        hold_definition(&mut state, definition, channels);
+        state.hold_definition(definition, channels);
         state.stats = None;
         state.playback = None;
         state.derive_job = None;
@@ -406,7 +408,7 @@ pub(crate) fn restore_discarded_edits(
             return;
         }
     };
-    hold_definition(&mut state, definition, channels);
+    state.hold_definition(definition, channels);
     state.derive_wanted = true;
     if let Some(types) = types {
         publish_values(document, &state, &types.read(), None, &mut cmd);

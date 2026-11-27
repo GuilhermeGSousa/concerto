@@ -143,50 +143,52 @@ struct DeriveInput {
     progress: DeriveProgress,
 }
 
-fn derived_database(input: &DeriveInput, inputs: &DerivedInputs) -> anyhow::Result<MotionDatabase> {
-    let (name, version) = (MotionDatabase::name(), MotionDatabase::DERIVED_VERSION);
-    let mut database = input.definition.clone();
-    let key = database.derived_key(inputs)?;
-    if let Some(blob) = input.cache.get(name, version, key) {
-        match database.apply_derived(&blob) {
-            Ok(()) => return Ok(database),
-            Err(error) => log::warn!("discarding the cached {name} blob {key:016x}: {error:#}"),
+impl DeriveInput {
+    fn derived_database(&self, inputs: &DerivedInputs) -> anyhow::Result<MotionDatabase> {
+        let (name, version) = (MotionDatabase::name(), MotionDatabase::DERIVED_VERSION);
+        let mut database = self.definition.clone();
+        let key = database.derived_key(inputs)?;
+        if let Some(blob) = self.cache.get(name, version, key) {
+            match database.apply_derived(&blob) {
+                Ok(()) => return Ok(database),
+                Err(error) => log::warn!("discarding the cached {name} blob {key:016x}: {error:#}"),
+            }
         }
+        *self.progress.lock().unwrap() = Some((0, database.entries.len()));
+        let blob = database.derive(inputs, &mut |finished, total| {
+            *self.progress.lock().unwrap() = Some((finished, total));
+        })?;
+        self.cache.put(name, version, key, &blob);
+        database.apply_derived(&blob)?;
+        Ok(database)
     }
-    *input.progress.lock().unwrap() = Some((0, database.entries.len()));
-    let blob = database.derive(inputs, &mut |finished, total| {
-        *input.progress.lock().unwrap() = Some((finished, total));
-    })?;
-    input.cache.put(name, version, key, &blob);
-    database.apply_derived(&blob)?;
-    Ok(database)
-}
 
-fn run_derive(input: DeriveInput) -> anyhow::Result<Derived> {
-    let root = ContentAssetRoot::Directory(input.root.clone());
-    let ids = input.definition.derived_inputs();
-    let inputs = pollster::block_on(DerivedInputs::read(&root, &input.assets, &ids))?;
-    let database = derived_database(&input, &inputs)?;
-    database.check_weights()?;
-    let skeleton: Skeleton = inputs.decode(database.skeleton.id())?;
-    let clips = database
-        .clips()
-        .map(|clip| inputs.decode::<AnimationClip>(clip.id()).map(Arc::new))
-        .collect::<anyhow::Result<Vec<_>>>()?;
-    let channels: Vec<Box<dyn FeatureChannel>> = database
-        .live_channels()?
-        .into_iter()
-        .map(|channel| channel.dyn_clone())
-        .collect();
-    Ok(Derived {
-        stats: BakedStats::of(&database),
-        playback: BakedPlayback {
-            database: Arc::new(database),
-            skeleton: Arc::new(skeleton),
-            clips,
-            channels: channels.into(),
-        },
-    })
+    fn run_derive(self) -> anyhow::Result<Derived> {
+        let root = ContentAssetRoot::Directory(self.root.clone());
+        let ids = self.definition.derived_inputs();
+        let inputs = pollster::block_on(DerivedInputs::read(&root, &self.assets, &ids))?;
+        let database = self.derived_database(&inputs)?;
+        database.check_weights()?;
+        let skeleton: Skeleton = inputs.decode(database.skeleton.id())?;
+        let clips = database
+            .clips()
+            .map(|clip| inputs.decode::<AnimationClip>(clip.id()).map(Arc::new))
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        let channels: Vec<Box<dyn FeatureChannel>> = database
+            .live_channels()?
+            .into_iter()
+            .map(|channel| channel.dyn_clone())
+            .collect();
+        Ok(Derived {
+            stats: BakedStats::of(&database),
+            playback: BakedPlayback {
+                database: Arc::new(database),
+                skeleton: Arc::new(skeleton),
+                clips,
+                channels: channels.into(),
+            },
+        })
+    }
 }
 
 fn derivable(state: &DefinitionDocument) -> Option<MotionDatabase> {
@@ -324,7 +326,7 @@ pub(crate) fn derive_definitions(
             progress: progress.clone(),
         };
         state.derive_job = Some(DeriveJob {
-            handle: std::thread::spawn(move || run_derive(input)),
+            handle: std::thread::spawn(move || input.run_derive()),
             asset,
             progress,
             line: editor.status.clone(),

@@ -58,35 +58,37 @@ pub fn read_skeleton(root: &Path, asset: &AssetEntry) -> anyhow::Result<Skeleton
     decode(&read_bytes::<Skeleton>(root, asset)?)
 }
 
-fn read_shown(id: AssetId, root: &Path, assets: &AssetRegistry) -> ShownSkeleton {
-    let mut shown = ShownSkeleton {
-        id,
-        skeleton: None,
-        error: None,
-    };
-    if id.is_nil() {
-        return shown;
+impl ShownSkeleton {
+    fn read_shown(id: AssetId, root: &Path, assets: &AssetRegistry) -> Self {
+        let mut shown = ShownSkeleton {
+            id,
+            skeleton: None,
+            error: None,
+        };
+        if id.is_nil() {
+            return shown;
+        }
+        let read = assets
+            .get(id)
+            .context("The skeleton is not in the project")
+            .and_then(|asset| read_skeleton(root, asset));
+        match read {
+            Ok(skeleton) => shown.skeleton = Some(Arc::new(skeleton)),
+            Err(error) => shown.error = Some(format!("{error:#}")),
+        }
+        shown
     }
-    let read = assets
-        .get(id)
-        .context("The skeleton is not in the project")
-        .and_then(|asset| read_skeleton(root, asset));
-    match read {
-        Ok(skeleton) => shown.skeleton = Some(Arc::new(skeleton)),
-        Err(error) => shown.error = Some(format!("{error:#}")),
-    }
-    shown
-}
 
-fn scene_of(shown: &mut ShownSkeleton, root: &Path, assets: &AssetRegistry) -> ShowClipScene {
-    let Some(skeleton) = assets.get(shown.id) else {
-        return ShowClipScene(None);
-    };
-    match read_shown_scene(root, Some(skeleton), None, assets) {
-        Ok(scene) => ShowClipScene(scene.map(|(_, scene)| scene)),
-        Err(error) => {
-            shown.error = Some(format!("{error:#}"));
-            ShowClipScene(None)
+    fn scene_of(&mut self, root: &Path, assets: &AssetRegistry) -> ShowClipScene {
+        let Some(skeleton) = assets.get(self.id) else {
+            return ShowClipScene(None);
+        };
+        match read_shown_scene(root, Some(skeleton), None, assets) {
+            Ok(scene) => ShowClipScene(scene.map(|(_, scene)| scene)),
+            Err(error) => {
+                self.error = Some(format!("{error:#}"));
+                ShowClipScene(None)
+            }
         }
     }
 }
@@ -109,8 +111,8 @@ pub(crate) fn follow_skeleton(
         {
             continue;
         }
-        let mut shown = read_shown(id, &project.root, &assets);
-        previews.trigger(document, scene_of(&mut shown, &project.root, &assets));
+        let mut shown = ShownSkeleton::read_shown(id, &project.root, &assets);
+        previews.trigger(document, shown.scene_of(&project.root, &assets));
         bones.0 = shown
             .skeleton
             .as_ref()
@@ -141,19 +143,21 @@ fn read_facts(
     })
 }
 
-fn unread_clips(state: &DefinitionDocument, skeleton: AssetId) -> Vec<AssetId> {
-    let mut unread = Vec::new();
-    for entry in &state.entries {
-        let clip = entry.clip.id();
-        let read = state
-            .entry_facts
-            .iter()
-            .any(|facts| facts.clip == clip && facts.skeleton == skeleton);
-        if !read && !unread.contains(&clip) {
-            unread.push(clip);
+impl DefinitionDocument {
+    fn unread_clips(&self, skeleton: AssetId) -> Vec<AssetId> {
+        let mut unread = Vec::new();
+        for entry in &self.entries {
+            let clip = entry.clip.id();
+            let read = self
+                .entry_facts
+                .iter()
+                .any(|facts| facts.clip == clip && facts.skeleton == skeleton);
+            if !read && !unread.contains(&clip) {
+                unread.push(clip);
+            }
         }
+        unread
     }
-    unread
 }
 
 fn start_facts_job(
@@ -210,7 +214,7 @@ pub(crate) fn read_entry_facts(
         else {
             continue;
         };
-        let unread = unread_clips(&state, skeleton);
+        let unread = state.unread_clips(skeleton);
         if unread.is_empty() {
             continue;
         }
