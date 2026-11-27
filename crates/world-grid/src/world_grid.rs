@@ -15,12 +15,22 @@ use concerto_render::{
 
 use crate::material::{WorldGridMaterial, WorldGridUniform};
 
+/// An infinite grid on the world's ground plane, `y = 0`, whatever the entity's transform.
+///
+/// Adding it gives the entity a mesh, a [`WorldGridMaterial`] and a default [`Transform`].
+/// Changes to its fields reach the material in `LateUpdate`.
 pub struct WorldGrid {
+    /// The side of a fine cell, in world units.
     pub cell_size: f32,
+    /// How many fine cells span a coarse cell, whose lines are brighter.
     pub coarse_cells: f32,
+    /// The colour of the lines; its alpha is the lines' opacity.
     pub line_color: Color,
+    /// The horizontal distance from the camera, in world units, where the grid starts to fade.
     pub fade_start: f32,
+    /// The horizontal distance from the camera, in world units, where the grid has faded out.
     pub fade_end: f32,
+    /// The colour of the plane between the lines; its alpha is the plane's opacity.
     pub surface_color: Color,
     /// Shade the grid with the scene's lights instead of drawing it at full brightness.
     pub lit: bool,
