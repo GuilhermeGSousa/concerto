@@ -1,3 +1,5 @@
+use std::any::TypeId;
+
 use concerto_app::{
     App,
     edit_time::AtPreviewTime,
@@ -12,17 +14,22 @@ use concerto_foundation::{
 use concerto_mesh::skeleton::Skeleton;
 use concerto_reflect::{GetTypeRegistration, TypeRegistry};
 use glam::{Vec2, Vec3};
+use log::warn;
 
 use crate::{
     clip::AnimationClip,
     drive::{AnimationDriveSet, drive_animation_players},
     event::{AnimationEvent, ClipEvent},
-    graph::AnimationGraph,
+    graph::{AnimationGraph, AnimationNodeData},
     mask::BoneMask,
+    message::{
+        AnimationMessage, ClipEnded, ReflectAnimationMessage, queue_message,
+        queue_reflected_message,
+    },
     node::{
         AdditiveNode, AimOffsetNode, AnimationClipNode, BlendNode, EditorAnimationNode, IkTarget,
-        LayerNode, PlaceholderNode, ResultNode, TwoBoneIkNode, blend_space::BlendSpace2DNode,
-        register_node_inputs, state_machine::AnimationStateMachine,
+        LayerNode, PlaceholderNode, PlayInSlot, ResultNode, SlotEntry, SlotNode, TwoBoneIkNode,
+        blend_space::BlendSpace2DNode, register_node_inputs, state_machine::AnimationStateMachine,
     },
     param::Param,
     retarget::{RetargetNode, RetargetRig},
@@ -32,12 +39,13 @@ use crate::{
     },
 };
 
-/// Registers the built-in animation nodes, the built-in clip event, and the handle types a graph stores.
+/// Registers the built-in animation nodes, the built-in clip event and messages, and the handle types a graph stores.
 pub fn register_animation_types(registry: &mut TypeRegistry) {
     registry.register::<ResultNode>();
     registry.register::<BlendNode>();
     registry.register::<TwoBoneIkNode>();
     registry.register::<LayerNode>();
+    registry.register::<SlotNode>();
     registry.register::<AdditiveNode>();
     registry.register::<AimOffsetNode>();
     registry.register::<AnimationClipNode>();
@@ -45,7 +53,17 @@ pub fn register_animation_types(registry: &mut TypeRegistry) {
     registry.register::<AnimationStateMachine>();
     registry.register::<RetargetNode>();
     registry.register::<PlaceholderNode>();
-    registry.register::<AnimationEvent>();
+    let mut event = AnimationEvent::get_type_registration();
+    event.insert(ReflectAnimationMessage);
+    registry.add(event);
+    let mut ended = ClipEnded::get_type_registration();
+    ended.insert(ReflectAnimationMessage);
+    registry.add(ended);
+    let mut play = PlayInSlot::get_type_registration();
+    play.insert(ReflectAnimationMessage);
+    registry.add(play);
+    registry.register::<AnimationNodeData>();
+    registry.register::<SlotEntry>();
     registry.register::<AssetHandle<AnimationClip>>();
     registry.register::<AssetHandle<AnimationGraph>>();
     registry.register::<AssetHandle<BoneMask>>();
@@ -65,6 +83,7 @@ pub fn register_animation_node_inputs(world: &mut World) {
     register_node_inputs::<BlendNode>(world);
     register_node_inputs::<TwoBoneIkNode>(world);
     register_node_inputs::<LayerNode>(world);
+    register_node_inputs::<SlotNode>(world);
     register_node_inputs::<AdditiveNode>(world);
     register_node_inputs::<AimOffsetNode>(world);
     register_node_inputs::<AnimationClipNode>(world);
@@ -83,6 +102,14 @@ pub trait AnimationAppExt {
 
     /// Registers `S` with the type registry, so clips that store it make it live on load.
     fn register_clip_event<S: ClipEvent + GetTypeRegistration>(&mut self) -> &mut Self;
+
+    /// Registers `M` with the type registry as an animation message, so `OnMessage` triggers
+    /// stored with its path fire, and listens for
+    /// [`SendAnimationMessage<M>`](crate::message::SendAnimationMessage) to queue it on a
+    /// character's player; call it before anything else registers `M`.
+    fn register_animation_message<M: AnimationMessage + GetTypeRegistration>(
+        &mut self,
+    ) -> &mut Self;
 }
 
 impl AnimationAppExt for App {
@@ -96,6 +123,31 @@ impl AnimationAppExt for App {
 
     fn register_clip_event<S: ClipEvent + GetTypeRegistration>(&mut self) -> &mut Self {
         self.register_type::<S>();
+        self
+    }
+
+    fn register_animation_message<M: AnimationMessage + GetTypeRegistration>(
+        &mut self,
+    ) -> &mut Self {
+        let registry = self.main_mut().world_mut().type_registry();
+        let mut registry = registry.write();
+        match registry.get(TypeId::of::<M>()) {
+            Some(registration) if registration.data::<ReflectAnimationMessage>().is_none() => {
+                warn!(
+                    "{} was registered before register_animation_message, so OnMessage triggers never fire on it",
+                    std::any::type_name::<M>()
+                );
+            }
+            Some(_) => {}
+            None => {
+                let mut registration = M::get_type_registration();
+                registration.insert(ReflectAnimationMessage);
+                registry.add(registration);
+                M::register_dependencies(&mut registry);
+            }
+        }
+        drop(registry);
+        self.add_listener(queue_message::<M>.at_preview_time());
         self
     }
 }
@@ -117,6 +169,10 @@ impl Plugin for AnimationPlugin {
             register_animation_types(&mut registry.write());
         }
         register_animation_node_inputs(app.main_mut().world_mut());
+        app.register_animation_message::<ClipEnded>();
+        app.register_animation_message::<PlayInSlot>();
+        app.register_animation_message::<AnimationEvent>();
+        app.add_listener(queue_reflected_message.at_preview_time());
 
         app.add_system(
             LateFixedUpdate,
@@ -193,7 +249,7 @@ mod tests {
             false
         }
 
-        fn update(&self, state: &mut bool, _: f32, _: &(), _: &AnimationGraphContext<'_>) {
+        fn update(&self, state: &mut bool, _: f32, _: &(), _: &mut AnimationGraphContext<'_>) {
             *state = true;
         }
 
@@ -304,7 +360,7 @@ mod tests {
 
         fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) {}
 
-        fn update(&self, _: &mut (), _: f32, _: &Res<Speed>, _: &AnimationGraphContext<'_>) {}
+        fn update(&self, _: &mut (), _: f32, _: &Res<Speed>, _: &mut AnimationGraphContext<'_>) {}
 
         fn evaluate(
             &self,

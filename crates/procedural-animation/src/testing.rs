@@ -107,7 +107,7 @@ impl AnimationNode for Capture {
         None
     }
 
-    fn update(&self, _: &mut Option<Frame>, _: f32, _: &(), _: &AnimationGraphContext<'_>) {}
+    fn update(&self, _: &mut Option<Frame>, _: f32, _: &(), _: &mut AnimationGraphContext<'_>) {}
 
     fn root_motion(
         &self,

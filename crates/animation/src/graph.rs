@@ -7,7 +7,10 @@ use concerto_foundation::assets::{
     handle::{AssetHandle, LiveLeaves},
 };
 use concerto_name::Name;
-use concerto_reflect::{EncodeError, ReflectedValue, TypeRegistry, ValueWarning, to_value};
+use concerto_reflect::{
+    EncodeError, JsonLeaf, Reflect, ReflectJson, ReflectedValue, TypeRegistration, TypeRegistry,
+    ValueWarning, json_to_value, to_json, to_value,
+};
 use glam::Vec2;
 use log::warn;
 use petgraph::{
@@ -21,9 +24,11 @@ use uuid::Uuid;
 use crate::{
     blackboard::AnimationBlackboard,
     evaluation::{AnimationGraphContext, AnimationGraphEvaluator, DriveContext},
+    message::resolve_message_types,
     node::{
         AnimationNode, ErasedAnimationNode, LayerNode, NodeState, PlaceholderNode,
         ReflectAnimationNode, ResultNode, blend_space::BlendSpace2DBuilderContext,
+        state_machine::AnimationStateMachineState,
     },
     param::Param,
     player::ActiveNodeState,
@@ -38,6 +43,11 @@ static PLACEHOLDER: PlaceholderNode = PlaceholderNode {};
 ///
 /// A node is `Stored` until built and `Live` once built. One that could not be built becomes a
 /// `Placeholder`, which plays as [`PlaceholderNode`] and keeps the value it could not build.
+///
+/// It reflects as a leaf, so a node can hold another, as a slot's entry does. Its JSON form is
+/// `{ "type": <type path>, "value": { ...fields } }`, read and written with the registry.
+#[derive(Reflect)]
+#[reflect(opaque, Json)]
 pub enum AnimationNodeData {
     /// Read from a file, not yet built into the node's type.
     Stored {
@@ -106,6 +116,65 @@ impl AnimationNodeData {
         }
     }
 
+    /// Builds the node from its stored value, or from a placeholder's kept value, loading handles through `leaves`.
+    ///
+    /// A node that cannot be built becomes a placeholder. `label` names the node in the warnings
+    /// returned, such as `node 3`. A live node is left alone.
+    pub fn make_live(
+        &mut self,
+        registry: &TypeRegistry,
+        leaves: &mut LiveLeaves,
+        label: &str,
+    ) -> Vec<ValueWarning> {
+        let (Self::Stored { type_name, value } | Self::Placeholder { type_name, value }) = self
+        else {
+            return Vec::new();
+        };
+        let failure = match registry
+            .get_by_name(type_name)
+            .and_then(|registration| registration.data::<ReflectAnimationNode>().copied())
+        {
+            Some(data) => {
+                let (mut built, node_warnings) = (data.from_value)(value, leaves);
+                if node_warnings.is_empty() {
+                    let checked = resolve_message_types(built.as_reflect_mut(), registry)
+                        .into_iter()
+                        .chain(built.make_live(registry, leaves));
+                    let warnings = checked
+                        .map(|warning| ValueWarning {
+                            path: type_name.clone(),
+                            reason: format!("{label} {}: {}", warning.path, warning.reason),
+                        })
+                        .collect();
+                    *self = Self::Live {
+                        type_name: std::mem::take(type_name),
+                        node: built,
+                    };
+                    return warnings;
+                }
+                node_warnings
+                    .into_iter()
+                    .map(|warning| format!("{label} replaced by a placeholder: {warning}"))
+                    .collect()
+            }
+            None => vec![format!(
+                "{label} replaced by a placeholder: type is not registered as an animation node"
+            )],
+        };
+        let warnings = failure
+            .into_iter()
+            .map(|reason: String| ValueWarning {
+                path: type_name.clone(),
+                reason,
+            })
+            .collect();
+        *self = Self::Placeholder {
+            type_name: std::mem::take(type_name),
+            value: std::mem::replace(value, ReflectedValue::List(Vec::new())),
+        };
+        warnings
+    }
+
     /// The node that plays: the live one, the placeholder, or none before the graph is made live.
     pub fn live(&self) -> Option<&dyn ErasedAnimationNode> {
         match self {
@@ -121,6 +190,49 @@ impl AnimationNodeData {
             Self::Live { node, .. } => Some(node.as_mut()),
             Self::Stored { .. } | Self::Placeholder { .. } => None,
         }
+    }
+}
+
+impl JsonLeaf for AnimationNodeData {
+    fn to_json(&self) -> serde_json::Value {
+        serde_json::Value::Null
+    }
+
+    fn from_json(_: &serde_json::Value) -> Result<Self, String> {
+        Err("a node's JSON form needs the type registry".to_owned())
+    }
+
+    fn to_json_with(&self, registry: &TypeRegistry) -> serde_json::Value {
+        let value = match self {
+            Self::Live { node, .. } => to_json(node.as_reflect(), registry),
+            Self::Stored { type_name, value } => registry
+                .get_by_name(type_name)
+                .and_then(|registration| registration.data::<ReflectAnimationNode>().copied())
+                .map_or(serde_json::Value::Null, |data| {
+                    let (built, _) =
+                        (data.from_value)(value, &mut LiveLeaves::from_parts(registry, None));
+                    to_json(built.as_reflect(), registry)
+                }),
+            Self::Placeholder { .. } => serde_json::Value::Null,
+        };
+        serde_json::json!({ "type": self.type_name(), "value": value })
+    }
+
+    fn from_json_with(value: &serde_json::Value, registry: &TypeRegistry) -> Result<Self, String> {
+        let type_name = value
+            .get("type")
+            .and_then(serde_json::Value::as_str)
+            .ok_or("expected an object with the node's type path under \"type\" and its fields under \"value\"")?;
+        let registration = registry
+            .get_by_name(type_name)
+            .filter(|registration| registration.data::<ReflectAnimationNode>().is_some())
+            .ok_or_else(|| format!("{type_name} is not registered as an animation node"))?;
+        let fields = value.get("value").cloned().unwrap_or_default();
+        let value = json_to_value(&fields, TypeRegistration::type_id(&registration), registry)?;
+        Ok(Self::Stored {
+            type_name: registration.type_path().to_owned(),
+            value,
+        })
     }
 }
 
@@ -304,41 +416,7 @@ impl AnimationGraph {
         let mut warnings = Vec::new();
 
         for (index, node) in self.nodes.node_weights_mut().enumerate() {
-            let (AnimationNodeData::Stored { type_name, value }
-            | AnimationNodeData::Placeholder { type_name, value }) = node
-            else {
-                continue;
-            };
-            let failure = match registry
-                .get_by_name(type_name)
-                .and_then(|registration| registration.data::<ReflectAnimationNode>().copied())
-            {
-                Some(data) => {
-                    let (built, node_warnings) = (data.from_value)(value, &mut leaves);
-                    if node_warnings.is_empty() {
-                        *node = AnimationNodeData::Live {
-                            type_name: std::mem::take(type_name),
-                            node: built,
-                        };
-                        continue;
-                    }
-                    node_warnings
-                        .into_iter()
-                        .map(|warning| format!("node {index} replaced by a placeholder: {warning}"))
-                        .collect()
-                }
-                None => vec![format!(
-                    "node {index} replaced by a placeholder: type is not registered as an animation node"
-                )],
-            };
-            warnings.extend(failure.into_iter().map(|reason| ValueWarning {
-                path: type_name.clone(),
-                reason,
-            }));
-            *node = AnimationNodeData::Placeholder {
-                type_name: std::mem::take(type_name),
-                value: std::mem::replace(value, ReflectedValue::List(Vec::new())),
-            };
+            warnings.extend(node.make_live(registry, &mut leaves, &format!("node {index}")));
         }
 
         self.load_warnings = warnings;
@@ -880,7 +958,7 @@ impl AnimationGraphState {
         &mut self,
         delta_time: f32,
         graphs: &AssetStore<AnimationGraph>,
-        context: &AnimationGraphContext<'_>,
+        context: &mut AnimationGraphContext<'_>,
     ) {
         let Some(graph) = self.get_animation_graph(graphs) else {
             return;
@@ -895,6 +973,29 @@ impl AnimationGraphState {
 
                 node_state.update(node, delta_time, context);
             });
+    }
+
+    pub(crate) fn in_state(&self, graphs: &AssetStore<AnimationGraph>, name: &Name) -> bool {
+        let Some(graph) = self.get_animation_graph(graphs) else {
+            return false;
+        };
+        self.graph_state.iter().any(|(node_index, node_state)| {
+            let Some(node) = graph.live_node(*node_index) else {
+                return false;
+            };
+            let state = node.state_as_any(&node_state.node_state);
+            if let Some(machine) = state.downcast_ref::<AnimationStateMachineState>() {
+                return machine.current_state_name().as_ref() == Some(name)
+                    || machine
+                        .current_graph()
+                        .is_some_and(|current| current.in_state(graphs, name));
+            }
+            let mut found = false;
+            node.inner_states(&node_state.node_state, &mut |_, inner| {
+                found |= inner.in_state(graphs, name);
+            });
+            found
+        })
     }
 
     pub(crate) fn root_motion(
@@ -957,7 +1058,7 @@ impl AnimationGraphState {
     pub(crate) fn drive(
         &mut self,
         graphs: &AssetStore<AnimationGraph>,
-        context: &DriveContext<'_>,
+        context: &mut DriveContext<'_>,
         bone_ids: &[Uuid],
         pool: &mut FramePool,
         output_frame: &mut AnimationFrame,
@@ -971,8 +1072,9 @@ impl AnimationGraphState {
             pool,
             output_frame,
             |node_index, node, state, inputs, pool, output| {
-                let context = context.scaled(weights[node_index.index()]);
-                node.drive(state, &context, bone_ids, inputs, pool, output);
+                let mut node_context = context.scaled(weights[node_index.index()]);
+                node.drive(state, &mut node_context, bone_ids, inputs, pool, output);
+                context.pass_up(node_context);
             },
         )
     }
@@ -1087,18 +1189,6 @@ impl AnimationGraphState {
             .as_ref()
             .and_then(move |handle| graphs.get(handle))
     }
-
-    pub(crate) fn is_finished(&self, graphs: &AssetStore<AnimationGraph>) -> bool {
-        let Some(graph) = self.get_animation_graph(graphs) else {
-            return true;
-        };
-
-        self.graph_state.iter().all(|(node_index, node_state)| {
-            graph
-                .live_node(*node_index)
-                .is_none_or(|node| node.is_finished(&node_state.node_state))
-        })
-    }
 }
 
 #[derive(Clone, Copy)]
@@ -1139,7 +1229,6 @@ impl AnimationGraphStates {
         self.states.iter()
     }
 
-    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn iter_mut(&mut self) -> impl Iterator<Item = &mut AnimationGraphState> {
         self.states.iter_mut()
     }
@@ -1311,7 +1400,7 @@ mod tests {
 
         fn create_state(&self, _: &Res<NeverRegistered>, _context: &AnimationGraphContext<'_>) {}
 
-        fn update(&self, _: &mut (), _: f32, _: &(), _: &AnimationGraphContext<'_>) {}
+        fn update(&self, _: &mut (), _: f32, _: &(), _: &mut AnimationGraphContext<'_>) {}
 
         fn evaluate(
             &self,

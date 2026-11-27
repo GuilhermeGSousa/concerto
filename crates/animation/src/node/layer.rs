@@ -107,7 +107,7 @@ impl AnimationNode for LayerNode {
         LayerState::default()
     }
 
-    fn update(&self, _: &mut LayerState, _: f32, _: &(), _: &AnimationGraphContext<'_>) {}
+    fn update(&self, _: &mut LayerState, _: f32, _: &(), _: &mut AnimationGraphContext<'_>) {}
 
     fn evaluate(
         &self,
@@ -186,7 +186,7 @@ impl AnimationNode for LayerNode {
         &self,
         state: &mut LayerState,
         _: &(),
-        context: &DriveContext<'_>,
+        context: &mut DriveContext<'_>,
         _: &[Uuid],
         inputs: &[EvaluatedFrame],
         _: &mut FramePool,
@@ -225,7 +225,7 @@ impl EditorAnimationNode for LayerNode {
     }
 }
 
-fn blend_joint(joint: &mut JointPose, target: &JointPose, weight: f32) {
+pub(crate) fn blend_joint(joint: &mut JointPose, target: &JointPose, weight: f32) {
     joint.translation = joint.translation.lerp(target.translation, weight);
     joint.rotation = joint.rotation.slerp(target.rotation, weight);
     joint.scale = joint.scale.lerp(target.scale, weight);
@@ -247,7 +247,7 @@ fn blend_local(weights: &[f32], layer: f32, overlay: &AnimationFrame, output: &m
     }
 }
 
-fn blend_attributes(
+pub(crate) fn blend_attributes(
     weights: &[f32],
     layer: f32,
     overlay: &AnimationFrame,

@@ -2,7 +2,7 @@ use concerto_foundation::assets::asset_store::AssetStore;
 use uuid::Uuid;
 
 use crate::{
-    evaluation::{AnimationGraphContext, DriveContext},
+    evaluation::{AnimationGraphContext, DriveContext, RaisedMessage},
     graph::{AnimationGraph, AnimationGraphStates, GraphId},
     pose::{AnimationFrame, FramePool, RootMotion},
 };
@@ -33,6 +33,17 @@ pub enum TransitionBlender {
     Inertialization,
 }
 
+impl TransitionBlender {
+    pub(crate) fn starting_in(self, initial: GraphId) -> Box<dyn AnimationTransitionBlender> {
+        match self {
+            Self::CrossFade => Box::new(blend_stack::BlendStack::new(initial)),
+            Self::Inertialization => Box::new(
+                inertialization_blender::InertializationBlender::new(initial),
+            ),
+        }
+    }
+}
+
 pub(crate) struct BlendInFlight {
     pub(crate) from: GraphId,
     pub(crate) to: GraphId,
@@ -59,7 +70,7 @@ pub(crate) trait AnimationTransitionBlender: Send + Sync {
         bone_ids: &[Uuid],
         graph_states: &mut AnimationGraphStates,
         graphs: &AssetStore<AnimationGraph>,
-        context: &DriveContext<'_>,
+        context: &mut DriveContext<'_>,
         pool: &mut FramePool,
         output: &mut AnimationFrame,
     );
@@ -77,8 +88,8 @@ pub(crate) trait AnimationTransitionBlender: Send + Sync {
         delta_time: f32,
         graph_states: &mut AnimationGraphStates,
         graphs: &AssetStore<AnimationGraph>,
-        context: &AnimationGraphContext<'_>,
-    );
+        context: &mut AnimationGraphContext<'_>,
+    ) -> Vec<RaisedMessage>;
 
     fn transition(
         &mut self,
