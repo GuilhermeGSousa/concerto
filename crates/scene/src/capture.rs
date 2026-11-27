@@ -262,10 +262,10 @@ fn added_value(
         |target| shown_name(target, world.get_component_for_entity::<Name>(target)),
     );
     let Some(registry) = world.get_resource::<AppTypeRegistry>() else {
-        return Ok(unlisted(component, &shown));
+        return Ok(component.unlisted(&shown));
     };
     let Some(registration) = registry.read().get_by_name(&component.type_name) else {
-        return Ok(unlisted(component, &shown));
+        return Ok(component.unlisted(&shown));
     };
     let mut added = SceneCapture::default();
     let live = registration
@@ -287,7 +287,7 @@ fn added_value(
                 .data::<ReflectDefault>()
                 .map(ReflectDefault::default)
             else {
-                return Ok(unlisted(component, &shown));
+                return Ok(component.unlisted(&shown));
             };
             apply_value_with(
                 &mut *value,
@@ -306,12 +306,14 @@ fn added_value(
     Ok(value)
 }
 
-fn unlisted(component: &SerializedComponent, node: &str) -> ReflectedValue {
-    warn!(
-        "{} added to {node} cannot be decoded, so the assets it names are not listed",
-        component.type_name
-    );
-    component.value.clone()
+impl SerializedComponent {
+    fn unlisted(&self, node: &str) -> ReflectedValue {
+        warn!(
+            "{} added to {node} cannot be decoded, so the assets it names are not listed",
+            self.type_name
+        );
+        self.value.clone()
+    }
 }
 
 struct StoredAssets<'a> {

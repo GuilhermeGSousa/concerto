@@ -21,7 +21,7 @@ use log::warn;
 
 use crate::link_path::LinkPath;
 use crate::node_id::NodeId;
-use crate::scene::{LinkChange, Scene, SceneNode};
+use crate::scene::{LinkChange, Scene, SceneLinkData, SceneNode};
 use crate::spawner::{spawn_scene_in_world, RemovedComponent, SpawnFilter};
 
 /// A placed scene.
@@ -52,6 +52,13 @@ struct Handoff {
 }
 
 impl SceneLink {
+    pub(crate) fn stored(data: &SceneLinkData, handle: AssetHandle<Scene>) -> Self {
+        data.changes
+            .iter()
+            .cloned()
+            .fold(Self::new(handle), Self::with_change)
+    }
+
     /// A link to `scene` with no changes.
     pub fn new(scene: AssetHandle<Scene>) -> Self {
         Self {
@@ -397,7 +404,7 @@ fn spawn_link(world: &mut World, link: Entity) -> Result<(), SpawnLinkError> {
                     link_name(world, link),
                     change.path()
                 );
-                outcomes[at] = unapplied(change.path(), &scene_name);
+                outcomes[at] = ChangeOutcome::unapplied(change.path(), &scene_name);
             }
         }
     }
@@ -465,12 +472,12 @@ fn spawn_link(world: &mut World, link: Entity) -> Result<(), SpawnLinkError> {
             outcome: crossing.change,
             inner,
             at,
-            node_name: node_label(node),
+            node_name: node.label(),
             change_path: changes[crossing.change].path().clone(),
         }));
         let inherited = handed
             .iter()
-            .map(|crossing| with_path(&changes[crossing.change], crossing.path.clone()))
+            .map(|crossing| changes[crossing.change].with_path(crossing.path.clone()))
             .collect();
         let mut inner_chain = chain.clone();
         inner_chain.push(id);
@@ -687,7 +694,7 @@ fn settle_handoffs(world: &mut World, link: Entity) {
 }
 
 fn handed_outcome(world: &World, handoff: &Handoff, scene_name: &str) -> ChangeOutcome {
-    let lost = || unapplied(&handoff.change_path, scene_name);
+    let lost = || ChangeOutcome::unapplied(&handoff.change_path, scene_name);
     let Some(inner) = world.get_component_for_entity::<SceneLink>(handoff.inner) else {
         return lost();
     };
@@ -703,28 +710,34 @@ fn handed_outcome(world: &World, handoff: &Handoff, scene_name: &str) -> ChangeO
     }
 }
 
-fn unapplied(path: &LinkPath, scene_name: &str) -> ChangeOutcome {
-    ChangeOutcome::Unapplied(format!("no node {path} in {scene_name}"))
-}
-
-fn node_label(node: &SceneNode) -> String {
-    match node.name.is_empty() {
-        true => node.id.to_string(),
-        false => node.name.clone(),
+impl ChangeOutcome {
+    fn unapplied(path: &LinkPath, scene_name: &str) -> Self {
+        Self::Unapplied(format!("no node {path} in {scene_name}"))
     }
 }
 
-fn with_path(change: &LinkChange, path: LinkPath) -> LinkChange {
-    match change {
-        LinkChange::AddComponent { component, .. } => LinkChange::AddComponent {
-            path,
-            component: component.clone(),
-        },
-        LinkChange::RemoveComponent { type_name, .. } => LinkChange::RemoveComponent {
-            path,
-            type_name: type_name.clone(),
-        },
-        LinkChange::RemoveNode { .. } => LinkChange::RemoveNode { path },
+impl SceneNode {
+    fn label(&self) -> String {
+        match self.name.is_empty() {
+            true => self.id.to_string(),
+            false => self.name.clone(),
+        }
+    }
+}
+
+impl LinkChange {
+    fn with_path(&self, path: LinkPath) -> Self {
+        match self {
+            LinkChange::AddComponent { component, .. } => LinkChange::AddComponent {
+                path,
+                component: component.clone(),
+            },
+            LinkChange::RemoveComponent { type_name, .. } => LinkChange::RemoveComponent {
+                path,
+                type_name: type_name.clone(),
+            },
+            LinkChange::RemoveNode { .. } => LinkChange::RemoveNode { path },
+        }
     }
 }
 

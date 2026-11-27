@@ -4,7 +4,7 @@ use concerto_foundation::assets::{asset_server::AssetServer, handle::AssetHandle
 
 use crate::link::SceneLink;
 use crate::node_id::SceneNodeId;
-use crate::scene::{Scene, SceneLinkData};
+use crate::scene::Scene;
 
 /// Nodes and components a spawn leaves out; the default leaves out nothing.
 #[derive(Default)]
@@ -110,13 +110,13 @@ pub fn spawn_scene(
     for (index, node) in scene.nodes.iter().enumerate() {
         if let Some(data) = node.link.as_ref().filter(|_| !skipped[index]) {
             cmd.insert(
-                stored_link(data, AssetHandle::weak(data.scene)),
+                SceneLink::stored(data, AssetHandle::weak(data.scene)),
                 node_entities[index],
             );
         }
     }
 
-    let has_parent = parented_nodes(scene, &skipped);
+    let has_parent = scene.parented_nodes(&skipped);
     for (index, node) in scene.nodes.iter().enumerate() {
         if skipped[index] {
             continue;
@@ -187,11 +187,11 @@ pub fn spawn_scene_in_world(
                 Some(server) => server.load::<Scene>(data.scene),
                 None => AssetHandle::weak(data.scene),
             };
-            world.insert(stored_link(data, handle), node_entities[index]);
+            world.insert(SceneLink::stored(data, handle), node_entities[index]);
         }
     }
 
-    let has_parent = parented_nodes(scene, &skipped);
+    let has_parent = scene.parented_nodes(&skipped);
     for (index, node) in scene.nodes.iter().enumerate() {
         if skipped[index] {
             continue;
@@ -221,26 +221,21 @@ pub fn spawn_scene_in_world(
     }
 }
 
-fn stored_link(data: &SceneLinkData, handle: AssetHandle<Scene>) -> SceneLink {
-    data.changes
-        .iter()
-        .cloned()
-        .fold(SceneLink::new(handle), SceneLink::with_change)
-}
-
-fn parented_nodes(scene: &Scene, skipped: &[bool]) -> Vec<bool> {
-    let mut has_parent = vec![false; scene.nodes.len()];
-    for (index, node) in scene.nodes.iter().enumerate() {
-        if skipped[index] {
-            continue;
-        }
-        for &child in &node.children {
-            if let Some(flag) = has_parent.get_mut(child) {
-                *flag = true;
+impl Scene {
+    fn parented_nodes(&self, skipped: &[bool]) -> Vec<bool> {
+        let mut has_parent = vec![false; self.nodes.len()];
+        for (index, node) in self.nodes.iter().enumerate() {
+            if skipped[index] {
+                continue;
+            }
+            for &child in &node.children {
+                if let Some(flag) = has_parent.get_mut(child) {
+                    *flag = true;
+                }
             }
         }
+        has_parent
     }
-    has_parent
 }
 
 fn roots(node_entities: &[Entity], has_parent: &[bool], skipped: &[bool]) -> Vec<Entity> {
