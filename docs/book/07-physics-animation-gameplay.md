@@ -1118,6 +1118,41 @@ A graph is a tree of nodes under a result node:
       AnimationClipNode::new(aim),
   );
   ```
+- **Slot** (`SlotNode`) plays authored entries over its one input, the base,
+  when messages call for them, like a montage slot. A `SlotEntry` holds a
+  `name`, one node of any registered type (stored and made live with the graph,
+  so nothing is built at run time), an optional `BoneMask`, `fade_in` and
+  `fade_out` seconds (0 is at once), the message types `on` that start it
+  and the message types `out` that end it, `ClipEnded` by default;
+  build it with `SlotEntry::new(name, node)` and `with_mask`, `with_fade_in`,
+  `with_fade_out`, `with_on` and `with_out`. An entry plays when a queued message matches
+  one of its `on` types or a `PlayInSlot { entry }` message names it, and a
+  message that arrives while it plays starts it again from the beginning; two
+  in one frame start it once. The entry's node takes the
+  slot's base as its input and is layered over it in the order the entries
+  started, by its fade weight times its mask, in the pose, in the attributes
+  of the drive pass and in root motion (an entry with a mask leaves the root
+  motion to the base). An entry fades out once its node raises one of its
+  `out` types in an update, and stops at weight 0. An `out` type matches any
+  message of that type, whatever its fields, so the default `ClipEnded` ends
+  the entry when any clip its node plays ends. What an entry's node raises,
+  in `update` or in `drive`, also goes on up to the slot's own containers, and
+  its drive weight is the slot's times the entry's fade weight.
+  A slot reacts only while it is in a playing graph, so one inside a state's
+  graph plays its entries only while that state plays.
+  ```rust
+  let slot = SlotNode::new().with_entry(
+      SlotEntry::new(
+          name!("wave"),
+          AnimationClipNode::new(wave).with_play_mode(AnimationPlayMode::PlayOnce),
+      )
+      .with_mask(upper_body)
+      .with_fade_in(0.15)
+      .with_fade_out(0.2),
+  );
+  graph.result_node().input(slot).add_input(AnimationClipNode::new(walk));
+  player.send(PlayInSlot { entry: name!("wave") });
+  ```
 - **2D blend space** places clips at points and blends by a `Vec2`
   parameter: the classic locomotion setup.
 - **State machine** switches between sub-graphs on triggers such as
@@ -1652,8 +1687,8 @@ next update walks its graph with the whole queue in the context:
 `context.messages()` gives every queued message in the order sent, then every
 message the drive pass raised since the last update in the order raised, and
 `context.message::<M>()` those of type `M`. Every node that updates reads
-them there, in the graph, in a state machine's playing states and in a
-retarget's inner graph; in `evaluate` and `root_motion` the list is empty, so
+them there, in the graph, in a state machine's playing states, in a slot's
+playing entries and in a retarget's inner graph; in `evaluate` and `root_motion` the list is empty, so
 a node that acts on a message later keeps what it needs in its state. The
 queue empties after the update. A paused player keeps its queue until it
 resumes. An `OnMessage` trigger stores the message's full type path and finds
@@ -1671,8 +1706,8 @@ happened with `context.raise(message)`, in `update` or in `drive`, the two
 walks that hand a node a mutable context; `evaluate` and `root_motion` have no
 `raise`, so a raise from them does not compile. A node raises once, on the
 frame or step its condition becomes true, not on every one it holds. Each
-state machine and retarget the node plays in reads what each of its states or
-its inner graph raised in this update and passes it on to its own container,
+state machine, slot and retarget the node plays in reads what each of its
+states, entries or inner graph raised in this update and passes it on to its own container,
 so the message reaches every ancestor and is never consumed, and a node never
 sees a message raised in `update` in `context.messages()`. At the root,
 `animate_targets` triggers each message the graph raised in its last update on
@@ -1874,9 +1909,9 @@ A clip that loads an event whose type is not registered logs a warning naming
 the clip and the type, and drops it.
 
 The clip node also raises each event its clock crosses as a message to the
-state machines above it, whatever its weight, so a transition can wait for one
-with `on_message_value` (see [Messages and signals](#messages-and-signals)). A
-game's event type that a transition waits for, or that `send_animation_message`
+state machines and slots above it, whatever its weight, so a transition can
+wait for one with `on_message_value` (see [Messages and
+signals](#messages-and-signals)). A game's event type that a transition waits for, or that `send_animation_message`
 sends, also implements `AnimationMessage` and is registered with
 `register_animation_message`, as `AnimationEvent` is. The raised copy stops at
 the graph's root; the game hears the event only as its `AnimationSignal`.

@@ -29,6 +29,8 @@ pub mod definition;
 pub mod layer;
 /// Helpers for nodes that work on joints in the skeleton's model space.
 pub mod model_space;
+/// The slot node, which plays authored entries over its base when messages call for them.
+pub mod slot;
 /// The state machine node, whose states each play a graph and whose transitions blend between
 /// them.
 pub mod state_machine;
@@ -43,6 +45,7 @@ pub use definition::{
     UpdateNodeInputs, register_node_inputs,
 };
 pub use layer::{LayerNode, LayerSpace};
+pub use slot::{PlayInSlot, SlotEntry, SlotNode, SlotState};
 pub use two_bone_ik::{IkGoal, IkTarget, TipRotation, TwoBoneIkNode, TwoBoneIkState};
 
 /// The rate a node plays at.
