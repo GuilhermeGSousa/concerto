@@ -1,9 +1,11 @@
-use concerto_ecs::system::input::Inputs;
+use concerto_ecs::{CommandQueue, Entity, signal::EntitySignal, system::input::Inputs};
 use concerto_mesh::Skeleton;
+use concerto_reflect::Reflect;
 use glam::{Affine3A, Vec3};
 
 use crate::{
     blackboard::AnimationBlackboard,
+    message::AnimationMessage,
     pose::{EvaluatedFrame, JointPose},
 };
 
@@ -65,6 +67,35 @@ pub struct RootBone {
     pub up: Vec3,
 }
 
+type TriggerFn = fn(&dyn Reflect, Entity, &mut CommandQueue);
+
+fn trigger_message<M: AnimationMessage + EntitySignal>(
+    message: &dyn Reflect,
+    entity: Entity,
+    cmd: &mut CommandQueue,
+) {
+    if let Some(message) = message.downcast_ref::<M>() {
+        cmd.entity(entity).trigger(message.clone());
+    }
+}
+
+pub(crate) struct RaisedMessage {
+    message: Box<dyn Reflect>,
+    trigger: Option<TriggerFn>,
+}
+
+impl RaisedMessage {
+    pub(crate) fn message(&self) -> &dyn Reflect {
+        self.message.as_ref()
+    }
+
+    pub(crate) fn trigger(&self, entity: Entity, cmd: &mut CommandQueue) {
+        if let Some(trigger) = self.trigger {
+            trigger(self.message.as_ref(), entity, cmd);
+        }
+    }
+}
+
 /// What every node of one player's graph is walked with: the player's own data and the walk's node inputs.
 pub struct AnimationGraphContext<'a> {
     pub(crate) blackboard: &'a AnimationBlackboard,
@@ -72,12 +103,67 @@ pub struct AnimationGraphContext<'a> {
     pub(crate) skeleton: Option<&'a Skeleton>,
     pub(crate) model_to_world: Option<Affine3A>,
     pub(crate) inputs: &'a Inputs<'a, 'a>,
+    pub(crate) messages: &'a [Box<dyn Reflect>],
+    pub(crate) raised: Vec<RaisedMessage>,
 }
 
 impl<'a> AnimationGraphContext<'a> {
     /// The blackboard of the player being walked.
     pub fn blackboard(&self) -> &AnimationBlackboard {
         self.blackboard
+    }
+
+    /// In `update`, the messages the game sent the player since its last update, in the order
+    /// sent; empty in every other walk.
+    ///
+    /// The game sends them with [`AnimationPlayer::send`](crate::player::AnimationPlayer::send)
+    /// or [`SendAnimationMessage`](crate::message::SendAnimationMessage). A message a node raised
+    /// is never among them.
+    pub fn messages(&self) -> impl Iterator<Item = &'a dyn Reflect> + use<'a> {
+        self.messages.iter().map(|message| message.as_ref())
+    }
+
+    /// The messages of type `M` among [`Self::messages`], in the order sent.
+    pub fn message<M: AnimationMessage>(&self) -> impl Iterator<Item = &'a M> + use<'a, M> {
+        self.messages()
+            .filter_map(|message| message.downcast_ref::<M>())
+    }
+
+    /// In `update`, queues `message` for every state machine and retarget this node plays in,
+    /// which can act on it, and, once it leaves the player's graph, triggers it on the player's
+    /// entity.
+    pub fn raise<M: AnimationMessage + EntitySignal>(&mut self, message: M) {
+        self.pass_up(RaisedMessage {
+            message: Box::new(message),
+            trigger: Some(trigger_message::<M>),
+        });
+    }
+
+    pub(crate) fn raise_boxed(&mut self, message: Box<dyn Reflect>) {
+        self.pass_up(RaisedMessage {
+            message,
+            trigger: None,
+        });
+    }
+
+    pub(crate) fn pass_up(&mut self, message: RaisedMessage) {
+        self.raised.push(message);
+    }
+
+    pub(crate) fn child(&self) -> AnimationGraphContext<'a> {
+        AnimationGraphContext {
+            blackboard: self.blackboard,
+            root: self.root.clone(),
+            skeleton: self.skeleton,
+            model_to_world: self.model_to_world,
+            inputs: self.inputs,
+            messages: self.messages,
+            raised: Vec::new(),
+        }
+    }
+
+    pub(crate) fn into_raised(self) -> Vec<RaisedMessage> {
+        self.raised
     }
 
     /// The root bone of the player being evaluated, if it has one.

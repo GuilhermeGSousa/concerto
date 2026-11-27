@@ -97,7 +97,13 @@ impl AnimationNode for SetAmount {
         0.0
     }
 
-    fn update(&self, elapsed: &mut f32, delta_time: f32, _: &(), _: &AnimationGraphContext<'_>) {
+    fn update(
+        &self,
+        elapsed: &mut f32,
+        delta_time: f32,
+        _: &(),
+        _: &mut AnimationGraphContext<'_>,
+    ) {
         *elapsed += delta_time;
     }
 

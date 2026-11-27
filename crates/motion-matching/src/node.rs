@@ -200,7 +200,7 @@ impl AnimationNode for MotionMatchingNode {
             Res<AssetStore<Skeleton>>,
             Res<AssetStore<AnimationClip>>,
         ),
-        context: &AnimationGraphContext<'_>,
+        context: &mut AnimationGraphContext<'_>,
     ) {
         state.clear_fired();
         match sources(self, databases, skeletons, clips, context.skeleton()) {

@@ -2,7 +2,7 @@ use concerto_foundation::assets::asset_store::AssetStore;
 use uuid::Uuid;
 
 use crate::{
-    evaluation::AnimationGraphContext,
+    evaluation::{AnimationGraphContext, RaisedMessage},
     graph::{AnimationGraph, AnimationGraphStates, GraphId},
     pose::{AnimationFrame, FramePool, RootMotion},
 };
@@ -67,8 +67,8 @@ pub(crate) trait AnimationTransitionBlender: Send + Sync {
         delta_time: f32,
         graph_states: &mut AnimationGraphStates,
         graphs: &AssetStore<AnimationGraph>,
-        context: &AnimationGraphContext<'_>,
-    );
+        context: &mut AnimationGraphContext<'_>,
+    ) -> Vec<RaisedMessage>;
 
     fn transition(
         &mut self,

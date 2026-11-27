@@ -286,7 +286,7 @@ impl AnimationNode for TwoBoneIkNode {
         TwoBoneIkState::default()
     }
 
-    fn update(&self, _: &mut TwoBoneIkState, _: f32, _: &(), _: &AnimationGraphContext<'_>) {}
+    fn update(&self, _: &mut TwoBoneIkState, _: f32, _: &(), _: &mut AnimationGraphContext<'_>) {}
 
     fn evaluate(
         &self,

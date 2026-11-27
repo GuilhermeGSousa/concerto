@@ -1223,7 +1223,6 @@ impl RetargetNode {
             source_root,
             source_root_reference: source.reference_local[source_root].clone(),
             player_bone_ids: player.bone_ids.clone(),
-            finished: false,
             warned: false,
         };
         running.pool.set_rest(&source_skeleton.rest_pose);
@@ -1280,7 +1279,6 @@ struct Running {
     source_root: usize,
     source_root_reference: JointPose,
     player_bone_ids: Box<[Uuid]>,
-    finished: bool,
     warned: bool,
 }
 
@@ -1300,6 +1298,8 @@ impl Running {
             skeleton: Some(skeleton),
             model_to_world: context.model_to_world,
             inputs: context.inputs,
+            messages: context.messages,
+            raised: Vec::new(),
         }
     }
 
@@ -1417,7 +1417,7 @@ impl AnimationNode for RetargetNode {
             Res<AssetStore<RetargetRig>>,
             Res<AssetStore<AnimationClip>>,
         ),
-        context: &AnimationGraphContext<'_>,
+        context: &mut AnimationGraphContext<'_>,
     ) {
         if matches!(state.stage, Stage::Pending)
             && let Some(stage) = self.start(graphs, skeletons, rigs, clips, context)
@@ -1441,9 +1441,11 @@ impl AnimationNode for RetargetNode {
             running.inner.reset(graphs);
             state.reset_pending = false;
         }
-        let inner_context = running.inner_context(context, source);
-        running.inner.update(delta_time, graphs, &inner_context);
-        running.finished = running.inner.is_finished(graphs);
+        let mut inner_context = running.inner_context(context, source);
+        running.inner.update(delta_time, graphs, &mut inner_context);
+        for message in inner_context.into_raised() {
+            context.pass_up(message);
+        }
     }
 
     fn evaluate(
@@ -1503,17 +1505,6 @@ impl AnimationNode for RetargetNode {
 
     fn reset(&self, state: &mut RetargetNodeState) {
         state.reset_pending = true;
-        if let Stage::Ready(running) = &mut state.stage {
-            running.finished = false;
-        }
-    }
-
-    fn is_finished(&self, state: &RetargetNodeState) -> bool {
-        match &state.stage {
-            Stage::Pending => false,
-            Stage::Ready(running) => running.finished,
-            Stage::Failed { .. } => true,
-        }
     }
 
     fn inner_graphs(&self, visit: &mut dyn FnMut(&AssetHandle<AnimationGraph>)) {
@@ -1681,6 +1672,7 @@ mod tests {
         event::AnimationEvent,
         graph::AnimationGraph,
         ik::{Hinge, TwoBoneChain, solve_two_bone},
+        message::ClipEnded,
         node::{AnimationClipNode, AnimationNode, AnimationPlayMode},
         player::AnimationPlayer,
         pose::{AnimationFrame, FiredEvent, FramePool, RootMotion},
@@ -3099,6 +3091,15 @@ mod tests {
         )
     }
 
+    fn update_inputs<'a>(
+        context: &'a AnimationGraphContext<'a>,
+    ) -> &'a SystemInputData<'a, 'a, <RetargetNode as AnimationNode>::UpdateInput> {
+        context
+            .inputs
+            .get::<<RetargetNode as AnimationNode>::UpdateInput>()
+            .unwrap()
+    }
+
     fn evaluate_inputs<'a>(
         context: &'a AnimationGraphContext<'a>,
     ) -> &'a SystemInputData<'a, 'a, <RetargetNode as AnimationNode>::EvaluateInput> {
@@ -3239,13 +3240,22 @@ mod tests {
             frame.expect("the player plays a retarget node")
         }
 
-        fn is_finished(&mut self) -> bool {
-            let mut finished = None;
-            self.player
-                .for_each_state_mut::<RetargetNode>(self.walks.graphs(), |node, state, _| {
-                    finished = Some(node.is_finished(state))
-                });
-            finished.expect("the player plays a retarget node")
+        fn ends_after(&mut self, delta_time: f32) -> bool {
+            let walks = &self.walks;
+            let mut ended = None;
+            self.player.for_each_state_mut::<RetargetNode>(
+                walks.graphs(),
+                |node, state, blackboard| {
+                    ended = Some(walks.update(blackboard, |context| {
+                        let mut walk = context.child();
+                        node.update(state, delta_time, update_inputs(context), &mut walk);
+                        walk.into_raised()
+                            .iter()
+                            .any(|message| message.message().downcast_ref::<ClipEnded>().is_some())
+                    }));
+                },
+            );
+            ended.expect("the player plays a retarget node")
         }
 
         fn reset(&mut self) {
@@ -3391,21 +3401,20 @@ mod tests {
     }
 
     #[test]
-    fn a_retarget_node_finishes_with_its_inner_one_shot_clip_and_not_after_a_reset() {
+    fn a_retarget_node_raises_its_inner_one_shot_clips_end_and_not_after_a_reset() {
         let mut played = Played::new(target_skeleton());
         played.load_rigs(node_target_rig());
         played.load_inner(
             AnimationClipNode::new(handle(HELD_CLIP)).with_play_mode(AnimationPlayMode::PlayOnce),
         );
 
-        played.advance_by(0.5);
-        assert!(!played.is_finished());
-
-        played.advance_by(0.75);
-        assert!(played.is_finished());
+        played.advance();
+        assert!(!played.ends_after(0.4));
+        assert!(played.ends_after(0.75));
 
         played.reset();
-        assert!(!played.is_finished());
+        assert!(!played.ends_after(0.1));
+        assert!(played.ends_after(1.0));
     }
 
     #[test]

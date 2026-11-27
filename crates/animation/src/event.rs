@@ -2,21 +2,29 @@ use concerto_ecs::{CommandQueue, Entity, signal::EntitySignal, signal::Signal};
 use concerto_foundation::assets::handle::LiveLeaves;
 use concerto_name::Name;
 use concerto_reflect::{
-    FromType, Reflect, ReflectedValue, TypeData, ValueWarning, apply_value_with,
+    FromType, Reflect, ReflectDefault, ReflectedValue, TypeData, ValueWarning, apply_value_with,
 };
+
+use crate::message::AnimationMessage;
 
 /// A value a clip can carry and trigger when playback crosses its time.
 pub trait ClipEvent: Reflect + Clone + Default + Send + Sync + 'static {}
 
 /// The event imports write: a name such as `footstep_left`.
 #[derive(Clone, Debug, Default, PartialEq, Reflect)]
-#[reflect(ClipEvent)]
+#[reflect(ClipEvent, Default)]
 pub struct AnimationEvent {
     /// The name the import gave the event.
     pub name: Name,
 }
 
 impl ClipEvent for AnimationEvent {}
+
+impl Signal for AnimationEvent {}
+
+impl EntitySignal for AnimationEvent {}
+
+impl AnimationMessage for AnimationEvent {}
 
 /// Triggered on the player's entity when playback crosses a `S` on a clip.
 pub struct AnimationSignal<S: ClipEvent> {
@@ -60,6 +68,8 @@ pub struct ReflectClipEvent {
     pub from_value: fn(&ReflectedValue, &mut LiveLeaves) -> BuiltClipEvent,
     /// Triggers an [`AnimationSignal`] carrying the event on the entity.
     pub trigger: fn(&dyn Reflect, Fired, Entity, &mut CommandQueue),
+    /// Clones the event into a box, as a clip node raises it; `None` when it is another type.
+    pub boxed: fn(&dyn Reflect) -> Option<Box<dyn Reflect>>,
 }
 
 impl TypeData for ReflectClipEvent {}
@@ -69,6 +79,7 @@ impl<S: ClipEvent> FromType<S> for ReflectClipEvent {
         Self {
             from_value: from_value::<S>,
             trigger: trigger::<S>,
+            boxed: boxed::<S>,
         }
     }
 }
@@ -80,6 +91,11 @@ fn from_value<S: ClipEvent>(stored: &ReflectedValue, leaves: &mut LiveLeaves) ->
         value: Box::new(event),
         warnings,
     }
+}
+
+fn boxed<S: ClipEvent>(value: &dyn Reflect) -> Option<Box<dyn Reflect>> {
+    let event = value.downcast_ref::<S>()?;
+    Some(Box::new(event.clone()))
 }
 
 fn trigger<S: ClipEvent>(

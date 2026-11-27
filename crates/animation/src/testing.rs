@@ -151,13 +151,21 @@ impl Walks {
         blackboard: &AnimationBlackboard,
         f: impl FnOnce(&AnimationGraphContext<'_>) -> R,
     ) -> R {
-        walk(&self.world, &self.create, blackboard, None, None, None, f)
+        walk(
+            &self.world,
+            &self.create,
+            blackboard,
+            None,
+            None,
+            None,
+            |context| f(context),
+        )
     }
 
     pub(crate) fn update<R>(
         &self,
         blackboard: &AnimationBlackboard,
-        f: impl FnOnce(&AnimationGraphContext<'_>) -> R,
+        f: impl FnOnce(&mut AnimationGraphContext<'_>) -> R,
     ) -> R {
         walk(&self.world, &self.update, blackboard, None, None, None, f)
     }
@@ -168,7 +176,15 @@ impl Walks {
         root: Option<RootBone>,
         f: impl FnOnce(&AnimationGraphContext<'_>) -> R,
     ) -> R {
-        walk(&self.world, &self.update, blackboard, root, None, None, f)
+        walk(
+            &self.world,
+            &self.update,
+            blackboard,
+            root,
+            None,
+            None,
+            |context| f(context),
+        )
     }
 
     pub(crate) fn evaluate<R>(
@@ -177,7 +193,15 @@ impl Walks {
         root: Option<RootBone>,
         f: impl FnOnce(&AnimationGraphContext<'_>) -> R,
     ) -> R {
-        walk(&self.world, &self.evaluate, blackboard, root, None, None, f)
+        walk(
+            &self.world,
+            &self.evaluate,
+            blackboard,
+            root,
+            None,
+            None,
+            |context| f(context),
+        )
     }
 
     pub(crate) fn evaluate_with<R>(
@@ -194,7 +218,7 @@ impl Walks {
             root,
             skeleton,
             None,
-            f,
+            |context| f(context),
         )
     }
 
@@ -212,7 +236,7 @@ impl Walks {
             None,
             Some(skeleton),
             model_to_world,
-            f,
+            |context| f(context),
         )
     }
 }
@@ -224,18 +248,20 @@ fn walk<K: 'static, R>(
     root: Option<RootBone>,
     skeleton: Option<&Skeleton>,
     model_to_world: Option<Affine3A>,
-    f: impl FnOnce(&AnimationGraphContext<'_>) -> R,
+    f: impl FnOnce(&mut AnimationGraphContext<'_>) -> R,
 ) -> R {
     let mut state = state.borrow_mut();
     let inputs = state.get(world).expect("a test walk fetches its inputs");
-    let context = AnimationGraphContext {
+    let mut context = AnimationGraphContext {
         blackboard,
         root,
         skeleton,
         model_to_world,
         inputs: &inputs,
+        messages: &[],
+        raised: Vec::new(),
     };
-    f(&context)
+    f(&mut context)
 }
 
 pub(crate) fn made_live(mut graph: AnimationGraph) -> AnimationGraph {

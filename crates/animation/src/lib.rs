@@ -29,6 +29,9 @@ pub mod inertialization;
 pub mod look_at;
 /// Bone masks, which limit a layer to some bones, and their resolution against a skeleton.
 pub mod mask;
+/// Messages: what the game sends a player's graph, and what its nodes raise to the containers
+/// above them and to the player's entity.
+pub mod message;
 /// Mirroring a pose across a plane through the skeleton's model-space origin.
 pub mod mirror;
 /// The animation nodes a graph is built from, and the trait a new kind of node implements.
@@ -72,6 +75,7 @@ mod tests {
     use crate::evaluation::RootBone;
     use crate::event::AnimationEvent;
     use crate::graph::AnimationGraph;
+    use crate::message::ClipEnded;
     use crate::node::AnimationPlayMode::PlayOnce;
     use crate::node::state_machine::{
         AnimationFSMTrigger, AnimationStateMachine, AnimationStateMachineState,
@@ -118,7 +122,8 @@ mod tests {
     }
 
     #[test]
-    fn a_clip_node_starts_at_its_start_time_wraps_when_looping_finishes_once_and_resets_to_it() {
+    fn a_clip_node_starts_at_its_start_time_raises_clip_ended_on_a_wrap_or_its_end_and_resets_to_it()
+     {
         let mut server = AssetServer::new();
         let mut clips = AssetStore::<AnimationClip>::new();
         server.register_asset(&clips);
@@ -126,8 +131,14 @@ mod tests {
         clips.insert(handle.id(), unit_duration_clip());
         let walks = Walks::new(clips, AssetStore::<AnimationGraph>::new());
         let blackboard = AnimationBlackboard::default();
-        let update = |node: &dyn ErasedAnimationNode, node_state: &mut NodeState, dt: f32| {
-            walks.update(&blackboard, |context| node.update(node_state, dt, context));
+        let ended = |node: &dyn ErasedAnimationNode, node_state: &mut NodeState, dt: f32| {
+            walks.update(&blackboard, |context| {
+                let mut walk = context.child();
+                node.update(node_state, dt, &mut walk);
+                walk.into_raised()
+                    .iter()
+                    .any(|message| message.message().downcast_ref::<ClipEnded>().is_some())
+            })
         };
 
         let looping = erased(AnimationClipNode::new(handle.clone()).with_start_time(0.4));
@@ -136,21 +147,19 @@ mod tests {
             .unwrap();
         assert_eq!(current_time(&node_state), 0.4);
 
-        update(looping.as_ref(), &mut node_state, 0.3);
+        assert!(!ended(looping.as_ref(), &mut node_state, 0.3));
         assert!((current_time(&node_state) - 0.7).abs() < 1e-5);
-        assert!(!looping.is_finished(&node_state));
 
-        update(looping.as_ref(), &mut node_state, 0.4);
+        assert!(ended(looping.as_ref(), &mut node_state, 0.4));
         assert_eq!(current_time(&node_state), 0.4);
-        assert!(looping.is_finished(&node_state));
 
-        update(looping.as_ref(), &mut node_state, 0.1);
+        assert!(!ended(looping.as_ref(), &mut node_state, 0.1));
         assert!((current_time(&node_state) - 0.5).abs() < 1e-5);
-        assert!(!looping.is_finished(&node_state));
 
         looping.reset(&mut node_state);
         assert_eq!(current_time(&node_state), 0.4);
-        assert!(!looping.is_finished(&node_state));
+        assert!(!ended(looping.as_ref(), &mut node_state, 0.1));
+        assert!(ended(looping.as_ref(), &mut node_state, 0.6));
 
         let once = erased(
             AnimationClipNode::new(handle)
@@ -162,12 +171,13 @@ mod tests {
             .unwrap();
         assert_eq!(current_time(&node_state), 0.4);
 
-        update(once.as_ref(), &mut node_state, 0.7);
-        assert!(once.is_finished(&node_state));
+        assert!(ended(once.as_ref(), &mut node_state, 0.7));
+        assert!(!ended(once.as_ref(), &mut node_state, 0.1));
 
         once.reset(&mut node_state);
         assert_eq!(current_time(&node_state), 0.4);
-        assert!(!once.is_finished(&node_state));
+        assert!(!ended(once.as_ref(), &mut node_state, 0.1));
+        assert!(ended(once.as_ref(), &mut node_state, 0.6));
     }
 
     fn clip_with_duration(duration: f32) -> AnimationClip {
@@ -249,7 +259,11 @@ mod tests {
                 );
             })
             .state(name!("jump_start"), jump_start, |transition| {
-                transition.to(name!("air"), AnimationFSMTrigger::OnAnimationEnd, 0.1);
+                transition.to(
+                    name!("air"),
+                    AnimationFSMTrigger::on_message::<ClipEnded>(),
+                    0.1,
+                );
             })
             .state(name!("air"), air, |transition| {
                 transition.to(
@@ -259,7 +273,11 @@ mod tests {
                 );
             })
             .state(name!("land"), land, |transition| {
-                transition.to(name!("movement"), AnimationFSMTrigger::OnAnimationEnd, 0.1);
+                transition.to(
+                    name!("movement"),
+                    AnimationFSMTrigger::on_message::<ClipEnded>(),
+                    0.1,
+                );
             })
             .build();
         let fsm = erased(fsm);
@@ -334,6 +352,21 @@ mod tests {
         clip
     }
 
+    fn looping_clip(bone: Uuid, frames: f32) -> AnimationClip {
+        let duration = frames * MACHINE_FRAME;
+        let mut clip = AnimationClip::default();
+        clip.add_channel(
+            bone,
+            AnimationChannel::new(
+                vec![0.0, duration],
+                AnimationChanelOutput::from_translation(
+                    [[0.0, 0.0, 0.0], [2.0 * duration, 0.0, 0.0]].into_iter(),
+                ),
+            ),
+        );
+        clip
+    }
+
     struct Machine {
         _server: AssetServer,
         walks: Walks,
@@ -353,6 +386,7 @@ mod tests {
             b_clip: AnimationClip,
             blend_time: f32,
             blender: TransitionBlender,
+            trigger: AnimationFSMTrigger,
         ) -> Self {
             let mut server = AssetServer::new();
             let mut clips = AssetStore::<AnimationClip>::new();
@@ -372,11 +406,7 @@ mod tests {
             let b = graph_for(b_clip);
 
             let fsm = AnimationStateMachine::from_initial_state(name!("a"), a, |transition| {
-                transition.to(
-                    name!("b"),
-                    AnimationFSMTrigger::on_bool(name!("to_b"), true),
-                    blend_time,
-                );
+                transition.to(name!("b"), trigger, blend_time);
             })
             .state(name!("b"), b, |_| {})
             .blender(blender)
@@ -463,6 +493,7 @@ mod tests {
             constant_x_clip(bone, 10.0),
             1.0,
             TransitionBlender::Inertialization,
+            AnimationFSMTrigger::on_bool(name!("to_b"), true),
         );
         machine.run(9);
         let before_last = machine.step();
@@ -560,6 +591,7 @@ mod tests {
                 with_event(linear_x_clip(bone, 8.0), 0.0),
                 0.1,
                 case.blender,
+                AnimationFSMTrigger::on_bool(name!("to_b"), true),
             );
             machine.run(5);
             machine.set(name!("to_b"), true);
@@ -587,6 +619,25 @@ mod tests {
                 (settled - 8.0 * 61.0 * MACHINE_FRAME).abs() < 1e-3,
                 "{:?}: settled at {settled}",
                 case.blender
+            );
+
+            let mut ending = Machine::new(
+                bone,
+                with_event(looping_clip(bone, 3.5), 3.25 * MACHINE_FRAME),
+                linear_x_clip(bone, 8.0),
+                0.1,
+                case.blender,
+                AnimationFSMTrigger::on_message::<ClipEnded>(),
+            );
+            ending.run(3);
+            ending.step();
+            assert!(
+                (ending.root_motion.translation.x - 0.5 * 2.0 * MACHINE_FRAME).abs() < 1e-4
+                    && ending.events.len() == 1,
+                "{:?}: the frame a raised ClipEnded fires in moved the root {} and fired {:?}",
+                case.blender,
+                ending.root_motion.translation.x,
+                fired_by_time(&ending)
             );
         }
     }

@@ -21,9 +21,11 @@ use uuid::Uuid;
 use crate::{
     blackboard::AnimationBlackboard,
     evaluation::{AnimationGraphContext, AnimationGraphEvaluator},
+    message::resolve_message_types,
     node::{
         AnimationNode, ErasedAnimationNode, LayerNode, NodeState, PlaceholderNode,
         ReflectAnimationNode, ResultNode, blend_space::BlendSpace2DBuilderContext,
+        state_machine::AnimationStateMachineState,
     },
     param::Param,
     player::ActiveNodeState,
@@ -314,8 +316,15 @@ impl AnimationGraph {
                 .and_then(|registration| registration.data::<ReflectAnimationNode>().copied())
             {
                 Some(data) => {
-                    let (built, node_warnings) = (data.from_value)(value, &mut leaves);
+                    let (mut built, node_warnings) = (data.from_value)(value, &mut leaves);
                     if node_warnings.is_empty() {
+                        let checked = resolve_message_types(built.as_reflect_mut(), registry)
+                            .into_iter()
+                            .chain(built.make_live(registry, &mut leaves));
+                        warnings.extend(checked.map(|warning| ValueWarning {
+                            path: type_name.clone(),
+                            reason: format!("node {index} {}: {}", warning.path, warning.reason),
+                        }));
                         *node = AnimationNodeData::Live {
                             type_name: std::mem::take(type_name),
                             node: built,
@@ -880,7 +889,7 @@ impl AnimationGraphState {
         &mut self,
         delta_time: f32,
         graphs: &AssetStore<AnimationGraph>,
-        context: &AnimationGraphContext<'_>,
+        context: &mut AnimationGraphContext<'_>,
     ) {
         let Some(graph) = self.get_animation_graph(graphs) else {
             return;
@@ -895,6 +904,29 @@ impl AnimationGraphState {
 
                 node_state.update(node, delta_time, context);
             });
+    }
+
+    pub(crate) fn in_state(&self, graphs: &AssetStore<AnimationGraph>, name: &Name) -> bool {
+        let Some(graph) = self.get_animation_graph(graphs) else {
+            return false;
+        };
+        self.graph_state.iter().any(|(node_index, node_state)| {
+            let Some(node) = graph.live_node(*node_index) else {
+                return false;
+            };
+            let state = node.state_as_any(&node_state.node_state);
+            if let Some(machine) = state.downcast_ref::<AnimationStateMachineState>() {
+                return machine.current_state_name().as_ref() == Some(name)
+                    || machine
+                        .current_graph()
+                        .is_some_and(|current| current.in_state(graphs, name));
+            }
+            let mut found = false;
+            node.inner_states(&node_state.node_state, &mut |_, inner| {
+                found |= inner.in_state(graphs, name);
+            });
+            found
+        })
     }
 
     pub(crate) fn root_motion(
@@ -1013,18 +1045,6 @@ impl AnimationGraphState {
             .as_ref()
             .and_then(move |handle| graphs.get(handle))
     }
-
-    pub(crate) fn is_finished(&self, graphs: &AssetStore<AnimationGraph>) -> bool {
-        let Some(graph) = self.get_animation_graph(graphs) else {
-            return true;
-        };
-
-        self.graph_state.iter().all(|(node_index, node_state)| {
-            graph
-                .live_node(*node_index)
-                .is_none_or(|node| node.is_finished(&node_state.node_state))
-        })
-    }
 }
 
 #[derive(Clone, Copy)]
@@ -1065,7 +1085,6 @@ impl AnimationGraphStates {
         self.states.iter()
     }
 
-    #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn iter_mut(&mut self) -> impl Iterator<Item = &mut AnimationGraphState> {
         self.states.iter_mut()
     }
@@ -1236,7 +1255,7 @@ mod tests {
 
         fn create_state(&self, _: &Res<NeverRegistered>, _context: &AnimationGraphContext<'_>) {}
 
-        fn update(&self, _: &mut (), _: f32, _: &(), _: &AnimationGraphContext<'_>) {}
+        fn update(&self, _: &mut (), _: f32, _: &(), _: &mut AnimationGraphContext<'_>) {}
 
         fn evaluate(
             &self,

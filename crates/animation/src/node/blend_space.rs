@@ -85,7 +85,7 @@ impl AnimationNode for BlendSpace2DNode {
         state: &mut BlendSpace2DInstanceNode,
         _delta_time: f32,
         _: &(),
-        context: &AnimationGraphContext<'_>,
+        context: &mut AnimationGraphContext<'_>,
     ) {
         let sample = context
             .blackboard()
@@ -286,7 +286,7 @@ mod tests {
         let walks = Walks::new(AssetStore::new(), AssetStore::new());
 
         let motion = walks.evaluate(&AnimationBlackboard::default(), None, |context| {
-            space.update(&mut state, 0.0, &(), context);
+            space.update(&mut state, 0.0, &(), &mut context.child());
             space.root_motion(
                 &mut state,
                 &(),
