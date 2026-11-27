@@ -8,7 +8,9 @@ use crate::resolve::ResolvedRagdoll;
 /// Physics pushes them apart the moment the body is simulated.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PartOverlap {
+    /// The index of one overlapping part.
     pub first: usize,
+    /// The index of the other overlapping part.
     pub second: usize,
     /// How far the shapes reach into each other, in metres.
     pub depth: f32,

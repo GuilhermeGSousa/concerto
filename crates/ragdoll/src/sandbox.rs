@@ -18,6 +18,8 @@ use crate::resolve::ResolvedRagdoll;
 
 /// A physics world with a floor whose top is at y = 0, to stand ragdolls in without an `App`.
 pub struct RagdollWorld {
+    /// The ECS world, holding the floor, a [`PhysicsState`] and the entities that own placed
+    /// ragdolls.
     pub world: World,
     pipeline: PhysicsPipeline,
 }
@@ -25,7 +27,9 @@ pub struct RagdollWorld {
 /// A ragdoll placed in a [`RagdollWorld`].
 #[derive(Clone, Copy, Debug)]
 pub struct PlacedRagdoll {
+    /// The ragdoll in the simulation.
     pub id: RagdollId,
+    /// The entity that owns the ragdoll.
     pub owner: Entity,
 }
 
@@ -180,9 +184,17 @@ pub fn joint_gaps(ragdoll: &ResolvedRagdoll, pose: &[BodyPose]) -> Vec<f32> {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Trial {
     /// Let it go from `height` metres above the floor.
-    Drop { height: f32 },
+    Drop {
+        /// The height of the rest pose above the floor, in metres.
+        height: f32,
+    },
     /// Hit the part on `bone` with `impulse`, in N·s.
-    Poke { bone: Name, impulse: Vec3 },
+    Poke {
+        /// The bone of the part to hit.
+        bone: Name,
+        /// The blow's impulse, in N·s in world space.
+        impulse: Vec3,
+    },
 }
 
 /// What happened to a ragdoll in a [`Trial`].

@@ -125,8 +125,11 @@ pub fn humanoid_rig() -> RetargetRig {
 
 /// The reference humanoid: its skeleton, the ragdoll generated for it, and that ragdoll fitted and built.
 pub struct ReferenceHumanoid {
+    /// The skeleton, built in code.
     pub skeleton: Skeleton,
+    /// The ragdoll asset generated for the skeleton.
     pub ragdoll: Ragdoll,
+    /// The ragdoll fitted to the skeleton and built.
     pub resolved: ResolvedRagdoll,
 }
 
@@ -163,7 +166,9 @@ pub fn reference_humanoid() -> ReferenceHumanoid {
 /// The reference humanoid's skeleton as entities: one per bone under a skeleton entity that holds the `SkeletonComponent`.
 #[derive(Clone, Debug)]
 pub struct SpawnedHumanoid {
+    /// The entity that holds the `SkeletonComponent`.
     pub skeleton: Entity,
+    /// One entity per bone, in the skeleton's joint order.
     pub bones: Vec<Entity>,
 }
 

@@ -13,11 +13,17 @@ use crate::asset::{
 /// The names a retarget rig gives the chains a humanoid ragdoll is generated from.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct HumanoidChains {
+    /// The spine's chain, above the pelvis.
     pub spine: Name,
+    /// The neck's chain, whose last bone is the head.
     pub neck: Name,
+    /// The left arm's chain, from upper arm to hand.
     pub left_arm: Name,
+    /// The right arm's chain, from upper arm to hand.
     pub right_arm: Name,
+    /// The left leg's chain, from thigh to foot.
     pub left_leg: Name,
+    /// The right leg's chain, from thigh to foot.
     pub right_leg: Name,
 }
 
@@ -39,6 +45,7 @@ impl Default for HumanoidChains {
 pub struct HumanoidSettings {
     /// The character's mass in kg, split over the parts by body-segment fractions.
     pub total_mass: f32,
+    /// The chain names to read the rig by.
     pub chains: HumanoidChains,
 }
 
@@ -52,11 +59,13 @@ impl Default for HumanoidSettings {
 }
 
 impl HumanoidSettings {
+    /// Sets the character's mass in kg.
     pub fn with_total_mass(mut self, total_mass: f32) -> Self {
         self.total_mass = total_mass;
         self
     }
 
+    /// Sets the chain names to read the rig by.
     pub fn with_chains(mut self, chains: HumanoidChains) -> Self {
         self.chains = chains;
         self
@@ -67,11 +76,17 @@ impl HumanoidSettings {
 #[derive(Clone, Debug, PartialEq)]
 pub enum GenerateError {
     /// The rig has no chain of this name.
-    MissingChain { chain: Name },
+    MissingChain {
+        /// The chain's name.
+        chain: Name,
+    },
     /// The chain has fewer bones than the limb needs.
     ShortChain {
+        /// The chain's name.
         chain: Name,
+        /// How many bones the chain has.
         bones: usize,
+        /// How many bones the limb needs.
         needs: usize,
     },
 }

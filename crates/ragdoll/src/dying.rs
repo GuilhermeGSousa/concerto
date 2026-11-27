@@ -26,7 +26,9 @@ use crate::{
 /// engine has no health; the game decides when.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Die {
+    /// The dying character.
     pub character: Entity,
+    /// The seconds over which its strength drains; zero kills at once.
     pub seconds: f32,
 }
 
@@ -35,6 +37,7 @@ impl Signal for Die {}
 /// A character's dead body has come to rest and left the simulation; triggered for every listener, each time it settles.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BodySettled {
+    /// The character whose body settled.
     pub character: Entity,
 }
 
@@ -58,6 +61,7 @@ impl Default for Dying {
 }
 
 impl Dying {
+    /// Drains the strength over `seconds`, starting now.
     pub fn new(seconds: f32) -> Self {
         Self {
             seconds,

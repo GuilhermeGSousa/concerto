@@ -11,7 +11,9 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, Default, PartialEq, Reflect, Serialize, Deserialize)]
 #[reflect(SkeletonSource, Default)]
 pub struct Ragdoll {
+    /// The skeleton whose bones the parts follow.
     pub skeleton: AssetHandle<Skeleton>,
+    /// The parts, at most one per bone.
     pub parts: Vec<RagdollPart>,
     /// Named strength settings for the whole body, such as "flinch", "braced" and "limp".
     ///
@@ -29,11 +31,13 @@ impl Ragdoll {
         }
     }
 
+    /// Adds a part.
     pub fn with_part(mut self, part: RagdollPart) -> Self {
         self.parts.push(part);
         self
     }
 
+    /// Adds a strength profile.
     pub fn with_profile(mut self, profile: StrengthProfile) -> Self {
         self.profiles.push(profile);
         self
@@ -93,8 +97,11 @@ pub enum PartStrength {
     /// `stiffness` is in N·m/rad, `damping` in N·m·s/rad, and the motor
     /// applies no more torque than `torque_limit` N·m.
     Powered {
+        /// The spring's stiffness, in N·m/rad.
         stiffness: f32,
+        /// The spring's damping, in N·m·s/rad.
         damping: f32,
+        /// The most torque the motor applies, in N·m.
         torque_limit: f32,
     },
     /// The part is dynamic and its joint's motor is off.
@@ -115,16 +122,20 @@ impl PartStrength {
 /// The strength of the part on one bone, where it differs from its profile's.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Reflect, Serialize, Deserialize)]
 pub struct BoneStrength {
+    /// The bone whose part this sets.
     pub bone: JointName,
+    /// The part's strength under this profile.
     pub strength: PartStrength,
 }
 
 /// Named strength settings for a whole body: one strength for every part, and others for the parts that differ.
 #[derive(Clone, Debug, Default, PartialEq, Reflect, Serialize, Deserialize)]
 pub struct StrengthProfile {
+    /// The name a `CharacterRagdoll` selects the profile by.
     pub name: Name,
     /// The strength of every part that `parts` does not name.
     pub strength: PartStrength,
+    /// The parts whose strength differs from `strength`, by bone.
     pub parts: Vec<BoneStrength>,
 }
 
@@ -161,13 +172,19 @@ impl StrengthProfile {
 pub enum RagdollShape {
     /// A capsule along the shape's local Y axis: `half_height` is half the length of the cylinder.
     Capsule {
+        /// Half the length of the cylinder between the end caps, in metres.
         half_height: f32,
+        /// The radius of the cylinder and its caps, in metres.
         radius: f32,
     },
+    /// A box centred on the shape's origin.
     Box {
+        /// Half the box's size along the shape's local axes, in metres.
         half_extents: Vec3,
     },
+    /// A sphere centred on the shape's origin.
     Sphere {
+        /// The radius in metres.
         radius: f32,
     },
 }
@@ -221,6 +238,7 @@ pub struct RagdollJoint {
     pub twist_max: f32,
     /// Friction torque while the joint is not driven, in N·m.
     pub friction: f32,
+    /// The spring the motor starts with when the ragdoll is built.
     pub motor: RagdollMotor,
 }
 
@@ -261,17 +279,20 @@ impl RagdollJoint {
         self
     }
 
+    /// Sets the lowest and highest twist angles, in radians.
     pub fn with_twist(mut self, twist_min: f32, twist_max: f32) -> Self {
         self.twist_min = twist_min;
         self.twist_max = twist_max;
         self
     }
 
+    /// Sets the friction torque, in N·m, applied while the joint is not driven.
     pub fn with_friction(mut self, friction: f32) -> Self {
         self.friction = friction;
         self
     }
 
+    /// Sets the spring the motor starts with.
     pub fn with_motor(mut self, motor: RagdollMotor) -> Self {
         self.motor = motor;
         self
@@ -288,14 +309,23 @@ pub enum Segment {
     /// A part that is none of the others: a tail, a prop.
     #[default]
     Other,
+    /// The pelvis, the root part of a humanoid.
     Pelvis,
+    /// A spine or chest bone between the pelvis and the head.
     Spine,
+    /// The head.
     Head,
+    /// An upper arm, from shoulder to elbow.
     UpperArm,
+    /// A forearm, from elbow to wrist.
     LowerArm,
+    /// A hand, from the wrist.
     Hand,
+    /// A thigh, from hip to knee.
     Thigh,
+    /// A shin, from knee to ankle.
     Shin,
+    /// A foot, from the ankle.
     Foot,
 }
 
@@ -303,15 +333,20 @@ pub enum Segment {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Reflect, Serialize, Deserialize)]
 pub enum Side {
     #[default]
+    /// On the body's midline: the pelvis, spine and head.
     Centre,
+    /// On the character's left.
     Left,
+    /// On the character's right.
     Right,
 }
 
 /// One body of a ragdoll, following one bone.
 #[derive(Clone, Debug, PartialEq, Reflect, Serialize, Deserialize)]
 pub struct RagdollPart {
+    /// The bone the part follows.
     pub bone: JointName,
+    /// The part's collision shape.
     pub shape: RagdollShape,
     /// Where the shape's centre is, in the bone's space.
     pub offset: Vec3,
@@ -323,6 +358,7 @@ pub struct RagdollPart {
     pub joint: RagdollJoint,
     /// What part of the body this is.
     pub segment: Segment,
+    /// Which side of the body the part is on.
     pub side: Side,
 }
 
@@ -351,21 +387,25 @@ impl RagdollPart {
         }
     }
 
+    /// Sets where the shape's centre is, in the bone's space.
     pub fn with_offset(mut self, offset: Vec3) -> Self {
         self.offset = offset;
         self
     }
 
+    /// Sets how the shape is turned, in the bone's space.
     pub fn with_rotation(mut self, rotation: Quat) -> Self {
         self.rotation = rotation;
         self
     }
 
+    /// Sets the mass in kg.
     pub fn with_mass(mut self, mass: f32) -> Self {
         self.mass = mass;
         self
     }
 
+    /// Sets the joint to the parent part.
     pub fn with_joint(mut self, joint: RagdollJoint) -> Self {
         self.joint = joint;
         self

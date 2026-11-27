@@ -25,9 +25,13 @@ use crate::{
 /// all hear it.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct BodyHit {
+    /// The character that was hit.
     pub character: Entity,
+    /// The index of the struck part in the character's ragdoll.
     pub part: usize,
+    /// The world-space point the blow landed on.
     pub point: Vec3,
+    /// The blow's impulse, in N·s in world space.
     pub impulse: Vec3,
     /// What struck it, which chooses the reaction.
     pub kind: HitKind,

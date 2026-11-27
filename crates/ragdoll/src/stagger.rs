@@ -104,6 +104,7 @@ impl Stagger {
         }
     }
 
+    /// Sets the seconds over which the stumble wears off.
     pub fn with_seconds(mut self, seconds: f32) -> Self {
         self.seconds = seconds;
         self
@@ -117,6 +118,7 @@ impl Stagger {
         self
     }
 
+    /// Sets the bend of the whole spine at severity 1, in radians.
     pub fn with_bend(mut self, bend: f32) -> Self {
         self.bend = bend;
         self
