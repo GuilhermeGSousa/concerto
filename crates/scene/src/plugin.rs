@@ -13,6 +13,8 @@ use crate::link::{
 };
 use crate::scene::Scene;
 
+/// Registers [`Scene`] as a placeable asset and spawns [`SceneLink`]s, in the editor as well as in a
+/// game, and spawns the [`StartupScene`] at startup when the `App` has one.
 pub struct ScenePlugin;
 
 impl Plugin for ScenePlugin {

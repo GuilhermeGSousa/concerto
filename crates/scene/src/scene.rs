@@ -12,7 +12,9 @@ use crate::node_id::NodeId;
 /// its reflected value.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SerializedComponent {
+    /// The component's type path, as its registration names it.
     pub type_name: String,
+    /// The component's reflected value.
     pub value: ReflectedValue,
 }
 
@@ -25,9 +27,11 @@ pub struct SerializedComponent {
 pub struct SceneNode {
     /// Names this node within its scene, whatever its name or index.
     pub id: NodeId,
+    /// The node's name, given to the spawned entity.
     pub name: String,
     /// Indices into `Scene::nodes`.
     pub children: Vec<usize>,
+    /// The components the spawned entity gets.
     pub components: Vec<SerializedComponent>,
     /// The scene this node links to and the changes made to its nodes, when it is a link.
     pub link: Option<SceneLinkData>,
@@ -36,22 +40,32 @@ pub struct SceneNode {
 /// A link stored on a [`SceneNode`]: the linked scene and the changes made to its nodes.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SceneLinkData {
+    /// The id of the linked scene.
     pub scene: AssetId,
+    /// The changes the link makes to the linked scene's nodes, in the order they apply.
     pub changes: Vec<LinkChange>,
 }
 
 /// One change a link makes to a node of its scene, addressed by the node's path of ids from the link.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum LinkChange {
+    /// Adds a component to the node, or replaces the one of the same type.
     AddComponent {
+        /// The path of the node.
         path: LinkPath,
+        /// The component added.
         component: SerializedComponent,
     },
+    /// Removes a component from the node.
     RemoveComponent {
+        /// The path of the node.
         path: LinkPath,
+        /// The type path of the component removed.
         type_name: String,
     },
+    /// Leaves the node, and its descendants, out of the spawn.
     RemoveNode {
+        /// The path of the node.
         path: LinkPath,
     },
 }
@@ -89,6 +103,7 @@ impl SceneNode {
 /// `nodes[0]` is not special: roots are the nodes no other node lists as a child.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Scene {
+    /// The scene's nodes; a node's children are indices into this list.
     pub nodes: Vec<SceneNode>,
     /// Every [`AssetId`] reachable from the nodes' components, so
     /// [`Asset::referenced_sub_assets`] need not decode them. Capture fills it
