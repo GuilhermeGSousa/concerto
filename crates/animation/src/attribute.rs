@@ -6,6 +6,17 @@ pub trait PoseAttribute: Clone + Send + Sync + 'static {
     fn neutral() -> Self;
     /// Blends `self`, carried at `self_weight`, with `other` at `other_weight`; the weights need not sum to 1.
     fn blend(&mut self, self_weight: f32, other: &Self, other_weight: f32);
+
+    /// The value a transition holds in place of `self` once its source stopped playing.
+    ///
+    /// A cross-fade interrupted mid-fade keeps playing a snapshot of where it was, and an
+    /// inertialization fades out the attributes its source had; both hold this value rather than
+    /// the live one. A target holds well, but closed-loop output computed for the body's state at
+    /// that moment does not: a balance controller's force should drop to neutral rather than keep
+    /// pushing. The default holds the value unchanged.
+    fn frozen(&self) -> Self {
+        self.clone()
+    }
 }
 
 trait Channel: Send + Sync {
@@ -22,6 +33,8 @@ trait Channel: Send + Sync {
     fn fill_neutral(&mut self, bone_count: usize);
 
     fn copy_from(&mut self, other: &dyn Channel);
+
+    fn freeze(&mut self);
 
     fn blend(&mut self, self_weight: f32, other: Option<&dyn Channel>, other_weight: f32);
 
@@ -71,6 +84,12 @@ impl<A: PoseAttribute> Channel for Values<A> {
     fn copy_from(&mut self, other: &dyn Channel) {
         if let Some(other) = Self::of(Some(other)) {
             self.0.clone_from(&other.0);
+        }
+    }
+
+    fn freeze(&mut self) {
+        for value in &mut self.0 {
+            *value = value.frozen();
         }
     }
 
@@ -162,6 +181,12 @@ impl PoseAttributes {
         for theirs in &other.channels {
             let index = self.open_like(theirs.as_ref());
             self.channels[index].copy_from(theirs.as_ref());
+        }
+    }
+
+    pub(crate) fn freeze(&mut self) {
+        for channel in &mut self.channels {
+            channel.freeze();
         }
     }
 

@@ -101,6 +101,7 @@ impl AnimationNode for Capture {
     type CreateInput = ();
     type UpdateInput = ();
     type EvaluateInput = ();
+    type DriveInput = ();
 
     fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) -> Option<Frame> {
         None

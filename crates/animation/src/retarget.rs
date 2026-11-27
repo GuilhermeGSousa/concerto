@@ -1300,6 +1300,7 @@ impl Running {
             skeleton: Some(skeleton),
             model_to_world: context.model_to_world,
             inputs: context.inputs,
+            entity: context.entity,
         }
     }
 
@@ -1399,6 +1400,7 @@ impl AnimationNode for RetargetNode {
         Res<'static, AssetStore<AnimationGraph>>,
         Res<'static, AssetStore<Skeleton>>,
     );
+    type DriveInput = ();
 
     fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) -> RetargetNodeState {
         RetargetNodeState {

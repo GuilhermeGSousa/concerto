@@ -1,4 +1,4 @@
-use concerto_ecs::system::input::Inputs;
+use concerto_ecs::{Entity, system::input::Inputs};
 use concerto_mesh::Skeleton;
 use glam::{Affine3A, Vec3};
 
@@ -72,12 +72,18 @@ pub struct AnimationGraphContext<'a> {
     pub(crate) skeleton: Option<&'a Skeleton>,
     pub(crate) model_to_world: Option<Affine3A>,
     pub(crate) inputs: &'a Inputs<'a, 'a>,
+    pub(crate) entity: Entity,
 }
 
 impl<'a> AnimationGraphContext<'a> {
     /// The blackboard of the player being walked.
     pub fn blackboard(&self) -> &AnimationBlackboard {
         self.blackboard
+    }
+
+    /// The entity of the player being walked.
+    pub fn entity(&self) -> Entity {
+        self.entity
     }
 
     /// The root bone of the player being evaluated, if it has one.
@@ -96,5 +102,57 @@ impl<'a> AnimationGraphContext<'a> {
     /// 0's parent, or identity when bone 0 has none.
     pub fn model_to_world(&self) -> Option<Affine3A> {
         self.model_to_world
+    }
+}
+
+/// What every node of one player's graph is driven with in one physics step: the step's length, the node's weight, and the player's blackboard, root, skeleton and entity.
+pub struct DriveContext<'a> {
+    pub(crate) delta_time: f32,
+    pub(crate) weight: f32,
+    pub(crate) graph: &'a AnimationGraphContext<'a>,
+}
+
+impl<'a> DriveContext<'a> {
+    /// The length of the physics step, in seconds.
+    pub fn delta_time(&self) -> f32 {
+        self.delta_time
+    }
+
+    /// How much of the node's drive frame reaches the player's on this step, from 0 to 1.
+    ///
+    /// It is the product of the shares every combiner above the node gives it, 1 at the root of
+    /// the player's graph: an input's weight among a blend's or a blend space's inputs, a layer's
+    /// weight for its overlay, and a state's weight in a cross-fade, including a state fading out.
+    /// A controller reads it to scale what it asks of physics to the part it will get, to stop
+    /// planning what it cannot carry out, or to wind down while its state fades out.
+    pub fn weight(&self) -> f32 {
+        self.weight
+    }
+
+    pub(crate) fn scaled(&self, share: f32) -> DriveContext<'a> {
+        DriveContext {
+            weight: self.weight * share,
+            ..*self
+        }
+    }
+
+    /// The player's blackboard.
+    pub fn blackboard(&self) -> &'a AnimationBlackboard {
+        self.graph.blackboard
+    }
+
+    /// The root bone of the player being driven, if it has one.
+    pub fn root(&self) -> Option<&'a RootBone> {
+        self.graph.root.as_ref()
+    }
+
+    /// The skeleton of the player being driven, once its asset is loaded.
+    pub fn skeleton(&self) -> Option<&'a Skeleton> {
+        self.graph.skeleton
+    }
+
+    /// The entity of the player being driven.
+    pub fn entity(&self) -> Entity {
+        self.graph.entity
     }
 }

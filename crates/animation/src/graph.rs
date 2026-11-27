@@ -20,7 +20,7 @@ use uuid::Uuid;
 
 use crate::{
     blackboard::AnimationBlackboard,
-    evaluation::{AnimationGraphContext, AnimationGraphEvaluator},
+    evaluation::{AnimationGraphContext, AnimationGraphEvaluator, DriveContext},
     node::{
         AnimationNode, ErasedAnimationNode, LayerNode, NodeState, PlaceholderNode,
         ReflectAnimationNode, ResultNode, blend_space::BlendSpace2DBuilderContext,
@@ -944,6 +944,80 @@ impl AnimationGraphState {
         pool: &mut FramePool,
         output_frame: &mut AnimationFrame,
     ) -> bool {
+        self.walk(
+            graphs,
+            pool,
+            output_frame,
+            |_, node, state, inputs, pool, output| {
+                node.evaluate(state, context, bone_ids, inputs, pool, output);
+            },
+        )
+    }
+
+    pub(crate) fn drive(
+        &mut self,
+        graphs: &AssetStore<AnimationGraph>,
+        context: &DriveContext<'_>,
+        bone_ids: &[Uuid],
+        pool: &mut FramePool,
+        output_frame: &mut AnimationFrame,
+    ) -> bool {
+        let Some(graph) = self.get_animation_graph(graphs) else {
+            return false;
+        };
+        let weights = self.drive_weights(graph, context);
+        self.walk(
+            graphs,
+            pool,
+            output_frame,
+            |node_index, node, state, inputs, pool, output| {
+                let context = context.scaled(weights[node_index.index()]);
+                node.drive(state, &context, bone_ids, inputs, pool, output);
+            },
+        )
+    }
+
+    fn drive_weights(&self, graph: &AnimationGraph, context: &DriveContext<'_>) -> Vec<f32> {
+        let mut weights = vec![0.0; graph.nodes.node_count()];
+        weights[graph.result_node.index()] = 1.0;
+        let mut shares = Vec::new();
+        for node_index in graph.iter() {
+            let (Some(node), Some(active)) = (
+                graph.live_node(node_index),
+                self.graph_state.get(&node_index),
+            ) else {
+                continue;
+            };
+            let weight = weights[node_index.index()];
+            let inputs = graph.inputs(node_index);
+            shares.clear();
+            shares.extend(inputs.iter().map(|input| {
+                self.graph_state
+                    .get(input)
+                    .map_or(1.0, |input| input.weight)
+            }));
+            node.drive_shares(&active.node_state, &context.scaled(weight), &mut shares);
+            for (input, share) in inputs.iter().zip(&shares) {
+                weights[input.index()] += weight * share;
+            }
+        }
+        weights
+    }
+
+    fn walk(
+        &mut self,
+        graphs: &AssetStore<AnimationGraph>,
+        pool: &mut FramePool,
+        output_frame: &mut AnimationFrame,
+        mut visit: impl FnMut(
+            AnimationNodeIndex,
+            &dyn ErasedAnimationNode,
+            &mut NodeState,
+            &[EvaluatedFrame],
+            &mut FramePool,
+            &mut AnimationFrame,
+        ),
+    ) -> bool {
         let Some(graph) = self.get_animation_graph(graphs) else {
             return false;
         };
@@ -960,10 +1034,10 @@ impl AnimationGraphState {
 
             if let Some(node) = graph.live_node(node_index) {
                 if let Some(node_state) = self.get_active_node_state_mut(&node_index) {
-                    node.evaluate(
+                    visit(
+                        node_index,
+                        node,
                         &mut node_state.node_state,
-                        context,
-                        bone_ids,
                         graph_evaluator.view_stack(stack_start),
                         pool,
                         &mut node_output,
@@ -1233,6 +1307,7 @@ mod tests {
         type CreateInput = Res<'static, NeverRegistered>;
         type UpdateInput = ();
         type EvaluateInput = ();
+        type DriveInput = ();
 
         fn create_state(&self, _: &Res<NeverRegistered>, _context: &AnimationGraphContext<'_>) {}
 

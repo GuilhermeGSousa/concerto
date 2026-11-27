@@ -127,6 +127,7 @@ impl AnimationNode for AdditiveNode {
     type CreateInput = ();
     type UpdateInput = Res<'static, AssetStore<AnimationClip>>;
     type EvaluateInput = Res<'static, AssetStore<AnimationClip>>;
+    type DriveInput = ();
 
     fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) -> AdditiveNodeState {
         AdditiveNodeState {
