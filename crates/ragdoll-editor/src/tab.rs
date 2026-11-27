@@ -482,21 +482,23 @@ fn run_preview_action(
     state.report = answer.unwrap_or_else(|message| message);
 }
 
-fn request_from(preview: &RagdollPreview, kind: ButtonKind) -> PreviewRequest {
-    match kind {
-        ButtonKind::Drop => PreviewRequest::Drop {
-            height: preview.drop_height,
-            seconds: preview.seconds,
-        },
-        ButtonKind::Poke => PreviewRequest::Poke {
-            bone: preview.poke_bone.0.as_str().to_owned(),
-            impulse: preview.poke_impulse,
-            seconds: preview.seconds,
-        },
-        ButtonKind::Play => PreviewRequest::Play {
-            clip: preview.clip.id(),
-        },
-        ButtonKind::Reset => PreviewRequest::Reset,
+impl RagdollPreview {
+    fn request_from(&self, kind: ButtonKind) -> PreviewRequest {
+        match kind {
+            ButtonKind::Drop => PreviewRequest::Drop {
+                height: self.drop_height,
+                seconds: self.seconds,
+            },
+            ButtonKind::Poke => PreviewRequest::Poke {
+                bone: self.poke_bone.0.as_str().to_owned(),
+                impulse: self.poke_impulse,
+                seconds: self.seconds,
+            },
+            ButtonKind::Play => PreviewRequest::Play {
+                clip: self.clip.id(),
+            },
+            ButtonKind::Reset => PreviewRequest::Reset,
+        }
     }
 }
 
@@ -518,7 +520,7 @@ fn preview_button(document: Entity, kind: ButtonKind) -> Listener<UIClick> {
         };
         cmd.trigger(RunPreviewAction {
             document,
-            request: request_from(&state.preview, kind),
+            request: state.preview.request_from(kind),
         });
     })
     .into_listener()
@@ -666,22 +668,24 @@ fn read_skeleton(reads: &mut Reads, id: AssetId, from: &ReadFrom) -> Result<Arc<
         .map_or_else(|| Err(String::new()), |(_, read)| read.clone())
 }
 
-fn read_scene(reads: &mut Reads, skeleton: AssetId, from: &ReadFrom) -> Option<(AssetId, Scene)> {
-    if !reads
-        .scene
-        .as_ref()
-        .is_some_and(|(held, _)| *held == skeleton)
-    {
-        let entry = from.assets.get(skeleton);
-        let read = concerto_animation_editor::read_shown_scene(from.root, entry, None, from.assets)
-            .map_err(|error| format!("{error:#}"));
-        reads.scene = Some((skeleton, read));
+impl Reads {
+    fn read_scene(&mut self, skeleton: AssetId, from: &ReadFrom) -> Option<(AssetId, Scene)> {
+        if !self
+            .scene
+            .as_ref()
+            .is_some_and(|(held, _)| *held == skeleton)
+        {
+            let entry = from.assets.get(skeleton);
+            let read =
+                concerto_animation_editor::read_shown_scene(from.root, entry, None, from.assets)
+                    .map_err(|error| format!("{error:#}"));
+            self.scene = Some((skeleton, read));
+        }
+        self.scene
+            .as_ref()
+            .and_then(|(_, read)| read.as_ref().ok())
+            .and_then(Clone::clone)
     }
-    reads
-        .scene
-        .as_ref()
-        .and_then(|(_, read)| read.as_ref().ok())
-        .and_then(Clone::clone)
 }
 
 fn follow_ragdoll(
@@ -786,7 +790,7 @@ fn follow_ragdoll(
         let (Some(skeleton), Some(current)) = (skeleton, current) else {
             continue;
         };
-        let scene = read_scene(&mut state.reads, skeleton_id, &from);
+        let scene = state.reads.read_scene(skeleton_id, &from);
         let stage = (skeleton_id, scene.as_ref().map(|(id, _)| *id));
         if state.sent.stage != Some(stage) {
             state.sent.stage = Some(stage);
