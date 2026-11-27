@@ -6,6 +6,10 @@ use glam::{Quat, Vec3};
 
 use crate::player::Player;
 
+/// Flies the first [`Player`] at 10 m/s along its child camera's view with W, A, S and D,
+/// yawing the player and pitching the camera with the mouse.
+///
+/// It does nothing until the player has a child [`VirtualCamera`]. Add it as an `Update` system.
 pub fn first_person_player_fly(
     mut players: Query<(&mut Transform, &Children), With<Player>>,
     mut cameras: Query<&mut Transform, (With<VirtualCamera>, Without<Player>)>,

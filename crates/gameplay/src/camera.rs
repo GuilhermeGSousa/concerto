@@ -12,9 +12,13 @@ use glam::{EulerRot, Quat, Vec3};
 use crate::actions::Look;
 use crate::third_person::ThirdPersonCamera;
 
+/// How [`CameraPivot`]s turn with the mouse and the `Look` stick.
 #[derive(Resource)]
 pub struct CameraSettings {
+    /// Radians the camera turns per unit of mouse movement.
     pub sensitivity: f32,
+    /// The most the camera pitches up or down, in radians, for a pivot without a
+    /// [`ThirdPersonCamera`].
     pub pitch_limit: f32,
     /// Radians per second the camera turns with the `Look` stick at full deflection.
     pub stick_turn_rate: f32,
@@ -31,12 +35,16 @@ impl Default for CameraSettings {
 }
 
 impl CameraSettings {
+    /// Sets the radians per second the camera turns with the `Look` stick at full deflection.
     pub fn with_stick_turn_rate(mut self, stick_turn_rate: f32) -> Self {
         self.stick_turn_rate = stick_turn_rate;
         self
     }
 }
 
+/// A camera rig's root, turned in yaw and pitch by the player's look input.
+///
+/// [`move_camera_pivot`] writes its rotation to the entity's [`Transform`] each frame.
 #[derive(Component, Default)]
 pub struct CameraPivot {
     yaw: f32,
@@ -49,6 +57,7 @@ impl CameraPivot {
         Self { yaw, pitch: 0.0 }
     }
 
+    /// The pivot's turn about +Y, in radians.
     pub fn yaw(&self) -> f32 {
         self.yaw
     }
@@ -82,9 +91,14 @@ pub fn move_camera_pivot(
     }
 }
 
+/// Keeps the entity at the translation of another entity's [`Transform`], plus an offset.
+///
+/// A [`CameraBoom`] under the entity ignores the followed entity's body when it probes.
 #[derive(Component)]
 pub struct EntityFollow {
+    /// The entity to follow.
     pub target: Entity,
+    /// Added to the target's translation, in metres.
     pub offset: Vec3,
 }
 
@@ -111,13 +125,18 @@ pub(crate) fn update_entity_follow(
 #[derive(Component, Reflect, Clone, Debug, PartialEq)]
 #[reflect(Component, Default, SceneComponent)]
 pub struct CameraBoom {
+    /// Where the camera sits relative to the shoulder, in the pivot's rotated frame, in metres; its
+    /// length is the boom's full length.
     pub offset: Vec3,
     /// Where the boom hangs from, as an offset from the pivot in its level frame.
     ///
     /// Being in the level frame, it stays put when the pivot pitches.
     pub shoulder: Vec3,
+    /// The radius of the sphere swept to find a body in the way, in metres.
     pub probe_radius: f32,
+    /// The shortest the boom is pulled in to, in metres.
     pub min_distance: f32,
+    /// The seconds in which the boom eases half the remaining way back out; zero snaps it out.
     pub return_halflife: f32,
 }
 
@@ -134,26 +153,31 @@ impl Default for CameraBoom {
 }
 
 impl CameraBoom {
+    /// Sets where the camera sits relative to the shoulder.
     pub fn with_offset(mut self, offset: Vec3) -> Self {
         self.offset = offset;
         self
     }
 
+    /// Sets where the boom hangs from, relative to the pivot in its level frame.
     pub fn with_shoulder(mut self, shoulder: Vec3) -> Self {
         self.shoulder = shoulder;
         self
     }
 
+    /// Sets the radius of the sphere swept to find a body in the way.
     pub fn with_probe_radius(mut self, probe_radius: f32) -> Self {
         self.probe_radius = probe_radius;
         self
     }
 
+    /// Sets the shortest the boom is pulled in to.
     pub fn with_min_distance(mut self, min_distance: f32) -> Self {
         self.min_distance = min_distance;
         self
     }
 
+    /// Sets the seconds in which the boom eases half the remaining way back out.
     pub fn with_return_halflife(mut self, return_halflife: f32) -> Self {
         self.return_halflife = return_halflife;
         self
