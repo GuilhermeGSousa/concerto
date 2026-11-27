@@ -35,7 +35,6 @@ use log::warn;
 use crate::{
     asset::{PartStrength, Ragdoll, StrengthProfile},
     behaviour::{BodyDrive, Claim},
-    drive::drawn_amount,
     dying::{Dying, Settled},
     hit::Flinch,
     resolve::ResolvedRagdoll,
@@ -200,7 +199,7 @@ impl CharacterRagdoll {
 
     fn drawn(&self, player: Option<&AnimationPlayer>, body: &RagdollBody, part: usize) -> f32 {
         if self.mode == RagdollMode::Graph {
-            return drawn_amount(player, body, part);
+            return body.drawn_amount(player, part);
         }
         body.bone_name(part)
             .map_or(0.0, |bone| self.weight_of(&bone))

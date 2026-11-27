@@ -1,6 +1,8 @@
 use concerto_animation::attribute::PoseAttribute;
 use glam::{Quat, Vec3};
 
+use crate::asset::PartStrength;
+
 /// How much of a bone is drawn from physics, from 0 (the animated pose) to 1 (the simulated one).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PhysicsAmount(pub f32);
@@ -84,13 +86,34 @@ impl PoseAttribute for MotorCommand {
     }
 }
 
+impl MotorCommand {
+    pub(crate) fn holding(strength: PartStrength, scale: f32, target: Quat) -> Self {
+        let mut command = Self {
+            cover: 1.0,
+            target,
+            ..Self::neutral()
+        };
+        if let PartStrength::Powered {
+            stiffness,
+            damping,
+            torque_limit,
+        } = strength
+        {
+            command.stiffness = stiffness * scale;
+            command.damping = damping * scale;
+            command.torque_limit = torque_limit * scale;
+        }
+        command
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use concerto_animation::attribute::PoseAttribute;
     use glam::{Quat, Vec3};
 
     use super::{MotorCommand, PhysicsAmount};
-    use crate::{character::Held, drive::part_drive};
+    use crate::{character::Held, drive::PartDrive};
 
     struct CommandRow {
         case: &'static str,
@@ -358,7 +381,7 @@ mod tests {
             },
         ];
         for row in drives {
-            let drive = part_drive(row.root, row.amount, row.command, row.follow, animated);
+            let drive = PartDrive::new(row.root, row.amount, row.command, row.follow, animated);
             assert_eq!(drive.held.kinematic, row.kinematic, "{}", row.case);
             assert!(
                 (drive.held.stiffness - row.stiffness).abs() < 1e-3,

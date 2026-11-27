@@ -14,7 +14,6 @@ use concerto_foundation::assets::{AssetId, asset_store::AssetStore, handle::Asse
 use concerto_mesh::Skeleton;
 use concerto_name::{Name, name};
 use concerto_reflect::{Reflect, ReflectDefault};
-use glam::Quat;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -90,7 +89,7 @@ impl HoldNode {
     }
 
     fn target_weight(&self, blackboard: &AnimationBlackboard) -> f32 {
-        let weight = read(blackboard, &self.weight);
+        let weight = blackboard.read(&self.weight).copied().unwrap_or(1.0);
         if weight.is_nan() {
             0.0
         } else {
@@ -99,7 +98,7 @@ impl HoldNode {
     }
 
     fn target_strength(&self, blackboard: &AnimationBlackboard) -> f32 {
-        let strength = read(blackboard, &self.strength);
+        let strength = blackboard.read(&self.strength).copied().unwrap_or(1.0);
         if strength.is_nan() {
             0.0
         } else {
@@ -179,29 +178,6 @@ impl HoldNode {
         }
         state.held.as_ref().map_or(&[], |held| &held.parts)
     }
-}
-
-fn read(blackboard: &AnimationBlackboard, param: &Param<f32>) -> f32 {
-    blackboard.read(param).copied().unwrap_or(1.0)
-}
-
-fn command(strength: PartStrength, scale: f32, target: Quat) -> MotorCommand {
-    let mut command = MotorCommand {
-        cover: 1.0,
-        target,
-        ..MotorCommand::neutral()
-    };
-    if let PartStrength::Powered {
-        stiffness,
-        damping,
-        torque_limit,
-    } = strength
-    {
-        command.stiffness = stiffness * scale;
-        command.damping = damping * scale;
-        command.torque_limit = torque_limit * scale;
-    }
-    command
 }
 
 struct HeldPart {
@@ -306,7 +282,8 @@ impl AnimationNode for HoldNode {
         for held in parts {
             let share = weight * held.share;
             let muscle = strength * body.wounds().strength_of(held.part);
-            let wanted = command(held.strength, muscle, body.animated_target(held.part));
+            let wanted =
+                MotorCommand::holding(held.strength, muscle, body.animated_target(held.part));
             if let Some(command) = commands.get_mut(held.bone) {
                 command.blend(1.0 - share, &wanted, share);
             }

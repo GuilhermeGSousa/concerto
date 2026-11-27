@@ -13,36 +13,38 @@ use crate::{
     dying::Settled,
 };
 
-fn physics_amount(player: Option<&AnimationPlayer>, bone: usize) -> f32 {
-    player.map_or(0.0, |player| {
-        player
-            .drive_attributes()
-            .get::<PhysicsAmount>(bone)
-            .0
-            .clamp(0.0, 1.0)
-    })
+impl PhysicsAmount {
+    fn driven(player: Option<&AnimationPlayer>, bone: usize) -> f32 {
+        player.map_or(0.0, |player| {
+            player
+                .drive_attributes()
+                .get::<PhysicsAmount>(bone)
+                .0
+                .clamp(0.0, 1.0)
+        })
+    }
 }
 
-pub(crate) fn drawn_amount(
-    player: Option<&AnimationPlayer>,
-    body: &RagdollBody,
-    part: usize,
-) -> f32 {
-    body.resolved()
-        .bones()
-        .get(part)
-        .map_or(0.0, |bone| physics_amount(player, *bone))
+impl MotorCommand {
+    fn driven(player: Option<&AnimationPlayer>, bone: usize) -> Self {
+        player.map_or_else(Self::neutral, |player| {
+            player.drive_attributes().get::<Self>(bone)
+        })
+    }
 }
 
-fn command_of(player: Option<&AnimationPlayer>, bone: usize) -> MotorCommand {
-    player.map_or_else(MotorCommand::neutral, |player| {
-        player.drive_attributes().get::<MotorCommand>(bone)
-    })
-}
+impl RagdollBody {
+    pub(crate) fn drawn_amount(&self, player: Option<&AnimationPlayer>, part: usize) -> f32 {
+        self.resolved()
+            .bones()
+            .get(part)
+            .map_or(0.0, |bone| PhysicsAmount::driven(player, *bone))
+    }
 
-fn follow_of(profile: Option<&StrengthProfile>, body: &RagdollBody, part: usize) -> Option<Held> {
-    let strength = profile?.strength_of(&body.bone_name(part)?);
-    matches!(strength, PartStrength::Powered { .. }).then(|| Held::of(strength))
+    fn follow(&self, profile: Option<&StrengthProfile>, part: usize) -> Option<Held> {
+        let strength = profile?.strength_of(&self.bone_name(part)?);
+        matches!(strength, PartStrength::Powered { .. }).then(|| Held::of(strength))
+    }
 }
 
 pub(crate) struct PartDrive {
@@ -52,51 +54,53 @@ pub(crate) struct PartDrive {
     pub(crate) torque: Vec3,
 }
 
-pub(crate) fn part_drive(
-    root: bool,
-    amount: f32,
-    command: MotorCommand,
-    follow: Option<Held>,
-    animated_target: Quat,
-) -> PartDrive {
-    let cover = command.cover.clamp(0.0, 1.0);
-    let kinematic = cover <= 0.0 && (root || amount <= 0.0);
-    if kinematic {
-        return PartDrive {
-            held: Held::KINEMATIC,
-            target: animated_target,
-            force: Vec3::ZERO,
-            torque: Vec3::ZERO,
-        };
-    }
-    let force = command.force * cover;
-    let torque = command.torque * cover;
-    match follow.filter(|_| !root && cover < 1.0) {
-        Some(follow) => {
-            let rest = 1.0 - cover;
-            PartDrive {
+impl PartDrive {
+    pub(crate) fn new(
+        root: bool,
+        amount: f32,
+        command: MotorCommand,
+        follow: Option<Held>,
+        animated_target: Quat,
+    ) -> Self {
+        let cover = command.cover.clamp(0.0, 1.0);
+        let kinematic = cover <= 0.0 && (root || amount <= 0.0);
+        if kinematic {
+            return PartDrive {
+                held: Held::KINEMATIC,
+                target: animated_target,
+                force: Vec3::ZERO,
+                torque: Vec3::ZERO,
+            };
+        }
+        let force = command.force * cover;
+        let torque = command.torque * cover;
+        match follow.filter(|_| !root && cover < 1.0) {
+            Some(follow) => {
+                let rest = 1.0 - cover;
+                PartDrive {
+                    held: Held {
+                        kinematic: false,
+                        stiffness: command.stiffness * cover + follow.stiffness * rest,
+                        damping: command.damping * cover + follow.damping * rest,
+                        torque_limit: command.torque_limit * cover + follow.torque_limit * rest,
+                    },
+                    target: animated_target.slerp(command.target, cover).normalize(),
+                    force,
+                    torque,
+                }
+            }
+            None => PartDrive {
                 held: Held {
                     kinematic: false,
-                    stiffness: command.stiffness * cover + follow.stiffness * rest,
-                    damping: command.damping * cover + follow.damping * rest,
-                    torque_limit: command.torque_limit * cover + follow.torque_limit * rest,
+                    stiffness: command.stiffness,
+                    damping: command.damping,
+                    torque_limit: command.torque_limit,
                 },
-                target: animated_target.slerp(command.target, cover).normalize(),
+                target: command.target,
                 force,
                 torque,
-            }
-        }
-        None => PartDrive {
-            held: Held {
-                kinematic: false,
-                stiffness: command.stiffness,
-                damping: command.damping,
-                torque_limit: command.torque_limit,
             },
-            target: command.target,
-            force,
-            torque,
-        },
+        }
     }
 }
 
@@ -149,11 +153,11 @@ pub fn drive_from_graph(
             .iter()
             .enumerate()
             .map(|(part, bone)| {
-                part_drive(
+                PartDrive::new(
                     body.resolved().settings().parts[part].parent.is_none(),
-                    physics_amount(player, *bone),
-                    command_of(player, *bone),
-                    follow_of(profile, &body, part),
+                    PhysicsAmount::driven(player, *bone),
+                    MotorCommand::driven(player, *bone),
+                    body.follow(profile, part),
                     targets[part],
                 )
             })
