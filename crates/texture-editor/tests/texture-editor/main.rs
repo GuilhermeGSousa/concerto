@@ -1,3 +1,4 @@
+//! Tests of the texture tab, driven through MCP: edit, save and reimport.
 use std::{
     path::{Path, PathBuf},
     time::{Duration, Instant},

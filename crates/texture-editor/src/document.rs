@@ -34,7 +34,9 @@ const VALUE: &str = "Texture";
 #[derive(Reflect, Clone, Copy, PartialEq, Debug, Default)]
 #[reflect(Default)]
 pub struct TextureDocument {
+    /// What the image is for, set by the importer; an edit that changes it is refused.
     pub role: TextureRole,
+    /// The compression, colour space, size and mip settings the levels are derived with.
     pub settings: TextureSettings,
 }
 
@@ -53,7 +55,9 @@ impl TextureDocument {
 /// source, and the derived preview or why deriving it failed.
 #[derive(Component, Default)]
 pub struct TextureTab {
+    /// The value as edited so far, or `None` before the texture has loaded.
     pub value: Option<TextureDocument>,
+    /// The file's value as last read or saved, which a discard restores.
     pub loaded: Option<TextureDocument>,
     pub(crate) preview: Option<AssetHandle<Texture>>,
     pub(crate) source: Option<TextureSource>,
