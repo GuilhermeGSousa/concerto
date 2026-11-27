@@ -313,7 +313,7 @@ pub enum Segment {
     Pelvis,
     /// A spine or chest bone between the pelvis and the head.
     Spine,
-    /// The head.
+    /// The head bone, at the top of the spine.
     Head,
     /// An upper arm, from shoulder to elbow.
     UpperArm,

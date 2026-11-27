@@ -45,7 +45,7 @@ impl Default for AudioMixer {
 /// The mixer bus a sound plays on, under the master.
 #[derive(Reflect, Default, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AudioBus {
-    /// Music.
+    /// Score and songs.
     Music,
     /// Background sound of a place, such as wind or a crowd.
     Ambience,

@@ -236,7 +236,7 @@ impl DummyRenderTexture {
         })
     }
 
-    /// Returns the texture.
+    /// Returns the 1 by 1 texture with its view and sampler.
     pub fn inner(&self) -> &RenderTexture {
         &self.0
     }

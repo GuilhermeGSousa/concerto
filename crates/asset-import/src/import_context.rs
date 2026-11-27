@@ -51,14 +51,14 @@ pub enum ImportError {
     },
     /// The source does not parse, or holds data the importer cannot use.
     MalformedSource {
-        /// The source.
+        /// The source file that does not parse.
         source_path: PathBuf,
         /// What is wrong.
         message: String,
     },
     /// The source lacks data the import needs.
     MissingRequiredData {
-        /// The source.
+        /// The source file that lacks the data.
         source_path: PathBuf,
         /// What is missing.
         message: String,

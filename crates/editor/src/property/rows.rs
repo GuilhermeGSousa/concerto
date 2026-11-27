@@ -252,7 +252,8 @@ impl PropertyCommit {
     ///
     /// # Errors
     ///
-    /// Returns [`EditError::TypeMismatch`] when `row`'s value is not a `T` or its editor is not `E`.
+    /// Returns [`EditError::TypeMismatch`] when `row`'s value is not a `T` or its editor is not
+    /// `E`.
     pub fn new<T: Reflect, E: PropertyEditor<T>>(
         row: &PropertyRow,
         edit: E::Edit,
@@ -291,7 +292,8 @@ impl PropertyCommits {
     ///
     /// # Errors
     ///
-    /// Returns [`EditError::TypeMismatch`] when `row`'s value is not a `T` or its editor is not `E`.
+    /// Returns [`EditError::TypeMismatch`] when `row`'s value is not a `T` or its editor is not
+    /// `E`.
     pub fn push<T: Reflect, E: PropertyEditor<T>>(
         &mut self,
         row: &PropertyRow,

@@ -52,7 +52,7 @@ pub enum WindowEvent {
     },
     /// A mouse button went down or came up.
     MouseButton {
-        /// The button.
+        /// Which mouse button changed state.
         button: MouseButton,
         /// Whether the button went down; `false` when it came up.
         pressed: bool,

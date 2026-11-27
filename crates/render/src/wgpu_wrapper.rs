@@ -1,8 +1,9 @@
 use std::ops::{Deref, DerefMut};
 
-/// A wgpu value that is `Send` and `Sync` on wasm too, where wgpu's own types are not.
+/// A wrapper that marks a value `Send` and `Sync` on every target.
 ///
-/// It derefs to the value.
+/// It is meant for wgpu handles, but the type does not restrict `T` (#1100). It derefs to the
+/// value.
 #[derive(Debug, Clone)]
 pub struct WgpuWrapper<T>(T);
 
@@ -13,9 +14,9 @@ impl<T> WgpuWrapper<T> {
     }
 }
 
-// SAFETY: the wrapper holds wgpu handles, which are `Send` natively and are only `!Send` on wasm, where `fragile-send-sync-non-atomic-wasm` keeps everything on one thread.
+// SAFETY: callers wrap only wgpu handles, which are `Send` natively and, with `fragile-send-sync-non-atomic-wasm`, on single-threaded wasm.
 unsafe impl<T> Send for WgpuWrapper<T> {}
-// SAFETY: the wrapper holds wgpu handles, which are `Sync` natively and are only `!Sync` on wasm, where `fragile-send-sync-non-atomic-wasm` keeps everything on one thread.
+// SAFETY: callers wrap only wgpu handles, which are `Sync` natively and, with `fragile-send-sync-non-atomic-wasm`, on single-threaded wasm.
 unsafe impl<T> Sync for WgpuWrapper<T> {}
 
 impl<T> Deref for WgpuWrapper<T> {

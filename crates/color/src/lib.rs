@@ -1,6 +1,7 @@
 //! Colors in linear RGBA, sRGB and HSL, and conversions between them.
 //!
-//! [`Color`] holds a value in whichever space it was authored in; renderers read it through [`Color::to_linear`].
+//! [`Color`] holds a value in whichever space it was authored in; renderers read it through
+//! [`Color::to_linear`].
 
 mod hsl;
 mod linear_rgba;
@@ -111,7 +112,8 @@ impl Color {
         }
     }
 
-    /// Converts to hue, saturation and lightness, returning the stored value unchanged if it is already HSL.
+    /// Converts to hue, saturation and lightness, returning the stored value unchanged if it is
+    /// already HSL.
     #[inline]
     pub fn to_hsl(self) -> Hsla {
         match self {

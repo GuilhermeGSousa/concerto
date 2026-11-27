@@ -1,5 +1,6 @@
-//! The window and input layer of Concerto: the events a host reports, the [`Window`](plugin::Window)
-//! resource, keyboard, mouse and gamepad input, local players, actions and the clipboard.
+//! The window and input layer of Concerto: the events a host reports, the
+//! [`Window`](plugin::Window) resource, keyboard, mouse and gamepad input, local players, actions
+//! and the clipboard.
 //!
 //! It opens no window itself; a host such as `concerto-winit` feeds it events.
 

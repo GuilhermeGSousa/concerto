@@ -31,7 +31,7 @@ pub struct On<'w, S: Signal> {
 }
 
 impl<S: Signal> On<'_, S> {
-    /// Returns the signal.
+    /// Returns the signal being delivered to this listener.
     pub fn signal(&self) -> &S {
         self.signal
     }

@@ -49,7 +49,7 @@ pub enum FontStyle {
     /// Upright; the default.
     #[default]
     Normal,
-    /// Italic.
+    /// Slanted, drawn with the font's italic face.
     Italic,
 }
 

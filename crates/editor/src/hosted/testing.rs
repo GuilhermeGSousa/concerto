@@ -388,7 +388,8 @@ impl Default for SceneFixture {
 }
 
 impl SceneFixture {
-    /// A fixture with an editor world, a project in a temporary directory, and two scene files in it.
+    /// A fixture with an editor world, a project in a temporary directory, and two scene files in
+    /// it.
     ///
     /// # Panics
     ///

@@ -48,7 +48,7 @@ impl Triangulation2D {
         &self.points
     }
 
-    /// Returns the triangles.
+    /// Returns the triangles, whose corners are indices into [`points`](Self::points).
     pub fn triangles(&self) -> &[Triangle] {
         &self.triangles
     }

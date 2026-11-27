@@ -521,7 +521,7 @@ pub struct ResolvedGoal {
 pub enum BoneUse {
     /// The retarget root.
     Root,
-    /// The motion root.
+    /// The bone above the root that carries the character's ground motion.
     MotionRoot,
     /// The start of the named chain.
     ChainStart(Name),

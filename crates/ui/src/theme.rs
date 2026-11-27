@@ -94,9 +94,9 @@ pub enum ButtonVariant {
 /// A chip's fill, outline and text colour.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ChipColors {
-    /// The fill.
+    /// The colour behind the chip's text.
     pub fill: Color,
-    /// The outline.
+    /// The colour of the chip's border.
     pub border: Color,
     /// The text colour.
     pub text: Color,
