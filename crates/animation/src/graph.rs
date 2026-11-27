@@ -22,7 +22,7 @@ use crate::{
     blackboard::AnimationBlackboard,
     evaluation::{AnimationGraphContext, AnimationGraphEvaluator},
     node::{
-        AnimationNode, ErasedAnimationNode, LayerNode, NodeReport, PlaceholderNode,
+        AnimationNode, ErasedAnimationNode, LayerNode, NodeState, PlaceholderNode,
         ReflectAnimationNode, ResultNode, blend_space::BlendSpace2DBuilderContext,
     },
     param::Param,
@@ -594,7 +594,8 @@ pub struct NodePathStep {
 pub struct NodeVisit<'a> {
     pub path: &'a [NodePathStep],
     pub weight: f32,
-    pub report: NodeReport,
+    pub node: &'a dyn ErasedAnimationNode,
+    pub state: &'a NodeState,
 }
 
 /// The per-player state of one graph: its handle and its nodes' states.
@@ -704,7 +705,8 @@ impl AnimationGraphState {
             f(&NodeVisit {
                 path,
                 weight: active.weight,
-                report: live.report(&active.node_state),
+                node: live,
+                state: &active.node_state,
             });
             live.inner_states(&active.node_state, &mut |state, inner| {
                 if let Some(step) = path.last_mut() {
@@ -1042,8 +1044,8 @@ mod tests {
         evaluation::AnimationGraphContext,
         mask::{BoneMask, BoneMaskBranch},
         node::{
-            AnimationClipNode, AnimationNode, BlendNode, InputSlots, LayerNode, LayerSpace,
-            ReflectAnimationNode,
+            AnimationClipNode, AnimationNode, BlendNode, EditorAnimationNode, LayerNode,
+            LayerSpace, ReflectAnimationNode,
         },
         plugin::register_animation_types,
         pose::{AnimationFrame, EvaluatedFrame, FramePool, JointPose},
@@ -1189,10 +1191,6 @@ mod tests {
         type UpdateInput = ();
         type EvaluateInput = ();
 
-        fn input_slots(&self) -> InputSlots {
-            InputSlots::None
-        }
-
         fn create_state(&self, _: &Res<NeverRegistered>, _context: &AnimationGraphContext<'_>) {}
 
         fn update(&self, _: &mut (), _: f32, _: &(), _: &AnimationGraphContext<'_>) {}
@@ -1211,6 +1209,8 @@ mod tests {
 
         fn reset(&self, _: &mut ()) {}
     }
+
+    impl EditorAnimationNode for NeverCreated {}
 
     fn live_with_never_created(mut graph: AnimationGraph) -> AnimationGraph {
         let mut registry = TypeRegistry::default();

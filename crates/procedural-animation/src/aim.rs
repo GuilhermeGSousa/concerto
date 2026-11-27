@@ -3,7 +3,7 @@ use concerto_animation::{
     evaluation::AnimationGraphContext,
     look_at::{LookFrame, YawPitch, look_rotation, yaw_pitch_to},
     node::{
-        AnimationNode, InputSlots, ReflectAnimationNode,
+        AnimationNode, EditorAnimationNode, InputSlots, ReflectAnimationNode,
         model_space::{WorldToModel, bone_under_first, model_joint},
     },
     param::Param,
@@ -418,10 +418,6 @@ impl AnimationNode for AimNode {
     type UpdateInput = ();
     type EvaluateInput = ();
 
-    fn input_slots(&self) -> InputSlots {
-        InputSlots::Fixed(vec![name!("pose")])
-    }
-
     fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) -> AimState {
         AimState {
             elapsed: 0.0,
@@ -524,13 +520,19 @@ impl AnimationNode for AimNode {
     }
 }
 
+impl EditorAnimationNode for AimNode {
+    fn input_slots(&self) -> InputSlots {
+        InputSlots::Fixed(vec![name!("pose")])
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use concerto_animation::{
         evaluation::AnimationGraphContext,
         graph::AnimationGraph,
         look_at::{LookFrame, YawPitch, look_rotation, yaw_pitch_to},
-        node::{AnimationNode, InputSlots, ReflectAnimationNode},
+        node::{AnimationNode, EditorAnimationNode, ReflectAnimationNode},
         player::AnimationPlayer,
         pose::{AnimationFrame, EvaluatedFrame, FramePool, JointPose},
     };
@@ -617,10 +619,6 @@ mod tests {
         type UpdateInput = ();
         type EvaluateInput = ();
 
-        fn input_slots(&self) -> InputSlots {
-            InputSlots::None
-        }
-
         fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) {}
 
         fn update(&self, _: &mut (), _: f32, _: &(), _: &AnimationGraphContext<'_>) {}
@@ -645,6 +643,8 @@ mod tests {
 
         fn reset(&self, _: &mut ()) {}
     }
+
+    impl EditorAnimationNode for InputPose {}
 
     fn graph_of(node: AimNode, rotations: &[Quat]) -> AnimationGraph {
         captured_graph(

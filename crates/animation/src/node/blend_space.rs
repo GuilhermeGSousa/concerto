@@ -10,7 +10,9 @@ use crate::{
     clip::AnimationClip,
     evaluation::AnimationGraphContext,
     graph::{AnimationGraph, AnimationNodeContext, AnimationNodeData, AnimationNodeIndex},
-    node::{AnimationClipNode, AnimationNode, InputSlots, ReflectAnimationNode},
+    node::{
+        AnimationClipNode, AnimationNode, EditorAnimationNode, InputSlots, ReflectAnimationNode,
+    },
     param::Param,
     pose::{AnimationFrame, EvaluatedFrame, FramePool, RootMotion, WeightedMotion},
 };
@@ -64,10 +66,6 @@ impl AnimationNode for BlendSpace2DNode {
     type CreateInput = ();
     type UpdateInput = ();
     type EvaluateInput = ();
-
-    fn input_slots(&self) -> InputSlots {
-        InputSlots::Variable
-    }
 
     fn create_state(
         &self,
@@ -164,6 +162,12 @@ impl AnimationNode for BlendSpace2DNode {
     fn reset(&self, state: &mut BlendSpace2DInstanceNode) {
         state.current_triangulated_point = None;
     }
+}
+
+impl EditorAnimationNode for BlendSpace2DNode {
+    fn input_slots(&self) -> InputSlots {
+        InputSlots::Variable
+    }
 
     fn input_added(&mut self, index: usize) {
         self.points.insert(index.min(self.points.len()), Vec2::ZERO);
@@ -232,7 +236,7 @@ mod tests {
     use super::{BlendInput, BlendSpace2DInstanceNode, BlendSpace2DNode};
     use crate::{
         blackboard::AnimationBlackboard,
-        node::AnimationNode,
+        node::{AnimationNode, EditorAnimationNode},
         pose::{RootMotion, WeightedMotion},
         testing::Walks,
     };

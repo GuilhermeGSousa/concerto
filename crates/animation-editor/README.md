@@ -321,8 +321,8 @@ three signals, sent with `PreviewSignals`, and writes one event:
   It is what `AnimationPlayer::for_each_node` visits on the first player that
   plays, the one with the lowest entity index: a `PreviewNode` per playing
   node with its `path` from the graph `ShowGraphs` named, its `weight` and its
-  `report`, the clip time of a clip node and the current state and transition
-  of a state machine. `nodes` is empty while no player plays the graph, as on
+  `describe` line, the `clip_time` of a clip node and the `machine` view, the
+  current state and transition of a state machine. `nodes` is empty while no player plays the graph, as on
   a stage with no skeleton. The tab forwards it with `forward_hosted_event`,
   so `EventReader<Hosted<GraphPreviewState>>` reads it in the editor.
 
@@ -470,7 +470,7 @@ stored value, and every edit is refused with
 `The preview is not running, so the graph is read-only`.
 
 The copy tells a node when its inputs change: it calls the parent's
-`input_added(index)` when it gives it an input and `input_removed(index)` when it
+`EditorAnimationNode::input_added(index)` when it gives it an input and `input_removed(index)` when it
 takes one away, so a `BlendSpace2DNode` keeps a point per input.
 
 ### The panels
@@ -478,7 +478,7 @@ takes one away, so a `BlendSpace2DNode` keeps a point per input.
 The `bottom` host holds a row with the breadcrumb and, under it, the canvas, in
 `Flow` mode for a pose graph. A node's title is the last segment of its type name. Its
 subtitle is the name of the asset its first handle field names, when the
-project has that asset. Its pins come from `input_slots()`: none, one per named
+project has that asset. Its pins come from `EditorAnimationNode::input_slots()`: none, one per named
 slot, or for a node that takes any number of inputs one per input and an empty
 one after them. Every node but the result node has an output pin. When a graph
 comes into view the canvas scrolls its result node into view, and when a state
@@ -608,7 +608,7 @@ transitions between that pair, 0 without one.
 
 | Tool | Does |
 | --- | --- |
-| `graph_inspect` | Read-only. The breadcrumb, then for a pose graph one line per node in id order, `id · type · place · subtitle`: `place` is `parent#slot`, `result` for the result node, or `loose`, and the subtitle is left out when the node has none. For a state machine, one line per state, `name · initial · graph address`, with `initial` only on the initial state and `no graph` or `missing graph` in place of an address, then one per transition, `from → to #index · trigger · blend`, such as `Idle → Run #0 · Instant · 0.25s`. When the graph names parameters, the line `parameters:` and one line per parameter follow, `name · type · value`, such as `moving · bool · false`, the type by the last segment of its name and the value as JSON, with ` · read as several types` after a name the graph reads as more than one. Once the preview has reported what it plays, the line `live:` follows: for a pose graph one line per playing node, `id · weight 1.00`, then ` · time 0.42s` on a clip node and ` · in Walk` on a state machine, with ` · Idle → Walk 0.25`, the transition and its progress, while one blends; for a state machine in view, that last part alone, `in Walk`. There is no `live:` block before a state has arrived or while no player plays the graph |
+| `graph_inspect` | Read-only. The breadcrumb, then for a pose graph one line per node in id order, `id · type · place · subtitle`: `place` is `parent#slot`, `result` for the result node, or `loose`, and the subtitle is left out when the node has none. For a state machine, one line per state, `name · initial · graph address`, with `initial` only on the initial state and `no graph` or `missing graph` in place of an address, then one per transition, `from → to #index · trigger · blend`, such as `Idle → Run #0 · Instant · 0.25s`. When the graph names parameters, the line `parameters:` and one line per parameter follow, `name · type · value`, such as `moving · bool · false`, the type by the last segment of its name and the value as JSON, with ` · read as several types` after a name the graph reads as more than one. Once the preview has reported what it plays, the line `live:` follows: for a pose graph one line per playing node, `id · weight 1.00`, then ` · time 0.42s` on a clip node and ` · in Walk` on a state machine, with ` · Idle → Walk 0.25`, the transition and its progress, while one blends; for a state machine in view, that last part alone, `in Walk`. A node other than a clip or a state machine whose `describe` returns a line has it printed indented under its own line. There is no `live:` block before a state has arrived or while no player plays the graph |
 | `graph_add_node` | `type`, by short name or full path, and optionally `parent` and `slot`. Answers `Added node 4, a LayerNode, as input 0 of node 0.`, or `…, loose.` The new node is selected, so it is the value `Node`. With `child` in place of `parent` and `slot` it sends `AddParent`, as dropping that node's link on empty space does, and answers `Added node 5, a LayerNode, with node 3 as input 0.`; a type that takes no inputs answers `refused` and adds nothing, and `child` with `parent` or `slot` answers `invalid_arguments` |
 | `graph_add_state` | `name`, and optionally `graph`, an existing `AnimationGraph` by address or id; without one a graph asset of that name is created beside the graph that holds the machine. Answers `Added state Idle, the initial state, playing content/Idle.gasset.` |
 | `graph_connect` | In a pose graph `child`, `parent` and optionally `slot`; answers `Node 4 is input 0 of node 2; node 3, which was there, is loose.` In a state machine `from` and `to`, equal for a transition to itself; answers `Added transition Idle → Walk #0.` and selects it |

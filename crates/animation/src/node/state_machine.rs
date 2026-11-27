@@ -10,10 +10,7 @@ use crate::transition::{
 };
 use crate::{
     evaluation::AnimationGraphContext,
-    node::{
-        AnimationNode, InputSlots, NodeReport, ReflectAnimationNode, StateMachineReport,
-        TransitionReport,
-    },
+    node::{AnimationNode, EditorAnimationNode, ReflectAnimationNode},
 };
 
 use concerto_ecs::Res;
@@ -453,6 +450,14 @@ impl AnimationStateMachine {
     }
 }
 
+/// A transition in flight; `progress` runs from 0 to 1.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TransitionView {
+    pub from: Name,
+    pub to: Name,
+    pub progress: f32,
+}
+
 pub struct AnimationStateMachineState {
     state_graphs: AnimationGraphStates,
     current_state: StateId,
@@ -482,11 +487,24 @@ impl AnimationStateMachineState {
         }
     }
 
+    /// The name of the state the machine is in.
     pub fn current_state_name(&self) -> Option<Name> {
         self.state_names.get(*self.current_state).copied()
     }
 
-    fn transition(
+    /// The transition the machine is blending through, if any.
+    pub fn transition(&self) -> Option<TransitionView> {
+        let named = |graph: GraphId| self.state_names.get(*graph).copied();
+        self.blender.in_flight().and_then(|blend| {
+            Some(TransitionView {
+                from: named(blend.from)?,
+                to: named(blend.to)?,
+                progress: blend.progress,
+            })
+        })
+    }
+
+    fn begin_transition(
         &mut self,
         graphs: &AssetStore<AnimationGraph>,
         transition: &AnimationStateMachineTransition,
@@ -514,10 +532,6 @@ impl AnimationNode for AnimationStateMachine {
     type CreateInput = Res<'static, AssetStore<AnimationGraph>>;
     type UpdateInput = Res<'static, AssetStore<AnimationGraph>>;
     type EvaluateInput = Res<'static, AssetStore<AnimationGraph>>;
-
-    fn input_slots(&self) -> InputSlots {
-        InputSlots::None
-    }
 
     fn create_state(
         &self,
@@ -550,12 +564,12 @@ impl AnimationNode for AnimationStateMachine {
         for transition in transitions {
             match &transition.trigger {
                 AnimationFSMTrigger::Instant => {
-                    state.transition(graphs, transition);
+                    state.begin_transition(graphs, transition);
                     break;
                 }
                 AnimationFSMTrigger::BoolEquals { param, value } => {
                     if context.blackboard().read(param).is_some_and(|v| v == value) {
-                        state.transition(graphs, transition);
+                        state.begin_transition(graphs, transition);
                         break;
                     }
                 }
@@ -565,7 +579,7 @@ impl AnimationNode for AnimationStateMachine {
                         .read(param)
                         .is_some_and(|v| v.length_squared() > f32::EPSILON)
                     {
-                        state.transition(graphs, transition);
+                        state.begin_transition(graphs, transition);
                         break;
                     }
                 }
@@ -575,7 +589,7 @@ impl AnimationNode for AnimationStateMachine {
                         .get(state.current_state.as_graph_id())
                         .is_some_and(|current_graph| current_graph.is_finished(graphs))
                     {
-                        state.transition(graphs, transition);
+                        state.begin_transition(graphs, transition);
                         break;
                     }
                 }
@@ -636,24 +650,6 @@ impl AnimationNode for AnimationStateMachine {
         }
     }
 
-    fn report(&self, state: &AnimationStateMachineState) -> NodeReport {
-        let named = |graph: GraphId| state.state_names.get(*graph).copied();
-        let transition = state.blender.in_flight().and_then(|blend| {
-            Some(TransitionReport {
-                from: named(blend.from)?,
-                to: named(blend.to)?,
-                progress: blend.progress,
-            })
-        });
-        NodeReport {
-            clip_time: None,
-            state_machine: Some(StateMachineReport {
-                current: state.current_state_name(),
-                transition,
-            }),
-        }
-    }
-
     #[cfg(any(test, feature = "test-support"))]
     fn inner_states_mut(
         &self,
@@ -661,6 +657,22 @@ impl AnimationNode for AnimationStateMachine {
         visit: &mut dyn FnMut(&mut AnimationGraphState),
     ) {
         state.state_graphs.iter_mut().for_each(visit);
+    }
+}
+
+impl EditorAnimationNode for AnimationStateMachine {
+    fn describe(&self, state: &AnimationStateMachineState) -> Option<String> {
+        let mut line = match state.current_state_name() {
+            Some(current) => format!("in {current}"),
+            None => "in no state".to_owned(),
+        };
+        if let Some(transition) = state.transition() {
+            line.push_str(&format!(
+                " · {} → {} {:.2}",
+                transition.from, transition.to, transition.progress
+            ));
+        }
+        Some(line)
     }
 }
 
@@ -785,7 +797,7 @@ mod tests {
         evaluation::AnimationGraphContext,
         graph::AnimationGraph,
         node::{
-            AnimationClipNode, AnimationNode, InputSlots, ReflectAnimationNode,
+            AnimationClipNode, AnimationNode, EditorAnimationNode, ReflectAnimationNode,
             register_node_inputs,
         },
         player::AnimationPlayer,
@@ -803,10 +815,6 @@ mod tests {
         type CreateInput = ();
         type UpdateInput = ();
         type EvaluateInput = ();
-
-        fn input_slots(&self) -> InputSlots {
-            InputSlots::None
-        }
 
         fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) -> u32 {
             0
@@ -830,6 +838,8 @@ mod tests {
 
         fn reset(&self, _: &mut u32) {}
     }
+
+    impl EditorAnimationNode for Counter {}
 
     fn counting_graph() -> AnimationGraph {
         let mut registry = TypeRegistry::default();
@@ -1209,18 +1219,8 @@ mod tests {
                 })
                 .collect();
             let mut line = format!("{} w{}", path.join("/"), visit.weight);
-            if let Some(time) = visit.report.clip_time {
-                line.push_str(&format!(" t{time:.2}"));
-            }
-            if let Some(machine) = &visit.report.state_machine {
-                let current = machine.current.map_or("none", |current| current.as_str());
-                line.push_str(&format!(" in {current}"));
-                if let Some(transition) = machine.transition {
-                    line.push_str(&format!(
-                        " {}>{} {:.2}",
-                        transition.from, transition.to, transition.progress
-                    ));
-                }
+            if let Some(described) = visit.node.describe(visit.state) {
+                line.push_str(&format!(" {described}"));
             }
             visits.push(line);
         });
@@ -1276,7 +1276,7 @@ mod tests {
                 "0 w1",
                 "1 w1 in idle",
                 "1:idle/0 w1",
-                "1:idle/1 w1 t0.05",
+                "1:idle/1 w1 time 0.05 s",
                 "1:walk/0 w1",
                 "1:walk/1 w1",
             ]
@@ -1287,7 +1287,10 @@ mod tests {
 
         player.set_bool_param(name!("go"), true);
         walks.advance(&mut player, 0.05);
-        assert_eq!(visited(&player, &walks)[1], "1 w1 in walk idle>walk 0.25");
+        assert_eq!(
+            visited(&player, &walks)[1],
+            "1 w1 in walk · idle → walk 0.25"
+        );
 
         for _ in 0..4 {
             walks.advance(&mut player, 0.05);
