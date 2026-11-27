@@ -434,6 +434,7 @@ impl AnimationNode for AimNode {
     type CreateInput = ();
     type UpdateInput = ();
     type EvaluateInput = ();
+    type DriveInput = ();
 
     fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) -> AimState {
         AimState {
@@ -635,6 +636,7 @@ mod tests {
         type CreateInput = ();
         type UpdateInput = ();
         type EvaluateInput = ();
+        type DriveInput = ();
 
         fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) {}
 

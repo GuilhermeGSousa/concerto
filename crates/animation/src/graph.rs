@@ -20,7 +20,7 @@ use uuid::Uuid;
 
 use crate::{
     blackboard::AnimationBlackboard,
-    evaluation::{AnimationGraphContext, AnimationGraphEvaluator},
+    evaluation::{AnimationGraphContext, AnimationGraphEvaluator, DriveContext},
     node::{
         AnimationNode, ErasedAnimationNode, LayerNode, NodeState, PlaceholderNode,
         ReflectAnimationNode, ResultNode, blend_space::BlendSpace2DBuilderContext,
@@ -944,6 +944,47 @@ impl AnimationGraphState {
         pool: &mut FramePool,
         output_frame: &mut AnimationFrame,
     ) -> bool {
+        self.walk(
+            graphs,
+            pool,
+            output_frame,
+            |node, state, inputs, pool, output| {
+                node.evaluate(state, context, bone_ids, inputs, pool, output);
+            },
+        )
+    }
+
+    pub(crate) fn drive(
+        &mut self,
+        graphs: &AssetStore<AnimationGraph>,
+        context: &DriveContext<'_>,
+        bone_ids: &[Uuid],
+        pool: &mut FramePool,
+        output_frame: &mut AnimationFrame,
+    ) -> bool {
+        self.walk(
+            graphs,
+            pool,
+            output_frame,
+            |node, state, inputs, pool, output| {
+                node.drive(state, context, bone_ids, inputs, pool, output);
+            },
+        )
+    }
+
+    fn walk(
+        &mut self,
+        graphs: &AssetStore<AnimationGraph>,
+        pool: &mut FramePool,
+        output_frame: &mut AnimationFrame,
+        mut visit: impl FnMut(
+            &dyn ErasedAnimationNode,
+            &mut NodeState,
+            &[EvaluatedFrame],
+            &mut FramePool,
+            &mut AnimationFrame,
+        ),
+    ) -> bool {
         let Some(graph) = self.get_animation_graph(graphs) else {
             return false;
         };
@@ -960,10 +1001,9 @@ impl AnimationGraphState {
 
             if let Some(node) = graph.live_node(node_index) {
                 if let Some(node_state) = self.get_active_node_state_mut(&node_index) {
-                    node.evaluate(
+                    visit(
+                        node,
                         &mut node_state.node_state,
-                        context,
-                        bone_ids,
                         graph_evaluator.view_stack(stack_start),
                         pool,
                         &mut node_output,
@@ -1233,6 +1273,7 @@ mod tests {
         type CreateInput = Res<'static, NeverRegistered>;
         type UpdateInput = ();
         type EvaluateInput = ();
+        type DriveInput = ();
 
         fn create_state(&self, _: &Res<NeverRegistered>, _context: &AnimationGraphContext<'_>) {}
 

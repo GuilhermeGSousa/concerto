@@ -1,4 +1,9 @@
-use concerto_app::{App, edit_time::AtPreviewTime, plugins::Plugin, schedule_groups::LateUpdate};
+use concerto_app::{
+    App,
+    edit_time::AtPreviewTime,
+    plugins::Plugin,
+    schedule_groups::{LateFixedUpdate, LateUpdate},
+};
 use concerto_ecs::{IntoSystemConfig, World, reflect::AppTypeRegistry};
 use concerto_foundation::{
     assets::handle::AssetHandle,
@@ -10,6 +15,7 @@ use glam::{Vec2, Vec3};
 
 use crate::{
     clip::AnimationClip,
+    drive::{AnimationDriveSet, drive_animation_players},
     event::{AnimationEvent, ClipEvent},
     graph::AnimationGraph,
     mask::BoneMask,
@@ -95,7 +101,8 @@ impl AnimationAppExt for App {
 }
 
 /// Registers the animation assets, node and event types, and the systems that play every
-/// [`AnimationPlayer`](crate::player::AnimationPlayer) in `LateUpdate`, at preview time too.
+/// [`AnimationPlayer`](crate::player::AnimationPlayer) in `LateUpdate` and drive it in
+/// `LateFixedUpdate`, at preview time too.
 pub struct AnimationPlugin;
 
 impl Plugin for AnimationPlugin {
@@ -111,6 +118,12 @@ impl Plugin for AnimationPlugin {
         }
         register_animation_node_inputs(app.main_mut().world_mut());
 
+        app.add_system(
+            LateFixedUpdate,
+            drive_animation_players
+                .in_set(AnimationDriveSet)
+                .at_preview_time(),
+        );
         app.add_system(LateUpdate, initialize_skeletons.at_preview_time())
             .add_system(
                 LateUpdate,
@@ -174,6 +187,7 @@ mod tests {
         type CreateInput = ();
         type UpdateInput = ();
         type EvaluateInput = ();
+        type DriveInput = ();
 
         fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) -> bool {
             false
@@ -240,12 +254,13 @@ mod tests {
             .unwrap()
             .insert(graph_handle.id(), graph);
 
+        let stand_in = world.spawn(());
         let mut player = AnimationPlayer::new(1);
         {
             let mut create = InputState::<InputSet<CreateNodeInputs>>::new(world);
             let inputs = create.get(world).unwrap();
             let graphs = world.get_resource::<AssetStore<AnimationGraph>>().unwrap();
-            player.initialize_graph(graph_handle, graphs, &inputs);
+            player.initialize_graph(stand_in, graph_handle, graphs, &inputs);
         }
         let bone = world.spawn(Transform::IDENTITY);
         world.spawn((
@@ -285,6 +300,7 @@ mod tests {
         type CreateInput = ();
         type UpdateInput = Res<'static, Speed>;
         type EvaluateInput = ();
+        type DriveInput = ();
 
         fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) {}
 

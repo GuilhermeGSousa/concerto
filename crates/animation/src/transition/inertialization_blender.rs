@@ -3,7 +3,7 @@ use uuid::Uuid;
 
 use crate::{
     attribute::PoseAttributes,
-    evaluation::AnimationGraphContext,
+    evaluation::{AnimationGraphContext, DriveContext},
     graph::{AnimationGraph, AnimationGraphStates, GraphId},
     inertialization::{Inertializer, PoseVelocity},
     pose::{AnimationFrame, FramePool, Pose, RootMotion},
@@ -181,6 +181,19 @@ impl AnimationTransitionBlender for InertializationBlender {
 
         self.store_output(output.pose(), delta_time);
         self.last_attributes.copy_from(output.attributes());
+    }
+
+    fn drive(
+        &mut self,
+        bone_ids: &[Uuid],
+        graph_states: &mut AnimationGraphStates,
+        graphs: &AssetStore<AnimationGraph>,
+        context: &DriveContext<'_>,
+        pool: &mut FramePool,
+        output: &mut AnimationFrame,
+    ) {
+        self.stack
+            .drive(bone_ids, graph_states, graphs, context, pool, output);
     }
 
     fn root_motion(

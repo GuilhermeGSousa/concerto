@@ -2,7 +2,8 @@ use concerto_foundation::assets::asset_store::AssetStore;
 use uuid::Uuid;
 
 use crate::{
-    evaluation::AnimationGraphContext,
+    attribute::PoseAttributes,
+    evaluation::{AnimationGraphContext, DriveContext},
     graph::{AnimationGraph, AnimationGraphStates, GraphId},
     pose::{AnimationFrame, FramePool, RootMotion},
     transition::{AnimationTransitionBlender, BlendInFlight},
@@ -41,7 +42,9 @@ pub(crate) struct BlendStack {
     entries: Vec<BlendStackEntry>,
     last_pose: AnimationFrame,
     last_pose_blended: bool,
+    last_drive: PoseAttributes,
     snapshot_pose: AnimationFrame,
+    snapshot_drive: PoseAttributes,
 }
 
 impl BlendStack {
@@ -54,7 +57,9 @@ impl BlendStack {
             }],
             last_pose: AnimationFrame::identity(0),
             last_pose_blended: false,
+            last_drive: PoseAttributes::default(),
             snapshot_pose: AnimationFrame::identity(0),
+            snapshot_drive: PoseAttributes::default(),
         }
     }
 
@@ -64,6 +69,27 @@ impl BlendStack {
         }
         let last = self.entries.len().saturating_sub(1);
         self.entries.drain(..last);
+    }
+
+    fn mix(
+        &self,
+        pool: &mut FramePool,
+        output: &mut AnimationFrame,
+        mut play: impl FnMut(Source, &mut FramePool, &mut AnimationFrame),
+        blend: impl Fn(&mut AnimationFrame, &AnimationFrame, f32),
+    ) {
+        let Some((base, fading_in)) = self.entries.split_first() else {
+            return;
+        };
+
+        play(base.source, pool, output);
+
+        for entry in fading_in {
+            let mut layer = pool.acquire();
+            play(entry.source, pool, &mut layer);
+            blend(output, &layer, entry.weight);
+            pool.release(layer);
+        }
     }
 
     fn holds(&self, graph: GraphId) -> bool {
@@ -79,6 +105,7 @@ impl BlendStack {
         }
         self.snapshot_pose.copy_from(&self.last_pose);
         self.snapshot_pose.events.clear();
+        self.snapshot_drive.copy_from(&self.last_drive);
         self.entries.clear();
         self.entries.push(BlendStackEntry {
             source: Source::Snapshot(from),
@@ -118,26 +145,20 @@ impl AnimationTransitionBlender for BlendStack {
         pool: &mut FramePool,
         output: &mut AnimationFrame,
     ) {
-        let Some((base, fading_in)) = self.entries.split_first() else {
-            return;
-        };
         let snapshot = &self.snapshot_pose;
-        let mut play =
-            |source: Source, pool: &mut FramePool, frame: &mut AnimationFrame| match source {
+        self.mix(
+            pool,
+            output,
+            |source, pool, frame| match source {
                 Source::Graph(graph_id) => {
                     if let Some(graph_state) = graph_states.get_mut(graph_id) {
                         graph_state.evaluate(graphs, context, bone_ids, pool, frame);
                     }
                 }
                 Source::Snapshot(_) => frame.copy_from(snapshot),
-            };
-        play(base.source, pool, output);
-        for entry in fading_in {
-            let mut layer = pool.acquire();
-            play(entry.source, pool, &mut layer);
-            output.blend(&layer, entry.weight);
-            pool.release(layer);
-        }
+            },
+            |output, layer, weight| output.blend(layer, weight),
+        );
         self.last_pose_blended = self.entries.len() > 1;
         if !self.last_pose_blended {
             return;
@@ -146,6 +167,34 @@ impl AnimationTransitionBlender for BlendStack {
             self.last_pose = AnimationFrame::identity(output.len());
         }
         self.last_pose.copy_from(output);
+    }
+
+    fn drive(
+        &mut self,
+        bone_ids: &[Uuid],
+        graph_states: &mut AnimationGraphStates,
+        graphs: &AssetStore<AnimationGraph>,
+        context: &DriveContext<'_>,
+        pool: &mut FramePool,
+        output: &mut AnimationFrame,
+    ) {
+        let snapshot = &self.snapshot_drive;
+        self.mix(
+            pool,
+            output,
+            |source, pool, frame| match source {
+                Source::Graph(graph_id) => {
+                    if let Some(graph_state) = graph_states.get_mut(graph_id) {
+                        graph_state.drive(graphs, context, bone_ids, pool, frame);
+                    }
+                }
+                Source::Snapshot(_) => frame.attributes_mut().copy_from(snapshot),
+            },
+            |output, layer, weight| {
+                output.attributes_mut().blend(layer.attributes(), weight);
+            },
+        );
+        self.last_drive.copy_from(output.attributes());
     }
 
     fn root_motion(

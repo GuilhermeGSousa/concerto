@@ -14,7 +14,7 @@ use log::warn;
 use uuid::Uuid;
 
 use crate::{
-    evaluation::AnimationGraphContext,
+    evaluation::{AnimationGraphContext, DriveContext},
     graph::{AnimationGraph, AnimationGraphState},
     pose::{AnimationFrame, EvaluatedFrame, FramePool, RootMotion, WeightedMotion},
 };
@@ -32,6 +32,8 @@ pub trait AnimationNode: Reflect + Send + Sync + 'static {
     type UpdateInput: ReadOnlySystemInput + 'static;
     /// What the node reads to write its pose.
     type EvaluateInput: ReadOnlySystemInput + 'static;
+    /// What the node reads to say what it asks of physics each step.
+    type DriveInput: ReadOnlySystemInput + 'static;
 
     /// Creates the node's state for one player, when the player starts the graph.
     fn create_state(
@@ -79,6 +81,26 @@ pub trait AnimationNode: Reflect + Send + Sync + 'static {
         inputs
             .first()
             .map_or(RootMotion::IDENTITY, |input| input.motion)
+    }
+
+    /// What the node asks of physics this step, from its state and its inputs' drive frames.
+    ///
+    /// Only attributes are read and written; joints are unused. `inputs` holds the drive frames of
+    /// the node's inputs in slot order, each with its node's weight. The default copies the first
+    /// input's attributes.
+    fn drive(
+        &self,
+        _state: &mut Self::State,
+        _input: &SystemInputData<'_, '_, Self::DriveInput>,
+        _context: &DriveContext<'_>,
+        _bone_ids: &[Uuid],
+        inputs: &[EvaluatedFrame],
+        _pool: &mut FramePool,
+        output: &mut AnimationFrame,
+    ) {
+        if let Some(input) = inputs.first() {
+            output.attributes_mut().copy_from(input.frame.attributes());
+        }
     }
 
     /// Puts the state back to where [`Self::create_state`] left it, as when a state machine
@@ -154,11 +176,15 @@ pub struct UpdateNodeInputs;
 /// The graph walk that writes poses; its input set holds every registered node's `EvaluateInput`.
 pub struct EvaluateNodeInputs;
 
-/// Registers `N`'s three inputs with the graph walks of `world`, before its schedules compile.
+/// The graph walk that drives physics each step; its input set holds every registered node's `DriveInput`.
+pub struct DriveNodeInputs;
+
+/// Registers `N`'s four inputs with the graph walks of `world`, before its schedules compile.
 pub fn register_node_inputs<N: AnimationNode>(world: &mut World) {
     register_input::<CreateNodeInputs, N::CreateInput>(world);
     register_input::<UpdateNodeInputs, N::UpdateInput>(world);
     register_input::<EvaluateNodeInputs, N::EvaluateInput>(world);
+    register_input::<DriveNodeInputs, N::DriveInput>(world);
 }
 
 /// An [`EditorAnimationNode`] with its state type erased; implemented for every one.
@@ -194,6 +220,17 @@ pub trait ErasedAnimationNode: Send + Sync {
         bone_ids: &[Uuid],
         inputs: &[WeightedMotion],
     ) -> RootMotion;
+
+    /// What the node asks of physics this step; see [`AnimationNode::drive`].
+    fn drive(
+        &self,
+        state: &mut NodeState,
+        context: &DriveContext<'_>,
+        bone_ids: &[Uuid],
+        inputs: &[EvaluatedFrame],
+        pool: &mut FramePool,
+        output: &mut AnimationFrame,
+    );
 
     /// Resets the state; see [`AnimationNode::reset`].
     fn reset(&self, state: &mut NodeState);
@@ -299,6 +336,22 @@ impl<T: EditorAnimationNode> ErasedAnimationNode for T {
             AnimationNode::root_motion(self, state, input, context, bone_ids, inputs)
         } else {
             RootMotion::IDENTITY
+        }
+    }
+
+    fn drive(
+        &self,
+        state: &mut NodeState,
+        context: &DriveContext<'_>,
+        bone_ids: &[Uuid],
+        inputs: &[EvaluatedFrame],
+        pool: &mut FramePool,
+        output: &mut AnimationFrame,
+    ) {
+        if let Some(state) = state.downcast_mut::<T::State>()
+            && let Some(input) = fetched::<T, T::DriveInput>(context.graph)
+        {
+            AnimationNode::drive(self, state, input, context, bone_ids, inputs, pool, output);
         }
     }
 
@@ -423,6 +476,7 @@ impl AnimationNode for PlaceholderNode {
     type CreateInput = ();
     type UpdateInput = ();
     type EvaluateInput = ();
+    type DriveInput = ();
 
     fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) {}
 
@@ -480,6 +534,7 @@ mod tests {
         type CreateInput = ();
         type UpdateInput = Res<'static, Step>;
         type EvaluateInput = ();
+        type DriveInput = ();
 
         fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) -> GainState {
             GainState::default()

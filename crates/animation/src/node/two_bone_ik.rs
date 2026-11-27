@@ -281,6 +281,7 @@ impl AnimationNode for TwoBoneIkNode {
     type CreateInput = ();
     type UpdateInput = ();
     type EvaluateInput = ();
+    type DriveInput = ();
 
     fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) -> TwoBoneIkState {
         TwoBoneIkState::default()

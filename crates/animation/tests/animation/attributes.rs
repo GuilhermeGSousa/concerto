@@ -3,7 +3,8 @@ use std::{thread, time::Duration};
 use concerto_animation::{
     attribute::{PoseAttribute, PoseAttributes},
     clip::{AnimationChanelOutput, AnimationChannel, AnimationClip},
-    evaluation::AnimationGraphContext,
+    drive::drive_animation_players,
+    evaluation::{AnimationGraphContext, DriveContext},
     event::{AnimationEvent, AnimationSignal},
     graph::{AnimationGraph, AnimationNodeIndex},
     mask::{BoneMask, BoneMaskBranch},
@@ -19,7 +20,7 @@ use concerto_animation::{
 };
 use concerto_app::{App, plugins::AssetManagerPlugin, schedule_groups::LateUpdate};
 use concerto_ecs::{
-    Entity,
+    Entity, IntoSystem, System,
     component::scene::SceneEntityRef,
     reflect::AppTypeRegistry,
     resource::{ResMut, Resource},
@@ -64,6 +65,22 @@ impl PoseAttribute for Amount {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct SeenBones(f32);
+
+impl PoseAttribute for SeenBones {
+    fn neutral() -> Self {
+        SeenBones(0.0)
+    }
+
+    fn blend(&mut self, self_weight: f32, other: &Self, other_weight: f32) {
+        let total = self_weight + other_weight;
+        if total > 0.0 {
+            self.0 = (self.0 * self_weight + other.0 * other_weight) / total;
+        }
+    }
+}
+
 #[derive(Default, Reflect)]
 #[reflect(AnimationNode)]
 struct SetAmount {
@@ -85,6 +102,14 @@ impl SetAmount {
         self.rate = rate;
         self
     }
+
+    fn write(&self, elapsed: f32, output: &mut AnimationFrame) {
+        let bone_count = output.len();
+        let amounts = output.attributes_mut().channel_mut::<Amount>(bone_count);
+        for bone in &self.bones {
+            amounts[*bone] = Amount(self.value + self.rate * elapsed);
+        }
+    }
 }
 
 impl AnimationNode for SetAmount {
@@ -92,6 +117,7 @@ impl AnimationNode for SetAmount {
     type CreateInput = ();
     type UpdateInput = ();
     type EvaluateInput = ();
+    type DriveInput = ();
 
     fn create_state(&self, _: &(), _: &AnimationGraphContext<'_>) -> f32 {
         0.0
@@ -114,11 +140,32 @@ impl AnimationNode for SetAmount {
         if let Some(input) = evaluated_inputs.first() {
             output.copy_from(&input.frame);
         }
-        let bone_count = output.len();
-        let amounts = output.attributes_mut().channel_mut::<Amount>(bone_count);
-        for bone in &self.bones {
-            amounts[*bone] = Amount(self.value + self.rate * *elapsed);
+        self.write(*elapsed, output);
+    }
+
+    fn drive(
+        &self,
+        elapsed: &mut f32,
+        _: &(),
+        context: &DriveContext<'_>,
+        bone_ids: &[Uuid],
+        inputs: &[EvaluatedFrame],
+        _: &mut FramePool,
+        output: &mut AnimationFrame,
+    ) {
+        if let Some(input) = inputs.first() {
+            output.attributes_mut().copy_from(input.frame.attributes());
         }
+        self.write(*elapsed, output);
+        let seen = context
+            .skeleton()
+            .filter(|skeleton| *skeleton.bone_ids == *bone_ids)
+            .map_or(0.0, |_| bone_ids.len() as f32);
+        let bone_count = output.len();
+        output
+            .attributes_mut()
+            .channel_mut::<SeenBones>(bone_count)
+            .fill(SeenBones(seen));
     }
 
     fn reset(&self, elapsed: &mut f32) {
@@ -380,6 +427,21 @@ impl Stage {
             .attributes();
         per_bone(attributes)
     }
+
+    fn driven(&mut self, player: Entity) -> Vec<f32> {
+        per_bone(self.drive(player))
+    }
+
+    fn drive(&mut self, player: Entity) -> &PoseAttributes {
+        let world = self.world();
+        let mut system = drive_animation_players.into_system();
+        system.initialize(world);
+        system.run_and_apply((), world);
+        world
+            .get_component_for_entity::<AnimationPlayer>(player)
+            .unwrap()
+            .drive_attributes()
+    }
 }
 
 fn per_bone(attributes: &PoseAttributes) -> Vec<f32> {
@@ -450,6 +512,13 @@ fn attributes_travel_with_the_pose_through_every_blend() {
     assert_eq!(stage.amounts(blend_player), [0.0, 0.25, 0.0]);
     assert_eq!(stage.amounts(layer_player), [0.0, 0.0, 0.5]);
     assert_eq!(stage.amounts(additive_player), [1.0; BONES]);
+    assert_eq!(stage.driven(blend_player), [0.0, 0.25, 0.0]);
+    assert_eq!(stage.driven(layer_player), [0.0, 0.0, 0.5]);
+    assert_eq!(
+        stage.drive(additive_player).get::<SeenBones>(0),
+        SeenBones(BONES as f32),
+        "a node's drive sees the player's skeleton and its bone ids"
+    );
 
     stage.set_param(cross_fade, name!("go"), true);
     stage.set_param(inertialized, name!("go"), true);
@@ -463,6 +532,7 @@ fn attributes_travel_with_the_pose_through_every_blend() {
         right_after > 0.9 && right_after < 1.0,
         "right after the transition the source's amount is {right_after}"
     );
+    assert_eq!(stage.driven(inertialized), [0.0; BONES]);
 
     stage.advance(0.49);
     let halfway = stage.amounts(cross_fade)[0];
@@ -470,6 +540,7 @@ fn attributes_travel_with_the_pose_through_every_blend() {
         (halfway - 0.5).abs() < 0.02,
         "halfway through the cross-fade the amount is {halfway}"
     );
+    assert_eq!(stage.driven(cross_fade), stage.amounts(cross_fade));
 
     stage.advance(0.5);
     let settled = stage.amounts(inertialized)[0];
@@ -491,8 +562,14 @@ fn attributes_travel_with_the_pose_through_every_blend() {
         [0.0; BONES],
         "a player swapped to a graph that is not loaded keeps no attributes"
     );
+    assert_eq!(stage.driven(blend_player), [0.0; BONES]);
     stage.pause(layer_player);
     stage.advance(0.0);
+    assert_eq!(
+        stage.driven(layer_player),
+        [0.0; BONES],
+        "a paused player is not driven"
+    );
     assert_eq!(
         stage.amounts(layer_player),
         [0.0, 0.0, 0.5],

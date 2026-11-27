@@ -499,6 +499,7 @@ impl AnimationNode for FootPlacementNode {
     type CreateInput = ();
     type UpdateInput = ();
     type EvaluateInput = Option<Res<'static, PhysicsState>>;
+    type DriveInput = ();
 
     fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) -> FootPlacementState {
         FootPlacementState::new(self)
@@ -700,6 +701,7 @@ mod tests {
         type CreateInput = ();
         type UpdateInput = ();
         type EvaluateInput = ();
+        type DriveInput = ();
 
         fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) {}
 

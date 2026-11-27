@@ -1416,7 +1416,8 @@ impl AnimationNode for Gain {
     type CreateInput = ();
     type UpdateInput = Res<'static, Tuning>;
     type EvaluateInput = ();
-    // create_state, update, evaluate, reset; is_finished defaults to true
+    type DriveInput = ();
+    // create_state, update, evaluate, reset; is_finished, root_motion and drive have defaults
 }
 
 impl EditorAnimationNode for Gain {}
@@ -1446,13 +1447,13 @@ takes. A node that keeps data for each input, as the blend space keeps a point,
 also implements `input_added(index)` and `input_removed(index)`, which an
 editor calls when it gives the node an input or takes one away.
 
-The three input types say what the node reads in each walk of the graph:
-`create_state` gets `CreateInput`, `update` gets `UpdateInput` and
-`evaluate` gets `EvaluateInput`, already fetched, as their typed data (`&Res<Tuning>`
+The four input types say what the node reads in each walk of the graph:
+`create_state` gets `CreateInput`, `update` gets `UpdateInput`,
+`evaluate` gets `EvaluateInput` and `drive` gets `DriveInput`, already fetched, as their typed data (`&Res<Tuning>`
 above). Each is a read-only system input: `Res`, `Option<Res>`, a read-only
 `Query`, or a tuple of them; `()` reads nothing. The systems that walk graphs,
-`initialize_animation_players`, `update_animation_players` and
-`animate_targets`, each declare the union of their walk's inputs over every
+`initialize_animation_players`, `update_animation_players`,
+`animate_targets` and `drive_animation_players`, each declare the union of their walk's inputs over every
 registered node, and nothing else, so `animate_targets` never declares what only
 an update reads. A node whose input is missing, or whose type was registered
 without `register_animation_node`, is skipped in that walk with a warning. A
@@ -1465,7 +1466,8 @@ player's own data: its blackboard, its root bone in `evaluate`, its skeleton,
 and, in `evaluate`, `model_to_world`: the transform of bone 0's parent, or
 identity when it has none. It is this frame's: the character has already moved by
 this frame's root motion when `evaluate` runs, so a node that reads the world
-reads where the character is now.
+reads where the character is now. `entity()` is the entity of the player being walked, which a node passes to a
+typed input, such as a `Query`, to read the character's other components.
 
 `evaluate` writes an `AnimationFrame`: a `Pose`, the joints in bone order, with
 the clip events its sources fired this frame. Its inputs
@@ -1492,6 +1494,27 @@ changes, the source's share halving every halflife; a retarget node drops
 them, since they belong to the skeleton that set them. The player keeps the
 last evaluated frame's, read with `AnimationPlayer::attributes`, and none once
 its graph gives no frame.
+
+A second walk of the graph, the drive pass, gives the attributes a physics step
+reads. `drive_animation_players`, the animation crate's system, runs it each
+fixed step in `LateFixedUpdate` inside `AnimationDriveSet`, which a system
+orders itself against, and is the only caller: a game does not call `drive` from its
+own system. For each player with a skeleton, paused or not, it walks the graph with the player's entity, its
+skeleton and its `InputSet<DriveNodeInputs>`, calling each
+node's `drive(state, input, context, bone_ids, inputs, pool, output)` from the
+leaves up, and keeps the attributes of the result, read with
+`AnimationPlayer::drive_attributes`; a paused player, or one whose graph gives
+no frame, keeps none. Only attributes are read and written, and the graph does
+not advance. The default copies the first input's, so only a node that asks something of physics
+or combines inputs overrides it: the blend node, blend spaces and the cross-fade
+blend by weight, a layer by the mask it resolved in its last `evaluate`, and a
+state machine drives the states it plays without advancing. Under
+inertialization the drive frame is the destination's alone. A node advances its
+physics-side state in `drive` at the step's `DriveContext::delta_time`; the
+context also gives the player's `blackboard()`, `root()`, `skeleton()` and
+`entity()`, and `bone_ids` are the skeleton's, as in `evaluate`. A `DriveInput`
+may not name what the drive writes, the `AnimationPlayer`; one that does panics
+when `drive_animation_players` is initialized.
 
 A node gives root motion with `root_motion(state, input, context, bone_ids,
 inputs)`, which returns a `RootMotion`. `update_animation_players` calls it for
