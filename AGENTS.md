@@ -94,7 +94,8 @@ cargo deny check bans advisories
 CARGO_BUILD_WARNINGS=deny cargo clippy --locked --workspace --all-targets -- -D warnings
 cargo clippy --locked --workspace -- -A clippy::all -D clippy::cognitive_complexity
 CARGO_BUILD_WARNINGS=deny cargo clippy --locked -p concerto-physics --no-default-features --features force-rapier -- -D warnings
-RUSTDOCFLAGS="-D warnings" CARGO_BUILD_WARNINGS=deny cargo doc --locked --workspace --no-deps
+RUSTDOCFLAGS="-D warnings" CARGO_BUILD_WARNINGS=deny cargo doc --locked --workspace --no-deps --features concerto-editor/testing,concerto-animation/test-support,concerto-ragdoll/test-support
+RUSTDOCFLAGS="-D warnings" CARGO_BUILD_WARNINGS=deny cargo doc --locked --no-deps -p concerto-physics --no-default-features --features force-rapier
 cargo test --locked --workspace
 cargo test --locked -p concerto-physics --no-default-features --features force-rapier
 cargo build --locked --target wasm32-unknown-unknown

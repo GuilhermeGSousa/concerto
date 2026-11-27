@@ -115,7 +115,12 @@ jobs:
         env:
           CARGO_BUILD_WARNINGS: deny
       - name: Check documentation
-        run: cargo doc --locked --workspace --no-deps
+        run: cargo doc --locked --workspace --no-deps --features concerto-editor/testing,concerto-animation/test-support,concerto-ragdoll/test-support
+        env:
+          RUSTDOCFLAGS: -D warnings
+          CARGO_BUILD_WARNINGS: deny
+      - name: Check documentation of the Rapier physics backend
+        run: cargo doc --locked --no-deps -p concerto-physics --no-default-features --features force-rapier
         env:
           RUSTDOCFLAGS: -D warnings
           CARGO_BUILD_WARNINGS: deny
