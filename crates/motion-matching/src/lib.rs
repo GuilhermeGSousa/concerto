@@ -51,7 +51,5 @@ pub use features::{
 pub use node::MotionMatchingNode;
 pub use plugin::MotionMatchingPlugin;
 pub use query::FeatureQuery;
-pub use search::{cost_of, search};
 pub use simulation::{CharacterSimulation, DesiredMotion, TrajectorySample};
-pub use staleness::{weightless_hash, weights_of};
 pub use state::{LastQuery, MotionMatchingState};

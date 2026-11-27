@@ -59,7 +59,7 @@ cached under the same key, before the handle reads as loaded:
   can't be an input, so an entry naming an additive clip fails the database's
   load, and its derive in the motion database editor, with an error naming the
   clip. Plain clips load as before.
-- `derived_key(&inputs)`: `weightless_hash` of the definition and the inputs'
+- `derived_key(&inputs)`: `MotionDatabase::weightless_hash` of the definition and the inputs'
   file bytes; see [Derived key](#derived-key).
 - `derive(&inputs, progress)`: decodes the skeleton and clips, calls
   `bake_with_progress`, and encodes the `BakedDatabase` with bincode.
@@ -251,7 +251,7 @@ one under the type's short name, which is how code builds a definition.
 `on_load` loads its channels with the asset server's type registry and logs a
 warning for each that fails, leaving it `Stored`; outside the asset server,
 call `load_channels(&registry)`. After that nothing needs the registry: `bake`,
-`FeatureQuery::new`, `weights_of` and the normalisation read the live channels,
+`FeatureQuery::new`, `MotionDatabase::weights` and the normalisation read the live channels,
 and a channel still `Stored` there is `UnloadedChannel`, or no normalisation.
 
 A channel may also override four methods:
@@ -335,7 +335,7 @@ positive, or the channel count differs from the bake's.
 ### Derived key
 
 ```rust
-let key = weightless_hash(&database, &skeleton_bytes, &clip_bytes);
+let key = database.weightless_hash(&skeleton_bytes, &clip_bytes);
 ```
 
 `clip_bytes` holds the stored bytes of one clip per entry. `derived_key` passes
@@ -345,7 +345,7 @@ skeleton's and clips' bytes, the entries, `rate`, `speed`, `simulation`,
 `trajectory`, `mirror_axis` when some entry is mirrored, and each channel's type
 name and value with its top-level `weight` field left out.
 
-`weights_of(&database)` gives each live channel's `weight()`, in order.
+`MotionDatabase::weights` gives each live channel's `weight()`, in order.
 
 A stored and a live channel with the same value hash the same.
 

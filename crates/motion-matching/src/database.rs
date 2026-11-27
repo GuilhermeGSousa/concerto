@@ -22,7 +22,6 @@ use crate::channel::{BodyMotion, FeatureChannel, FeatureChannelData};
 use crate::definition::{MirrorAxis, MotionEntry, SimulationBoneSettings, TrajectorySettings};
 use crate::features::reference_channels;
 use crate::simulation::TrajectorySample;
-use crate::staleness::weightless_hash;
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub(crate) struct Span {
@@ -543,7 +542,7 @@ impl DerivedData for MotionDatabase {
             .clips()
             .map(|clip| self.input_bytes(inputs, clip.id()))
             .collect::<anyhow::Result<Vec<_>>>()?;
-        Ok(weightless_hash(self, skeleton, &clips))
+        Ok(self.weightless_hash(skeleton, &clips))
     }
 
     fn derive(

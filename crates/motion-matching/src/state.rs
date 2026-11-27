@@ -20,7 +20,6 @@ use crate::{
     database::{BakeError, MotionDatabase},
     node::{trajectory_key, MotionMatchingNode, MotionMatchingTrajectory},
     query::FeatureQuery,
-    search::{cost_of, search},
     simulation::TrajectorySample,
 };
 
@@ -262,7 +261,9 @@ impl MotionMatchingState {
             .and_then(|mut ranges| ranges.next())
             .map(|range| range.start)
             .ok_or_else(|| "the database has no frames".to_string())?;
-        let (pose, velocity) = sample(sources, frame, 0.0).map_err(|error| error.to_string())?;
+        let (pose, velocity) = sources
+            .sample(frame, 0.0)
+            .map_err(|error| error.to_string())?;
 
         self.output = AnimationFrame::new(Pose::from_joints(
             sources.player_skeleton.rest_pose.to_vec(),
@@ -328,7 +329,7 @@ impl MotionMatchingState {
         };
         let simulation =
             Transform::from_translation_rotation(trajectory.translation, trajectory.rotation);
-        let samples = rescaled(trajectory, self.play_rate);
+        let samples = trajectory.rescaled(self.play_rate);
         let raw = match query.raw(
             database,
             sources.skeleton,
@@ -352,8 +353,7 @@ impl MotionMatchingState {
             .range_of(self.frame)
             .is_some_and(|range| self.frame + 1 == range.end);
         let current = (!end_of_range).then_some(self.frame);
-        let found = search(
-            database,
+        let found = database.search(
             &features,
             current,
             node.ignore_surrounding,
@@ -373,7 +373,7 @@ impl MotionMatchingState {
             return Ok((best != self.frame).then_some(best));
         }
         let differs = best.abs_diff(self.frame) > node.same_frame_tolerance;
-        let Some(current_cost) = cost_of(database, &features, self.frame) else {
+        let Some(current_cost) = database.cost_of(&features, self.frame) else {
             return Ok(None);
         };
         Ok((best_cost < current_cost && differs).then_some(best))
@@ -425,8 +425,9 @@ impl MotionMatchingState {
 
         let between = self.sub_frame_time * rate;
         if let Some(best) = better {
-            let (pose, velocity) =
-                sample(&sources, best, between).map_err(|error| error.to_string())?;
+            let (pose, velocity) = sources
+                .sample(best, between)
+                .map_err(|error| error.to_string())?;
             let source_velocity = if self.last_delta > 0.0 {
                 PoseVelocity::between(&self.previous_blended, &self.blended, self.last_delta)
             } else {
@@ -444,8 +445,9 @@ impl MotionMatchingState {
             self.pose = pose;
             self.velocity = velocity;
         } else if dt * play_rate > 0.0 {
-            let (pose, velocity) =
-                sample(&sources, self.frame, between).map_err(|error| error.to_string())?;
+            let (pose, velocity) = sources
+                .sample(self.frame, between)
+                .map_err(|error| error.to_string())?;
             self.pose = pose;
             self.velocity = velocity;
         }
@@ -505,47 +507,45 @@ pub(crate) struct Sources<'a> {
     pub clips: Vec<&'a AnimationClip>,
 }
 
-fn rescaled(trajectory: &MotionMatchingTrajectory, play_rate: f32) -> Vec<TrajectorySample> {
-    if play_rate == 1.0 {
-        return trajectory.samples.clone();
+impl MotionMatchingTrajectory {
+    fn rescaled(&self, play_rate: f32) -> Vec<TrajectorySample> {
+        if play_rate == 1.0 {
+            return self.samples.clone();
+        }
+        self.samples
+            .iter()
+            .map(|sample| TrajectorySample {
+                position: self.translation + (sample.position - self.translation) / play_rate,
+                velocity: sample.velocity / play_rate,
+                rotation: sample.rotation,
+            })
+            .collect()
     }
-    trajectory
-        .samples
-        .iter()
-        .map(|sample| TrajectorySample {
-            position: trajectory.translation
-                + (sample.position - trajectory.translation) / play_rate,
-            velocity: sample.velocity / play_rate,
-            rotation: sample.rotation,
-        })
-        .collect()
 }
 
-fn sample(
-    sources: &Sources,
-    frame: usize,
-    between: f32,
-) -> Result<(Pose, PoseVelocity), BakeError> {
-    let database = sources.database;
-    let range = database.range_of(frame).ok_or(BakeError::FrameOutOfRange {
-        frame,
-        frame_count: database.frame_count().unwrap_or(0),
-    })?;
-    let (first, second) = if frame + 1 < range.end {
-        (frame, frame + 1)
-    } else {
-        (frame - 1, frame)
-    };
-    let mut pose = Pose::from_joints(database.pose(first, sources.skeleton, &sources.clips)?);
-    let second_pose = Pose::from_joints(database.pose(second, sources.skeleton, &sources.clips)?);
-    let velocity = PoseVelocity::between(&pose, &second_pose, 1.0 / database.rate);
-    let weight = if first == frame {
-        between.clamp(0.0, 1.0)
-    } else {
-        1.0
-    };
-    pose.blend(&second_pose, weight);
-    Ok((pose, velocity))
+impl Sources<'_> {
+    fn sample(&self, frame: usize, between: f32) -> Result<(Pose, PoseVelocity), BakeError> {
+        let database = self.database;
+        let range = database.range_of(frame).ok_or(BakeError::FrameOutOfRange {
+            frame,
+            frame_count: database.frame_count().unwrap_or(0),
+        })?;
+        let (first, second) = if frame + 1 < range.end {
+            (frame, frame + 1)
+        } else {
+            (frame - 1, frame)
+        };
+        let mut pose = Pose::from_joints(database.pose(first, self.skeleton, &self.clips)?);
+        let second_pose = Pose::from_joints(database.pose(second, self.skeleton, &self.clips)?);
+        let velocity = PoseVelocity::between(&pose, &second_pose, 1.0 / database.rate);
+        let weight = if first == frame {
+            between.clamp(0.0, 1.0)
+        } else {
+            1.0
+        };
+        pose.blend(&second_pose, weight);
+        Ok((pose, velocity))
+    }
 }
 
 #[cfg(test)]

@@ -32,71 +32,73 @@ impl EntryPlan {
     }
 }
 
-/// Checks the rate, speed, clips and ranges of a database and lays out the frames of every entry.
-///
-/// # Errors
-///
-/// Returns [`BakeError::InvalidRate`], [`BakeError::InvalidSpeed`] or
-/// [`BakeError::InvalidSampleDt`] for a value that is not positive and
-/// finite, [`BakeError::ClipCountMismatch`] when `clips` does not hold one
-/// clip per entry, and for the first entry that fails,
-/// [`BakeError::ClipHasNoBones`], [`BakeError::InvalidRange`] or
-/// [`BakeError::RangeTooShort`].
-pub fn plan_entries(
-    definition: &MotionDatabase,
-    skeleton: &Skeleton,
-    clips: &[&AnimationClip],
-) -> Result<Vec<EntryPlan>, BakeError> {
-    if !(definition.rate.is_finite() && definition.rate > 0.0) {
-        return Err(BakeError::InvalidRate(definition.rate));
-    }
-    if !(definition.speed.is_finite() && definition.speed > 0.0) {
-        return Err(BakeError::InvalidSpeed(definition.speed));
-    }
-    if !(definition.trajectory.sample_dt.is_finite() && definition.trajectory.sample_dt > 0.0) {
-        return Err(BakeError::InvalidSampleDt(definition.trajectory.sample_dt));
-    }
-    if clips.len() != definition.entries.len() {
-        return Err(BakeError::ClipCountMismatch {
-            expected: definition.entries.len(),
-            actual: clips.len(),
-        });
-    }
+impl MotionDatabase {
+    /// Checks the rate, speed, clips and ranges of a database and lays out the frames of every entry.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BakeError::InvalidRate`], [`BakeError::InvalidSpeed`] or
+    /// [`BakeError::InvalidSampleDt`] for a value that is not positive and
+    /// finite, [`BakeError::ClipCountMismatch`] when `clips` does not hold one
+    /// clip per entry, and for the first entry that fails,
+    /// [`BakeError::ClipHasNoBones`], [`BakeError::InvalidRange`] or
+    /// [`BakeError::RangeTooShort`].
+    pub fn plan_entries(
+        &self,
+        skeleton: &Skeleton,
+        clips: &[&AnimationClip],
+    ) -> Result<Vec<EntryPlan>, BakeError> {
+        if !(self.rate.is_finite() && self.rate > 0.0) {
+            return Err(BakeError::InvalidRate(self.rate));
+        }
+        if !(self.speed.is_finite() && self.speed > 0.0) {
+            return Err(BakeError::InvalidSpeed(self.speed));
+        }
+        if !(self.trajectory.sample_dt.is_finite() && self.trajectory.sample_dt > 0.0) {
+            return Err(BakeError::InvalidSampleDt(self.trajectory.sample_dt));
+        }
+        if clips.len() != self.entries.len() {
+            return Err(BakeError::ClipCountMismatch {
+                expected: self.entries.len(),
+                actual: clips.len(),
+            });
+        }
 
-    let mut plans = Vec::with_capacity(clips.len());
-    let mut first_frame = 0;
-    for (entry, (spec, clip)) in definition.entries.iter().zip(clips).enumerate() {
-        if !skeleton
-            .bone_ids
-            .iter()
-            .any(|id| clip.get_channels(id).is_some())
-        {
-            return Err(BakeError::ClipHasNoBones { entry });
+        let mut plans = Vec::with_capacity(clips.len());
+        let mut first_frame = 0;
+        for (entry, (spec, clip)) in self.entries.iter().zip(clips).enumerate() {
+            if !skeleton
+                .bone_ids
+                .iter()
+                .any(|id| clip.get_channels(id).is_some())
+            {
+                return Err(BakeError::ClipHasNoBones { entry });
+            }
+            let (start, end) = match spec.range {
+                Some(range) => (range.start, range.end),
+                None => (0.0, clip.duration()),
+            };
+            let valid = start.is_finite()
+                && end.is_finite()
+                && start >= 0.0
+                && end <= clip.duration()
+                && start < end;
+            if !valid {
+                return Err(BakeError::InvalidRange { entry });
+            }
+            let frames = ((end - start) * self.rate / self.speed).floor() as usize;
+            if frames < 2 {
+                return Err(BakeError::RangeTooShort { entry, frames });
+            }
+            plans.push(EntryPlan {
+                start,
+                first_frame,
+                frames,
+            });
+            first_frame += frames;
         }
-        let (start, end) = match spec.range {
-            Some(range) => (range.start, range.end),
-            None => (0.0, clip.duration()),
-        };
-        let valid = start.is_finite()
-            && end.is_finite()
-            && start >= 0.0
-            && end <= clip.duration()
-            && start < end;
-        if !valid {
-            return Err(BakeError::InvalidRange { entry });
-        }
-        let frames = ((end - start) * definition.rate / definition.speed).floor() as usize;
-        if frames < 2 {
-            return Err(BakeError::RangeTooShort { entry, frames });
-        }
-        plans.push(EntryPlan {
-            start,
-            first_frame,
-            frames,
-        });
-        first_frame += frames;
+        Ok(plans)
     }
-    Ok(plans)
 }
 
 /// The skeleton's rest pose with every bone's channels in `clip` sampled at `time`.
@@ -328,7 +330,7 @@ pub fn trajectory_samples(
 /// # Errors
 ///
 /// Returns the first [`BakeError`] found: an invalid setting or entry as
-/// [`plan_entries`] reports it, an invalid smoothing window, a joint the
+/// [`MotionDatabase::plan_entries`] reports it, an invalid smoothing window, a joint the
 /// skeleton lacks, a channel that is not loaded or fails its
 /// [`validate`](crate::channel::FeatureChannel::validate), or a pose that
 /// cannot be mirrored.
@@ -351,8 +353,8 @@ pub fn bake_with_progress(
     clips: &[&AnimationClip],
     mut on_entry: impl FnMut(usize, usize),
 ) -> Result<BakedDatabase, BakeError> {
-    let plans = plan_entries(definition, skeleton, clips)?;
-    let mirror = mirror_of(definition, skeleton)?;
+    let plans = definition.plan_entries(skeleton, clips)?;
+    let mirror = definition.mirror(skeleton)?;
     check_window("position_window", definition.simulation.position_window)?;
     check_window("facing_window", definition.simulation.facing_window)?;
     find_joint(skeleton, definition.simulation.position_joint)?;
@@ -460,16 +462,15 @@ pub fn bake_with_progress(
     ))
 }
 
-fn mirror_of(
-    definition: &MotionDatabase,
-    skeleton: &Skeleton,
-) -> Result<Option<PoseMirror>, BakeError> {
-    if !definition.entries.iter().any(|entry| entry.mirrored) {
-        return Ok(None);
+impl MotionDatabase {
+    fn mirror(&self, skeleton: &Skeleton) -> Result<Option<PoseMirror>, BakeError> {
+        if !self.entries.iter().any(|entry| entry.mirrored) {
+            return Ok(None);
+        }
+        PoseMirror::new(skeleton, self.mirror_axis.normal())
+            .map(Some)
+            .map_err(BakeError::Mirror)
     }
-    PoseMirror::new(skeleton, definition.mirror_axis.normal())
-        .map(Some)
-        .map_err(BakeError::Mirror)
 }
 
 // todo: dont return tuples its gross
