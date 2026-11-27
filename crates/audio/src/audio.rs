@@ -21,8 +21,10 @@ const MOCK_SAMPLE_RATE: u32 = 1000;
 /// `Mock` always opens the mock backend.
 #[derive(Resource, Default, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AudioBackend {
+    /// The system's audio device.
     #[default]
     Device,
+    /// A silent backend that renders only when [`Audio::advance`] is called.
     Mock,
 }
 

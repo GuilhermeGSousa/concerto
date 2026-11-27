@@ -36,11 +36,17 @@ pub(crate) const FADE: Tween = Tween {
 #[derive(Component, Reflect, Clone, Debug)]
 #[reflect(Component)]
 pub struct AudioPlayer {
+    /// The clip played.
     pub clip: AssetHandle<AudioClip>,
+    /// The mixer bus the sound plays on.
     pub bus: AudioBus,
+    /// The linear volume, on the mixer's scale: 0 or less is silent, 1 the clip's own level.
     pub volume: f32,
+    /// The playback rate, 1 for the clip's own speed; it also shifts the pitch.
     pub speed: f32,
+    /// Whether the whole clip loops, so the sound never ends on its own.
     pub looping: bool,
+    /// What happens to the entity when the sound finishes.
     pub end: PlaybackEnd,
 }
 
@@ -101,15 +107,19 @@ impl AudioPlayer {
 /// What happens to a player's entity when its sound finishes.
 #[derive(Reflect, Default, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PlaybackEnd {
+    /// Despawns the entity; the default.
     #[default]
     Despawn,
+    /// Removes the [`AudioPlayer`] and keeps the entity.
     Remove,
+    /// Keeps the entity and its player, silent until the player is inserted again.
     Keep,
 }
 
 /// A sound reached its end; sent once per play, before `end` acts.
 #[derive(Event, Clone, Debug)]
 pub struct SoundFinished {
+    /// The entity whose [`AudioPlayer`] finished.
     pub entity: Entity,
 }
 
