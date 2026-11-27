@@ -5,12 +5,18 @@ use crate::{Fields, LeafError, Reflect, ReflectMut, ReflectRef};
 /// A reflected value as stored data: self-describing, with field and variant names.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum ReflectedValue {
+    /// A leaf's bytes, as its [`Leaf::encode`](crate::Leaf::encode) wrote them.
     Leaf(Vec<u8>),
+    /// A struct's fields, by name, in declaration order.
     Struct(Vec<(String, ReflectedValue)>),
+    /// An enum's active variant and that variant's fields.
     Variant {
+        /// The variant's name.
         name: String,
+        /// The variant's fields, by name, in declaration order.
         fields: Vec<(String, ReflectedValue)>,
     },
+    /// A list's elements, in order.
     List(Vec<ReflectedValue>),
 }
 
@@ -46,7 +52,9 @@ fn has_wanted_fields(
 
 /// Sees each leaf before its own encoding does; `None` leaves the leaf to encode itself.
 pub trait LeafHook {
+    /// Encodes `leaf`, or returns `None` to let the leaf encode itself.
     fn encode(&mut self, leaf: &dyn Reflect) -> Option<Result<Vec<u8>, LeafError>>;
+    /// Decodes `bytes` into `leaf`, or returns `None` to let the leaf decode itself.
     fn decode(&mut self, leaf: &mut dyn Reflect, bytes: &[u8]) -> Option<Result<(), LeafError>>;
 }
 
@@ -65,7 +73,9 @@ impl LeafHook for NoHook {
 /// A leaf that could not be encoded, and where it is.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EncodeError {
+    /// The path to the leaf, such as `transform.translation` or `points[2]`.
     pub path: String,
+    /// Why the leaf could not be encoded.
     pub error: LeafError,
 }
 
@@ -80,7 +90,9 @@ impl std::error::Error for EncodeError {}
 /// A part of the stored value that was not applied, and where it is.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ValueWarning {
+    /// The path to the part, such as `transform.translation` or `points[2]`; empty for the root.
     pub path: String,
+    /// Why the part was not applied.
     pub reason: String,
 }
 

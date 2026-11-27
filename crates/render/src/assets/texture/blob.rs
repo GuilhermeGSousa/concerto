@@ -5,9 +5,13 @@ use wgpu_types::{Extent3d, TextureFormat};
 /// A texture's sampled levels, mip 0 first, each laid out in whole blocks of `format`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TextureLevels {
+    /// The GPU format every level is in.
     pub format: TextureFormat,
+    /// The width of level 0 in texels.
     pub width: u32,
+    /// The height of level 0 in texels.
     pub height: u32,
+    /// The bytes of each level, mip 0 first.
     pub levels: Vec<Vec<u8>>,
 }
 

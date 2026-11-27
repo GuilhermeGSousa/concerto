@@ -1,3 +1,4 @@
+/// Named actions bound to keys, mouse buttons and pad inputs.
 pub mod actions;
 mod gamepad;
 mod players;
@@ -13,11 +14,16 @@ pub use players::{
 pub use winit::event::MouseButton;
 pub use winit::keyboard::{KeyCode, PhysicalKey};
 
+/// Where a key or button is in its press cycle this frame.
 #[derive(Clone, Copy, PartialEq)]
 pub enum InputState {
+    /// It went down this frame.
     Pressed,
+    /// It is held and went down on an earlier frame.
     Down,
+    /// It came up this frame.
     Released,
+    /// It is not held and did not change this frame.
     Up,
 }
 
@@ -73,6 +79,8 @@ impl ButtonState {
     }
 }
 
+/// The state of the keyboard, mouse and gamepads this frame, folded from the host's
+/// [`WindowEvent`](crate::events::WindowEvent)s.
 #[derive(Resource)]
 pub struct Input {
     input_map: HashMap<winit::keyboard::PhysicalKey, ButtonState>,
@@ -85,6 +93,7 @@ pub struct Input {
 }
 
 impl Input {
+    /// Creates input with nothing held, the mouse at the origin and no pads connected.
     pub fn new() -> Self {
         Self {
             input_map: HashMap::new(),
@@ -97,6 +106,7 @@ impl Input {
         }
     }
 
+    /// Returns where `key` is in its press cycle this frame.
     pub fn get_key_state(&self, key: PhysicalKey) -> InputState {
         self.input_map
             .get(&key)
@@ -111,6 +121,7 @@ impl Input {
             .map(|(key, _)| *key)
     }
 
+    /// Whether `key` went down this frame.
     pub fn is_just_pressed(&self, key: PhysicalKey) -> bool {
         self.input_map.get(&key).is_some_and(|state| state.pressed)
     }
@@ -123,40 +134,48 @@ impl Input {
             .map(|(key, _)| *key)
     }
 
+    /// Whether `key` is held now, whether it went down this frame or earlier.
     pub fn is_held(&self, key: PhysicalKey) -> bool {
         self.input_map.get(&key).is_some_and(|state| state.held())
     }
 
+    /// Whether `key` came up this frame.
     pub fn is_just_released(&self, key: PhysicalKey) -> bool {
         self.input_map.get(&key).is_some_and(|state| state.released)
     }
 
+    /// Returns the raw mouse motion summed over this frame, in the device's unaccelerated units.
     pub fn mouse_delta(&self) -> Vec2 {
         self.mouse_delta
     }
 
+    /// Returns the cursor position in physical pixels from the top-left of the drawing area.
     pub fn mouse_position(&self) -> Vec2 {
         self.mouse_position
     }
 
+    /// Returns where `button` is in its press cycle this frame.
     pub fn get_mouse_button_state(&self, button: MouseButton) -> InputState {
         self.mouse_button_map
             .get(&button)
             .map_or(InputState::Up, |state| state.state())
     }
 
+    /// Whether `button` went down this frame.
     pub fn is_mouse_button_just_pressed(&self, button: MouseButton) -> bool {
         self.mouse_button_map
             .get(&button)
             .is_some_and(|state| state.pressed)
     }
 
+    /// Whether `button` is held now, whether it went down this frame or earlier.
     pub fn is_mouse_button_held(&self, button: MouseButton) -> bool {
         self.mouse_button_map
             .get(&button)
             .is_some_and(|state| state.held())
     }
 
+    /// Whether `button` came up this frame.
     pub fn is_mouse_button_just_released(&self, button: MouseButton) -> bool {
         self.mouse_button_map
             .get(&button)
@@ -169,6 +188,7 @@ impl Input {
         &self.typed_chars
     }
 
+    /// Adds `c` to this frame's typed characters.
     pub fn push_typed_char(&mut self, c: char) {
         self.typed_chars.push(c);
     }
@@ -203,6 +223,7 @@ impl Input {
         self.gamepads.iter()
     }
 
+    /// Returns the connected pad with `id`, or `None` when it is not connected.
     pub fn gamepad(&self, id: GamepadId) -> Option<&Gamepad> {
         self.gamepads.iter().find(|pad| pad.id() == id)
     }
@@ -212,6 +233,7 @@ impl Input {
         self.gamepads.first()
     }
 
+    /// Returns the settings applied to every pad.
     pub fn gamepad_settings(&self) -> GamepadSettings {
         self.gamepad_settings
     }
@@ -259,14 +281,17 @@ impl Input {
         self.gamepads.iter_mut().find(|pad| pad.id() == id)
     }
 
+    /// Records that `key` went down (`pressed`) or came up; repeats while held change nothing.
     pub fn update_key_input(&mut self, key: PhysicalKey, pressed: bool) {
         self.input_map.entry(key).or_default().apply(pressed);
     }
 
+    /// Sets the cursor position, in physical pixels from the top-left of the drawing area.
     pub fn update_mouse_position(&mut self, x: f64, y: f64) {
         self.mouse_position = Vec2::new(x as f32, y as f32);
     }
 
+    /// Records that `button` went down (`pressed`) or came up; repeats while held change nothing.
     pub fn update_mouse_button(&mut self, button: MouseButton, pressed: bool) {
         self.mouse_button_map
             .entry(button)

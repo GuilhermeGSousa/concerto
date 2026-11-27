@@ -35,9 +35,11 @@ pub struct UIFocusable;
 #[derive(Resource, Deref, DerefMut, Default)]
 pub struct FocusedWidget(Option<concerto_ecs::entity::Entity>);
 
+/// Written when a widget, the one it holds, gains keyboard focus.
 #[derive(Event)]
 pub struct UIFocusGained(pub Entity);
 
+/// Written when a widget, the one it holds, loses keyboard focus.
 #[derive(Event)]
 pub struct UIFocusLost(pub Entity);
 

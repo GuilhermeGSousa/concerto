@@ -26,8 +26,10 @@ pub(crate) mod inertialization_blender;
     serde::Deserialize,
 )]
 pub enum TransitionBlender {
+    /// Blends linearly from the old state's pose to the new one over the blend time.
     #[default]
     CrossFade,
+    /// Plays the new state at once and decays the difference from the old pose with a spring.
     Inertialization,
 }
 

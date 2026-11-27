@@ -2,7 +2,10 @@ use std::mem;
 
 pub use concerto_mesh::Vertex;
 
+/// A vertex type that can describe its own GPU buffer layout.
 pub trait VertexBufferLayout {
+    /// Returns the layout of a buffer of this type, one attribute per field at consecutive
+    /// shader locations from 0.
     fn describe() -> wgpu::VertexBufferLayout<'static>;
 }
 

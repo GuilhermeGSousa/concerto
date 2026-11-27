@@ -68,7 +68,9 @@ impl EntitySignal for PoseLost {}
 #[derive(Reflect, Clone, Copy, Debug, Default, PartialEq)]
 #[reflect(Default)]
 pub struct PartWeight {
+    /// The bone whose part this sets.
     pub bone: JointName,
+    /// How much of the part's simulated pose is drawn: 0 is the animated pose, 1 the ragdoll's.
     pub weight: f32,
 }
 
@@ -80,12 +82,14 @@ pub struct PartWeight {
 #[derive(Component, Reflect, Clone, Debug, PartialEq)]
 #[reflect(Component, Default, SceneComponent)]
 pub struct CharacterRagdoll {
+    /// The ragdoll asset of the skeleton.
     pub ragdoll: AssetHandle<Ragdoll>,
     /// The character's own capsule, carried under the body while the character is physical.
     ///
     /// It should have `CollisionLayers::character()` so the parts pass
     /// through it.
     pub capsule: SceneEntityRef,
+    /// How the parts are driven.
     pub mode: RagdollMode,
     /// How much of the simulated pose is drawn on the skeleton: 0 is the animated pose, 1 the ragdoll's.
     pub weight: f32,
@@ -126,16 +130,19 @@ impl CharacterRagdoll {
         }
     }
 
+    /// Sets the character's own capsule, carried under the body while the character is physical.
     pub fn with_capsule(mut self, capsule: Entity) -> Self {
         self.capsule = SceneEntityRef::Entity(capsule);
         self
     }
 
+    /// Sets how the parts are driven.
     pub fn with_mode(mut self, mode: RagdollMode) -> Self {
         self.mode = mode;
         self
     }
 
+    /// Sets how much of the simulated pose is drawn: 0 is the animated pose, 1 the ragdoll's.
     pub fn with_weight(mut self, weight: f32) -> Self {
         self.weight = weight;
         self
@@ -150,6 +157,7 @@ impl CharacterRagdoll {
         self
     }
 
+    /// Sets the strength profile used in the powered mode.
     pub fn with_profile(mut self, profile: impl Into<Name>) -> Self {
         self.profile = profile.into();
         self

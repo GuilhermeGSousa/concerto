@@ -19,8 +19,11 @@ const MIN_BOOM_DISTANCE: f32 = 1e-3;
 #[derive(Reflect, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum CameraStance {
     #[default]
+    /// Eases toward the [`ThirdPersonCamera::follow`] framing.
     Follow,
+    /// Eases toward the [`ThirdPersonCamera::crouch`] framing.
     Crouch,
+    /// Eases toward the [`ThirdPersonCamera::aim`] framing.
     Aim,
 }
 
@@ -28,7 +31,9 @@ pub enum CameraStance {
 #[derive(Reflect, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ShoulderSide {
     #[default]
+    /// Over the character's right shoulder.
     Right,
+    /// Over the character's left shoulder.
     Left,
 }
 
@@ -66,36 +71,43 @@ impl Default for CameraFraming {
 }
 
 impl CameraFraming {
+    /// Sets how far up from the pivot the shoulder point is, in its level frame.
     pub fn with_height(mut self, height: f32) -> Self {
         self.height = height;
         self
     }
 
+    /// Sets how far toward the side's shoulder the shoulder point is.
     pub fn with_shoulder(mut self, shoulder: f32) -> Self {
         self.shoulder = shoulder;
         self
     }
 
+    /// Sets the boom length back from the shoulder point.
     pub fn with_distance(mut self, distance: f32) -> Self {
         self.distance = distance;
         self
     }
 
+    /// Sets the lens's vertical field of view, in radians.
     pub fn with_fovy(mut self, fovy: f32) -> Self {
         self.fovy = fovy;
         self
     }
 
+    /// Sets the multiplier of `CameraSettings::sensitivity`.
     pub fn with_sensitivity_scale(mut self, sensitivity_scale: f32) -> Self {
         self.sensitivity_scale = sensitivity_scale;
         self
     }
 
+    /// Sets the pivot's pitch clamp, in radians, either way.
     pub fn with_pitch_limit(mut self, pitch_limit: f32) -> Self {
         self.pitch_limit = pitch_limit;
         self
     }
 
+    /// Sets the seconds in which the camera closes half its gap to this framing; 0 or less snaps.
     pub fn with_halflife(mut self, halflife: f32) -> Self {
         self.halflife = halflife;
         self
@@ -134,10 +146,15 @@ impl CameraFraming {
 #[derive(Component, Reflect, Clone, Debug, PartialEq)]
 #[reflect(Component, Default, SceneComponent)]
 pub struct ThirdPersonCamera {
+    /// The framing the camera eases toward.
     pub stance: CameraStance,
+    /// The shoulder the camera looks over.
     pub side: ShoulderSide,
+    /// The framing while following.
     pub follow: CameraFraming,
+    /// The framing while crouching.
     pub crouch: CameraFraming,
+    /// The framing while aiming.
     pub aim: CameraFraming,
     #[reflect(skip)]
     current: Option<CameraFraming>,
@@ -165,26 +182,31 @@ impl Default for ThirdPersonCamera {
 }
 
 impl ThirdPersonCamera {
+    /// Sets the framing the camera eases toward.
     pub fn with_stance(mut self, stance: CameraStance) -> Self {
         self.stance = stance;
         self
     }
 
+    /// Sets the shoulder the camera looks over.
     pub fn with_side(mut self, side: ShoulderSide) -> Self {
         self.side = side;
         self
     }
 
+    /// Sets the framing while following.
     pub fn with_follow(mut self, follow: CameraFraming) -> Self {
         self.follow = follow;
         self
     }
 
+    /// Sets the framing while crouching.
     pub fn with_crouch(mut self, crouch: CameraFraming) -> Self {
         self.crouch = crouch;
         self
     }
 
+    /// Sets the framing while aiming.
     pub fn with_aim(mut self, aim: CameraFraming) -> Self {
         self.aim = aim;
         self

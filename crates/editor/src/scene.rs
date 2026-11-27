@@ -50,11 +50,13 @@ use crate::{
 /// Shared presentation summary for the scene hierarchy and Chatter.
 #[derive(Resource, Default)]
 pub struct SceneState {
+    /// The status text of the open Scene document, empty when none is open.
     pub status: String,
     loading: bool,
     document: Option<Entity>,
 }
 impl SceneState {
+    /// Whether the open Scene document is still loading the scene it asked for.
     pub fn loading(&self) -> bool {
         self.loading
     }
@@ -63,43 +65,57 @@ impl SceneState {
 /// A Scene document finished opening `asset`, which it now shows.
 #[derive(Event, Clone, Debug, PartialEq)]
 pub struct SceneOpened {
+    /// The Scene document.
     pub document: Entity,
+    /// The scene asset it opened.
     pub asset: AssetEntry,
 }
 
 /// A Scene document could not open `asset`; `message` is the status it shows.
 #[derive(Event, Clone, Debug, PartialEq)]
 pub struct SceneOpenFailed {
+    /// The Scene document.
     pub document: Entity,
+    /// The scene asset it asked for.
     pub asset: AssetEntry,
+    /// Why the scene did not open, as the document's status shows it.
     pub message: String,
 }
 
 /// A document saved: `asset` is what it now shows, and `written` every file the save wrote.
 #[derive(Event, Clone, Debug, PartialEq)]
 pub struct SceneSaved {
+    /// The document that saved.
     pub document: Entity,
+    /// The asset the document shows after the save.
     pub asset: AssetEntry,
+    /// Every asset the save wrote, `asset` among them.
     pub written: Vec<AssetEntry>,
 }
 
 /// A Scene document could not save; `message` is the status it shows.
 #[derive(Event, Clone, Debug, PartialEq)]
 pub struct SaveFailed {
+    /// The Scene document.
     pub document: Entity,
+    /// Why the save failed, as the document's status shows it.
     pub message: String,
 }
 
 /// What every edit, play and preview `App` is built from.
 #[derive(Resource, Clone)]
 pub struct SceneRecipe {
+    /// The game's recipe, run first on every `App`.
     pub recipe: fn(&mut App),
+    /// The GPU the `App`s draw with, or `None` when the editor has none.
     pub gpu: Option<Gpu>,
+    /// Connects each `App`'s clipboard to the editor's, or `None` to leave it unconnected.
     pub clipboard: Option<fn(&mut WindowClipboard)>,
     /// Built into every edit and play `App`, in order, after the scene tools.
     pub scene_plugins: Vec<fn(&mut App)>,
 }
 
+/// Adds plugins of an extension crate or a game to the `App`s scenes are edited and played in.
 pub trait SceneToolsAppExt {
     /// Adds `plugin` to every edit and play `App`, after the scene tools.
     fn add_scene_tools_plugin(&mut self, plugin: fn(&mut App)) -> &mut Self;
@@ -165,7 +181,9 @@ pub fn load_scene(root: PathBuf, address: String, id: AssetId) -> anyhow::Result
 
 /// Opens, hosts, and saves scenes; `recipe` is what each scene's edit `App` is built from.
 pub struct ScenePlugin {
+    /// The game's recipe, which builds the `App` of each scene being edited or played.
     pub recipe: fn(&mut App),
+    /// Connects each scene `App`'s clipboard to the editor's, or `None` to leave it unconnected.
     pub clipboard: Option<fn(&mut WindowClipboard)>,
 }
 

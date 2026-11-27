@@ -5,35 +5,50 @@ use crate::{
 
 /// What kind of value a [`Reflect`] is, for reading.
 pub enum ReflectRef<'a> {
+    /// A struct, or a tuple struct, with named fields.
     Struct(&'a dyn Fields),
+    /// An enum, read through its active variant.
     Enum(&'a dyn Enum),
+    /// A list, such as a `Vec`.
     List(&'a dyn List),
+    /// A leaf, which has no reflected parts and encodes itself as bytes.
     Leaf(&'a dyn Leaf),
 }
 
 /// What kind of value a [`Reflect`] is, for writing.
 pub enum ReflectMut<'a> {
+    /// A struct, or a tuple struct, with named fields.
     Struct(&'a mut dyn Fields),
+    /// An enum, written through its active variant.
     Enum(&'a mut dyn Enum),
+    /// A list, such as a `Vec`.
     List(&'a mut dyn List),
+    /// A leaf, which has no reflected parts and encodes itself as bytes.
     Leaf(&'a mut dyn Leaf),
 }
 
 /// Named fields: a struct's, or the active variant's of an enum. Tuple fields are named `"0"`, `"1"`, ….
 pub trait Fields {
+    /// Returns the number of fields.
     fn field_len(&self) -> usize;
+    /// Returns the name of the field at `index`, or `None` when it is out of range.
     fn name_at(&self, index: usize) -> Option<&'static str>;
+    /// Returns the field at `index`, or `None` when it is out of range.
     fn field_at(&self, index: usize) -> Option<&dyn Reflect>;
+    /// Returns the field at `index` mutably, or `None` when it is out of range.
     fn field_at_mut(&mut self, index: usize) -> Option<&mut dyn Reflect>;
 
+    /// Returns the index of the field `name`, or `None` when there is none.
     fn index_of(&self, name: &str) -> Option<usize> {
         (0..self.field_len()).find(|&index| self.name_at(index) == Some(name))
     }
 
+    /// Returns the field `name`, or `None` when there is none.
     fn field(&self, name: &str) -> Option<&dyn Reflect> {
         self.field_at(self.index_of(name)?)
     }
 
+    /// Returns the field `name` mutably, or `None` when there is none.
     fn field_mut(&mut self, name: &str) -> Option<&mut dyn Reflect> {
         let index = self.index_of(name)?;
         self.field_at_mut(index)
@@ -42,6 +57,7 @@ pub trait Fields {
 
 /// An enum: its active variant's name, and that variant's fields; its variant names are its [`ReflectEnumInfo`].
 pub trait Enum: Fields {
+    /// Returns the active variant's name.
     fn variant_name(&self) -> &'static str;
     /// Every variant's name, in declaration order.
     fn variant_names(&self) -> &'static [&'static str];
@@ -51,14 +67,20 @@ pub trait Enum: Fields {
 
 /// A growable sequence of reflected elements.
 pub trait List {
+    /// Returns the number of elements.
     fn len(&self) -> usize;
+    /// Returns the element at `index`, or `None` when it is out of range.
     fn get(&self, index: usize) -> Option<&dyn Reflect>;
+    /// Returns the element at `index` mutably, or `None` when it is out of range.
     fn get_mut(&mut self, index: usize) -> Option<&mut dyn Reflect>;
+    /// Appends a `Default` element.
     fn push_default(&mut self);
+    /// Shortens the list to `len` elements; does nothing when it is no longer than that.
     fn truncate(&mut self, len: usize);
     /// Removes the element at `index`, moving the later ones down; false when it is out of range.
     fn remove(&mut self, index: usize) -> bool;
 
+    /// Returns whether the list has no elements.
     fn is_empty(&self) -> bool {
         self.len() == 0
     }
@@ -66,7 +88,18 @@ pub trait List {
 
 /// A value with no reflected inside, which encodes itself as bytes.
 pub trait Leaf {
+    /// Encodes the value as bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`LeafError`] when the value cannot be encoded.
     fn encode(&self) -> Result<Vec<u8>, LeafError>;
+
+    /// Replaces the value with the one `bytes` encode.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`LeafError`] when `bytes` do not decode as this type.
     fn decode(&mut self, bytes: &[u8]) -> Result<(), LeafError>;
 }
 

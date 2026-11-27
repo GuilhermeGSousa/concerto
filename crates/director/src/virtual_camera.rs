@@ -95,6 +95,7 @@ impl VirtualCamera {
         self
     }
 
+    /// Gives the camera a lens, which the main camera takes while this one is live.
     pub fn with_lens(mut self, lens: Lens) -> Self {
         self.lens = Some(lens);
         self
@@ -110,6 +111,7 @@ impl VirtualCamera {
         self
     }
 
+    /// The camera's place in the stack: higher priorities sit above lower ones.
     pub fn priority(&self) -> i32 {
         self.priority
     }
@@ -130,8 +132,11 @@ impl VirtualCamera {
 /// blended independently of the render target and clear colour.
 #[derive(Clone, Copy, Debug, PartialEq, Reflect)]
 pub struct Lens {
+    /// The vertical field of view, in radians.
     pub fovy: f32,
+    /// The distance to the near clipping plane, in world units.
     pub znear: f32,
+    /// The distance to the far clipping plane, in world units.
     pub zfar: f32,
 }
 
@@ -142,6 +147,7 @@ impl Default for Lens {
 }
 
 impl Lens {
+    /// The lens `camera` has now.
     pub fn from_camera(camera: &Camera) -> Self {
         Self {
             fovy: camera.fovy,
@@ -160,6 +166,7 @@ impl Lens {
         camera.zfar = self.zfar;
     }
 
+    /// Interpolates each field linearly from `self`, at `t = 0`, to `other`, at `t = 1`.
     pub fn lerp(self, other: Self, t: f32) -> Self {
         Self {
             fovy: self.fovy + (other.fovy - self.fovy) * t,
@@ -172,7 +179,9 @@ impl Lens {
 /// How a virtual camera takes over from whatever was live before it.
 #[derive(Clone, Copy)]
 pub struct BlendIn {
+    /// How long the blend takes, in seconds; 0 or less cuts.
     pub duration: f32,
+    /// The curve the blend follows over `duration`.
     pub ease: Ease,
 }
 
@@ -183,6 +192,7 @@ impl BlendIn {
         ease: Ease::Linear,
     };
 
+    /// A blend over `duration` seconds that eases in and out.
     pub fn smooth(duration: f32) -> Self {
         Self {
             duration,
@@ -190,6 +200,7 @@ impl BlendIn {
         }
     }
 
+    /// A blend over `duration` seconds at constant speed.
     pub fn linear(duration: f32) -> Self {
         Self {
             duration,
@@ -204,17 +215,23 @@ impl Default for BlendIn {
     }
 }
 
+/// The curve a [`BlendIn`] follows from its start to its end.
 #[derive(Clone, Copy, Default)]
 #[repr(u8)]
 pub enum Ease {
+    /// Constant speed: `t`.
     Linear,
+    /// Slow at both ends: `3t² - 2t³`; the default.
     #[default]
     SmoothStep,
+    /// Slow at the start: `t²`.
     EaseIn,
+    /// Slow at the end: `t(2 - t)`.
     EaseOut,
 }
 
 impl Ease {
+    /// Maps progress `t`, clamped to `0..=1`, to the blend weight in `0..=1`.
     pub fn apply(self, t: f32) -> f32 {
         let t = t.clamp(0.0, 1.0);
         match self {
@@ -232,13 +249,19 @@ impl Ease {
 /// started from.
 #[derive(Clone, Copy)]
 pub struct CameraPose {
+    /// The position in world space.
     pub translation: Vec3,
+    /// The orientation in world space.
     pub rotation: Quat,
+    /// The projection.
     pub lens: Lens,
+    /// The depth of field, or `None` for none.
     pub focus: Option<DepthOfField>,
 }
 
 impl CameraPose {
+    /// Interpolates from `self`, at `t = 0`, to `other`, at `t = 1`: the rotation spherically,
+    /// and a focus only one side has fades in or out.
     pub fn lerp(self, other: Self, t: f32) -> Self {
         Self {
             translation: self.translation.lerp(other.translation, t),

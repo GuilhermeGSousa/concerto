@@ -69,11 +69,13 @@ impl ChainNames {
 /// A [`RagdollCreation`] says how it went. The Create ragdoll button and the
 /// `create_ragdoll` tool both send it.
 pub struct CreateRagdoll {
+    /// The id of the retarget rig whose chains and skeleton the ragdoll is generated from.
     pub rig: AssetId,
     /// Where the new asset goes, such as content/hero/ragdoll.gasset; next to the rig, as ragdoll.gasset, without one.
     pub address: Option<String>,
     /// The character's mass in kg; 75 without it.
     pub total_mass: Option<f32>,
+    /// The rig's chain names where they differ from the defaults.
     pub chains: ChainNames,
 }
 impl Signal for CreateRagdoll {}
@@ -81,8 +83,11 @@ impl Signal for CreateRagdoll {}
 /// A ragdoll that was generated and saved.
 #[derive(Clone, Debug, PartialEq)]
 pub struct CreatedRagdoll {
+    /// The new asset's id.
     pub id: AssetId,
+    /// The address the new asset was written to.
     pub address: String,
+    /// The sum of the parts' masses, in kg.
     pub total_mass: f32,
     /// One line per part: its bone, shape with sizes, and mass.
     pub parts: Vec<String>,
@@ -91,7 +96,9 @@ pub struct CreatedRagdoll {
 /// What a `CreateRagdoll` came to: the new asset, or why nothing was written.
 #[derive(Event, Clone, Debug, PartialEq)]
 pub struct RagdollCreation {
+    /// The rig the [`CreateRagdoll`] named.
     pub rig: AssetId,
+    /// The saved ragdoll, or what to change so that one can be generated.
     pub result: Result<CreatedRagdoll, String>,
 }
 

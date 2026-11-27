@@ -19,7 +19,9 @@ pub struct Layers {
 impl Layers {
     /// How many layers there are.
     pub const COUNT: u8 = 14;
+    /// No layer.
     pub const NONE: Self = Self { bits: 0 };
+    /// Every one of the fourteen layers.
     pub const ALL: Self = Self { bits: 0x3fff };
     /// The layer of everything that names no other: level geometry and props.
     pub const DEFAULT: Self = Self::bit(0);
@@ -58,6 +60,7 @@ impl Layers {
         self.bits & other.bits & Self::ALL.bits != 0
     }
 
+    /// Whether no layer is set.
     pub const fn is_empty(self) -> bool {
         self.bits & Self::ALL.bits == 0
     }
@@ -103,6 +106,7 @@ impl CollisionLayers {
     /// In no layer: the body collides with nothing and no query sees it.
     pub const NONE: Self = Self::new(Layers::NONE, Layers::NONE);
 
+    /// Creates layers from the ones the body is in and the ones it collides with.
     pub const fn new(memberships: Layers, filter: Layers) -> Self {
         Self {
             memberships,

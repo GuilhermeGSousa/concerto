@@ -3,11 +3,17 @@ use std::{
     ops::{Deref, DerefMut},
 };
 
+/// Bundles: sets of components spawned or inserted together.
 pub mod bundle;
 pub(crate) mod components;
+/// [`Name`](name::Name), a human-readable label for an entity.
 pub mod name;
+/// [`RemovedComponents`](removed::RemovedComponents), the system parameter that reads which
+/// entities lost a component.
 pub mod removed;
+/// Required components: the components a component brings with it when inserted.
 pub mod required;
+/// [`SceneEntityRef`](scene::SceneEntityRef), an entity reference that survives saving a scene.
 pub mod scene;
 
 pub use concerto_ecs_macros::Component;
@@ -58,6 +64,7 @@ pub struct ComponentLifecycleContext {
 /// }
 /// ```
 pub trait Component: Send + Sync + 'static {
+    /// Returns the component's name, by default its full Rust type path.
     fn name() -> &'static str
     where
         Self: Sized,

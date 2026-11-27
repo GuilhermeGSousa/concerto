@@ -1,3 +1,4 @@
+//! The popup that lists names to pick from under a search field, shared by every name picker.
 use concerto_ecs::{
     Component, Entity, Query, Res, With, command::CommandQueue,
     query::change_detection::DetectChanges, signal::listener::Listener,

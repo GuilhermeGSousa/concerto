@@ -16,7 +16,9 @@ use crate::{embeds_by_default, replace, stage, HOST};
 /// One source whose scene file [`pack_imports`] considered, and how many loose outputs it embedded there.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PackedSource {
+    /// The source's path relative to the project, `/`-separated.
     pub source: String,
+    /// How many loose output files were moved into the scene file.
     pub embedded: usize,
 }
 
@@ -26,7 +28,9 @@ pub struct PackedSource {
 /// alone, with the reason.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PackReport {
+    /// The sources whose scene files were considered.
     pub sources: Vec<PackedSource>,
+    /// One line per source left alone, `<source>: skipped, <reason>`.
     pub skipped: Vec<String>,
 }
 

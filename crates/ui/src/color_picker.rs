@@ -104,6 +104,7 @@ impl UIColorPicker {
 
 /// Sent to a [`UIColorPicker`] whenever the user changes its color, in the space the picker was given.
 pub struct UIColorChanged {
+    /// The new colour, in the picker's space.
     pub color: Color,
 }
 

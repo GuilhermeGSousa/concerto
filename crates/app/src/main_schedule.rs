@@ -7,6 +7,11 @@ use crate::{
     Plugin,
 };
 
+/// Runs the main world's frame: [`First`], then [`FixedUpdate`] and [`LateFixedUpdate`] once per
+/// fixed step the frame's time allows, then [`Update`] and [`LateUpdate`].
+///
+/// Add it to every game `App`; it needs [`Time`], which [`TimePlugin`](crate::plugins::TimePlugin)
+/// inserts.
 pub struct MainSchedulePlugin;
 
 fn run_main(world: &mut World) {

@@ -10,9 +10,12 @@ use concerto_render::{
 
 use crate::readback::{TerminalOutput, TerminalRenderState};
 
+/// Sent when the terminal's size changes.
 #[derive(Event)]
 pub struct TerminalResizeEvent {
+    /// The new width in character columns.
     pub width: u16,
+    /// The new height in character rows.
     pub height: u16,
 }
 

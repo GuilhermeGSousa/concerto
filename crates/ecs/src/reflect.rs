@@ -38,9 +38,14 @@ impl AppTypeRegistry {
 /// How to read, change, add and remove a reflected component on a world.
 #[derive(Clone, Copy)]
 pub struct ReflectComponent {
+    /// Returns the component on the entity as [`Reflect`], or `None` when it has none.
     pub read: for<'w> fn(&ComponentMetadata<'w>, Entity) -> Option<&'w dyn Reflect>,
+    /// Calls the closure with the component on the entity, mutably, and marks it changed; `false`
+    /// when the entity has none.
     pub edit: fn(&mut World, Entity, &mut dyn FnMut(&mut dyn Reflect)) -> bool,
+    /// Inserts the boxed value as the component; `false` when it is another type.
     pub insert_boxed: fn(&mut World, Entity, Box<dyn Reflect>) -> bool,
+    /// Removes the component from the entity.
     pub remove: fn(&mut World, Entity),
 }
 
@@ -108,7 +113,11 @@ fn insert_boxed<T: Component + Reflect>(
 /// How a scene spawns a component from stored data and captures it back.
 #[derive(Clone, Copy)]
 pub struct ReflectSceneComponent {
+    /// Builds the component at its `Default`, applies the stored value with scene-node indices
+    /// resolved against the entity slice, inserts it, and returns what was not applied.
     pub spawn: fn(&mut World, Entity, &ReflectedValue, &[Entity]) -> Vec<ValueWarning>,
+    /// Encodes the entity's component, recording referenced nodes and assets in the
+    /// [`SceneCapture`]; `None` when the entity has none.
     pub capture:
         fn(&World, Entity, &mut SceneCapture) -> Option<Result<ReflectedValue, EncodeError>>,
 }
@@ -161,7 +170,9 @@ fn capture<T: Component + Reflect>(
 /// How a leaf that needs the world is spawned from a scene and captured into one.
 #[derive(Clone, Copy)]
 pub struct ReflectSceneLeaf {
+    /// Sets the leaf from its stored bytes, resolving what it refers to through the [`SceneSpawn`].
     pub spawn: fn(&mut dyn Reflect, &[u8], &SceneSpawn<'_>) -> Result<(), LeafError>,
+    /// Encodes the leaf, recording what it refers to in the [`SceneCapture`].
     pub capture: fn(&dyn Reflect, &mut SceneCapture) -> Result<Vec<u8>, LeafError>,
 }
 
@@ -169,6 +180,7 @@ impl TypeData for ReflectSceneLeaf {}
 
 /// What a leaf sees while its scene is spawned.
 pub struct SceneSpawn<'w> {
+    /// The world being spawned into.
     pub world: &'w World,
     /// One entity per scene node, by node index.
     pub node_entities: &'w [Entity],
@@ -183,6 +195,7 @@ pub struct SceneCapture {
 }
 
 impl SceneCapture {
+    /// Creates a capture that maps each entity in the scene to its node index.
     pub fn new(node_indices: EntityHashMap<usize>) -> Self {
         Self {
             node_indices,
@@ -213,10 +226,12 @@ impl SceneCapture {
         }
     }
 
+    /// Returns each asset the captured values referred to, once, in the order first seen.
     pub fn referenced_assets(&self) -> &[AssetId] {
         &self.referenced_assets
     }
 
+    /// Takes the referenced assets, each once, in the order first seen.
     pub fn into_referenced_assets(self) -> Vec<AssetId> {
         self.referenced_assets
     }
@@ -284,6 +299,7 @@ impl SceneComponentType {
         self.registration.short_name()
     }
 
+    /// Returns the component type's registration.
     pub fn registration(&self) -> &TypeRegistration {
         &self.registration
     }

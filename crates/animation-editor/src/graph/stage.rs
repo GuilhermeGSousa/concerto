@@ -33,6 +33,7 @@ pub struct GraphPreview {
     pub scene: AssetHandle<Scene>,
     /// Whether the skeleton's bones are drawn.
     pub skeleton: bool,
+    /// Whether the graph plays; paused, the character holds its pose.
     pub playing: bool,
     /// The preview's time scale, any finite value above 0.
     pub speed: f32,
@@ -62,6 +63,7 @@ pub(super) fn hosted_types(world: &World, document: Entity) -> Option<AppTypeReg
 ///
 /// An edit never marks the tab unsaved. A speed of 0 or below, or not finite, is refused.
 pub struct PreviewValue {
+    /// The graph tab's document.
     pub document: Entity,
 }
 
@@ -116,6 +118,7 @@ impl PropertyTarget for PreviewValue {
 ///
 /// An edit never marks the tab unsaved.
 pub struct ParametersValue {
+    /// The graph tab's document.
     pub document: Entity,
 }
 

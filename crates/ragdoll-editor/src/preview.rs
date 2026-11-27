@@ -48,28 +48,36 @@ use glam::Vec3;
 /// It stands the skeleton's character there, posed in the rest pose, in
 /// `scene` when it has one and as bare bones otherwise.
 pub struct ShowRagdollStage {
+    /// The skeleton the character is posed on.
     pub skeleton: Arc<Skeleton>,
+    /// The skeleton's asset id, under which the preview's asset store holds it.
     pub skeleton_id: AssetId,
+    /// The character scene from the skeleton's folder, or `None` to show bare bones.
     pub scene: Option<Scene>,
 }
 impl Signal for ShowRagdollStage {}
 
 /// Gives the preview the Ragdoll asset `id` as edited so far, and rebuilds the character's body from it.
 pub struct SetRagdoll {
+    /// The id the ragdoll is stored under in the preview's asset store.
     pub id: AssetId,
+    /// The ragdoll as edited so far.
     pub ragdoll: Ragdoll,
 }
 impl Signal for SetRagdoll {}
 
 /// Lifts the character until its lowest bone is `height` metres above the floor, and lets it go limp.
 pub struct DropRagdoll {
+    /// The height of the lowest bone above the floor, in metres.
     pub height: f32,
 }
 impl Signal for DropRagdoll {}
 
 /// Hits the part on `bone` with `impulse`, in N·s, making the body limp first when it is not.
 pub struct PokeRagdoll {
+    /// The bone of the part that is hit.
     pub bone: Name,
+    /// The impulse in N·s, in world space.
     pub impulse: Vec3,
 }
 impl Signal for PokeRagdoll {}

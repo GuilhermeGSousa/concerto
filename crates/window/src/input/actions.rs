@@ -15,10 +15,20 @@ use crate::input::{
     PlayerDevices, PlayerIndex, Players,
 };
 
-define_label!(ActionLabel);
-define_label!(ContextLabel);
+define_label!(
+    /// A named action, such as "jump" or "frame the selection"; declare one with
+    /// [`define_action!`](crate::define_action).
+    ActionLabel
+);
+define_label!(
+    /// A context in which bindings apply, such as a panel or a game mode; declare one with
+    /// [`define_context!`](crate::define_context).
+    ContextLabel
+);
 
+/// An interned [`ActionLabel`], cheap to copy and compare.
 pub type InternedActionLabel = Interned<dyn ActionLabel>;
+/// An interned [`ContextLabel`], cheap to copy and compare.
 pub type InternedContextLabel = Interned<dyn ContextLabel>;
 
 /// Defines a named action, following the same pattern as a schedule label.
@@ -53,15 +63,21 @@ macro_rules! define_context {
     };
 }
 
+/// The modifier keys a [`Shortcut`] requires.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
 pub struct Modifiers {
+    /// Either Control key.
     pub ctrl: bool,
+    /// Either Shift key.
     pub shift: bool,
+    /// Either Alt key, Option on macOS.
     pub alt: bool,
+    /// Either logo key: Windows, or Command on macOS.
     pub logo: bool,
 }
 
 impl Modifiers {
+    /// No modifiers.
     pub const NONE: Modifiers = Modifiers {
         ctrl: false,
         shift: false,
@@ -87,13 +103,17 @@ impl Modifiers {
     }
 }
 
+/// A key pressed with a set of modifiers held.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct Shortcut {
+    /// The key pressed.
     pub key: KeyCode,
+    /// The modifiers that must be held with it.
     pub modifiers: Modifiers,
 }
 
 impl Shortcut {
+    /// Creates the shortcut for `key` alone.
     pub fn key(key: KeyCode) -> Self {
         Self {
             key,
@@ -101,20 +121,24 @@ impl Shortcut {
         }
     }
 
+    /// Creates the shortcut for `key` with Control held.
     pub fn ctrl(key: KeyCode) -> Self {
         Self::key(key).with_ctrl()
     }
 
+    /// Requires Control as well.
     pub fn with_ctrl(mut self) -> Self {
         self.modifiers.ctrl = true;
         self
     }
 
+    /// Requires Shift as well.
     pub fn with_shift(mut self) -> Self {
         self.modifiers.shift = true;
         self
     }
 
+    /// Requires Alt as well.
     pub fn with_alt(mut self) -> Self {
         self.modifiers.alt = true;
         self
@@ -162,8 +186,11 @@ impl Shortcut {
 /// One button-like input an action can be bound to.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum ButtonBinding {
+    /// A key with modifiers.
     Key(Shortcut),
+    /// A mouse button.
     Mouse(MouseButton),
+    /// A gamepad button, on whichever pad the reading player holds.
     Gamepad(GamepadButton),
 }
 
@@ -194,16 +221,23 @@ impl ButtonBinding {
 /// A source of a two-dimensional action value, such as movement.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Axis2dBinding {
+    /// Four keys, each pushing the value one unit in its direction; `up` is positive Y.
     Keys {
+        /// The key for positive Y.
         up: KeyCode,
+        /// The key for negative Y.
         down: KeyCode,
+        /// The key for negative X.
         left: KeyCode,
+        /// The key for positive X.
         right: KeyCode,
     },
+    /// A gamepad stick, with the dead zone applied.
     Stick(GamepadStick),
 }
 
 impl Axis2dBinding {
+    /// Binds W, S, A and D to up, down, left and right.
     pub fn wasd() -> Self {
         Self::Keys {
             up: KeyCode::KeyW,
@@ -213,6 +247,7 @@ impl Axis2dBinding {
         }
     }
 
+    /// Binds the arrow keys.
     pub fn arrows() -> Self {
         Self::Keys {
             up: KeyCode::ArrowUp,
@@ -320,6 +355,7 @@ impl Scope {
 /// Fired once for each action a key or gamepad button press resolved to.
 #[derive(Event, Clone, Copy, PartialEq, Eq, Debug)]
 pub struct ActionFired {
+    /// The action that fired.
     pub action: InternedActionLabel,
     /// The pad whose button fired it, or `None` for a key.
     pub gamepad: Option<GamepadId>,
@@ -344,6 +380,10 @@ impl ActionFired {
     }
 }
 
+/// The bindings from inputs to actions, and the stacks of contexts that decide which apply.
+///
+/// Bindings in an active context take precedence over global ones, and later contexts over
+/// earlier ones.
 #[derive(Resource, Default)]
 pub struct ActionMap {
     bindings: Vec<Binding>,
@@ -453,15 +493,18 @@ impl ActionMap {
             .retain(|binding| !(binding.action == action && binding.context == context));
     }
 
+    /// Activates `context` on top of the shared stack; pushing it again moves it to the top.
     pub fn push_context(&mut self, context: impl ContextLabel) {
         push_onto(&mut self.contexts, context.intern());
     }
 
+    /// Removes `context` from the shared stack, wherever it is in it.
     pub fn pop_context(&mut self, context: impl ContextLabel) {
         let context = context.intern();
         self.contexts.retain(|active| *active != context);
     }
 
+    /// Whether `context` is on the shared stack.
     pub fn is_active(&self, context: impl ContextLabel) -> bool {
         self.contexts.contains(&context.intern())
     }
@@ -504,6 +547,7 @@ impl ActionMap {
         self.capturing_text = capturing;
     }
 
+    /// Whether a widget is taking text, so unmodified text keys fire no actions.
     pub fn capturing_text(&self) -> bool {
         self.capturing_text
     }

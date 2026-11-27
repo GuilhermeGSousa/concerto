@@ -1,3 +1,5 @@
+//! Tests of particle emission, simulation and drawing through the particles plugin.
+
 use concerto_app::{
     main_schedule::MainSchedulePlugin,
     plugins::{AssetManagerPlugin, TimePlugin, TransformPlugin},

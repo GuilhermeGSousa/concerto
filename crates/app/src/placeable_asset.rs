@@ -17,7 +17,9 @@ use crate::{edit_time::AtEditTime, schedule_groups::Update, App};
 
 /// Asks the placement of `A` to fill `entity` from the loaded asset `asset`.
 pub struct FillPlaced<A: PlaceableAsset> {
+    /// The loaded asset to place.
     pub asset: AssetId,
+    /// The entity to fill.
     pub entity: Entity,
     _asset: PhantomData<fn() -> A>,
 }
@@ -38,10 +40,15 @@ impl<A: PlaceableAsset> Signal for FillPlaced<A> {}
 /// What the editor needs to place an asset kind it can't name.
 #[derive(Clone, Copy)]
 pub struct PlaceableKind {
+    /// The asset kind, as [`Asset::name`](concerto_foundation::assets::Asset::name) gives it.
     pub kind: &'static str,
+    /// Starts loading the asset, holding a handle to it until it is placed or released.
     pub request_load: fn(&mut World, AssetId),
+    /// Returns whether the asset is loaded.
     pub is_loaded: fn(&World, AssetId) -> bool,
+    /// Fills the entity from the loaded asset, then releases the handle the load held.
     pub fill: fn(&mut World, AssetId, Entity),
+    /// Drops the handle a load held, without placing the asset.
     pub release: fn(&mut World, AssetId),
 }
 

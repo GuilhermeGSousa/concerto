@@ -22,12 +22,16 @@ use crate::{
 /// A draggable range slider widget.
 #[derive(Component)]
 pub struct UISlider {
+    /// The current value, between `min` and `max`.
     pub value: f32,
+    /// The value at the left end.
     pub min: f32,
+    /// The value at the right end.
     pub max: f32,
 }
 
 impl UISlider {
+    /// A slider from `min` to `max` at `value`.
     pub fn new(value: f32, min: f32, max: f32) -> Self {
         Self { value, min, max }
     }
@@ -43,6 +47,7 @@ pub(crate) struct UISliderFill;
 
 /// Sent to a [`UISlider`] whenever its value changes during a drag.
 pub struct UISliderChanged {
+    /// The new value.
     pub value: f32,
 }
 

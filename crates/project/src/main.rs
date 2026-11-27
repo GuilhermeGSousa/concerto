@@ -1,3 +1,6 @@
+//! `cargo-concerto`, the Cargo subcommand `cargo concerto`; [`concerto_project::USAGE`] gives its
+//! commands.
+
 use std::path::PathBuf;
 use std::process::ExitCode;
 

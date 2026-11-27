@@ -1,3 +1,8 @@
+//! Colors in linear RGBA, sRGB and HSL, and conversions between them.
+//!
+//! [`Color`] holds a value in whichever space it was authored in; renderers read it through
+//! [`Color::to_linear`].
+
 mod hsl;
 mod linear_rgba;
 mod srgba;
@@ -13,8 +18,11 @@ pub use srgba::Srgba;
 /// (e.g. for GPU upload).
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Color {
+    /// A color in linear light.
     LinearRgba(LinearRgba),
+    /// A color in sRGB-encoded values.
     Srgba(Srgba),
+    /// A color in hue, saturation and lightness over sRGB.
     Hsla(Hsla),
 }
 
@@ -25,18 +33,26 @@ impl Default for Color {
 }
 
 impl Color {
+    /// Opaque white.
     pub const WHITE: Self = Self::LinearRgba(LinearRgba::WHITE);
+    /// Opaque black.
     pub const BLACK: Self = Self::LinearRgba(LinearRgba::BLACK);
+    /// Opaque pure red.
     pub const RED: Self = Self::LinearRgba(LinearRgba::RED);
+    /// Opaque pure green.
     pub const GREEN: Self = Self::LinearRgba(LinearRgba::GREEN);
+    /// Opaque pure blue.
     pub const BLUE: Self = Self::LinearRgba(LinearRgba::BLUE);
+    /// Fully transparent black.
     pub const TRANSPARENT: Self = Self::LinearRgba(LinearRgba::TRANSPARENT);
 
+    /// Creates a color from linear-light channels, each nominally in 0.0 to 1.0.
     #[inline]
     pub const fn rgba(r: f32, g: f32, b: f32, a: f32) -> Self {
         Self::LinearRgba(LinearRgba::new(r, g, b, a))
     }
 
+    /// Creates a color from sRGB-encoded channels, each in 0.0 to 1.0, with linear alpha.
     #[inline]
     pub const fn srgba(r: f32, g: f32, b: f32, a: f32) -> Self {
         Self::Srgba(Srgba::new(r, g, b, a))
@@ -60,6 +76,7 @@ impl Color {
         Self::LinearRgba(LinearRgba::from_rgba_u32(packed))
     }
 
+    /// Returns an opaque color with each linear channel drawn uniformly from 0.0 to 1.0.
     pub fn random_color() -> Self {
         Self::LinearRgba(LinearRgba::random_color())
     }
@@ -86,6 +103,7 @@ impl Color {
         }
     }
 
+    /// Converts to sRGB-encoded values, returning the stored value unchanged if it is already sRGB.
     #[inline]
     pub fn to_srgba(self) -> Srgba {
         match self {
@@ -94,6 +112,8 @@ impl Color {
         }
     }
 
+    /// Converts to hue, saturation and lightness, returning the stored value unchanged if it is
+    /// already HSL.
     #[inline]
     pub fn to_hsl(self) -> Hsla {
         match self {

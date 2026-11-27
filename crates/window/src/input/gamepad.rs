@@ -8,10 +8,12 @@ use crate::input::{ButtonState, InputState};
 pub struct GamepadId(u32);
 
 impl GamepadId {
+    /// Creates the id the host gives the pad at `index`.
     pub const fn new(index: u32) -> Self {
         Self(index)
     }
 
+    /// Returns the host's index for the pad.
     pub const fn index(self) -> u32 {
         self.0
     }
@@ -20,22 +22,39 @@ impl GamepadId {
 /// A gamepad button; `LeftTrigger` and `RightTrigger` are analog.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum GamepadButton {
+    /// The bottom face button: A on Xbox, Cross on PlayStation.
     South,
+    /// The right face button: B on Xbox, Circle on PlayStation.
     East,
+    /// The top face button: Y on Xbox, Triangle on PlayStation.
     North,
+    /// The left face button: X on Xbox, Square on PlayStation.
     West,
+    /// The left shoulder button.
     LeftBumper,
+    /// The right shoulder button.
     RightBumper,
+    /// The left analog trigger.
     LeftTrigger,
+    /// The right analog trigger.
     RightTrigger,
+    /// The left centre button: View, Back or Share.
     Select,
+    /// The right centre button: Menu, Start or Options.
     Start,
+    /// The logo button in the middle of the pad.
     Mode,
+    /// Pressing the left stick in.
     LeftThumb,
+    /// Pressing the right stick in.
     RightThumb,
+    /// Up on the directional pad.
     DPadUp,
+    /// Down on the directional pad.
     DPadDown,
+    /// Left on the directional pad.
     DPadLeft,
+    /// Right on the directional pad.
     DPadRight,
 }
 
@@ -72,9 +91,13 @@ impl GamepadButton {
 /// One stick axis, in -1..1 with Y positive up.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum GamepadAxis {
+    /// The left stick's horizontal axis, positive to the right.
     LeftStickX,
+    /// The left stick's vertical axis, positive up.
     LeftStickY,
+    /// The right stick's horizontal axis, positive to the right.
     RightStickX,
+    /// The right stick's vertical axis, positive up.
     RightStickY,
 }
 
@@ -91,7 +114,9 @@ impl GamepadAxis {
 /// One of a gamepad's two sticks.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum GamepadStick {
+    /// The left stick.
     Left,
+    /// The right stick.
     Right,
 }
 
@@ -117,16 +142,19 @@ impl Default for GamepadSettings {
 }
 
 impl GamepadSettings {
+    /// Sets [`Self::dead_zone`].
     pub fn with_dead_zone(mut self, dead_zone: f32) -> Self {
         self.dead_zone = dead_zone;
         self
     }
 
+    /// Sets [`Self::live_zone`].
     pub fn with_live_zone(mut self, live_zone: f32) -> Self {
         self.live_zone = live_zone;
         self
     }
 
+    /// Sets [`Self::trigger_threshold`].
     pub fn with_trigger_threshold(mut self, trigger_threshold: f32) -> Self {
         self.trigger_threshold = trigger_threshold;
         self
@@ -181,32 +209,38 @@ impl Gamepad {
         }
     }
 
+    /// Returns the pad's id.
     pub fn id(&self) -> GamepadId {
         self.id
     }
 
+    /// Returns the name the pad's driver reports.
     pub fn name(&self) -> &str {
         &self.name
     }
 
+    /// Returns where `button` is in its press cycle this frame.
     pub fn button_state(&self, button: GamepadButton) -> InputState {
         self.buttons
             .get(&button)
             .map_or(InputState::Up, |pad| pad.state.state())
     }
 
+    /// Whether `button` is held now, whether it went down this frame or earlier.
     pub fn is_held(&self, button: GamepadButton) -> bool {
         self.buttons
             .get(&button)
             .is_some_and(|pad| pad.state.held())
     }
 
+    /// Whether `button` went down this frame.
     pub fn is_just_pressed(&self, button: GamepadButton) -> bool {
         self.buttons
             .get(&button)
             .is_some_and(|pad| pad.state.pressed)
     }
 
+    /// Whether `button` came up this frame.
     pub fn is_just_released(&self, button: GamepadButton) -> bool {
         self.buttons
             .get(&button)

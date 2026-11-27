@@ -1,3 +1,5 @@
+#![allow(missing_docs, reason = "benchmark harness, not public API")]
+
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use glam::{Quat, Vec3};
 

@@ -21,20 +21,31 @@ use crate::{Hsla, Srgba};
     serde::Deserialize,
 )]
 pub struct LinearRgba {
+    /// The red channel in linear light.
     pub r: f32,
+    /// The green channel in linear light.
     pub g: f32,
+    /// The blue channel in linear light.
     pub b: f32,
+    /// The alpha, 0.0 transparent to 1.0 opaque.
     pub a: f32,
 }
 
 impl LinearRgba {
+    /// Opaque white.
     pub const WHITE: Self = Self::new(1.0, 1.0, 1.0, 1.0);
+    /// Opaque black.
     pub const BLACK: Self = Self::new(0.0, 0.0, 0.0, 1.0);
+    /// Opaque pure red.
     pub const RED: Self = Self::new(1.0, 0.0, 0.0, 1.0);
+    /// Opaque pure green.
     pub const GREEN: Self = Self::new(0.0, 1.0, 0.0, 1.0);
+    /// Opaque pure blue.
     pub const BLUE: Self = Self::new(0.0, 0.0, 1.0, 1.0);
+    /// Fully transparent black.
     pub const TRANSPARENT: Self = Self::new(0.0, 0.0, 0.0, 0.0);
 
+    /// Creates a color from linear-light channels and alpha.
     #[inline]
     pub const fn new(r: f32, g: f32, b: f32, a: f32) -> Self {
         Self { r, g, b, a }
@@ -58,6 +69,7 @@ impl LinearRgba {
         Self::from_bytes(r, g, b, a)
     }
 
+    /// Returns an opaque color with each channel drawn uniformly from 0.0 to 1.0.
     pub fn random_color() -> Self {
         let mut rng = rand::rng();
         Self {
@@ -80,11 +92,13 @@ impl LinearRgba {
         [self.r, self.g, self.b, self.a]
     }
 
+    /// Converts to sRGB-encoded values.
     #[inline]
     pub fn to_srgba(self) -> Srgba {
         Srgba::from(self)
     }
 
+    /// Converts to hue, saturation and lightness.
     #[inline]
     pub fn to_hsl(self) -> Hsla {
         Hsla::from(self)

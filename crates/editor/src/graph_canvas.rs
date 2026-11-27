@@ -1,3 +1,5 @@
+//! The graph canvas: a reusable widget that draws nodes and the links between them on a UI node,
+//! and sends each gesture on it as a signal to that node for its owner to answer.
 pub mod layout;
 
 use concerto_app::{
@@ -82,36 +84,59 @@ pub enum CanvasMode {
 /// A mark that sets a node or a link apart.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CanvasEmphasis {
+    /// Drawn in the theme's `active` colour, which differs from the selection's accent.
     Active,
+    /// Drawn in the theme's warning colour.
     Warning,
 }
 
 /// What a canvas can have selected: a node, or a link by its index in `links`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CanvasTarget {
+    /// The node with this id.
     Node(CanvasNodeId),
+    /// The link at this index in `links`.
     Link(usize),
 }
 
 /// What lies under the pointer on a canvas.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CanvasPart {
+    /// The body of a node.
     Node(CanvasNodeId),
-    Input { node: CanvasNodeId, slot: usize },
+    /// An input pin of a node.
+    Input {
+        /// The node the pin is on.
+        node: CanvasNodeId,
+        /// The pin's index among the node's inputs, from 0.
+        slot: usize,
+    },
+    /// The output pin of a node.
     Output(CanvasNodeId),
+    /// The link at this index in `links`.
     Link(usize),
+    /// Empty space.
     Empty,
 }
 
 /// A box on a canvas.
 #[derive(Clone, Debug, PartialEq)]
 pub struct CanvasNode {
+    /// The id links, the selection and the signals name the node by.
     pub id: CanvasNodeId,
+    /// The text of the first row.
     pub title: String,
+    /// A muted second row under the title.
     pub subtitle: Option<String>,
+    /// The labels of the input pins, one row each, top to bottom; ignored in
+    /// [`CanvasMode::Diagram`].
     pub inputs: Vec<String>,
+    /// Whether the node has an output pin, at the right of its title row; ignored in
+    /// [`CanvasMode::Diagram`].
     pub output: bool,
+    /// A short readout at the right of the title row.
     pub badge: Option<String>,
+    /// A mark that outlines the node in its colour.
     pub emphasis: Option<CanvasEmphasis>,
 }
 
@@ -163,10 +188,15 @@ impl CanvasNode {
 /// A link from one node's output to another node.
 #[derive(Clone, Debug, PartialEq)]
 pub struct CanvasLink {
+    /// The node the link runs out of.
     pub from: CanvasNodeId,
+    /// The node the link runs into.
     pub to: CanvasNodeId,
+    /// The input pin of `to` the link ends on, in [`CanvasMode::Flow`].
     pub slot: Option<usize>,
+    /// A label beside the link's vertical run.
     pub label: Option<String>,
+    /// A mark that draws the link in its colour.
     pub emphasis: Option<CanvasEmphasis>,
 }
 
@@ -204,9 +234,14 @@ impl CanvasLink {
 /// Nodes and the links between them, drawn on the UI node that holds it.
 #[derive(Component, Clone, Debug, Default, PartialEq)]
 pub struct GraphCanvas {
+    /// The boxes on the canvas.
     pub nodes: Vec<CanvasNode>,
+    /// The links between them; one whose ends name no node is not drawn.
     pub links: Vec<CanvasLink>,
+    /// How the canvas draws and lays them out.
     pub mode: CanvasMode,
+    /// What is drawn selected, in the accent colour; the owner sets it, usually on
+    /// [`CanvasSelected`].
     pub selection: Option<CanvasTarget>,
 }
 
@@ -235,46 +270,57 @@ impl GraphCanvas {
 /// Sent to a [`GraphCanvas`] when a node or a link is pressed (`Some`) or empty space is clicked (`None`).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CanvasSelected {
+    /// The node or link pressed, or `None` for empty space.
     pub target: Option<CanvasTarget>,
 }
 
 /// Sent to a [`GraphCanvas`] when a node is double-clicked, or Enter is pressed with it selected.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CanvasActivated {
+    /// The node activated.
     pub node: CanvasNodeId,
 }
 
 /// Sent to a [`GraphCanvas`] when a drag from an output pin ends on an input pin, or in `Diagram` a drag from one box ends on another.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CanvasConnected {
+    /// The node the drag started on.
     pub from: CanvasNodeId,
+    /// The node the drag ended on.
     pub to: CanvasNodeId,
+    /// The input pin it ended on, or `None` in [`CanvasMode::Diagram`].
     pub slot: Option<usize>,
 }
 
 /// Sent to a [`GraphCanvas`] when a connect drag from `from` ends on empty space, with the pointer's window position.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CanvasLinkDropped {
+    /// The node the drag started on.
     pub from: CanvasNodeId,
+    /// The pointer's position in the window, in logical pixels.
     pub at: Vec2,
 }
 
 /// Sent to a [`GraphCanvas`] when Delete is pressed with something selected.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CanvasDeleted {
+    /// What was selected.
     pub target: CanvasTarget,
 }
 
 /// Sent to a [`GraphCanvas`] on a right click, with the pointer's window position and what it is on.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CanvasMenuRequested {
+    /// The pointer's position in the window, in logical pixels.
     pub at: Vec2,
+    /// What the pointer is on.
     pub on: CanvasPart,
 }
 
 /// Send to a [`GraphCanvas`] to scroll a node into view.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct FrameCanvasNode {
+    /// The node to bring into view.
     pub node: CanvasNodeId,
 }
 

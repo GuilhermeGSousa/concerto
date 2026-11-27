@@ -73,16 +73,27 @@ define_context!(
 /// What a clip's tab shows and how its preview plays, kept on the document.
 #[derive(Component)]
 pub struct ClipDocument {
+    /// The clip as last opened or saved, without the tab's unsaved event edits.
     pub clip: Option<Arc<AnimationClip>>,
+    /// What the clip holds and how much of the shown skeleton it drives.
     pub facts: ClipFacts,
+    /// Whether the root bone's movement moves the character; off by default.
     pub root_motion: bool,
+    /// Whether the preview draws the skeleton's bones; on by default.
     pub skeleton_gizmo: bool,
+    /// The scene picked to show, which outlasts the clip; `None` shows the clip folder's `scene`.
     pub picked_scene: Option<AssetId>,
+    /// The scene the preview shows, or `None` for an empty stage.
     pub shown_scene: Option<AssetId>,
+    /// Why the scene to show failed to load, if it did.
     pub scene_error: Option<String>,
+    /// The clip's events as edited so far, in the tab's order.
     pub events: Vec<TabEvent>,
+    /// The index in `events` of the selected event.
     pub selected_event: Option<usize>,
+    /// The bones of the skeleton the preview shows, in its order.
     pub skeleton: Vec<ShownBone>,
+    /// The timeline's rows, one per bone the clip drives.
     pub rows: Vec<TimelineTrack>,
 }
 
@@ -160,12 +171,19 @@ pub(crate) fn bone_rows(clip: &AnimationClip, skeleton: &[ShownBone]) -> Vec<Tim
 /// What a clip holds, and how much of it the shown skeleton uses.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ClipFacts {
+    /// The clip's length in seconds.
     pub duration: f32,
+    /// The frame rate the clip stores, or else the one detected from its keys.
     pub rate: Option<f32>,
+    /// Whether `rate` is stored in the clip rather than detected.
     pub rate_is_stored: bool,
+    /// The frame count at `rate`, when there is a rate.
     pub frames: Option<u32>,
+    /// The bones the clip has channels for.
     pub clip_bones: usize,
+    /// The bones of the skeleton the preview shows.
     pub skeleton_bones: usize,
+    /// The shown skeleton's bones that the clip has channels for.
     pub driven: usize,
 }
 

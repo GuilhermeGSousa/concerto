@@ -18,43 +18,59 @@ use crate::{
     node::UINode,
 };
 
+/// Marks a button, as the themed button element spawns it.
 #[derive(Component, Default)]
 pub struct UIButton;
 
+/// Marks a button that shows an icon instead of a label.
 #[derive(Component, Default)]
 pub struct UIIconButton;
 
+/// Marks a search field; nothing reads it, the behaviour is [`crate::search::UISearchField`]'s.
 #[derive(Component, Default)]
 pub struct UISearchField;
 
+/// A node shown only while the pointer is over `target`.
 #[derive(Component)]
 pub struct UITooltip {
+    /// The node whose hover shows the tooltip.
     pub target: Entity,
 }
 
+/// A header that shows and hides `content` when clicked, with [`toggle_collapsible`] as its click
+/// listener.
 #[derive(Component)]
 pub struct UICollapsibleSection {
+    /// Whether `content` is shown.
     pub expanded: bool,
+    /// The node shown and hidden.
     pub content: Entity,
 }
 
+/// A row of tabs, each with [`select_tab`] as its click listener, showing the [`UITabBody`] of the
+/// selected one.
 #[derive(Component, Default)]
 pub struct UITabStrip {
+    /// The index of the selected tab.
     pub selected: usize,
 }
 
 /// The content shown when its tab is the selected one.
 #[derive(Component)]
 pub struct UITabBody {
+    /// The [`UITabStrip`] entity.
     pub strip: Entity,
+    /// The index of the tab that shows this body.
     pub index: usize,
 }
 
+/// Marks a row of a property list.
 #[derive(Component, Default)]
 pub struct UIPropertyRow;
 
 /// Sent to a [`UICollapsibleSection`] when it expands or collapses.
 pub struct UICollapsibleChanged {
+    /// Whether the section is now expanded.
     pub expanded: bool,
 }
 
@@ -63,6 +79,7 @@ impl EntitySignal for UICollapsibleChanged {}
 
 /// Sent to a [`UITabStrip`] when one of its tabs is selected.
 pub struct UITabChanged {
+    /// The index of the selected tab.
     pub selected: usize,
 }
 

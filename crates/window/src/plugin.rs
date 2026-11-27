@@ -27,15 +27,20 @@ pub use winit::window::ResizeDirection;
 pub enum WindowGesture {
     /// Move the window; a double press toggles maximised instead.
     Move,
+    /// Resize the window by dragging an edge or corner.
     Resize {
+        /// The edge or corner being dragged.
         direction: ResizeDirection,
     },
 }
 
 /// One rectangle of the window's frame, in logical pixels.
 pub struct WindowGestureZone {
+    /// The top-left corner.
     pub min: Vec2,
+    /// The bottom-right corner.
     pub max: Vec2,
+    /// What a press here does; `None` means nothing, hiding any zone below.
     pub gesture: Option<WindowGesture>,
 }
 
@@ -56,6 +61,8 @@ impl WindowGestureRegion {
     }
 }
 
+/// Adds the [`Window`], [`Input`], gamepad players, action map, clipboard and the events and
+/// systems that keep them current from the host's [`WindowEvent`]s.
 pub struct WindowPlugin;
 
 fn update_input(mut input: ResMut<Input>) {

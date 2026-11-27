@@ -1,3 +1,6 @@
+//! `cargo concerto`: creating a game project, adding or updating its editor crate, and building
+//! and running the game, natively or for the web.
+
 use std::fmt;
 use std::fs;
 use std::io::{BufRead, BufReader};
@@ -65,67 +68,115 @@ pub const USAGE: &str = "usage: cargo concerto new <dir> [--engine <path>]\n    
 /// Where a generated project's engine dependencies come from.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Engine {
+    /// The engine crates from crates.io, at this tool's version.
     Published,
+    /// The engine crates by path from the engine checkout at this directory.
     Checkout(PathBuf),
 }
 
 /// A parsed command line.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
+    /// `new <dir>`: creates a game project in the directory.
     New(PathBuf, Engine),
+    /// `editor <dir>`: adds an editor crate to the game in the directory.
     Editor(PathBuf, Engine),
+    /// `editor <dir> --update`: regenerates the game's editor crate, on the engine given or, with
+    /// `None`, the one it already uses.
     UpdateEditor(PathBuf, Option<Engine>),
+    /// `build`: builds the game.
     Build(BuildOptions),
+    /// `run`: builds the game natively and runs it.
     Run(RunOptions),
 }
 
 /// What `build` was asked for.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BuildOptions {
+    /// The game's directory, which holds its `Cargo.toml`.
     pub dir: PathBuf,
+    /// Whether to cook the game's derived data and stage it beside the build (`--cook`).
     pub cook: bool,
+    /// Whether to build with Cargo's release profile (`--release`).
     pub release: bool,
+    /// Whether to build for `wasm32-unknown-unknown` with `trunk` instead of natively.
     pub wasm: bool,
+    /// The URL the web build is served from, passed to `trunk` (`--public-url`); web only.
     pub public_url: Option<String>,
+    /// Where the web build is written (`--dist`), `dist` in the game's directory when `None`; web
+    /// only.
     pub dist: Option<PathBuf>,
 }
 
 /// What `run` was asked for: a native build, and the arguments the game is run with.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RunOptions {
+    /// How the game is built; never for the web.
     pub build: BuildOptions,
+    /// The arguments after `--`, passed to the game.
     pub args: Vec<String>,
 }
 
 /// The steps `build` runs, in order.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BuildPlan {
+    /// The steps, in the order they run.
     pub steps: Vec<BuildStep>,
 }
 
 /// One step of a [`BuildPlan`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BuildStep {
-    Cargo { args: Vec<String> },
-    Cook { out: PathBuf },
-    Trunk { dir: PathBuf, args: Vec<String> },
-    Overlay { from: PathBuf, onto: OverlayTarget },
-    Run { args: Vec<String> },
+    /// Runs Cargo, building the game's executable.
+    Cargo {
+        /// The arguments to Cargo.
+        args: Vec<String>,
+    },
+    /// Runs the built executable with `--cook`, writing its cooked data.
+    Cook {
+        /// The directory the cooked data is written to.
+        out: PathBuf,
+    },
+    /// Runs `trunk`, building the game for the web.
+    Trunk {
+        /// The directory `trunk` runs in, the game's.
+        dir: PathBuf,
+        /// The arguments to `trunk`.
+        args: Vec<String>,
+    },
+    /// Copies the cooked data over a build's files.
+    Overlay {
+        /// The directory of cooked data.
+        from: PathBuf,
+        /// Where it is copied.
+        onto: OverlayTarget,
+    },
+    /// Runs the built executable.
+    Run {
+        /// The arguments the game is run with.
+        args: Vec<String>,
+    },
 }
 
 /// Where an overlay step copies the cooked files.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OverlayTarget {
+    /// The `<executable>-content` directory beside the native executable.
     BuiltContent,
+    /// A directory, the web build's output.
     Dir(PathBuf),
 }
 
 /// The files a command wrote, the manifests it edited, and what it has to say.
 #[derive(Debug, Default)]
 pub struct Report {
+    /// The files written, printed as `wrote <path>`.
     pub written: Vec<PathBuf>,
+    /// The manifests edited, printed as `edited <path>`.
     pub edited: Vec<PathBuf>,
+    /// What the user should know, printed as `note: <note>`.
     pub notes: Vec<String>,
+    /// What may need the user's attention, printed as `warning: <warning>`.
     pub warnings: Vec<String>,
 }
 

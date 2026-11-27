@@ -26,14 +26,22 @@ use crate::{
 
 const MAX_LIGHTS: usize = 128;
 
+/// A light at its entity's transform; spot and directional lights shine down the local -Z.
 #[derive(Component, Reflect)]
 #[reflect(Component, Default, SceneComponent)]
 #[require(crate::components::render_entity::SyncWithRenderWorld)]
 pub struct Light {
+    /// The light's colour.
     pub color: Color,
+    /// A multiplier on `color`; point and spot light falls off with the inverse square of the
+    /// distance.
     pub intensity: f32,
+    /// Whether the light casts shadows.
     pub shadowmaps_enabled: bool,
+    /// Whether it is a point, spot or directional light.
     pub light_type: LightType,
+    /// The distance in world units at which a point or spot light fades to nothing, or 0 for no
+    /// limit; ignored by directional lights.
     pub range: f32,
 }
 
@@ -44,6 +52,7 @@ impl Default for Light {
 }
 
 impl Light {
+    /// Creates a white point light of intensity 1 and unlimited range, without shadows.
     pub fn point_light() -> Self {
         Self {
             color: Color::WHITE,
@@ -54,6 +63,8 @@ impl Light {
         }
     }
 
+    /// Creates a white spot light of intensity 1 and unlimited range, without shadows, whose cone
+    /// has a half-angle of `cone_angle` radians.
     pub fn spot_light(cone_angle: f32) -> Self {
         Self {
             color: Color::WHITE,
@@ -64,6 +75,7 @@ impl Light {
         }
     }
 
+    /// Creates a white directional light of intensity 1, without shadows.
     pub fn directional_light() -> Self {
         Self {
             color: Color::WHITE,
@@ -74,11 +86,13 @@ impl Light {
         }
     }
 
+    /// Sets [`Self::intensity`].
     pub fn with_intensity(mut self, intensity: f32) -> Self {
         self.intensity = intensity;
         self
     }
 
+    /// Sets [`Self::color`].
     pub fn with_color(mut self, color: Color) -> Self {
         self.color = color;
         self
@@ -90,6 +104,7 @@ impl Light {
         self
     }
 
+    /// Makes the light cast shadows.
     pub fn with_shadows(mut self) -> Self {
         self.shadowmaps_enabled = true;
         self
@@ -156,16 +171,19 @@ impl ShadowCascades {
         Self::default()
     }
 
+    /// Sets [`Self::count`].
     pub fn with_count(mut self, count: u32) -> Self {
         self.count = count;
         self
     }
 
+    /// Sets [`Self::first_far`].
     pub fn with_first_far(mut self, first_far: f32) -> Self {
         self.first_far = first_far;
         self
     }
 
+    /// Sets [`Self::max_distance`].
     pub fn with_max_distance(mut self, max_distance: f32) -> Self {
         self.max_distance = max_distance;
         self
@@ -213,17 +231,23 @@ fn point_shadow_far(range: f32) -> f32 {
     }
 }
 
+/// The shape of a [`Light`].
 #[derive(Reflect, Default)]
 pub enum LightType {
+    /// Shines in every direction from a point.
     #[default]
     Point,
+    /// Shines in a cone down the light's -Z.
     Spot {
+        /// The half-angle of the cone, in radians.
         cone_angle: f32,
     },
+    /// Shines in parallel rays down the light's -Z, from infinitely far away, as the sun does.
     Directional,
 }
 
 impl LightType {
+    /// Returns the light type's number in shaders: 0 point, 1 spot, 2 directional.
     pub fn index(&self) -> u32 {
         match *self {
             LightType::Point => 0,
@@ -245,6 +269,7 @@ pub(crate) struct RenderShadowsEnabled(pub(crate) bool);
 #[derive(Component, Clone, Copy, PartialEq, Default)]
 pub(crate) struct RenderShadowCascades(pub(crate) ShadowCascades);
 
+/// The render-world form of a [`Light`], laid out as the shaders read it.
 #[derive(Component, ShaderType, Clone, Copy, PartialEq)]
 pub struct RenderLight {
     pub(crate) translation: Vec3,

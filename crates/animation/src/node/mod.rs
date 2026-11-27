@@ -15,13 +15,23 @@ use crate::{
     },
 };
 
+/// The node that plays an additive clip's delta over its input.
 pub mod additive;
 mod aim_offset;
+/// The 2D blend space node, which blends its inputs by where a `Vec2` param falls among their
+/// points.
 pub mod blend_space;
+/// The [`AnimationNode`] trait every graph node implements, its type-erased form, and what a
+/// node reports about itself.
 pub mod definition;
+/// The layer node, which lays one input over another on the bones of a mask.
 pub mod layer;
+/// Helpers for nodes that work on joints in the skeleton's model space.
 pub mod model_space;
+/// The state machine node, whose states each play a graph and whose transitions blend between
+/// them.
 pub mod state_machine;
+/// The two-bone IK node, which bends a chain such as an arm or a leg to reach a goal.
 pub mod two_bone_ik;
 
 pub use additive::{AdditiveNode, AdditiveNodeState};
@@ -70,10 +80,13 @@ pub fn effective_weight(
     }
 }
 
+/// What a clip does when it reaches its end.
 #[derive(Clone, Debug, Default, PartialEq, Reflect, serde::Serialize, serde::Deserialize)]
 pub enum AnimationPlayMode {
+    /// Starts again from its start time.
     #[default]
     Loop,
+    /// Holds its last pose and reports itself finished.
     PlayOnce,
 }
 
@@ -306,12 +319,14 @@ impl ClipClock {
     }
 }
 
+/// The playback state of an [`AnimationClipNode`]: its clock and its key cursors.
 pub struct AnimationClipNodeState {
     clock: ClipClock,
     cursors: Vec<KeyCursor>,
 }
 
 impl AnimationClipNodeState {
+    /// A state at time 0, playing.
     pub fn new() -> Self {
         Self {
             clock: ClipClock::new(0.0),
@@ -319,15 +334,18 @@ impl AnimationClipNodeState {
         }
     }
 
+    /// Returns the state with its clock at `start_time` seconds.
     pub fn with_start_time(mut self, start_time: f32) -> Self {
         self.clock = ClipClock::new(start_time);
         self
     }
 
+    /// Restarts the clock from its start time and unpauses it.
     pub fn play(&mut self) {
         self.clock.play();
     }
 
+    /// The playback time on the clip, in seconds.
     pub fn current_time(&self) -> f32 {
         self.clock.current_time()
     }
@@ -502,6 +520,9 @@ fn sample_root(channels: &[AnimationChannel], rest: &JointPose, time: f32) -> Jo
     joint
 }
 
+/// Plays one clip, looping or once, at a rate a blackboard param can scale.
+///
+/// A loop that passes the clip's end goes back to the start time, dropping the overshoot.
 #[derive(Clone, Reflect, serde::Serialize, serde::Deserialize)]
 #[reflect(AnimationNode, Default)]
 pub struct AnimationClipNode {
@@ -519,6 +540,7 @@ impl Default for AnimationClipNode {
 }
 
 impl AnimationClipNode {
+    /// A node that loops `clip` from its start at rate 1.
     pub fn new(clip: AssetHandle<AnimationClip>) -> Self {
         Self {
             clip,
@@ -529,15 +551,18 @@ impl AnimationClipNode {
         }
     }
 
+    /// The clip the node plays.
     pub fn clip(&self) -> &AssetHandle<AnimationClip> {
         &self.clip
     }
 
+    /// Sets the time the clip starts and loops back to, in seconds.
     pub fn with_start_time(mut self, start_time: f32) -> Self {
         self.start_time = start_time;
         self
     }
 
+    /// Sets whether the clip loops or plays once.
     pub fn with_play_mode(mut self, play_mode: AnimationPlayMode) -> Self {
         self.play_mode = play_mode;
         self

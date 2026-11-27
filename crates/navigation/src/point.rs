@@ -12,7 +12,9 @@ use concerto_reflect::{Reflect, ReflectDefault};
 #[reflect(Component, Default, SceneComponent)]
 #[require(Transform)]
 pub struct NavPoint {
+    /// The name game data refers to the point by; empty for none.
     pub anchor: Name,
+    /// Whether agents may route to and through the point.
     pub enabled: bool,
 }
 
@@ -30,6 +32,7 @@ impl Default for NavPoint {
 #[reflect(Component, Default, SceneComponent)]
 #[require(NavPoint)]
 pub struct NavLinks {
+    /// The links, each to another point.
     pub links: Vec<NavLink>,
 }
 
@@ -37,6 +40,8 @@ pub struct NavLinks {
 #[derive(Reflect, Clone, Copy, Debug, Default, PartialEq)]
 #[reflect(Default)]
 pub struct NavLink {
+    /// The point linked to.
     pub to: SceneEntityRef,
+    /// Whether the link is walkable only from the owning point to `to`.
     pub one_way: bool,
 }

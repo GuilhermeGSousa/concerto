@@ -15,10 +15,12 @@ use crate::input::{GamepadButton, GamepadId, Input, KeyCode, PhysicalKey};
 pub struct PlayerIndex(u8);
 
 impl PlayerIndex {
+    /// Creates the place at `index`, 0 for the first player.
     pub const fn new(index: u8) -> Self {
         Self(index)
     }
 
+    /// Returns the place's index, 0 for the first player.
     pub const fn index(self) -> u8 {
         self.0
     }
@@ -27,14 +29,18 @@ impl PlayerIndex {
 /// A device that can be given to a player.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum PlayerDevice {
+    /// The connected pad with this id.
     Gamepad(GamepadId),
+    /// The keyboard and mouse, shared as one device.
     KeyboardMouse,
 }
 
 /// The devices one player holds.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub struct PlayerDevices {
+    /// The pad the player holds, if any.
     pub gamepad: Option<GamepadId>,
+    /// Whether the player holds the keyboard and mouse.
     pub keyboard_mouse: bool,
 }
 
@@ -77,25 +83,31 @@ impl Default for JoinSettings {
 }
 
 impl JoinSettings {
+    /// Creates the default settings: four places, no joining on press, South or Start to join a
+    /// pad, and Enter or Space to join the keyboard.
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Sets [`Self::max_players`].
     pub fn with_max_players(mut self, max_players: u8) -> Self {
         self.max_players = max_players;
         self
     }
 
+    /// Sets [`Self::join_on_press`].
     pub fn with_join_on_press(mut self, join_on_press: bool) -> Self {
         self.join_on_press = join_on_press;
         self
     }
 
+    /// Sets [`Self::keyboard_mouse_joins`].
     pub fn with_keyboard_mouse_joins(mut self, keyboard_mouse_joins: bool) -> Self {
         self.keyboard_mouse_joins = keyboard_mouse_joins;
         self
     }
 
+    /// Adds `button` to [`Self::join_buttons`].
     pub fn with_join_button(mut self, button: GamepadButton) -> Self {
         self.join_buttons.push(button);
         self
@@ -107,6 +119,7 @@ impl JoinSettings {
         self
     }
 
+    /// Adds `key` to [`Self::join_keys`].
     pub fn with_join_key(mut self, key: KeyCode) -> Self {
         self.join_keys.push(key);
         self
@@ -122,8 +135,16 @@ impl JoinSettings {
 /// Why [`Players::assign`] refused.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum AssignError {
-    OutOfRange { max_players: u8 },
-    Taken { by: PlayerIndex },
+    /// The player index is not below [`JoinSettings::max_players`].
+    OutOfRange {
+        /// The number of player places.
+        max_players: u8,
+    },
+    /// Another player already holds the device.
+    Taken {
+        /// The player holding it.
+        by: PlayerIndex,
+    },
 }
 
 impl fmt::Display for AssignError {
@@ -145,19 +166,30 @@ impl std::error::Error for AssignError {}
 /// A change to who plays and on what.
 #[derive(Event, Clone, Copy, Debug, PartialEq)]
 pub enum PlayerEvent {
+    /// A player took an empty place with a device.
     Joined {
+        /// The player's place.
         player: PlayerIndex,
+        /// The device they joined with.
         device: PlayerDevice,
     },
+    /// A player's place was emptied.
     Left {
+        /// The player's place.
         player: PlayerIndex,
     },
+    /// A player's pad disconnected; they stay joined and wait for it.
     DeviceLost {
+        /// The player's place.
         player: PlayerIndex,
+        /// The pad that disconnected.
         gamepad: GamepadId,
     },
+    /// A waiting player got a pad back, by reconnecting or by being assigned one.
     DeviceRestored {
+        /// The player's place.
         player: PlayerIndex,
+        /// The pad they now hold.
         gamepad: GamepadId,
     },
 }
@@ -177,6 +209,7 @@ pub struct Players {
 }
 
 impl Players {
+    /// Creates an empty set of players with `settings`.
     pub fn new(settings: JoinSettings) -> Self {
         Self {
             settings,
@@ -185,6 +218,7 @@ impl Players {
         }
     }
 
+    /// Returns the join settings.
     pub fn settings(&self) -> &JoinSettings {
         &self.settings
     }
@@ -269,6 +303,7 @@ impl Players {
             .map(|(player, _)| *player)
     }
 
+    /// Whether `player` has joined and is waiting for a lost pad.
     pub fn is_waiting(&self, player: PlayerIndex) -> bool {
         self.players
             .get(&player)

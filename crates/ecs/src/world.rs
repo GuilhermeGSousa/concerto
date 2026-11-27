@@ -95,7 +95,9 @@ impl Default for World {
     }
 }
 
+// SAFETY: every component, resource and command the world stores is `Send + Sync`; only their type-erased storage hides that from the compiler.
 unsafe impl Send for World {}
+// SAFETY: every component, resource and command the world stores is `Send + Sync`; only their type-erased storage hides that from the compiler.
 unsafe impl Sync for World {}
 
 impl World {
@@ -260,14 +262,17 @@ impl World {
         }
     }
 
+    /// Returns every archetype, indexed by [`ArchetypeId`](crate::archetype::ArchetypeId).
     pub fn archetypes(&self) -> &[Archetype] {
         &self.archetypes
     }
 
+    /// Returns every archetype mutably.
     pub fn get_archetypes_mut(&mut self) -> &mut Vec<Archetype> {
         &mut self.archetypes
     }
 
+    /// Creates a [`QueryState`] for querying the world outside a system.
     pub fn query<T: QueryData, F: QueryFilter>(&mut self) -> QueryState<T, F> {
         QueryState::<T, F>::new(self)
     }
@@ -289,6 +294,7 @@ impl World {
         self.entity_store.structural_version(entity)
     }
 
+    /// Returns whether `entity` is alive in this world.
     pub fn entity_is_valid(&self, entity: Entity) -> bool {
         self.entity_store.find_location(entity).is_some()
     }
@@ -471,6 +477,7 @@ impl World {
     ) -> Option<&T> {
         self.archetypes
             .get(entity_location.archetype_index as usize)
+            // SAFETY: an `EntityLocation` the world hands out names a live row of its archetype.
             .and_then(|archetype| unsafe { archetype.get_component_unsafe(entity_location.row) })
     }
 
@@ -480,6 +487,7 @@ impl World {
     ) -> Option<MutableCellAccessor<'_, T>> {
         self.archetypes
             .get_mut(entity_location.archetype_index as usize)
+            // SAFETY: an `EntityLocation` the world hands out names a live row of its archetype.
             .and_then(|archetype| unsafe {
                 archetype.get_component_unsafe_mut(entity_location.row)
             })
@@ -570,10 +578,13 @@ impl World {
         self.resources.get_mut(&TypeId::of::<T>())
     }
 
+    /// Returns a cell that can hand out mutable access, for running systems; prefer the safe
+    /// accessors.
     pub fn as_unsafe_world_cell_mut(&mut self) -> UnsafeWorldCell<'_> {
         UnsafeWorldCell::new_mutable(self)
     }
 
+    /// Returns a cell that hands out only shared access, for reading through system parameters.
     pub fn as_unsafe_world_cell(&self) -> UnsafeWorldCell<'_> {
         UnsafeWorldCell::new_ref(self)
     }
@@ -639,6 +650,8 @@ impl World {
         Some(check)
     }
 
+    /// Returns whether the component `component_id` was added to `entity` since the last
+    /// [`tick`](Self::tick); `false` when the entity or component is absent.
     pub fn was_component_added(&self, entity: Entity, component_id: ComponentId) -> bool {
         self.was_component_added_in(entity, component_id, self.out_of_system_ticks())
     }
@@ -686,6 +699,8 @@ impl World {
             })
     }
 
+    /// Returns whether the component `component_id` was added or changed on `entity` since the last
+    /// [`tick`](Self::tick); `false` when the entity or component is absent.
     pub fn was_component_changed(&self, entity: Entity, component_id: ComponentId) -> bool {
         self.was_component_changed_in(entity, component_id, self.out_of_system_ticks())
     }
@@ -901,6 +916,10 @@ impl World {
         }
     }
 
+    /// Runs the compiled schedule labelled `label` from [`CompiledSchedules`], doing nothing when
+    /// there is none.
+    ///
+    /// The schedule is taken out of the resource while it runs, so its systems cannot run it again.
     pub fn run_schedule(&mut self, label: impl ScheduleLabel) {
         let label = label.intern();
 
@@ -918,6 +937,7 @@ impl World {
         }
     }
 
+    /// Adds a listener for the signal `T` on an entity of its own, marked [`GlobalListener`].
     pub fn add_listener<T: Signal, M>(&mut self, system: impl IntoListener<T, M>) {
         let mut listener = system.into_listener();
         T::listener_added(self, &mut listener);
@@ -945,6 +965,7 @@ impl World {
         Listener::<T>::run(target, &mut signal, self);
     }
 
+    /// Triggers the signal `T` built with `Default`.
     pub fn trigger_default<T: Signal + Default>(&mut self) {
         self.trigger(T::default());
     }
@@ -973,7 +994,9 @@ pub struct UnsafeWorldCell<'w> {
     _marker: PhantomData<(&'w World, &'w UnsafeCell<World>)>,
 }
 
+// SAFETY: the cell stands for a borrow of a `World`, which is `Send`, and its `unsafe` accessors make callers rule out conflicting access.
 unsafe impl Send for UnsafeWorldCell<'_> {}
+// SAFETY: the cell stands for a borrow of a `World`, which is `Sync`, and its `unsafe` accessors make callers rule out conflicting access.
 unsafe impl Sync for UnsafeWorldCell<'_> {}
 
 impl<'w> From<&'w mut World> for UnsafeWorldCell<'w> {
@@ -1237,28 +1260,36 @@ impl<'w> RestrictedWorld<'w> {
         self.commands().remove::<T>(entity);
     }
 
+    /// Returns the component `T` on `entity`, or `None` when it has none.
     pub fn get_component_for_entity<T: Component>(&self, entity: Entity) -> Option<&T> {
         // SAFETY: a `RestrictedWorld` lives only inside an exclusive world operation.
         unsafe { self.world_cell.world() }.get_component_for_entity(entity)
     }
 
+    /// Returns the component `T` on `entity` mutably and marks it changed, or `None` when it has
+    /// none.
     pub fn get_component_for_entity_mut<T: Component>(&mut self, entity: Entity) -> Option<&mut T> {
         // SAFETY: a `RestrictedWorld` lives only inside an exclusive world operation.
         unsafe { self.world_cell.world_mut() }.get_component_for_entity_mut(entity)
     }
 
+    /// Returns the resource `T`, or `None` when the world has none.
     pub fn get_resource<T: Resource>(&self) -> Option<&T> {
         // SAFETY: a `RestrictedWorld` lives only inside an exclusive world operation.
         unsafe { self.world_cell.world() }.get_resource()
     }
 
+    /// Returns the resource `T` mutably and marks it changed, or `None` when the world has none.
     pub fn get_resource_mut<T: Resource>(&mut self) -> Option<&mut T> {
         // SAFETY: a `RestrictedWorld` lives only inside an exclusive world operation.
         unsafe { self.world_cell.world_mut() }.get_resource_mut::<T>()
     }
 }
 
+/// A type built from the world it will live in, such as a
+/// [`SystemLocal`](crate::system::input::SystemLocal)'s initial value.
 pub trait FromWorld {
+    /// Creates the value from `world`.
     fn from_world(world: &World) -> Self;
 }
 

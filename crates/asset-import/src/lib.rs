@@ -1,3 +1,6 @@
+//! The importer interface: an [`Importer`] reads a source file and emits its sub-assets into an
+//! [`ImportContext`], which the import engine writes as content assets.
+
 mod clip_names;
 mod import_context;
 
@@ -20,6 +23,7 @@ use serde::{Deserialize, Serialize};
 #[reflect(Default)]
 pub struct NoSettings {}
 
+/// Turns one kind of source file, such as a glTF, into content assets.
 pub trait Importer: Send + Sync {
     /// The importer's own settings, kept in the `[settings]` table of each source's sidecar.
     type Settings: Reflect + GetTypeRegistration + Default + Clone + Serialize + DeserializeOwned;
@@ -34,6 +38,7 @@ pub trait Importer: Send + Sync {
     /// The name sidecars persist for this importer.
     fn name(&self) -> &'static str;
 
+    /// The file extensions this importer reads, lowercase and without the dot.
     fn supported_extensions(&self) -> &'static [&'static str];
 
     /// The asset settings the source's asset holds now, or `None` when it has none yet.
@@ -41,6 +46,12 @@ pub trait Importer: Send + Sync {
         None
     }
 
+    /// Imports the source at `source_path` with `settings`, emitting its sub-assets into `ctx`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an [`ImportError`] when the source cannot be read, is malformed or lacks data the
+    /// import needs, or when an emitted sub-asset cannot be serialized.
     fn import(
         &self,
         source_path: &Path,
@@ -49,6 +60,8 @@ pub trait Importer: Send + Sync {
         ctx: &mut ImportContext,
     ) -> Result<(), ImportError>;
 
+    /// Checks the sub-assets an import emitted and returns what is wrong with them; none by
+    /// default.
     fn validate(&self, _sub_assets: &[EmittedSubAsset]) -> Vec<ValidationIssue> {
         Vec::new()
     }
@@ -59,6 +72,7 @@ pub trait ErasedImporter: Send + Sync {
     /// The name sidecars persist for this importer.
     fn name(&self) -> &'static str;
 
+    /// The file extensions this importer reads, lowercase and without the dot.
     fn supported_extensions(&self) -> &'static [&'static str];
 
     /// Registers the importer's settings and asset settings types.
@@ -111,6 +125,7 @@ pub trait ErasedImporter: Send + Sync {
         ctx: &mut ImportContext,
     ) -> Result<(), ImportError>;
 
+    /// Checks the sub-assets an import emitted and returns what is wrong with them.
     fn validate(&self, sub_assets: &[EmittedSubAsset]) -> Vec<ValidationIssue>;
 }
 
@@ -212,16 +227,24 @@ impl<I: Importer> ErasedImporter for I {
     }
 }
 
+/// How serious a [`ValidationIssue`] is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ValidationSeverity {
+    /// The assets are usable but may not be what the author meant.
     Warning,
+    /// The assets are not usable.
     Error,
 }
 
+/// A problem [`Importer::validate`] found in an import's sub-assets.
 #[derive(Debug, Clone)]
 pub struct ValidationIssue {
+    /// How serious the problem is.
     pub severity: ValidationSeverity,
+    /// What is wrong, for the user to read.
     pub message: String,
+    /// The source the sub-assets came from.
     pub source_path: PathBuf,
+    /// The name of the sub-asset at fault, or `None` when the problem is the import's as a whole.
     pub sub_asset_name: Option<String>,
 }

@@ -7,7 +7,9 @@ use glam::{Quat, Vec3};
 #[derive(Component, Reflect, Clone, Copy, Debug, PartialEq)]
 #[reflect(Component, Default)]
 pub struct DesiredMotion {
+    /// The world-space velocity to reach, in metres per second.
     pub velocity: Vec3,
+    /// The world-space facing to reach.
     pub rotation: Quat,
 }
 
@@ -24,8 +26,11 @@ impl Default for DesiredMotion {
 #[derive(Reflect, Clone, Copy, Debug, PartialEq)]
 #[reflect(Default)]
 pub struct TrajectorySample {
+    /// The predicted position, in world space.
     pub position: Vec3,
+    /// The predicted velocity, in metres per second.
     pub velocity: Vec3,
+    /// The predicted facing.
     pub rotation: Quat,
 }
 
@@ -51,10 +56,16 @@ fn frequency(halflife: f32) -> f32 {
 #[reflect(Component, Default)]
 #[require(DesiredMotion)]
 pub struct CharacterSimulation {
+    /// The halflife, in seconds, the velocity springs toward the desired one with.
     pub velocity_halflife: f32,
+    /// The halflife, in seconds, the facing springs toward the desired one with.
     pub rotation_halflife: f32,
+    /// The time between trajectory samples, in seconds.
     pub sample_dt: f32,
+    /// The number of trajectory samples predicted ahead.
     pub sample_count: usize,
+    /// The speed, in metres per second, the capsule's pull toward the character is capped at
+    /// unless the spring already moves faster.
     pub max_pull_speed: f32,
     #[reflect(skip)]
     pub(crate) velocity: Spring<Vec3>,

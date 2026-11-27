@@ -43,10 +43,15 @@ const SETTINGS: &str = "Settings";
 /// A definition's settings that belong to no channel, as the inspector edits them.
 #[derive(Reflect, Clone, Debug, PartialEq)]
 pub struct DatabaseSettings {
+    /// The frames baked per second of database time.
     pub rate: f32,
+    /// How many seconds of clip each second of database time covers.
     pub speed: f32,
+    /// Which joints place and orient the simulation bone.
     pub simulation: SimulationBoneSettings,
+    /// How the trajectory the channels see is sampled.
     pub trajectory: TrajectorySettings,
+    /// The plane mirrored entries are mirrored across.
     pub mirror_axis: MirrorAxis,
 }
 
@@ -69,8 +74,11 @@ pub struct ChannelId(Uuid);
 
 /// A live channel of a definition, under the type name a save writes back.
 pub struct HeldChannel {
+    /// Names the channel while the document holds it, through reorders and removals.
     pub id: ChannelId,
+    /// The channel's registered type name, which a save writes.
     pub type_name: String,
+    /// The channel as edited so far.
     pub value: Box<dyn FeatureChannel>,
 }
 
@@ -117,14 +125,23 @@ impl HeldChannel {
 /// Everything a definition's tab holds, its settings and channels included.
 #[derive(Component, Default)]
 pub struct DefinitionDocument {
+    /// The skeleton the clips animate.
     pub skeleton: AssetHandle<Skeleton>,
+    /// The clips to bake, in order, as edited so far.
     pub entries: Vec<MotionEntry>,
+    /// The index of the entry selected in the panel, which the preview plays.
     pub selected_entry: Option<usize>,
+    /// The settings as edited so far, or `None` before the definition has loaded.
     pub settings: Option<DatabaseSettings>,
+    /// The feature channels as edited so far, in the order their values are stored.
     pub channels: Vec<HeldChannel>,
+    /// The definition as last read or saved, which a discard restores.
     pub loaded: Option<MotionDatabase>,
+    /// The stats of the last bake, or `None` until the definition as edited has baked.
     pub stats: Option<BakedStats>,
+    /// What was read of each entry's clip; see [`DefinitionDocument::facts_of`].
     pub entry_facts: Vec<EntryFacts>,
+    /// The time in seconds in the selected entry's clip that the preview shows.
     pub time: f32,
     pub(crate) shown_skeleton: Option<ShownSkeleton>,
     pub(crate) facts_job: Option<FactsJob>,

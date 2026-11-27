@@ -8,6 +8,10 @@ mod instant;
 pub use frame_stats::FrameStats;
 pub use instant::Instant;
 
+/// The frame clock: the time elapsed over the last frame, scaled and unscaled, and the accumulator
+/// for fixed steps.
+///
+/// The fixed step is [`Time::fixed_delta_time`] long, and one frame's delta never exceeds 250 ms.
 #[derive(Resource)]
 pub struct Time {
     last_update: Instant,
@@ -22,6 +26,7 @@ impl Time {
     const FIXED_DELTA_TIME: Duration = Duration::from_millis(33);
     const MAX_DELTA_TIME: Duration = Duration::from_millis(250);
 
+    /// Creates a clock starting now, at time scale 1.0.
     pub fn new() -> Self {
         Self {
             last_update: Instant::now(),
@@ -45,6 +50,7 @@ impl Time {
         self.real_delta
     }
 
+    /// Returns how fast game time passes relative to wall time: 1.0 is real time, 0.0 is paused.
     pub fn time_scale(&self) -> f32 {
         self.time_scale
     }
@@ -55,10 +61,13 @@ impl Time {
         self.time_scale = time_scale.max(0.0);
     }
 
+    /// Adds the last frame's game time to the fixed-step accumulator.
     pub fn accumulate_fixed_time(&mut self) {
         self.accumulated_fixed_time += self.delta();
     }
 
+    /// Takes one fixed step from the accumulator and returns `true`, or returns `false` and records
+    /// the leftover as the overstep when less than a step remains.
     pub fn expend_fixed_time(&mut self) -> bool {
         let result = self.accumulated_fixed_time >= Time::fixed_delta_time();
 
@@ -70,6 +79,7 @@ impl Time {
         result
     }
 
+    /// Measures the wall time since the last update and sets this frame's deltas from it.
     pub fn update(&mut self) {
         let now = Instant::now();
         self.real_delta = (now - self.last_update).min(Self::MAX_DELTA_TIME);
@@ -77,6 +87,7 @@ impl Time {
         self.last_update = now;
     }
 
+    /// Returns the length of one fixed step, 33 ms.
     pub fn fixed_delta_time() -> Duration {
         Self::FIXED_DELTA_TIME
     }

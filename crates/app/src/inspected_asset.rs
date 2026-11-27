@@ -12,9 +12,15 @@ use concerto_reflect::Reflect;
 /// What the editor needs to create, load, show and save an asset kind it can't name.
 #[derive(Clone, Copy)]
 pub struct InspectedAsset {
+    /// The asset kind, as [`Asset::name`] gives it.
     pub kind: &'static str,
+    /// Creates a new asset of the kind at an address under a project root, records it in the
+    /// registry, and returns its id.
     pub create: fn(&Path, &str, &mut AssetRegistry) -> anyhow::Result<AssetId>,
+    /// Decodes a content asset file's bytes into its id and its value.
     pub decode: fn(&[u8]) -> anyhow::Result<DecodedAsset>,
+    /// Saves a value of the kind to an address under a project root, records it in the registry,
+    /// and returns its id.
     pub save: fn(&dyn Reflect, &Path, &str, &mut AssetRegistry) -> anyhow::Result<AssetId>,
 }
 
@@ -32,7 +38,9 @@ impl InspectedAsset {
 
 /// An inspected asset read from its file.
 pub struct DecodedAsset {
+    /// The asset's id, read from its header.
     pub id: AssetId,
+    /// The asset's value.
     pub value: Box<dyn Reflect>,
 }
 

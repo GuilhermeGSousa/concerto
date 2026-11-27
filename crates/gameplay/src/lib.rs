@@ -1,3 +1,6 @@
+//! Gameplay building blocks over the engine: player input actions, first- and third-person
+//! cameras, a first-person walker, and NPCs moved by navigation.
+
 use concerto_app::{
     Plugin,
     schedule_groups::{FixedUpdate, Update},
@@ -17,14 +20,28 @@ use crate::first_person::{
 use crate::navigation::follow_nav_steering;
 use crate::third_person::{ThirdPersonCamera, update_third_person_cameras};
 
+/// The input actions gameplay reads, and their default bindings.
 pub mod actions;
+/// Camera pivots turned by look input, entity following, and booms that keep the camera clear of
+/// bodies.
 pub mod camera;
+/// A first-person walker driven by a player's input, and views placed at its eyes.
 pub mod first_person;
+/// Free flight for a [`Player`](crate::player::Player).
 pub mod movement;
+/// Moving navigation agents by what their navigation wants.
 pub mod navigation;
+/// The free-flying player and its camera.
 pub mod player;
+/// Third-person camera framings for follow, crouch and aim, eased between.
 pub mod third_person;
 
+/// Adds gameplay's actions, cameras, first-person walkers and nav-agent movement.
+///
+/// # Panics
+///
+/// Building it panics unless the `WindowPlugin` was added before it, since its actions are bound in
+/// the window's `ActionMap`.
 pub struct GameplayPlugin;
 
 impl Plugin for GameplayPlugin {

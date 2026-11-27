@@ -7,11 +7,15 @@ use crate::{
 
 use typle::typle;
 
+/// A term of a query, data or filter: what it registers and which archetypes it matches.
 pub trait WorldQuery {
+    /// What the term keeps between runs, such as its component id.
     type State: Send + Sync + Sized;
 
+    /// Registers what the term needs on `world` and returns its state.
     fn init_state(world: &mut World) -> Self::State;
 
+    /// Returns whether `archetype` has what the term needs.
     fn matches(state: &Self::State, archetype: &Archetype) -> bool;
 }
 

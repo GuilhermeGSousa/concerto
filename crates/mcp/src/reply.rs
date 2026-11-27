@@ -8,7 +8,9 @@ use tokio::sync::oneshot;
 /// A failed tool call, answered as `isError` content `{"code", "message"}`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ToolError {
+    /// A stable snake_case code a client can match on, such as `no_scene`.
     pub code: &'static str,
+    /// What went wrong and what to do next, for the client to read.
     pub message: String,
 }
 

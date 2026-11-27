@@ -1,4 +1,5 @@
 //! A ragdoll chain falling on a floor, for looking at.
+#![allow(missing_docs, reason = "example binary, not public API")]
 
 use std::f32::consts::FRAC_PI_3;
 

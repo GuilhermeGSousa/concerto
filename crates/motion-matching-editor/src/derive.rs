@@ -29,26 +29,37 @@ use crate::{
 /// How many frames a baked entry holds, and whether it is shorter than the trajectory looks ahead.
 #[derive(Clone, Debug, PartialEq)]
 pub struct EntryStats {
+    /// The entry's clip.
     pub clip: AssetId,
+    /// The frames baked from the entry.
     pub frames: usize,
+    /// Whether the entry holds fewer frames than the trajectory's horizon spans.
     pub short: bool,
 }
 
 /// One channel's mean over its dimensions and its group's standard deviation.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ChannelStats {
+    /// The channel's type name.
     pub name: String,
+    /// The mean of the channel's dimensions, averaged over them.
     pub mean: f32,
+    /// The standard deviation of the channel's normalisation group.
     pub deviation: f32,
 }
 
 /// What the panel shows of a baked database.
 #[derive(Clone, Debug, PartialEq)]
 pub struct BakedStats {
+    /// One per entry, in the definition's order.
     pub entries: Vec<EntryStats>,
+    /// The frames baked from every entry.
     pub frames: usize,
+    /// The baked data's size in bytes.
     pub bytes: usize,
+    /// How far ahead the trajectory looks, in seconds.
     pub horizon: f32,
+    /// One per feature channel, in the order their values are stored.
     pub channels: Vec<ChannelStats>,
 }
 

@@ -28,14 +28,26 @@ const SNAP_WEIGHT: f32 = 1.0e-4;
 #[derive(Clone, Debug, PartialEq, Reflect, serde::Serialize, serde::Deserialize)]
 #[reflect(AnimationNode, Default)]
 pub struct LookAtNode {
+    /// The bones that turn, from the top of the chain down.
     pub chain: Vec<LookAtBone>,
+    /// The eyes, each aimed on its own after the chain has turned.
     pub eyes: Vec<LookAtEye>,
+    /// The model-space direction every bone looks along in the rest pose.
     pub forward: Vec3,
+    /// The model-space up of every bone in the rest pose; not parallel to `forward`.
     pub up: Vec3,
+    /// The `Vec3` blackboard param holding the world-space point to look at.
     pub target_param: Param<Vec3>,
+    /// The weight the look is applied at, before the param scales it; clamped to 0 to 1.
     pub weight: f32,
+    /// The `f32` blackboard param the weight is multiplied by, when it holds one.
     pub weight_param: Option<Param<f32>>,
+    /// The halflife, in seconds, the weight eases in and out with.
     pub weight_halflife: f32,
+    /// The widest angle, in radians, between the first bone's gaze and the target at which the
+    /// node still looks; past it the look eases out.
+    ///
+    /// It is capped at 170 degrees, and 0 or less never looks.
     pub max_angle: f32,
 }
 
@@ -58,10 +70,16 @@ impl Default for LookAtNode {
 /// A bone of the look-at chain: its share of the turn, its limits in radians, and the halflife of its offset.
 #[derive(Clone, Debug, PartialEq, Reflect, serde::Serialize, serde::Deserialize)]
 pub struct LookAtBone {
+    /// The bone, which must descend from the bone above it in the chain.
     pub bone: JointName,
+    /// The bone's share of the turn, relative to the bones below it; 0 or less turns it not at
+    /// all.
     pub share: f32,
+    /// The most the bone yaws, in radians.
     pub yaw_limit: f32,
+    /// The most the bone pitches, in radians.
     pub pitch_limit: f32,
+    /// The halflife, in seconds, the bone's turn eases toward the solve with; 0 snaps.
     pub halflife: f32,
 }
 
@@ -80,9 +98,13 @@ impl Default for LookAtBone {
 /// An eye: aimed on its own at the target, from its own position, within its limits.
 #[derive(Clone, Debug, PartialEq, Reflect, serde::Serialize, serde::Deserialize)]
 pub struct LookAtEye {
+    /// The eye bone.
     pub bone: JointName,
+    /// The most the eye yaws, in radians.
     pub yaw_limit: f32,
+    /// The most the eye pitches, in radians.
     pub pitch_limit: f32,
+    /// The halflife, in seconds, the eye's turn eases toward the solve with; 0 snaps.
     pub halflife: f32,
 }
 

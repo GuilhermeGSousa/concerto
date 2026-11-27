@@ -18,10 +18,12 @@ pub struct UIFonts {
 }
 
 impl UIFonts {
+    /// Adds a font face from its TrueType or OpenType bytes.
     pub fn add_face(&mut self, data: impl Into<Cow<'static, [u8]>>) {
         self.faces.push(data.into());
     }
 
+    /// Makes `family` the one [`FontFamily::SansSerif`](super::FontFamily::SansSerif) shapes with.
     pub fn set_sans_serif(&mut self, family: impl Into<String>) {
         self.sans_serif = Some(family.into());
     }

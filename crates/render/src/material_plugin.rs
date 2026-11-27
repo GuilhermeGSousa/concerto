@@ -113,6 +113,8 @@ pub struct MaterialPipeline<M: 'static> {
 }
 
 impl<M: 'static> MaterialPipeline<M> {
+    /// Creates the pipeline set from the opaque and blended pipelines and `M`'s own layout, with
+    /// no masked pipeline.
     pub fn new(
         pipelines: ViewPipelines,
         blended_pipelines: Option<ViewPipelines>,
@@ -171,6 +173,7 @@ impl<M: 'static> Resource for MaterialPipeline<M> {
 /// Holds the `wgpu::BindGroup` built from the material's data, bound at
 /// `@group(0)` during the material render pass.
 pub struct RenderMaterial<M: 'static> {
+    /// The bind group of the material's data, bound at `@group(0)`.
     pub bind_group: wgpu::BindGroup,
     /// The source asset's alpha mode when it was prepared.
     pub alpha_mode: AlphaMode,

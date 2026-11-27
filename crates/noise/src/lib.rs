@@ -1,3 +1,6 @@
+//! Deterministic, seeded 1D noise and random values, for procedural motion that replays the same
+//! from the same seed.
+
 const GOLDEN_GAMMA: u64 = 0x9E37_79B9_7F4A_7C15;
 const MAX_OCTAVES: u32 = 8;
 const OCTAVE_SHIFT_STREAM: u64 = 1024;

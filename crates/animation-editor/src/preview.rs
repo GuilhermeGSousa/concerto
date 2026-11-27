@@ -80,8 +80,11 @@ impl Signal for ShowClipScene {}
 
 /// Sets how the preview plays the clip.
 pub struct SetClipTransport {
+    /// Whether the time advances.
     pub playing: bool,
+    /// Whether the time wraps to the start at the end, rather than stopping.
     pub looping: bool,
+    /// The speed multiplier, 1 for the clip's own speed.
     pub rate: f32,
 }
 impl Signal for SetClipTransport {}
@@ -101,22 +104,29 @@ impl Signal for SetSkeletonGizmo {}
 /// Where the preview is in the clip; written when either field changes.
 #[derive(Event, Clone, Debug, PartialEq)]
 pub struct ClipPreviewProgress {
+    /// The time in the clip, in seconds.
     pub time: f32,
+    /// Whether the clip is playing; false once a clip that does not loop reaches its end.
     pub playing: bool,
 }
 
 /// A bone of the shown skeleton: the id a clip's channels target and the bone's name.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ShownBone {
+    /// The bone's id, which a clip's channels target.
     pub id: Uuid,
+    /// The bone's name in the skeleton.
     pub name: Name,
 }
 
 /// How many bones the shown skeleton has, how many of them the clip drives, and its bones in order; written when any changes.
 #[derive(Event, Clone, Debug, PartialEq)]
 pub struct ClipPreviewBones {
+    /// The bone count of the first rooted skeleton, or 0 with none.
     pub bones: usize,
+    /// The skeleton's bones that the clip has channels for.
     pub driven: usize,
+    /// The skeleton's bones, in its order; empty when its asset is not loaded.
     pub skeleton: Vec<ShownBone>,
 }
 

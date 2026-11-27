@@ -17,8 +17,11 @@ use crate::{
 /// Where one entry's frames sit in the database and which clip time its first frame samples.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct EntryPlan {
+    /// The clip time, in seconds, the entry's first frame samples.
     pub start: f32,
+    /// The index of the entry's first frame in the database.
     pub first_frame: usize,
+    /// The number of frames the entry bakes.
     pub frames: usize,
 }
 

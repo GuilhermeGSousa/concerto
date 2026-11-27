@@ -9,15 +9,19 @@ use concerto_render::{
 
 use crate::{ascii::pixels_to_ascii_into, frame::TerminalFrame};
 
+/// The GPU staging buffer the terminal camera's image is copied into, sized to the terminal.
 #[derive(Resource)]
 pub struct TerminalRenderState {
     pub(crate) staging_buffer: wgpu::Buffer,
     pub(crate) padded_bpr: u32,
+    /// The image width in pixels, one per terminal column.
     pub width: u32,
+    /// The image height in pixels, one per terminal row.
     pub height: u32,
 }
 
 impl TerminalRenderState {
+    /// Creates a staging buffer on `device` for a `width` by `height` RGBA8 image.
     pub fn new(device: &wgpu::Device, width: u32, height: u32) -> Self {
         let padded_bpr = padded_bytes_per_row(width, wgpu::TextureFormat::Rgba8UnormSrgb);
         let staging_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -36,9 +40,17 @@ impl TerminalRenderState {
     }
 }
 
+/// Marks the camera whose image is drawn in the terminal and resized to follow it.
 #[derive(Component)]
 pub struct TerminalOutput;
 
+/// Copies the first render camera's target into the staging buffer, waits for it, and
+/// converts it to the characters of the [`TerminalFrame`].
+///
+/// # Panics
+///
+/// Panics if the first render camera has no render target, if the device fails to poll, or if
+/// the staging buffer fails to map or its mapped range cannot be read.
 pub fn readback_terminal_frame(
     device: Res<RenderDevice>,
     queue: Res<RenderQueue>,

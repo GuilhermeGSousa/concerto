@@ -120,6 +120,7 @@ impl Default for Fall {
 }
 
 impl Fall {
+    /// Sets how conscious the fall is, from 1, fully braced, to 0, limp.
     pub fn with_strength(mut self, strength: f32) -> Self {
         self.strength = strength;
         self

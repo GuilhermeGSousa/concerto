@@ -30,23 +30,44 @@
 //!     .run(&mut world);
 //! ```
 
+/// [`Archetype`](archetype::Archetype), the storage for entities that share one set of components.
 pub mod archetype;
+/// [`CommandQueue`], which defers structural changes until a system's commands apply.
 pub mod command;
+/// Small types shared across the crate, such as the sorted component-id set that names an
+/// archetype.
 pub mod common;
+/// [`Component`] and what comes with it: bundles, required components, removal tracking, names and
+/// scene references.
 pub mod component;
+/// [`Entity`] handles, their storage, and the parent and child hierarchy.
 pub mod entity;
+/// [`Event`]s: messages written by one system and read once by each reader.
 pub mod events;
+/// Interning: storing a value once for the life of the process and comparing it by address.
 pub mod intern;
+/// Label traits compared and hashed as trait objects, and [`define_label!`] to declare one.
 pub mod label;
+/// [`Query`], the system parameter that iterates entities' components, and its filters.
 pub mod query;
+/// Reflection of components into a world: the [`AppTypeRegistry`](reflect::AppTypeRegistry) and the
+/// type data that reads, writes and saves components.
 pub mod reflect;
+/// [`Resource`]s, the world's singletons, and the [`Res`] and [`ResMut`] parameters.
 pub mod resource;
+/// Signals: values triggered on the world and run by the listeners registered for them.
 pub mod signal;
+/// Systems, schedules, sets, tags and executors.
 pub mod system;
+/// [`Table`](table::Table), the column storage behind each archetype.
 pub mod table;
+/// Cells and hashers the scheduler and storage use.
 pub mod utilities;
+/// Hashers with a fixed seed, which a `const` constructor can name.
 pub mod utils;
+/// [`World`], which owns every entity, component, resource and listener.
 pub mod world;
+/// [`WorldId`](world_id::WorldId), the process-unique identity of a world.
 pub mod world_id;
 
 pub use command::CommandQueue;

@@ -28,14 +28,23 @@ const SNAP_WEIGHT: f32 = 1.0e-4;
 #[derive(Clone, Debug, PartialEq, Reflect, serde::Serialize, serde::Deserialize)]
 #[reflect(AnimationNode, Default)]
 pub struct AimNode {
+    /// The bones that turn, from the top of the chain down.
     pub chain: Vec<AimBone>,
+    /// Where the barrel is.
     pub muzzle: Muzzle,
+    /// The model-space up that yaw turns about.
     pub up: Vec3,
+    /// The `Vec3` blackboard param holding the world-space point to aim at.
     pub target_param: Param<Vec3>,
+    /// The weight the aim is applied at, before the param scales it; clamped to 0 to 1.
     pub weight: f32,
+    /// The `f32` blackboard param the weight is multiplied by, when it holds one.
     pub weight_param: Option<Param<f32>>,
+    /// The halflife, in seconds, the weight eases in and out with.
     pub weight_halflife: f32,
+    /// The halflife, in seconds, the bones ease back onto the solve with; 0 applies it at once.
     pub reacquire_halflife: f32,
+    /// The `f32` blackboard param the re-acquire halflife is multiplied by, when it holds one.
     pub reacquire_param: Option<Param<f32>>,
 }
 
@@ -58,9 +67,14 @@ impl Default for AimNode {
 /// A bone of the aim chain: its share of the turn and its limits, in radians.
 #[derive(Clone, Debug, PartialEq, Reflect, serde::Serialize, serde::Deserialize)]
 pub struct AimBone {
+    /// The bone, which must descend from the bone above it in the chain.
     pub bone: JointName,
+    /// The bone's share of the turn, relative to the bones below it; 0 or less turns it not at
+    /// all.
     pub share: f32,
+    /// The most the bone yaws, in radians.
     pub yaw_limit: f32,
+    /// The most the bone pitches, in radians.
     pub pitch_limit: f32,
 }
 
@@ -78,8 +92,11 @@ impl Default for AimBone {
 /// Where the barrel is: a point and a direction in `bone`'s space.
 #[derive(Clone, Debug, PartialEq, Reflect, serde::Serialize, serde::Deserialize)]
 pub struct Muzzle {
+    /// The bone the barrel is fixed to.
     pub bone: JointName,
+    /// The barrel's tip, in the bone's space.
     pub offset: Vec3,
+    /// The direction the barrel points, in the bone's space.
     pub direction: Vec3,
 }
 

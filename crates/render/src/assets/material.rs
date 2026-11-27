@@ -98,7 +98,10 @@ pub enum AlphaMode {
     #[default]
     Opaque,
     /// Fragments whose alpha is below `cutoff` are discarded; the rest are opaque.
-    Mask { cutoff: f32 },
+    Mask {
+        /// The alpha below which a fragment is discarded, from 0 to 1.
+        cutoff: f32,
+    },
     /// The surface is blended over what is behind it by its alpha.
     Blend,
 }
@@ -155,6 +158,7 @@ pub struct StandardMaterial {
 }
 
 impl StandardMaterial {
+    /// Creates the default material with the given base colour and normal textures.
     pub fn new(
         base_color_texture: Option<AssetHandle<Texture>>,
         normal_texture: Option<AssetHandle<Texture>>,
@@ -169,77 +173,94 @@ impl StandardMaterial {
         material
     }
 
+    /// Returns the material with its base colour factor set; see
+    /// [`Self::set_base_color_factor`].
     pub fn with_base_color_factor(mut self, factor: Color) -> Self {
         self.set_base_color_factor(factor);
         self
     }
 
+    /// Returns the material with its metallic-roughness texture set.
     pub fn with_metallic_roughness_texture(mut self, texture: AssetHandle<Texture>) -> Self {
         self.set_metallic_roughness_texture(texture);
         self
     }
 
+    /// Returns the material with its emissive texture set.
     pub fn with_emissive_texture(mut self, texture: AssetHandle<Texture>) -> Self {
         self.set_emissive_texture(texture);
         self
     }
 
+    /// Returns the material with its occlusion texture set.
     pub fn with_occlusion_texture(mut self, texture: AssetHandle<Texture>) -> Self {
         self.set_occlusion_texture(texture);
         self
     }
 
+    /// Sets the base colour texture, sampled as colour and multiplied by the base colour factor.
     pub fn set_base_color_texture(&mut self, texture: AssetHandle<Texture>) {
         self.base_color_texture = Some(texture);
         self.uniform.flags |= MaterialFlags::HAS_BASE_COLOR_TEXTURE;
     }
 
+    /// Returns the base colour texture, if any.
     pub fn base_color_texture(&self) -> Option<&AssetHandle<Texture>> {
         self.base_color_texture.as_ref()
     }
 
+    /// Sets the base colour texture; renamed to [`Self::set_base_color_texture`].
     #[deprecated(note = "renamed to `set_base_color_texture`")]
     pub fn set_diffuse_texture(&mut self, texture: AssetHandle<Texture>) {
         self.set_base_color_texture(texture);
     }
 
+    /// Returns the base colour texture; renamed to [`Self::base_color_texture`].
     #[deprecated(note = "renamed to `base_color_texture`")]
     pub fn diffuse_texture(&self) -> Option<&AssetHandle<Texture>> {
         self.base_color_texture()
     }
 
+    /// Sets the tangent-space normal map.
     pub fn set_normal_texture(&mut self, texture: AssetHandle<Texture>) {
         self.normal_texture = Some(texture);
         self.uniform.flags |= MaterialFlags::HAS_NORMAL_TEXTURE;
     }
 
+    /// Returns the normal map, if any.
     pub fn normal_texture(&self) -> Option<&AssetHandle<Texture>> {
         self.normal_texture.as_ref()
     }
 
+    /// Sets the texture holding roughness in green and metalness in blue.
     pub fn set_metallic_roughness_texture(&mut self, texture: AssetHandle<Texture>) {
         self.metallic_roughness_texture = Some(texture);
         self.uniform.flags |= MaterialFlags::HAS_METALLIC_ROUGHNESS_TEXTURE;
     }
 
+    /// Returns the metallic-roughness texture, if any.
     pub fn metallic_roughness_texture(&self) -> Option<&AssetHandle<Texture>> {
         self.metallic_roughness_texture.as_ref()
     }
 
+    /// Sets the emissive texture, multiplied by the emissive factor.
     pub fn set_emissive_texture(&mut self, texture: AssetHandle<Texture>) {
         self.emissive_texture = Some(texture);
         self.uniform.flags |= MaterialFlags::HAS_EMISSIVE_TEXTURE;
     }
 
+    /// Returns the emissive texture, if any.
     pub fn emissive_texture(&self) -> Option<&AssetHandle<Texture>> {
         self.emissive_texture.as_ref()
     }
 
+    /// Sets the texture holding ambient occlusion in red.
     pub fn set_occlusion_texture(&mut self, texture: AssetHandle<Texture>) {
         self.occlusion_texture = Some(texture);
         self.uniform.flags |= MaterialFlags::HAS_OCCLUSION_TEXTURE;
     }
 
+    /// Returns the occlusion texture, if any.
     pub fn occlusion_texture(&self) -> Option<&AssetHandle<Texture>> {
         self.occlusion_texture.as_ref()
     }
@@ -250,6 +271,7 @@ impl StandardMaterial {
         self.uniform.base_color_factor = factor.to_linear();
     }
 
+    /// Returns the base colour factor.
     pub fn base_color_factor(&self) -> Color {
         Color::from(self.uniform.base_color_factor)
     }
@@ -260,6 +282,7 @@ impl StandardMaterial {
         self.uniform.metallic_factor = factor;
     }
 
+    /// Returns the metalness factor, from 0 to 1.
     pub fn metallic_factor(&self) -> f32 {
         self.uniform.metallic_factor
     }
@@ -270,6 +293,7 @@ impl StandardMaterial {
         self.uniform.roughness_factor = factor;
     }
 
+    /// Returns the roughness factor, from 0 to 1.
     pub fn roughness_factor(&self) -> f32 {
         self.uniform.roughness_factor
     }
@@ -280,6 +304,7 @@ impl StandardMaterial {
         self.uniform.emissive_factor = factor.to_array();
     }
 
+    /// Returns the linear RGB emissive factor.
     pub fn emissive_factor(&self) -> Vec3 {
         Vec3::from_array(self.uniform.emissive_factor)
     }
@@ -290,6 +315,7 @@ impl StandardMaterial {
         self.uniform.occlusion_strength = strength;
     }
 
+    /// Returns how strongly the occlusion texture darkens, from 0 to 1.
     pub fn occlusion_strength(&self) -> f32 {
         self.uniform.occlusion_strength
     }
@@ -309,11 +335,13 @@ impl StandardMaterial {
         }
     }
 
+    /// Returns the material with its alpha mode set.
     pub fn with_alpha_mode(mut self, mode: AlphaMode) -> Self {
         self.set_alpha_mode(mode);
         self
     }
 
+    /// Returns how the base colour's alpha is treated.
     pub fn alpha_mode(&self) -> AlphaMode {
         AlphaMode::from(&self.uniform)
     }
@@ -324,11 +352,13 @@ impl StandardMaterial {
         self.uniform.uv_scale = scale;
     }
 
+    /// Returns the material with its UV scale set; see [`Self::set_uv_scale`].
     pub fn with_uv_scale(mut self, scale: [f32; 2]) -> Self {
         self.set_uv_scale(scale);
         self
     }
 
+    /// Returns the scale applied to UV coordinates.
     pub fn uv_scale(&self) -> [f32; 2] {
         self.uniform.uv_scale
     }
@@ -380,18 +410,27 @@ impl LoadableAsset for StandardMaterial {
     }
 }
 
+/// The bits of [`StandardMaterial`]'s uniform that say which textures it has and how it treats
+/// alpha; the shader reads them.
 #[repr(transparent)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable, serde::Serialize, serde::Deserialize)]
 pub struct MaterialFlags(u32);
 
 bitflags! {
     impl MaterialFlags: u32 {
+        /// A base colour texture is bound.
         const HAS_BASE_COLOR_TEXTURE = 1 << 0;
+        /// A normal map is bound.
         const HAS_NORMAL_TEXTURE = 1 << 1;
+        /// A metallic-roughness texture is bound.
         const HAS_METALLIC_ROUGHNESS_TEXTURE = 1 << 2;
+        /// An emissive texture is bound.
         const HAS_EMISSIVE_TEXTURE = 1 << 3;
+        /// An occlusion texture is bound.
         const HAS_OCCLUSION_TEXTURE = 1 << 4;
+        /// The alpha mode is [`AlphaMode::Mask`].
         const ALPHA_CUTOUT = 1 << 5;
+        /// The alpha mode is [`AlphaMode::Blend`].
         const ALPHA_BLEND = 1 << 6;
     }
 }
@@ -583,6 +622,7 @@ pub trait Material: AsBindGroup + LoadableAsset + Send + Sync + 'static {
         })
     }
 
+    /// The primitive topology of the material's meshes; defaults to triangle lists.
     fn topology() -> wgpu::PrimitiveTopology
     where
         Self: Sized,
@@ -590,6 +630,8 @@ pub trait Material: AsBindGroup + LoadableAsset + Send + Sync + 'static {
         wgpu::PrimitiveTopology::TriangleList
     }
 
+    /// The blend state of the material's opaque and masked pipelines; defaults to replacing what
+    /// is behind.
     fn blend_state() -> Option<wgpu::BlendState>
     where
         Self: Sized,

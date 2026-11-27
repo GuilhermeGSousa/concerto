@@ -28,8 +28,11 @@ use crate::{
 
 /// Writes `json` at `path` in `target`, as MCP `set_property` does, reporting the result as a `PropertyCommitted`.
 pub struct WriteValue {
+    /// The value to write into.
     pub target: Arc<dyn PropertyTarget>,
+    /// The dot-separated property path inside the value.
     pub path: String,
+    /// The new value at `path`, as JSON.
     pub json: Value,
 }
 

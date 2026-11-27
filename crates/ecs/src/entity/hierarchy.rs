@@ -51,15 +51,21 @@ impl Command for DespawnChildren {
     }
 }
 
+/// The children of an entity, in the order they were attached.
+///
+/// The world keeps it in step with the children's [`ChildOf`] components and removes it when the
+/// last child leaves.
 pub struct Children {
     children: Vec<Entity>,
 }
 
 impl Children {
+    /// Returns an iterator over the children.
     pub fn iter(&self) -> impl DoubleEndedIterator<Item = &Entity> + ExactSizeIterator {
         self.children.iter()
     }
 
+    /// Reorders the children by `key`, keeping the order of equal keys.
     pub fn sort_by_key<K: Ord>(&mut self, mut key: impl FnMut(Entity) -> K) {
         self.children.sort_by_key(|entity| key(*entity));
     }
@@ -124,6 +130,10 @@ impl<'a> IntoIterator for &'a Children {
     }
 }
 
+/// Makes its entity a child of `parent`.
+///
+/// Inserting it adds the entity to the parent's [`Children`]; replacing or removing it takes the
+/// entity out. Despawning the parent despawns its children.
 #[allow(dead_code)]
 pub struct ChildOf {
     parent: Entity,
@@ -181,10 +191,12 @@ impl Component for ChildOf {
 }
 
 impl ChildOf {
+    /// Creates the relation to `parent`.
     pub fn new(parent: Entity) -> Self {
         Self { parent }
     }
 
+    /// Returns the parent entity.
     pub fn parent(&self) -> Entity {
         self.parent
     }

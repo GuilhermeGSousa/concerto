@@ -128,6 +128,7 @@ impl Default for InspectorRegistry {
 }
 
 impl InspectorRegistry {
+    /// Makes `E` the editor of every property of type `T`, replacing any editor `T` had.
     pub fn register_property_editor<T: Reflect, E: PropertyEditor<T>>(&mut self) {
         self.editors.insert(
             TypeId::of::<T>(),
@@ -345,9 +346,10 @@ impl SystemInput for InspectionSource<'_> {
         world: UnsafeWorldCell<'world>,
         ticks: SystemTicks,
     ) -> Result<Self::Data<'world, 'state>, ValidationError> {
-        // SAFETY: this input declares exactly the access of its two parts.
         Ok(InspectionSource {
+            // SAFETY: this input declares exactly the access of its two parts.
             components: unsafe { ComponentMetadata::get_data(state, world, ticks) }?,
+            // SAFETY: this input declares exactly the access of its two parts.
             table: unsafe { Res::new(world, ticks) }?,
         })
     }
@@ -358,7 +360,13 @@ impl SystemInput for InspectionSource<'_> {
 }
 impl ReadOnlySystemInput for InspectionSource<'_> {}
 
+/// Registers property editors on the editor's `App`.
 pub trait EditableApp {
+    /// Makes `E` the inspector's editor of every property of type `T`.
+    ///
+    /// # Panics
+    ///
+    /// Panics when [`InspectorPlugin`](super::InspectorPlugin) is not registered yet.
     fn register_property_editor<T: Reflect, E: PropertyEditor<T>>(&mut self) -> &mut Self;
 }
 

@@ -54,11 +54,17 @@ pub(crate) const SPEEDS: [Speed; 4] = [
 /// The owner sets `duration` and `rate`, and the transport keeps the rest.
 #[derive(Component, Clone, Debug, PartialEq)]
 pub struct ClipTransport {
+    /// The clip's length in seconds; 0 disables every button.
     pub duration: f32,
+    /// The clip's frame rate; `None` disables the step buttons.
     pub rate: Option<f32>,
+    /// The preview's time in the clip, in seconds.
     pub time: f32,
+    /// Whether the preview is playing; true by default.
     pub playing: bool,
+    /// Whether the clip loops; true by default.
     pub looping: bool,
+    /// The playback speed multiplier; 1 by default.
     pub speed: f32,
 }
 
@@ -82,17 +88,24 @@ pub struct TransportDisabled;
 /// On a [`Timeline`], has the transport write its duration, rate and time from `document`'s [`ClipTransport`].
 #[derive(Component)]
 pub struct TransportTimeline {
+    /// The document whose [`ClipTransport`] the timeline follows.
     pub document: Entity,
 }
 
 /// The buttons of a transport row, on the row, and the document they drive.
 #[derive(Component, Clone, Copy, Debug)]
 pub struct TransportRow {
+    /// The document whose preview the buttons drive.
     pub document: Entity,
+    /// The button that pauses and steps one frame back.
     pub step_back: Entity,
+    /// The play/pause button.
     pub play: Entity,
+    /// The button that pauses and steps one frame forward.
     pub step_forward: Entity,
+    /// The Loop toggle.
     pub looping: Entity,
+    /// The speed buttons: 0.25×, 0.5×, 1× and 2×.
     pub speeds: [Entity; SPEEDS.len()],
 }
 

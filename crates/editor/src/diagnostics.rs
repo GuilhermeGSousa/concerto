@@ -17,6 +17,7 @@ use taffy::FlexDirection;
 
 use crate::dock::{DockedApp, PanelDescriptor, PanelRegistry, Region};
 
+/// The id the UI cost counters are registered under in the [`PanelRegistry`].
 pub const PANEL_ID: &str = "concerto.stats";
 
 #[derive(Component)]
@@ -31,6 +32,7 @@ struct Sampler {
     frames: u32,
 }
 
+/// Adds the panel in the top strip that shows the UI's cost counters.
 pub struct DiagnosticsPlugin;
 
 impl Plugin for DiagnosticsPlugin {

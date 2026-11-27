@@ -12,6 +12,7 @@ use crate::{
 
 /// A leaf type's JSON form, from which its [`ReflectJson`] is built.
 pub trait JsonLeaf: Reflect + Sized {
+    /// Returns the value's JSON form.
     fn to_json(&self) -> Value;
     /// Reads the value back, or says what shape was expected.
     ///
@@ -24,7 +25,10 @@ pub trait JsonLeaf: Reflect + Sized {
 /// Writes a leaf as JSON and reads it back.
 #[derive(Clone, Copy)]
 pub struct ReflectJson {
+    /// Writes a value of the registered type as JSON, or `null` when it is another type.
     pub to_json: fn(&dyn Reflect) -> Value,
+    /// Reads a value of the registered type from JSON, or returns a message naming the expected
+    /// shape.
     pub from_json: fn(&Value) -> Result<Box<dyn Reflect>, String>,
 }
 

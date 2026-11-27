@@ -36,8 +36,11 @@ pub struct CameraDirector {
 
 /// A virtual camera's place in the stack, mirrored from its component.
 pub struct StackEntry {
+    /// The virtual camera's entity.
     pub camera: Entity,
+    /// The camera's priority; higher entries sit above lower ones.
     pub priority: i32,
+    /// Whether the camera is eligible to be live.
     pub enabled: bool,
 }
 
@@ -74,6 +77,7 @@ impl CameraDirector {
             .map(|entry| entry.camera)
     }
 
+    /// Whether `vcam` is the [`live`](Self::live) camera.
     pub fn is_live(&self, vcam: Entity) -> bool {
         self.live() == Some(vcam)
     }
@@ -83,6 +87,7 @@ impl CameraDirector {
         &self.stack
     }
 
+    /// Whether `vcam` is in the stack and enabled; `false` for an entity not in the stack.
     pub fn is_enabled(&self, vcam: Entity) -> bool {
         self.entry(vcam).is_some_and(|entry| entry.enabled)
     }
@@ -183,6 +188,8 @@ impl CameraDirector {
         self.blend
     }
 
+    /// Sets how the view catches up on the next change of control; a blend under way keeps its
+    /// own.
     pub fn set_blend(&mut self, blend: BlendIn) {
         self.blend = blend;
     }

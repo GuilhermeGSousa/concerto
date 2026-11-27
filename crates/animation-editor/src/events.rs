@@ -15,16 +15,22 @@ const NO_NAME: &str = "An event needs a name";
 /// An event as a clip tab shows and edits it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TabEvent {
+    /// The event's time in the clip, in seconds.
     pub time: f32,
+    /// The event's name, or its stored type and value.
     pub kind: TabEventKind,
 }
 
 /// What a tab event is: an `AnimationEvent` it can edit, or a typed event it keeps as stored.
 #[derive(Clone, Debug, PartialEq)]
 pub enum TabEventKind {
+    /// An [`AnimationEvent`] with this name, which the tab edits.
     Named(Name),
+    /// An event of any other type, read-only in the tab and saved as read.
     Typed {
+        /// The event's registered type name.
         type_name: String,
+        /// The event's value, as stored in the clip.
         value: ReflectedValue,
     },
 }

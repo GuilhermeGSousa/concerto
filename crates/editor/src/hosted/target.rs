@@ -1,3 +1,5 @@
+//! Which document's `App` the panels read and the viewport shows: [`EditTarget`] and
+//! [`ViewportTarget`], moved by [`SetEditTarget`].
 use concerto_ecs::{
     CommandQueue, Component, Entity, Query, Res, With,
     signal::{On, Signal},

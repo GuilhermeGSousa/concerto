@@ -10,9 +10,13 @@ pub struct DocumentTypes(pub AppTypeRegistry);
 
 /// A value inside `C`, a component on a document in the editor's world.
 pub struct DocumentValue<C> {
+    /// The value's name, the title of its card.
     pub name: String,
+    /// The document entity in the editor's world that holds `C`.
     pub document: Entity,
+    /// Finds the value in `C`, or `None` when `C` holds none, as before it has loaded.
     pub read: Box<dyn Fn(&C) -> Option<&dyn Reflect> + Send + Sync>,
+    /// Finds the value in `C` for writing, or `None` when `C` holds none.
     pub edit: Box<dyn Fn(&mut C) -> Option<&mut dyn Reflect> + Send + Sync>,
 }
 

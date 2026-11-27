@@ -1,3 +1,5 @@
+//! Events of hosted `App`s, read from the editor's world: [`HostedAppEvents`] reads them in place
+//! and [`HostedEventsAppExt::forward_hosted_event`] re-writes them as [`Hosted`] events.
 use std::collections::HashMap;
 
 use concerto_app::{App, schedule_groups::First};
@@ -19,7 +21,9 @@ use super::{HostedApp, ParkedEditApp};
 /// An event about a document: re-written in the editor's world from its hosted `App`, or written there directly for a value it holds.
 #[derive(Clone)]
 pub struct Hosted<E> {
+    /// The document whose `App` wrote the event, or that holds the value it is about.
     pub document: Entity,
+    /// The event itself.
     pub event: E,
 }
 
@@ -128,6 +132,7 @@ pub(crate) fn forward_events<E: Event + Clone + 'static>(
     }
 }
 
+/// Forwards events from hosted `App`s into the editor's `App`.
 pub trait HostedEventsAppExt {
     /// Re-writes every `E` a hosted `App` writes as a [`Hosted<E>`] event in this `App`.
     fn forward_hosted_event<E: Event + Clone + 'static>(&mut self) -> &mut Self;

@@ -30,14 +30,18 @@ use crate::tools::{
 pub enum EntityEdit {
     /// Adds an empty entity as the last child of `parent`, or at the top level of a world without a scene root.
     Create {
+        /// The new entity's parent, or `None` for the scene root or a game world's top level.
         parent: Option<Entity>,
     },
     /// Removes the entity and its descendants.
     Delete(Entity),
     /// Copies the entity and its descendants beside it.
     Duplicate(Entity),
+    /// Sets the entity's name, trimmed; an empty name is refused.
     Rename {
+        /// The entity to rename.
         entity: Entity,
+        /// Its new name.
         name: String,
     },
 }
@@ -47,7 +51,10 @@ impl Signal for EntityEdit {}
 /// What one `EntityEdit` did: the entity it created or duplicated, or the status text saying why it was refused.
 #[derive(Event, Clone)]
 pub struct EntityEdited {
+    /// The edit that was asked for.
     pub edit: EntityEdit,
+    /// The created or duplicated entity, `None` for another edit, or the status text saying why it
+    /// was refused.
     pub result: Result<Option<Entity>, String>,
 }
 

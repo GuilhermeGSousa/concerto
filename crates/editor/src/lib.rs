@@ -51,7 +51,12 @@ use std::path::PathBuf;
 use crate::asset_picker::AssetPickerPlugin;
 use crate::entity_picker::EntityPickerPlugin;
 
+/// The whole editor: its panels, documents, scene tools and project systems, for one game's
+/// recipe.
+///
+/// [`run`] and [`run_with`] add it; a test or an embedding `App` can add it directly.
 pub struct EditorPlugin {
+    /// The project to open at startup, or `None` to start without one.
     pub project: Option<PathBuf>,
     /// Let the window manager draw the window frame instead of the editor.
     pub decorated: bool,

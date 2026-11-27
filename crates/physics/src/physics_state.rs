@@ -84,6 +84,7 @@ pub struct PhysicsState {
 }
 
 impl PhysicsState {
+    /// Creates an empty simulation with no bodies or ragdolls.
     pub fn new() -> Self {
         Self {
             backend: ActiveBackend::new(),
@@ -542,10 +543,12 @@ impl PhysicsState {
         self.backend.set_body_translation(body.0, translation);
     }
 
+    /// Sets the body's linear velocity, in m/s in world space, and wakes it.
     pub fn set_linear_velocity(&mut self, body: BodyId, velocity: Vec3) {
         self.backend.set_linear_velocity(body.0, velocity);
     }
 
+    /// The body's linear velocity, in m/s in world space.
     pub fn linear_velocity(&self, body: BodyId) -> Vec3 {
         self.backend.linear_velocity(body.0)
     }
@@ -612,14 +615,17 @@ impl PhysicsState {
             })
     }
 
+    /// Applies an impulse, in N·s, at the body's centre of mass, changing its velocity at once.
     pub fn add_impulse(&mut self, body: BodyId, impulse: Vec3) {
         self.backend.add_impulse(body.0, impulse);
     }
 
+    /// Applies an impulse, in N·s, at the world-space `position`, which also changes its spin.
     pub fn add_impulse_at(&mut self, body: BodyId, impulse: Vec3, position: Vec3) {
         self.backend.add_impulse_at(body.0, impulse, position);
     }
 
+    /// Adds a force, in N, at the body's centre of mass for the next step.
     pub fn add_force(&mut self, body: BodyId, force: Vec3) {
         self.backend.add_force(body.0, force);
     }
@@ -629,6 +635,7 @@ impl PhysicsState {
         self.backend.add_torque(body.0, torque);
     }
 
+    /// Adds a force, in N, at the world-space `position` for the next step, which also adds torque.
     pub fn add_force_at(&mut self, body: BodyId, force: Vec3, position: Vec3) {
         self.backend.add_force_at(body.0, force, position);
     }

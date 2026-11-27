@@ -5,7 +5,9 @@ use glam::{Quat, Vec3};
 /// How the root moved this frame, in its parent's space, read from the way it faced last frame.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct RootMotion {
+    /// The translation in the parent's space, rotated into the frame the root faced last frame.
     pub translation: Vec3,
+    /// The rotation in the parent's space, relative to the way the root faced last frame.
     pub rotation: Quat,
 }
 
@@ -63,10 +65,15 @@ pub fn apply_additive(base: &mut JointPose, delta: &JointPose, weight: f32) {
 /// A clip event crossed this frame: the key on its clip, and the weight its source has in the frame.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct FiredEvent {
+    /// The clip the event key is on.
     pub clip: AssetId,
+    /// The index of the key in the clip's [`events`](crate::clip::AnimationClip::events).
     pub key: u32,
+    /// The key's time on the clip, in seconds.
     pub time: f32,
+    /// The weight its source has in the frame, from 0 to 1.
     pub weight: f32,
+    /// Whether the frame was mirrored when the key was crossed.
     pub mirrored: bool,
 }
 
@@ -229,14 +236,18 @@ impl Blendable for AnimationFrame {
 
 /// A frame an input of a node evaluated, and the weight it carries.
 pub struct EvaluatedFrame {
+    /// The frame the input evaluated.
     pub frame: AnimationFrame,
+    /// The weight the input's node carries, from 0 to 1.
     pub weight: f32,
 }
 
 /// One input's root motion in the root-motion pass and the weight its node carries.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct WeightedMotion {
+    /// The input's root motion.
     pub motion: RootMotion,
+    /// The weight the input's node carries, from 0 to 1.
     pub weight: f32,
 }
 

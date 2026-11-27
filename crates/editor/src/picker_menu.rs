@@ -1,3 +1,5 @@
+//! The parts every picker menu is built from: its list or tree, its placement under the button that
+//! opens it, and its sizes.
 use concerto_ecs::{Entity, command::CommandQueue, component::Component};
 use concerto_ui::elements::{ListBuilder, prelude::*};
 use concerto_ui::{

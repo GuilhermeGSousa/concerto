@@ -1,3 +1,5 @@
+#![allow(missing_docs, reason = "build script of the raw Jolt bindings")]
+
 use std::path::{Path, PathBuf};
 
 fn main() {

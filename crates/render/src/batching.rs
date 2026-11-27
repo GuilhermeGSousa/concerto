@@ -310,14 +310,18 @@ impl<K> ViewBatches<K> {
 /// Batches queued and mesh instances culled for one view in the last frame.
 #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
 pub struct ViewDrawStats {
+    /// The number of batches queued.
     pub draws: u32,
+    /// The number of mesh instances culled.
     pub culled: u32,
 }
 
 /// Batches queued and mesh instances culled for every view in the last frame.
 #[derive(Resource, Default)]
 pub struct RenderDrawStats {
+    /// The stats of each camera, by its render-world entity.
     pub cameras: EntityHashMap<ViewDrawStats>,
+    /// The stats of each shadow map layer, by layer index.
     pub shadow_layers: Vec<ViewDrawStats>,
 }
 

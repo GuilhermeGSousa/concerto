@@ -44,18 +44,21 @@ const PLAY_GLYPH: f32 = 13.0;
 /// Entity in the tab bar that activates the associated document.
 #[derive(Component)]
 pub struct EditorTab {
+    /// The document the tab shows.
     pub document: Entity,
 }
 
 /// Close button nested in an [`EditorTab`].
 #[derive(Component)]
 pub struct EditorTabClose {
+    /// The document the button closes.
     pub document: Entity,
 }
 
 /// Play/Stop button nested in the Scene tab, which cannot be closed.
 #[derive(Component)]
 pub struct EditorTabPlay {
+    /// The Scene document whose game the button starts and stops.
     pub document: Entity,
 }
 
@@ -74,18 +77,23 @@ struct TabIcon {
     document: Entity,
 }
 
+/// Marks the node in the top strip that clips the tabs and takes the wheel to scroll them.
 #[derive(Component)]
 pub struct TabStrip;
 
+/// Marks the row inside the [`TabStrip`] that holds the tabs and moves when they scroll.
 #[derive(Component, Default)]
 pub struct TabStripContent;
 
+/// How far the tabs in a [`TabStrip`] are scrolled, and the tab last scrolled into view.
 #[derive(Component, Default)]
 pub struct TabScroll {
     offset: f32,
     revealed: Option<Entity>,
 }
 
+/// Shows a tab per open document, ordered by when it opened, with its close and Play buttons, and
+/// scrolls the active one into view.
 pub struct TabsPlugin;
 
 impl Plugin for TabsPlugin {

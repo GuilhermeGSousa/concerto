@@ -1,3 +1,5 @@
+//! Where a canvas puts its nodes and how its links run, in content space: [`CanvasLayout`] and the
+//! boxes and routes it holds.
 use std::collections::{HashMap, VecDeque};
 
 use concerto_ui::node::UIBox;
@@ -39,23 +41,31 @@ const BACKWARD_LANE: f32 = 20.0;
 /// Which way a link's arrowhead points.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ArrowDirection {
+    /// Points left.
     Left,
+    /// Points right.
     Right,
 }
 
 /// A node's box and the centres of its pins, in content space.
 #[derive(Clone, Debug, PartialEq)]
 pub struct NodeBox {
+    /// The node the box is for.
     pub id: CanvasNodeId,
+    /// The box's position and size.
     pub rect: UIBox,
+    /// The centre of each input pin, in the node's order.
     pub inputs: Vec<Vec2>,
+    /// The centre of the output pin, if the node has one.
     pub output: Option<Vec2>,
 }
 
 /// One straight run of a link.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Segment {
+    /// Where the run starts.
     pub from: Vec2,
+    /// Where the run ends.
     pub to: Vec2,
 }
 
@@ -88,10 +98,13 @@ pub struct Detour {
 pub struct LinkRoute {
     /// The link's index in the canvas's `links`.
     pub link: usize,
+    /// Where the link leaves its first node.
     pub start: Vec2,
     /// The x of the vertical run.
     pub bend: f32,
+    /// Where the link reaches its second node.
     pub end: Vec2,
+    /// The direction of the arrowhead at `end`, or `None` for a link without one, as in `Flow`.
     pub arrow: Option<ArrowDirection>,
     /// Set on a diagram link that spans more than one column.
     pub detour: Option<Detour>,

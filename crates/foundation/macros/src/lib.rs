@@ -1,3 +1,6 @@
+//! Procedural macros for `concerto-foundation`: the `Asset`, `Blendable` and `AsAny` derives and
+//! the backing of `asset_id!`; use them through its re-exports.
+
 extern crate proc_macro;
 extern crate syn;
 
@@ -118,6 +121,13 @@ fn existing_file(path: &std::path::Path) -> Result<Option<std::path::PathBuf>, S
     }
 }
 
+/// Derives `Asset`, naming the asset after its type, with the format version given by
+/// `#[asset(version = n)]`.
+///
+/// # Panics
+///
+/// Panics if the input does not parse as a struct, enum or union, which rustc rules out for a
+/// derive.
 #[proc_macro_derive(Asset, attributes(asset))]
 pub fn asset(input: TokenStream) -> TokenStream {
     let ast = syn::parse(input).unwrap();
@@ -167,6 +177,11 @@ fn impl_asset(ast: &syn::DeriveInput) -> TokenStream {
     gen.into()
 }
 
+/// Derives `Blendable` for a struct by interpolating each field with its own `Blendable`.
+///
+/// # Panics
+///
+/// Panics if the input is an enum or a union.
 #[proc_macro_derive(Blendable)]
 pub fn lerp_derive(input: TokenStream) -> TokenStream {
     // 1. Parse the input Rust code (the struct) into a syntax tree
@@ -222,6 +237,12 @@ pub fn lerp_derive(input: TokenStream) -> TokenStream {
     gen.into()
 }
 
+/// Derives `AsAny`, returning the value itself as `dyn Any`.
+///
+/// # Panics
+///
+/// Panics if the input does not parse as a struct, enum or union, which rustc rules out for a
+/// derive.
 #[proc_macro_derive(AsAny)]
 pub fn any_derive(input: TokenStream) -> TokenStream {
     let ast: DeriveInput = syn::parse(input).unwrap();

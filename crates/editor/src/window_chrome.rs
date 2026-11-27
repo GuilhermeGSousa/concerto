@@ -28,6 +28,8 @@ use taffy::Position;
 use crate::dock::{DockedApp, PanelDescriptor, PanelRegistry, Region, TOP_STRIP};
 use crate::fonts::{button_icon, glyph, icon_button};
 
+/// The id the window controls are registered under in the [`PanelRegistry`], when the editor draws
+/// its own frame.
 pub const PANEL_ID: &str = "concerto.window";
 
 const GRIP: f32 = 6.0;
@@ -58,6 +60,8 @@ struct MaximiseGlyph;
 
 /// Whether the window manager draws the frame.
 pub struct WindowChromePlugin {
+    /// `true` lets the window manager draw the frame; `false` has the editor draw its own controls
+    /// and resize grips.
     pub decorated: bool,
 }
 

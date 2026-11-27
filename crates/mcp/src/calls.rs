@@ -20,8 +20,11 @@ use crate::{PendingCall, Reply, ServeCalls, ToolError, ToolRegistry};
 /// One `tools/call` from the client, written in `First` and read by tools through [`ToolCalls`].
 #[derive(Event, Clone)]
 pub struct McpCall {
+    /// The name of the tool called.
     pub tool: String,
+    /// The call's arguments, as the client sent them.
     pub arguments: Value,
+    /// Where the call's answer goes.
     pub reply: Reply,
 }
 

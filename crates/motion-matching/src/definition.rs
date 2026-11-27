@@ -8,7 +8,9 @@ use serde::{Deserialize, Serialize};
 /// A span of a clip in seconds, from `start` to `end`.
 #[derive(Reflect, Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct TimeRange {
+    /// The start, in seconds from the clip's start.
     pub start: f32,
+    /// The end, in seconds from the clip's start.
     pub end: f32,
 }
 
@@ -17,20 +19,29 @@ pub struct TimeRange {
 /// No range means the whole clip.
 #[derive(Reflect, Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct MotionEntry {
+    /// The clip to bake.
     pub clip: AssetHandle<AnimationClip>,
+    /// The span of the clip to bake; the whole clip when absent.
     pub range: Option<TimeRange>,
+    /// Whether the entry is baked mirrored across the database's mirror plane.
     pub mirrored: bool,
 }
 
 /// A signed axis of a joint's local space.
 #[derive(Reflect, Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum JointAxis {
+    /// The joint's +X axis.
     X,
+    /// The joint's -X axis.
     NegX,
+    /// The joint's +Y axis.
     #[default]
     Y,
+    /// The joint's -Y axis.
     NegY,
+    /// The joint's +Z axis.
     Z,
+    /// The joint's -Z axis.
     NegZ,
 }
 
@@ -51,8 +62,10 @@ impl JointAxis {
 /// The horizontal model-space axis normal to the plane that mirrored entries are mirrored across.
 #[derive(Reflect, Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MirrorAxis {
+    /// The plane `x = 0`.
     #[default]
     X,
+    /// The plane `z = 0`.
     Z,
 }
 
@@ -69,10 +82,16 @@ impl MirrorAxis {
 /// Which joints place and orient the simulation bone, and how much to smooth it.
 #[derive(Reflect, Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SimulationBoneSettings {
+    /// The joint whose model-space position, projected onto the ground and smoothed, places the
+    /// simulation bone.
     pub position_joint: JointName,
+    /// The joint whose facing, flattened onto the ground and smoothed, turns the simulation bone.
     pub facing_joint: JointName,
+    /// The axis of `facing_joint`'s model-space rotation the character faces along.
     pub facing_axis: JointAxis,
+    /// The width, in frames, of the filter that smooths the position; odd and greater than 3.
     pub position_window: usize,
+    /// The width, in frames, of the filter that smooths the facing; odd and greater than 3.
     pub facing_window: usize,
 }
 
@@ -94,7 +113,9 @@ impl Default for SimulationBoneSettings {
 /// ahead of the current frame.
 #[derive(Reflect, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct TrajectorySettings {
+    /// The time between samples, in seconds.
     pub sample_dt: f32,
+    /// The number of samples.
     pub sample_count: usize,
 }
 

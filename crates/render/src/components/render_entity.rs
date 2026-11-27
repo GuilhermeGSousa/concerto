@@ -19,6 +19,7 @@ pub struct SyncWithRenderWorld;
 pub struct RenderEntity(Entity);
 
 impl RenderEntity {
+    /// Points at the render-world `entity`.
     pub fn new(entity: Entity) -> Self {
         Self(entity)
     }
@@ -29,6 +30,7 @@ impl RenderEntity {
 pub struct MainEntity(Entity);
 
 impl MainEntity {
+    /// Points at the main-world `entity`.
     pub fn new(entity: Entity) -> Self {
         Self(entity)
     }

@@ -1,3 +1,6 @@
+//! Tests of physics bodies, contacts, sensors, layers, scene queries and ragdolls, on the backend
+//! the build selects.
+
 mod box_collider;
 mod collision_steps;
 mod common;
