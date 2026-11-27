@@ -12,6 +12,7 @@ use crate::{asset::NavMesh, navmesh::NavMeshData};
 #[derive(Component, Reflect, Clone, Debug, Default, PartialEq)]
 #[reflect(Component, Default, SceneComponent)]
 pub struct NavMeshComponent {
+    /// The navmesh asset.
     pub handle: AssetHandle<NavMesh>,
 }
 
@@ -19,8 +20,11 @@ pub struct NavMeshComponent {
 #[derive(Component, Reflect, Clone, Copy, Debug, Default, PartialEq)]
 #[reflect(Component, Default)]
 pub struct NavMeshStatus {
+    /// The number of polygons.
     pub polygons: u32,
+    /// The world-space minimum corner of the vertices' bounds; zero when there are none.
     pub min: Vec3,
+    /// The world-space maximum corner of the vertices' bounds; zero when there are none.
     pub max: Vec3,
 }
 

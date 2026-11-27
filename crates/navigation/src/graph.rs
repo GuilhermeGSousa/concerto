@@ -14,11 +14,17 @@ use crate::point::NavLink;
 /// One point as the graph is built from it: its entity, world position and rotation, anchor, `enabled` flag and links.
 #[derive(Clone, Debug, PartialEq)]
 pub struct NavPointRecord {
+    /// The point's entity.
     pub entity: Entity,
+    /// The point's world position.
     pub position: Vec3,
+    /// The point's world rotation, which its facing is read from.
     pub rotation: Quat,
+    /// The name game data refers to the point by; empty for none.
     pub anchor: Name,
+    /// Whether agents may route to and through the point.
     pub enabled: bool,
+    /// The links from this point.
     pub links: Vec<NavLink>,
 }
 
@@ -63,26 +69,37 @@ impl NavPointRecord {
 /// A point of the graph: where it is, which way it faces, its anchor and whether it can be entered.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct NavGraphPoint {
+    /// The point's entity.
     pub entity: Entity,
+    /// The point's world position.
     pub position: Vec3,
+    /// The rotation about the y axis that faces along the point's forward (+z) axis.
     pub facing: Quat,
+    /// The name game data refers to the point by; empty for none.
     pub anchor: Name,
+    /// Whether agents may route to and through the point.
     pub enabled: bool,
 }
 
 /// An authored link between two points of the graph.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct NavEdge {
+    /// The point that authored the link.
     pub from: Entity,
+    /// The point it links to.
     pub to: Entity,
+    /// Whether the link is walkable only from `from` to `to`.
     pub one_way: bool,
 }
 
 /// A route: the point it ends at, the positions it passes, and its length.
 #[derive(Clone, Debug, PartialEq)]
 pub struct NavPath {
+    /// The point the route ends at.
     pub destination: Entity,
+    /// The world positions the route passes, ending at the destination.
     pub positions: Vec<Vec3>,
+    /// The route's length in metres.
     pub length: f32,
 }
 
