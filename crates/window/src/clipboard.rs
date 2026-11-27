@@ -28,11 +28,13 @@ pub enum ClipboardRead {
     Unavailable(String),
 }
 
-fn text_read(result: Result<String, String>) -> ClipboardRead {
-    match result {
-        Ok(text) if text.is_empty() => ClipboardRead::NoText,
-        Ok(text) => ClipboardRead::Text(text),
-        Err(reason) => ClipboardRead::Unavailable(reason),
+impl ClipboardRead {
+    fn from_text(result: Result<String, String>) -> Self {
+        match result {
+            Ok(text) if text.is_empty() => Self::NoText,
+            Ok(text) => Self::Text(text),
+            Err(reason) => Self::Unavailable(reason),
+        }
     }
 }
 
@@ -242,12 +244,15 @@ mod tests {
     #[test]
     fn read_text_maps_to_text_no_text_or_unavailable() {
         assert_eq!(
-            text_read(Ok("bunny".into())),
+            ClipboardRead::from_text(Ok("bunny".into())),
             ClipboardRead::Text("bunny".into())
         );
-        assert_eq!(text_read(Ok(String::new())), ClipboardRead::NoText);
         assert_eq!(
-            text_read(Err("NotAllowedError".into())),
+            ClipboardRead::from_text(Ok(String::new())),
+            ClipboardRead::NoText
+        );
+        assert_eq!(
+            ClipboardRead::from_text(Err("NotAllowedError".into())),
             ClipboardRead::Unavailable("NotAllowedError".into())
         );
     }

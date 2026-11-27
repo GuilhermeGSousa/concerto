@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 
 use arboard::{Clipboard, Error};
 
-use super::{text_read, ClipboardBackend, ClipboardRead};
+use super::{ClipboardBackend, ClipboardRead};
 
 /// The operating system's clipboard, read synchronously and answered the next frame.
 pub struct OsClipboard {
@@ -33,7 +33,7 @@ impl ClipboardBackend for OsClipboard {
     }
 
     fn request_read(&mut self) {
-        let read = arboard_read(self.clipboard.get_text());
+        let read = ClipboardRead::from_arboard(self.clipboard.get_text());
         self.reads.push_back(read);
     }
 
@@ -42,10 +42,12 @@ impl ClipboardBackend for OsClipboard {
     }
 }
 
-fn arboard_read(result: Result<String, Error>) -> ClipboardRead {
-    match result {
-        Err(Error::ContentNotAvailable | Error::ConversionFailure) => ClipboardRead::NoText,
-        result => text_read(result.map_err(|error| error.to_string())),
+impl ClipboardRead {
+    fn from_arboard(result: Result<String, Error>) -> Self {
+        match result {
+            Err(Error::ContentNotAvailable | Error::ConversionFailure) => Self::NoText,
+            result => Self::from_text(result.map_err(|error| error.to_string())),
+        }
     }
 }
 
@@ -80,7 +82,7 @@ mod tests {
             unavailable(Error::ClipboardOccupied),
         ];
         for case in cases {
-            assert_eq!(arboard_read(case.read), case.expected);
+            assert_eq!(ClipboardRead::from_arboard(case.read), case.expected);
         }
     }
 }
