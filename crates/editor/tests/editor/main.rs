@@ -1,3 +1,4 @@
+//! Integration tests of the editor, driven through its signals and MCP tools.
 mod asset_editor;
 mod custom_property;
 mod document_value;
