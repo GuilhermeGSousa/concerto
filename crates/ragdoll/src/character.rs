@@ -9,6 +9,7 @@ use concerto_ecs::{
     signal::{
         EntitySignal, On, Signal,
         lifecycle::{Remove, Replace},
+        listener::Listener,
     },
 };
 use concerto_foundation::{
@@ -35,8 +36,9 @@ use log::warn;
 use crate::{
     asset::{PartStrength, Ragdoll, StrengthProfile},
     behaviour::{BodyDrive, Claim},
-    dying::{Dying, Settled},
+    dying::{Dying, Settled, mark_dead},
     hit::Flinch,
+    messages::BodyDead,
     resolve::ResolvedRagdoll,
 };
 
@@ -93,6 +95,7 @@ pub struct PartWeight {
 /// have loaded.
 #[derive(Component, Reflect, Clone, Debug, PartialEq)]
 #[reflect(Component, Default, SceneComponent)]
+#[require(Listener<BodyDead> = mark_dead())]
 pub struct CharacterRagdoll {
     /// The ragdoll asset of the skeleton.
     pub ragdoll: AssetHandle<Ragdoll>,
@@ -216,8 +219,6 @@ pub(crate) struct Held {
 
 const SLACK_TORQUE: f32 = 1.0e-3;
 const MAX_LEAD: f32 = 0.5;
-const DYING_STIFFNESS: f32 = 400.0;
-const DYING_TORQUE: f32 = 120.0;
 
 impl Held {
     pub(crate) const KINEMATIC: Self = Self {
@@ -698,13 +699,9 @@ fn drain_strengths(
     asked: &mut Asked,
 ) {
     for (part, held) in wanted.iter_mut().enumerate() {
-        let left = dying.left(resolved.segment(part));
-        if held.kinematic {
-            *held = Held::of(PartStrength::powered(DYING_STIFFNESS, DYING_TORQUE));
-        }
-        held.stiffness *= left;
-        held.damping *= left;
-        held.torque_limit *= left;
+        let segment = resolved.segment(part);
+        let left = dying.left(segment);
+        *held = dying.drain(segment, *held);
         asked.forces[part] *= left;
         asked.torques[part] *= left;
     }

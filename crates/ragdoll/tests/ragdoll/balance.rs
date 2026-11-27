@@ -1,3 +1,13 @@
+use concerto_animation::{
+    clip::{AnimationChanelOutput, AnimationChannel, AnimationClip},
+    graph::AnimationGraph,
+    node::{
+        AnimationClipNode, AnimationNode,
+        state_machine::{AnimationStateMachine, AnimationStateMachineState},
+    },
+    player::{AnimationHandleComponent, AnimationPlayer},
+    plugin::AnimationPlugin,
+};
 use concerto_app::{
     App,
     main_schedule::MainSchedulePlugin,
@@ -6,10 +16,13 @@ use concerto_app::{
 };
 use concerto_ecs::entity::Entity;
 use concerto_ecs::resource::{ResMut, Resource};
-use concerto_ecs::signal::On;
-use concerto_foundation::assets::asset_server::AssetServer;
+use concerto_ecs::signal::{On, lifecycle::Add};
+use concerto_foundation::assets::{
+    asset_server::AssetServer, asset_store::AssetStore, handle::AssetHandle,
+};
 use concerto_foundation::transform::Transform;
-use concerto_mesh::JointPose;
+use concerto_mesh::{JointPose, Skeleton};
+use concerto_name::Name;
 use concerto_physics::collider::Collider;
 use concerto_physics::physics_state::PhysicsState;
 use concerto_physics::plugin::PhysicsPlugin;
@@ -18,8 +31,8 @@ use concerto_ragdoll::testing::{
     SpawnedHumanoid, humanoid_skeleton, reference_humanoid, spawn_humanoid,
 };
 use concerto_ragdoll::{
-    Balance, BehaviourEnded, BodyDrive, BodySense, BodySettled, BodyState, CharacterRagdoll,
-    Outcome, PhysicalState, RagdollBody, RagdollPlugin,
+    Balance, BehaviourEnded, BodyDrive, BodySense, BodySettled, BodyState, CharacterRagdoll, Dead,
+    Outcome, PhysicalState, RagdollBody, RagdollMode, RagdollPlugin,
 };
 use glam::{Quat, Vec3};
 
@@ -37,11 +50,21 @@ fn count_settles(_: On<BodySettled>, mut settles: ResMut<Settles>) {
     settles.0 += 1;
 }
 
+#[derive(Resource, Default)]
+struct Deaths(usize);
+
+fn count_marked_dead(_: On<Add<Dead>>, mut deaths: ResMut<Deaths>) {
+    deaths.0 += 1;
+}
+
+type GraphBuilder = Box<dyn FnOnce(&AssetServer) -> AnimationGraph>;
+
 pub struct Stage {
     pub app: App,
     pub humanoid: SpawnedHumanoid,
     pub character: Entity,
     pub pose: Vec<JointPose>,
+    entries: Vec<Name>,
 }
 
 impl Stage {
@@ -50,16 +73,30 @@ impl Stage {
     }
 
     pub fn placed(placement: Transform) -> Self {
+        Self::build(placement, None)
+    }
+
+    /// A body in the graph mode whose animation graph is `build`'s.
+    pub fn graphed(build: impl FnOnce(&AssetServer) -> AnimationGraph + 'static) -> Self {
+        Self::build(Transform::default(), Some(Box::new(build)))
+    }
+
+    fn build(placement: Transform, graph: Option<GraphBuilder>) -> Self {
         let mut app = App::new();
         app.register_plugin(MainSchedulePlugin)
             .register_plugin(TimePlugin)
             .register_plugin(AssetManagerPlugin)
             .register_plugin(TransformPlugin)
-            .register_plugin(PhysicsPlugin)
-            .register_plugin(RagdollPlugin);
+            .register_plugin(PhysicsPlugin);
+        if graph.is_some() {
+            app.register_plugin(AnimationPlugin);
+        }
+        app.register_plugin(RagdollPlugin);
         app.add_listener(record).insert_resource(Ended::default());
         app.add_listener(count_settles)
             .insert_resource(Settles::default());
+        app.add_listener(count_marked_dead)
+            .insert_resource(Deaths::default());
         app.finish_plugin_build();
         let server = app.get_resource::<AssetServer>().unwrap().clone();
         let reference = reference_humanoid();
@@ -67,6 +104,7 @@ impl Stage {
         let mut asset = reference.ragdoll;
         asset.skeleton = skeleton.clone();
         let asset = server.add(asset);
+        let graph = graph.map(|build| server.add(build(&server)));
         app.update();
         let world = app.main_mut().world_mut();
         world.spawn((
@@ -75,20 +113,30 @@ impl Stage {
         ));
         let humanoid = spawn_humanoid(world, skeleton, placement);
         let character = humanoid.skeleton;
-        world.insert(
-            (
-                CharacterRagdoll::new(asset),
-                BodyDrive::default(),
-                BodySense::default(),
-                PhysicalState::default(),
+        match graph {
+            Some(graph) => world.insert(
+                (
+                    CharacterRagdoll::new(asset).with_mode(RagdollMode::Graph),
+                    AnimationHandleComponent::new(graph),
+                ),
+                character,
             ),
-            character,
-        );
+            None => world.insert(
+                (
+                    CharacterRagdoll::new(asset),
+                    BodyDrive::default(),
+                    BodySense::default(),
+                    PhysicalState::default(),
+                ),
+                character,
+            ),
+        }
         let mut stage = Self {
             app,
             humanoid,
             character,
             pose: humanoid_skeleton().rest_pose.to_vec(),
+            entries: Vec::new(),
         };
         stage.run(5);
         stage
@@ -126,7 +174,46 @@ impl Stage {
             self.app.serve(LateFixedUpdate);
             self.app.serve(Update);
             self.app.serve(LateUpdate);
+            if let Some(state) = self.current_state()
+                && self.entries.last() != Some(&state)
+            {
+                self.entries.push(state);
+            }
         }
+    }
+
+    fn current_state(&self) -> Option<Name> {
+        let graphs = self.app.get_resource::<AssetStore<AnimationGraph>>()?;
+        let player = self
+            .app
+            .main()
+            .world()
+            .get_component_for_entity::<AnimationPlayer>(self.character)?;
+        let mut current = None;
+        player.for_each_state::<AnimationStateMachine>(
+            graphs,
+            |_, state: &AnimationStateMachineState, _| {
+                current = current.or(state.current_state_name());
+            },
+        );
+        current
+    }
+
+    /// The states the graph's machine has been in, in the order it entered them.
+    pub fn entries(&self) -> &[Name] {
+        &self.entries
+    }
+
+    pub fn in_state(&self, state: Name) -> bool {
+        let world = self.app.main().world();
+        let graphs = self
+            .app
+            .get_resource::<AssetStore<AnimationGraph>>()
+            .unwrap();
+        world
+            .get_component_for_entity::<AnimationPlayer>(self.character)
+            .unwrap()
+            .in_state(graphs, &state)
     }
 
     pub fn push(&mut self, bone: &str, impulse: Vec3) {
@@ -177,6 +264,10 @@ impl Stage {
         self.app.get_resource::<Settles>().unwrap().0
     }
 
+    pub fn deaths(&self) -> usize {
+        self.app.get_resource::<Deaths>().unwrap().0
+    }
+
     pub fn ended(&self) -> Vec<BehaviourEnded> {
         self.app.get_resource::<Ended>().unwrap().0.clone()
     }
@@ -195,6 +286,30 @@ impl Stage {
             .world_mut()
             .insert(component, self.character);
     }
+}
+
+pub fn standing_clip(skeleton: &Skeleton) -> AnimationClip {
+    let pelvis = skeleton.bone_index(Name::from("pelvis")).unwrap();
+    let mut clip = AnimationClip::default();
+    clip.add_channel(
+        skeleton.bone_ids[pelvis],
+        AnimationChannel::new(
+            vec![0.0, 1.0],
+            AnimationChanelOutput::from_rotation(
+                [Quat::IDENTITY.to_array(), Quat::IDENTITY.to_array()].into_iter(),
+            ),
+        ),
+    );
+    clip
+}
+
+pub fn over_clip(node: impl AnimationNode, clip: &AssetHandle<AnimationClip>) -> AnimationGraph {
+    let mut graph = AnimationGraph::new();
+    graph
+        .result_node()
+        .input(node)
+        .input(AnimationClipNode::new(clip.clone()));
+    graph
 }
 
 #[derive(Debug)]
