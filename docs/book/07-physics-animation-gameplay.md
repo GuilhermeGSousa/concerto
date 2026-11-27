@@ -1125,7 +1125,9 @@ A graph is a tree of nodes under a result node:
   `AnimationFSMTrigger::OnAnimationEnd`. Each transition takes a
   `blend_time`, and the machine's `TransitionBlender` (set with
   `.blender(..)` on the builder) decides what it means: `CrossFade`, the
-  default, fades the old state out over `blend_time` seconds, and
+  default, fades the old state out over `blend_time` seconds (a transition
+  back into a state that is still fading freezes the blend as it stands, pose
+  and attributes, and fades that out instead, so nothing jumps), and
   `Inertialization` plays only the new state and decays the pose difference
   to the old one with `blend_time` as the halflife. A built machine is read
   with `states()`, `initial_state()` and `transitions(from)`, and edited by
@@ -1469,6 +1471,22 @@ The frame carries the clip events its sources fired this frame
 weighted as the joints are. A node that builds its output without `copy_from`
 or `blend` must forward its inputs' events itself, with
 `AnimationFrame::push_event`, or they never reach the player.
+
+A frame also carries typed per-bone attributes beside its joints, in
+`AnimationFrame::attributes`. An attribute is a type that implements
+`PoseAttribute`: its `neutral` value, read on every bone of a frame no node
+set it on, and how two values `blend` by weight. A node sets one with
+`attributes_mut().channel_mut::<A>(bone_count)` and reads one with
+`AnimationFrame::attribute::<A>(bone)`; nothing is registered. Every combiner
+blends them with the joints: `copy_from` and `blend` carry them, so the blend
+node, blend spaces and the cross-fade blend them by weight; a layer blends them
+per bone by its mask weight times its layer weight, in either space; additive
+and aim offset nodes keep their base's; the inertialization blender keeps the
+source's attributes and blends them over the destination's as the destination
+changes, the source's share halving every halflife; a retarget node drops
+them, since they belong to the skeleton that set them. The player keeps the
+last evaluated frame's, read with `AnimationPlayer::attributes`, and none once
+its graph gives no frame.
 
 A node gives root motion with `root_motion(state, input, context, bone_ids,
 inputs)`, which returns a `RootMotion`. `update_animation_players` calls it for

@@ -2,6 +2,8 @@ use concerto_foundation::{assets::AssetId, blend::Blendable};
 pub use concerto_mesh::skeleton::JointPose;
 use glam::{Quat, Vec3};
 
+use crate::attribute::{PoseAttribute, PoseAttributes};
+
 /// How the root moved this frame, in its parent's space, read from the way it faced last frame.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct RootMotion {
@@ -136,9 +138,10 @@ impl Pose {
     }
 }
 
-/// What an animation graph gives for one frame: the pose and the clip events crossed.
+/// What an animation graph gives for one frame: the pose, its attributes and the clip events crossed.
 pub struct AnimationFrame {
     pose: Pose,
+    attributes: PoseAttributes,
     pub(crate) events: Vec<FiredEvent>,
 }
 
@@ -152,6 +155,7 @@ impl AnimationFrame {
     pub fn new(pose: Pose) -> AnimationFrame {
         AnimationFrame {
             pose,
+            attributes: PoseAttributes::default(),
             events: Vec::new(),
         }
     }
@@ -164,6 +168,21 @@ impl AnimationFrame {
     /// The pose of this frame, to change.
     pub fn pose_mut(&mut self) -> &mut Pose {
         &mut self.pose
+    }
+
+    /// The per-bone attributes this frame carries.
+    pub fn attributes(&self) -> &PoseAttributes {
+        &self.attributes
+    }
+
+    /// The per-bone attributes this frame carries, to change.
+    pub fn attributes_mut(&mut self) -> &mut PoseAttributes {
+        &mut self.attributes
+    }
+
+    /// The value of `A` on `bone`, neutral when no node set it.
+    pub fn attribute<A: PoseAttribute>(&self, bone: usize) -> A {
+        self.attributes.get(bone)
     }
 
     /// The number of joints in this frame's pose.
@@ -201,9 +220,10 @@ impl AnimationFrame {
         self.events.push(event);
     }
 
-    /// Blends the pose toward `other` by `weight`, and weights both frames' events to match.
+    /// Blends the pose and attributes toward `other` by `weight`, and weights both frames' events to match.
     pub fn blend(&mut self, other: &AnimationFrame, weight: f32) {
         self.pose.blend(&other.pose, weight);
+        self.attributes.blend(&other.attributes, weight);
         for event in &mut self.events {
             event.weight *= 1.0 - weight;
         }
@@ -214,9 +234,10 @@ impl AnimationFrame {
             }));
     }
 
-    /// Overwrites this frame's joints and events with those of `other` (same skeleton / length).
+    /// Overwrites this frame's joints, attributes and events with those of `other` (same skeleton / length).
     pub fn copy_from(&mut self, other: &AnimationFrame) {
         self.pose.copy_from(&other.pose);
+        self.attributes.copy_from(&other.attributes);
         self.events.clone_from(&other.events);
     }
 }
@@ -264,6 +285,7 @@ impl FramePool {
         if !self.rest.is_empty() {
             frame.pose.joints.clone_from_slice(&self.rest);
         }
+        frame.attributes.clear();
         frame.events.clear();
         frame
     }
