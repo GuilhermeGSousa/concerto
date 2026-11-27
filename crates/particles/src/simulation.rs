@@ -8,7 +8,9 @@ use crate::emitter::ParticleEmitter;
 /// One living particle, in world space.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Particle {
+    /// The world-space position, in metres.
     pub position: Vec3,
+    /// The world-space velocity, in metres per second.
     pub velocity: Vec3,
     /// Seconds since it appeared.
     pub age: f32,
