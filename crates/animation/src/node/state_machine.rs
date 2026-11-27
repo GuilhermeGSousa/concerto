@@ -5,10 +5,7 @@ use crate::graph::{AnimationGraph, AnimationGraphState, AnimationGraphStates, Gr
 use crate::message::{AnimationMessage, MessageType};
 use crate::param::Param;
 use crate::pose::{AnimationFrame, EvaluatedFrame, FramePool, RootMotion, WeightedMotion};
-use crate::transition::{
-    AnimationTransitionBlender, TransitionBlender, blend_stack::BlendStack,
-    inertialization_blender::InertializationBlender,
-};
+use crate::transition::{AnimationTransitionBlender, TransitionBlender};
 use crate::{
     evaluation::{AnimationGraphContext, DriveContext, RaisedMessage},
     node::{AnimationNode, EditorAnimationNode, ReflectAnimationNode},
@@ -557,17 +554,6 @@ pub struct AnimationStateMachineState {
     pending: Option<usize>,
 }
 
-fn blender_from(
-    blender: TransitionBlender,
-    initial_state: StateId,
-) -> Box<dyn AnimationTransitionBlender> {
-    let initial_graph = initial_state.as_graph_id();
-    match blender {
-        TransitionBlender::CrossFade => Box::new(BlendStack::new(initial_graph)),
-        TransitionBlender::Inertialization => Box::new(InertializationBlender::new(initial_graph)),
-    }
-}
-
 impl AnimationStateMachineState {
     pub(crate) fn new(
         initial_state: StateId,
@@ -579,7 +565,7 @@ impl AnimationStateMachineState {
             state_graphs: AnimationGraphStates::new(state_graphs),
             current_state: initial_state,
             state_names,
-            blender: blender_from(blender, initial_state),
+            blender: blender.starting_in(initial_state.as_graph_id()),
             reset_pending: false,
             pending: None,
         }
@@ -587,7 +573,7 @@ impl AnimationStateMachineState {
 
     fn restart(&mut self, initial_state: StateId, blender: TransitionBlender) {
         self.current_state = initial_state;
-        self.blender = blender_from(blender, initial_state);
+        self.blender = blender.starting_in(initial_state.as_graph_id());
         self.reset_pending = true;
         self.pending = None;
     }
