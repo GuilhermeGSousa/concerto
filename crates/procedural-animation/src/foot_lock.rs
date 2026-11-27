@@ -28,14 +28,24 @@ const RELEASED: f32 = 1.0e-3;
 #[derive(Clone, Debug, PartialEq, Reflect, serde::Serialize, serde::Deserialize)]
 #[reflect(AnimationNode, Default)]
 pub struct FootLockNode {
+    /// The legs to lock.
     pub legs: Vec<FootLockLeg>,
+    /// The horizontal speed, in metres per second, under which a foot can plant.
     pub plant_speed: f32,
+    /// The height above the model origin, in metres, under which a contact point can plant.
     pub plant_height: f32,
+    /// How far, in metres, the animated foot may drift horizontally from its lock before the lock
+    /// is released; the foot then waits for its next plant.
     pub unlock_radius: f32,
+    /// The halflife, in seconds, a released foot eases back to the animated one with.
     pub release_halflife: f32,
+    /// The distance below full leg extension, in metres, where reach starts to ease.
     pub softness: f32,
+    /// The weight the lock is applied at, before the param scales it; clamped to 0 to 1.
     pub weight: f32,
+    /// The `f32` blackboard param the weight is multiplied by, when it holds one.
     pub weight_param: Option<Param<f32>>,
+    /// The halflife, in seconds, the weight eases with.
     pub weight_halflife: f32,
 }
 
@@ -123,8 +133,11 @@ impl FootLockNode {
 /// at, and `hinge` is the knee's hinge axis.
 #[derive(Clone, Debug, Default, PartialEq, Reflect, serde::Serialize, serde::Deserialize)]
 pub struct FootLockLeg {
+    /// The foot bone; its parent is the knee and its grandparent the hip.
     pub foot: JointName,
+    /// The bone a plant is read from and held at; the foot when absent.
     pub toe: Option<JointName>,
+    /// The knee's hinge axis.
     pub hinge: Hinge,
 }
 
@@ -183,9 +196,13 @@ impl FootLockState {
 /// One leg's lock as the last evaluate left it, in world space.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct LegLock {
+    /// Whether the foot is held, easing back, or following the animation.
     pub phase: LockPhase,
+    /// Where the foot is held, in world space.
     pub lock: Vec3,
+    /// Where the animation puts the contact point this frame, in world space.
     pub animated: Vec3,
+    /// Where the contact point is shown after the lock, in world space.
     pub shown: Vec3,
     previous: Option<Vec3>,
     planted: bool,
@@ -221,9 +238,12 @@ impl LegLock {
 /// Whether a leg's foot is held, easing back to the animated foot, or following it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum LockPhase {
+    /// The foot follows the animation.
     #[default]
     Free,
+    /// The foot is held where it planted.
     Locked,
+    /// The foot eases from its lock back to the animated foot.
     Releasing,
 }
 
