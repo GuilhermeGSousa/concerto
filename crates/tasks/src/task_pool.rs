@@ -22,6 +22,9 @@ fn available_parallelism() -> usize {
         .unwrap_or(1)
 }
 
+/// A pool of worker threads that run spawned futures.
+///
+/// Dropping the pool stops and joins its threads.
 pub struct TaskPool {
     executor: Arc<Executor<'static>>,
     threads: Vec<JoinHandle<()>>,
@@ -34,10 +37,13 @@ impl TaskPool {
         static THREAD_EXECUTOR: Arc<ThreadExecutor<'static>> = Arc::new(ThreadExecutor::new());
     }
 
+    /// Creates a pool with one worker per available core, named `task-pool-{i}`.
     pub fn new() -> Self {
         Self::with_name("task-pool")
     }
 
+    /// Returns the calling thread's [`ThreadExecutor`], which runs tasks spawned onto it only on
+    /// this thread.
     pub fn get_thread_executor() -> Arc<ThreadExecutor<'static>> {
         Self::THREAD_EXECUTOR.with(Clone::clone)
     }
@@ -95,6 +101,7 @@ impl TaskPool {
         }
     }
 
+    /// Spawns `future` onto the worker threads and returns its [`Task`].
     pub fn spawn<T>(&self, future: impl Future<Output = T> + Send + 'static) -> Task<T>
     where
         T: Send + 'static,
@@ -102,6 +109,9 @@ impl TaskPool {
         Task::new(self.executor.spawn(future))
     }
 
+    /// Spawns `future` onto the calling thread's local executor, so it never moves between threads.
+    /// Only the pool's worker threads run their local executors, so a future spawned from any other
+    /// thread never runs.
     pub fn spawn_local<T>(&self, future: impl Future<Output = T> + 'static) -> Task<T>
     where
         T: Send + 'static,
@@ -124,6 +134,16 @@ impl TaskPool {
             .with(|scope_executor| self.scope_inner(scope_executor, scope_executor, f))
     }
 
+    /// Like [`scope`](TaskPool::scope), but tasks spawned with
+    /// [`ScopedTaskPool::spawn_on_external`] run on `external_executor` when it is given.
+    ///
+    /// The ECS executor passes the main thread's executor here so that systems which must run on
+    /// the main thread do.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `f` or a spawned task panicked, raising it again only after every spawned task has
+    /// finished.
     pub fn scope_with_executor<'env, F, T>(
         &self,
         external_executor: Option<&ThreadExecutor>,
@@ -258,6 +278,9 @@ impl Default for TaskPool {
     }
 }
 
+/// A scope opened by [`TaskPool::scope`] that spawns tasks which may borrow from the caller.
+///
+/// The scope does not return until every task spawned in it has finished.
 pub struct ScopedTaskPool<'scope, 'env: 'scope, T: Send> {
     executor: &'scope Executor<'scope>,
     external_executor: &'scope ThreadExecutor<'scope>,
@@ -271,6 +294,8 @@ pub struct ScopedTaskPool<'scope, 'env: 'scope, T: Send> {
 }
 
 impl<'scope, 'env, T: Send> ScopedTaskPool<'scope, 'env, T> {
+    /// Creates a scope over the given executors and task queue; [`TaskPool::scope`] is the way to
+    /// open one.
     pub fn new(
         executor: &'scope Executor<'scope>,
         external_executor: &'scope ThreadExecutor<'scope>,
