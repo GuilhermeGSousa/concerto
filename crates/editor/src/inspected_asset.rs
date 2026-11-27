@@ -78,7 +78,9 @@ pub struct ProjectTypes {
     pub registry: Option<AppTypeRegistry>,
 }
 
-/// The `Update` systems that mark inspected documents dirty, save, load and read their skeletons; a system that reads an inspected document's state for the frame runs after it.
+/// The `Update` systems that mark inspected documents dirty, save, load and read their skeletons.
+///
+/// A system that reads an inspected document's state for the frame runs after this set.
 #[derive(SystemSet, Clone, PartialEq, Eq, Hash, Debug)]
 pub struct InspectedAssetSystems;
 

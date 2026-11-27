@@ -68,6 +68,13 @@ pub(crate) fn has_alpha(image: &RgbaImage) -> bool {
 }
 
 /// Derives the levels the GPU samples from `source`, as a texture of `role` with `settings`.
+///
+/// # Errors
+///
+/// Returns an error when `source` fails to decode, when `settings` ask for a
+/// block compression with no sRGB form (BC4 or BC5) in the sRGB colour space,
+/// or, on wasm, when `settings` ask for any block compression, which the web
+/// build cannot encode.
 pub fn derive_levels(
     source: &TextureSource,
     role: TextureRole,

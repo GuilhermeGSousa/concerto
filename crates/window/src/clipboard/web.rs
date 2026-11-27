@@ -12,7 +12,12 @@ pub struct OsClipboard {
 }
 
 impl OsClipboard {
-    /// Checks that the page can reach `navigator.clipboard`, or says why it cannot.
+    /// Checks that the page can reach `navigator.clipboard`.
+    ///
+    /// # Errors
+    ///
+    /// Returns the reason when there is no browser window, or when
+    /// `navigator.clipboard` is missing because the page is not a secure context.
     pub fn open() -> Result<Self, String> {
         navigator_clipboard()?;
         let (sender, reads) = channel();

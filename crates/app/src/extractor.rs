@@ -25,7 +25,7 @@ impl MainWorld {
     }
 }
 
-/// Moves `main` into `render` as the [`MainWorld`] resource, runs the
+/// Moves `main` into `render` as the `MainWorld` resource, runs the
 /// [`Extract`] schedule, then swaps it back out.
 pub fn extract(main: &mut World, render: &mut World) {
     let scratch = main
@@ -43,8 +43,9 @@ pub fn extract(main: &mut World, render: &mut World) {
     main.insert_resource(ScratchMainWorld(scratch_world));
 }
 
-/// Access data from the MainWorld
-/// The MainWorld only exists during the [`Extract`] schedule
+/// A system input that reads `T` from the main world, for render-world extract systems.
+///
+/// The main world is reachable only while the [`Extract`] schedule runs.
 #[derive(Deref, DerefMut)]
 pub struct Extracted<'world, 'state, T: ReadOnlySystemInput + 'static>(
     SystemInputData<'world, 'state, T>,

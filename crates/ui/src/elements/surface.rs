@@ -69,7 +69,9 @@ impl UITheme {
         .gap(self.spacing_sm)
     }
 
-    /// A horizontal rule; `.vertical()` turns it on its side.
+    /// A horizontal rule.
+    ///
+    /// [`Divider::vertical`] turns it on its side.
     pub fn divider(&self) -> Divider {
         Divider {
             node: UINode::default()

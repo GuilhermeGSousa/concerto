@@ -24,7 +24,15 @@ pub const STAGGER: &str = "stagger";
 /// The priority of stagger's claims on the spine and the arms.
 pub const STAGGER_PRIORITY: i32 = 20;
 
-/// Makes a balancing body stumble: its steps fall short and late, its legs are weaker and its knees give on each landing, its trunk bends the way it was sent and its arms windmill while the trunk turns. Add it to a character when it is hit or shoved; it brings a `Balance` when the character has none, and ends when balance does, with the same outcome.
+/// Makes a balancing body stumble.
+///
+/// Its steps fall short and late, its legs are weaker and its knees give on
+/// each landing, its trunk bends the way it was sent and its arms windmill
+/// while the trunk turns.
+///
+/// Add it to a character when it is hit or shoved. It brings a `Balance`
+/// when the character has none, and ends when balance does, with the same
+/// outcome.
 #[derive(Component, Reflect, Clone, Debug, PartialEq)]
 #[reflect(Component, Default, SceneComponent)]
 #[require(Balance, BodyDrive, BodySense, PhysicalState)]
@@ -142,7 +150,11 @@ struct SidedArm {
     lag: f32,
 }
 
-/// Each fixed step, in `BehaviourSet` before `balance_bodies`: for every staggering body, hinders its balance by what is left of the stumble, bends the spine towards the stagger's direction, and circles both arms in the sense the trunk is turning, as wide as it turns fast.
+/// Drives every staggering body, each fixed step in `BehaviourSet` before `balance_bodies`.
+///
+/// It hinders the body's balance by what is left of the stumble, bends the
+/// spine towards the stagger's direction, and circles both arms in the sense
+/// the trunk is turning, as wide as it turns fast.
 pub fn stagger_bodies(
     mut characters: Query<(
         &mut Stagger,

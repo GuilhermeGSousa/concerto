@@ -14,7 +14,9 @@ use crate::{
     resources::RenderContext,
 };
 
-/// How many samples a camera's scene is drawn with per pixel, to smooth the edges of geometry. Goes on the camera's entity; a camera without one uses `Sample4`.
+/// How many samples a camera's scene is drawn with per pixel, to smooth the edges of geometry.
+///
+/// Goes on the camera's entity. A camera without one uses [`Msaa::Sample4`].
 #[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq, Reflect)]
 #[reflect(Component, Default, SceneComponent)]
 pub enum Msaa {

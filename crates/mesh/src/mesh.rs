@@ -30,8 +30,9 @@ impl Aabb {
         self.max - self.min
     }
 
-    /// Returns the world-space AABB containing all eight transformed corners.
-    /// This remains correct for rotation and non-uniform scale.
+    /// The world-space box containing all eight corners transformed by `transform`.
+    ///
+    /// It remains correct for rotation and non-uniform scale.
     pub fn transformed(self, transform: Mat4) -> Self {
         let mut min = Vec3::splat(f32::INFINITY);
         let mut max = Vec3::splat(f32::NEG_INFINITY);

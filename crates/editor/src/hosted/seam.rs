@@ -61,7 +61,7 @@ impl<T: ReadOnlySystemInput + 'static> DerefMut for EditWorld<'_, '_, T> {
     }
 }
 
-/// An [`Editor`] parameter's state, rebuilt from its first form whenever the edit target is another world.
+/// An [`EditWorld`] parameter's state, rebuilt from its first form whenever the edit target is another world.
 pub struct EditWorldState<S> {
     targets: Targets,
     built_for: Option<WorldId>,

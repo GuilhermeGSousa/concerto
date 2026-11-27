@@ -19,7 +19,7 @@ use crate::{
 /// A unique identifier for a resource type, based on its Rust [`TypeId`].
 pub type ResourceId = TypeId;
 
-/// Marker trait for globally-shared data stored in a [`World`](crate::world::World).
+/// Marker trait for globally-shared data stored in a [`World`].
 ///
 /// Derive with `#[derive(Resource)]`.  Each type may have at most one instance per world.
 ///
@@ -84,7 +84,7 @@ const STORED_UNDER_ITS_TYPE: &str = "a resource is stored under its own type id"
 
 /// Read-only system parameter that borrows a [`Resource`] from the world.
 ///
-/// Derefs to `&T`.  Implements [`DetectChanges`](crate::query::change_detection::DetectChanges)
+/// Derefs to `&T`.  Implements [`DetectChanges`]
 /// so systems can react when the resource value changes.
 ///
 /// A system taking it is skipped with a warning while the resource is missing; take
@@ -98,6 +98,10 @@ pub struct Res<'world, T: Resource> {
 
 impl<'world, T: Resource> Res<'world, T> {
     /// Borrows `T` from `world` for a run with `ticks`, or reports it missing.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`ValidationError`] of kind `Missing` when the world holds no `T`.
     ///
     /// # Safety
     /// The caller must hold read access to `T`.
@@ -219,6 +223,10 @@ pub struct ResMut<'world, T: Resource> {
 
 impl<'world, T: Resource> ResMut<'world, T> {
     /// Borrows `T` mutably from `world` for a run with `ticks`, or reports it missing.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`ValidationError`] of kind `Missing` when the world holds no `T`.
     ///
     /// # Safety
     /// The caller must hold write access to `T`.

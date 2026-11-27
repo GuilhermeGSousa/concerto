@@ -79,7 +79,9 @@ impl std::fmt::Display for PropertyPath {
     }
 }
 
-/// The requested field is absent. An empty path always addresses the root.
+/// The requested field is absent.
+///
+/// An empty path always addresses the root, so only a non-empty path can fail.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PathError {
     NotFound,
@@ -93,6 +95,11 @@ impl std::fmt::Display for PathError {
 impl std::error::Error for PathError {}
 
 /// Access a leaf, composite value, or root without retaining a borrowed value.
+///
+/// # Errors
+///
+/// Returns [`PathError::NotFound`] when a segment of `path` names no field or element of
+/// the value it is applied to.
 pub fn with_property(
     root: &dyn Reflect,
     path: &PropertyPath,
@@ -143,8 +150,14 @@ fn access(
     visitor.result.unwrap_or(Err(PathError::NotFound))
 }
 
-/// Mutably access a leaf, composite value, or root. The callback owns any
-/// validation policy; this function only resolves the path.
+/// Mutably access a leaf, composite value, or root.
+///
+/// The callback owns any validation policy; this function only resolves the path.
+///
+/// # Errors
+///
+/// Returns [`PathError::NotFound`] when a segment of `path` names no field or element of
+/// the value it is applied to.
 pub fn with_property_mut(
     root: &mut dyn Reflect,
     path: &PropertyPath,

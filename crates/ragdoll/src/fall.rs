@@ -43,7 +43,12 @@ impl Default for FallReaction {
     }
 }
 
-/// A fall the body takes part in: the hands go to where it will land, with bent elbows that buckle on contact, the head is held away from the ground, the spine curls and the knees fold. It ends when the body has landed and relaxed, limp and `Down`. Add it to start a fall on a standing character too.
+/// A fall the body takes part in.
+///
+/// The hands go to where it will land, with bent elbows that buckle on
+/// contact, the head is held away from the ground, the spine curls and the
+/// knees fold. It ends when the body has landed and relaxed, limp and
+/// `Down`. Add it to start a fall on a standing character too.
 #[derive(Component, Reflect, Clone, Debug, PartialEq)]
 #[reflect(Component, Default, SceneComponent)]
 #[require(BodyDrive, BodySense, PhysicalState)]
@@ -196,7 +201,15 @@ fn horizontal(vector: Vec3) -> Vec3 {
     Vec3::new(vector.x, 0.0, vector.z)
 }
 
-/// Each fixed step, in `BehaviourSet`: for every falling body with a `Fall`, sends each hand towards where the chest will land, or to a wall about to be hit, lets an arm buckle once its hand is down, holds the head away from the way the body travels, curls the spine and folds the legs; once the trunk is down, or the body lies on any part but its feet, and is slow the character is `Down`, the strength drains, and the body ends limp.
+/// Drives every falling body with a [`Fall`], each fixed step in `BehaviourSet`.
+///
+/// It sends each hand towards where the chest will land, or to a wall about
+/// to be hit, lets an arm buckle once its hand is down, holds the head away
+/// from the way the body travels, curls the spine and folds the legs.
+///
+/// Once the trunk is down, or the body lies on any part but its feet, and is
+/// slow, the character is `Down`, the strength drains, and the body ends
+/// limp.
 pub fn fall_bodies(
     mut characters: Query<(
         Entity,

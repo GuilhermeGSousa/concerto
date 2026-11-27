@@ -12,7 +12,9 @@ use crate::{
     sun::{Sky, Sun},
 };
 
-/// Keeps the sun's tint and every sky's lighting up to date in the main world; needs no GPU.
+/// Keeps the sun's tint and every sky's lighting up to date in the main world.
+///
+/// It needs no GPU.
 pub struct SkyPlugin;
 
 impl Plugin for SkyPlugin {
@@ -34,7 +36,11 @@ impl Plugin for SkyPlugin {
     }
 }
 
-/// The sun and the sky, drawn when `RenderPlugin` is registered before it; part of `DefaultPlugins`.
+/// The sun and the sky, part of `DefaultPlugins`.
+///
+/// The sky is drawn only when [`RenderPlugin`] is registered before this
+/// plugin. Registering [`RenderPlugin`] after it logs a warning, and no sky is
+/// drawn.
 pub struct SkyboxPlugin;
 
 impl Plugin for SkyboxPlugin {

@@ -25,7 +25,11 @@ impl NavMeshQuery {
         Self { mesh: build(data) }
     }
 
-    /// The corners after `from` up to `to`, both snapped to the mesh from up to half a metre away; `from` itself is not included, or `None` when either end is farther off the mesh or no path joins them.
+    /// The corners of the path after `from` up to `to`.
+    ///
+    /// Both ends are snapped to the mesh from up to half a metre away, and `from`
+    /// itself is not included. Returns `None` when either end is farther off the
+    /// mesh or no path joins them.
     pub fn path(&self, from: Vec3, to: Vec3) -> Option<Vec<Vec3>> {
         self.mesh.as_ref()?.path_3d(from, to)
     }

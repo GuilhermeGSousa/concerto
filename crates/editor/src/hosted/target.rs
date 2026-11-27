@@ -14,7 +14,9 @@ pub struct EditTarget;
 #[derive(Component)]
 pub struct ViewportTarget;
 
-/// Moves the targets to `document` if it holds an `App`, or clears them; a `document` that is not the active tab changes nothing.
+/// Moves the targets to `document` if it holds an `App`, or clears them.
+///
+/// A `document` that is not the active tab changes nothing.
 pub struct SetEditTarget(pub Option<Entity>);
 impl Signal for SetEditTarget {}
 

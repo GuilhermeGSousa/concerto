@@ -20,11 +20,11 @@ impl BuildHasher for NoOpHash {
 
 pub type TypeIdMap<V> = HashMap<TypeId, V, NoOpHash>;
 
+/// A [`Hasher`] for types that already contain a high-quality hash, which it passes through
+/// instead of hashing again.
 #[doc(hidden)]
 pub struct NoOpHasher(u64);
 
-// This is for types that already contain a high-quality hash and want to skip
-// re-hashing that hash.
 impl Hasher for NoOpHasher {
     fn finish(&self) -> u64 {
         self.0

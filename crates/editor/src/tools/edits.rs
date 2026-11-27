@@ -89,6 +89,13 @@ fn refused(reason: impl ToString) -> PropertyRefusal {
 
 impl CommitProperty {
     /// Writes the value into the component the row addresses.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EditError::MissingTarget`] when the row addresses no component or its entity is gone,
+    /// [`EditError::UnregisteredComponent`] when the component type is not registered,
+    /// [`EditError::MissingAssets`] when `world` has no asset server or asset registry, and the editor's
+    /// own error when the property is not found or the value is refused.
     pub fn apply(&self, world: &mut World) -> Result<(), EditError> {
         let target = self
             .row
@@ -355,7 +362,14 @@ pub struct ComponentEdited {
     pub result: Result<(), String>,
 }
 
-/// Apply one structural edit to the live world.
+/// Applies one structural edit to the live world.
+///
+/// # Errors
+///
+/// Returns [`EditError::UnregisteredComponent`] when the component type is not registered,
+/// [`EditError::MissingTarget`] when the entity does not exist, [`EditError::Rejected`] when adding a
+/// component the entity already has or one with no default, and [`EditError::NotFound`] when removing
+/// one it lacks.
 pub fn apply_component_edit(world: &mut World, edit: ComponentEdit) -> Result<(), EditError> {
     let (ComponentEdit::Add { entity, component } | ComponentEdit::Remove { entity, component }) =
         edit;

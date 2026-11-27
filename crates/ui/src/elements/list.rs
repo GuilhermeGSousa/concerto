@@ -16,7 +16,9 @@ use crate::{
     tree::{UITree, UITreeElement},
 };
 
-/// A `UIList` or `UITree` with its items, and a search field over it when made searchable, spawned in one call.
+/// A `UIList` or `UITree` with its items, spawned in one call.
+///
+/// A searchable one also gets a search field over it.
 pub struct ListBuilder {
     theme: UITheme,
     node: UINode,
@@ -29,7 +31,10 @@ pub struct ListBuilder {
     items: Vec<ListItem>,
 }
 
-/// One row of a [`ListBuilder`]: a label, or content of the caller's, with its search text, its pick and, in a tree, its children.
+/// One row of a [`ListBuilder`].
+///
+/// A row shows a label or content of the caller's, and carries its search text,
+/// its pick and, in a tree, its children.
 pub struct ListItem {
     theme: UITheme,
     content: ItemContent,
@@ -125,7 +130,7 @@ impl UITheme {
 }
 
 impl ListBuilder {
-    /// The height of every row; the theme's `row_height` otherwise.
+    /// Sets the height of every row, in logical pixels, in place of the theme's `row_height`.
     pub fn row_height(mut self, height: f32) -> Self {
         self.row_height = Some(height);
         self
@@ -266,7 +271,9 @@ impl ListItem {
         self
     }
 
-    /// Nests `child` under this row; only a tree shows it.
+    /// Nests `child` under this row.
+    ///
+    /// Only a tree shows it.
     pub fn child(mut self, child: ListItem) -> Self {
         self.children.push(child);
         self

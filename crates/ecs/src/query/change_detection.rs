@@ -5,7 +5,7 @@ use crate::component::{Component, SystemTicks, Tick};
 /// A mutable reference to a component that automatically marks the component as changed.
 ///
 /// Obtained from a `Query<&mut T>`.  Deref gives `&T`; DerefMut gives `&mut T` and
-/// records a change tick so that [`Changed<T>`](super::query_filter::Changed) filters work.
+/// records a change tick so that [`Changed<T>`](super::filter::Changed) filters work.
 pub struct Mut<'w, T: Component> {
     data: &'w mut T,
     added_tick: Tick,

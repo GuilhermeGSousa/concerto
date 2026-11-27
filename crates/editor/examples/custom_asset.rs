@@ -1,4 +1,6 @@
-//! A game asset kind edited in the editor's generic inspector tab. Run with `cargo run -p concerto-editor --example custom_asset`.
+//! A game asset kind edited in the editor's generic inspector tab.
+//!
+//! Run it with `cargo run -p concerto-editor --example custom_asset`.
 use anyhow::Result;
 use concerto_app::{
     App,
@@ -93,6 +95,10 @@ fn game(app: &mut App) {
 }
 
 /// Writes a project holding one empty scene under `root`.
+///
+/// # Errors
+///
+/// Returns an error when the project's folders or its scene cannot be written.
 pub fn write_project(root: &Path) -> Result<AssetId> {
     std::fs::create_dir_all(root.join("content"))?;
     save_content_asset_into(
@@ -268,7 +274,17 @@ fn unsaved(app: &mut App, document: Entity) -> bool {
         .is_some()
 }
 
-/// Opens a project with a scene, creates a Dialogue once the scene's game names it, edits it through the inspector and saves it.
+/// Opens a project with a scene, creates a Dialogue once the scene's game names it, edits it
+/// through the inspector and saves it.
+///
+/// # Errors
+///
+/// Returns an error when the project cannot be written or a step never completes.
+///
+/// # Panics
+///
+/// Panics when the created, edited or saved dialogue differs from what the steps should
+/// leave.
 pub fn smoke_test() -> Result<()> {
     let directory = tempfile::tempdir()?;
     let root = directory.path().canonicalize()?;

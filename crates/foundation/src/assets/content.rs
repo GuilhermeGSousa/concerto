@@ -1,8 +1,10 @@
-//! Framing for game-ready content assets: `magic | u32 header_len |
-//! bincode(u32 format version, ContentAssetHeader) | payload (verbatim) | derived blob |
-//! uncooked section`, the blob and the section present only when the header describes them. The header is read
-//! without touching the payload, so a future asset registry can index a
-//! whole content tree by scanning headers alone.
+//! Framing for game-ready content assets.
+//!
+//! A file is `magic | u32 header_len | bincode(u32 format version,
+//! ContentAssetHeader) | payload (verbatim) | derived blob | uncooked section`,
+//! the blob and the section present only when the header describes them. The
+//! header is read without touching the payload, so an asset registry can index
+//! a whole content tree by scanning headers alone.
 use std::path::Path;
 
 use anyhow::Context;
@@ -20,6 +22,12 @@ pub use concerto_asset_format::{
 };
 
 /// Decodes a content asset as `A`, checking its kind and type version and migrating an older version.
+///
+/// # Errors
+///
+/// Returns an error when `bytes` is not a well-formed content asset, holds
+/// another kind, was written by a newer version of `A`, or does not decode or
+/// migrate.
 pub fn decode_content_asset<A: Asset>(bytes: &[u8]) -> anyhow::Result<(ContentAssetHeader, A)> {
     let (header, payload) = read_content_asset(bytes)?;
     let value = decode_content_payload::<A>(&header.kind, header.kind_version, payload)?;
@@ -56,6 +64,11 @@ pub(crate) fn decode_content_payload<A: Asset>(
 }
 
 /// Decodes an uncooked section of a record of type `kind` as `E`, checking the kind and the section's version and migrating an older version.
+///
+/// # Errors
+///
+/// Returns an error when `kind` is not the kind of `E`'s asset, the section
+/// was written by a newer version of `E`, or it does not decode or migrate.
 pub fn decode_uncooked<E: UncookedData>(
     kind: &str,
     version: u32,
@@ -82,6 +95,13 @@ pub fn decode_uncooked<E: UncookedData>(
 }
 
 /// Compares `value`'s payload encoding with `<dir>/<A::name()>.v<A::FORMAT_VERSION>.bin`, for a crate's encoding test.
+///
+/// With `CONCERTO_BLESS_ENCODING=1` set, it writes the fixture instead.
+///
+/// # Panics
+///
+/// Panics when the fixture is missing or differs from the encoding, or when
+/// `value` does not serialize or the fixture cannot be written.
 pub fn check_encoding<A: Asset>(value: &A, dir: &Path) {
     let bytes = bincode::serialize(value)
         .unwrap_or_else(|error| panic!("failed to serialize {}: {error}", A::name()));
@@ -96,6 +116,13 @@ pub fn check_encoding<A: Asset>(value: &A, dir: &Path) {
 }
 
 /// Compares `value`'s encoding with `<dir>/<E::Asset::name()>.uncooked.v<E::VERSION>.bin`, for a crate's encoding test.
+///
+/// With `CONCERTO_BLESS_ENCODING=1` set, it writes the fixture instead.
+///
+/// # Panics
+///
+/// Panics when the fixture is missing or differs from the encoding, or when
+/// `value` does not serialize or the fixture cannot be written.
 pub fn check_uncooked_encoding<E: UncookedData>(value: &E, dir: &Path) {
     let name = E::Asset::name();
     let bytes = bincode::serialize(value)
@@ -151,6 +178,11 @@ impl EncodingFixture {
 }
 
 /// The standalone record of `entry`, read from `<project_root>/<entry.address>`.
+///
+/// # Errors
+///
+/// Returns an error when the file cannot be read or is malformed, or does not
+/// hold the embedded asset `entry` names.
 pub fn read_asset_record(project_root: &Path, entry: &AssetEntry) -> anyhow::Result<Vec<u8>> {
     let path = project_root.join(&entry.address);
     let file = std::fs::read(&path)
@@ -161,6 +193,11 @@ pub fn read_asset_record(project_root: &Path, entry: &AssetEntry) -> anyhow::Res
 }
 
 /// The standalone record of `entry` without its uncooked section, which is not read from disk.
+///
+/// # Errors
+///
+/// Returns an error when the file cannot be read or is malformed, or does not
+/// hold the embedded asset `entry` names.
 pub fn read_asset_record_without_uncooked(
     project_root: &Path,
     entry: &AssetEntry,
@@ -173,7 +210,14 @@ pub fn read_asset_record_without_uncooked(
         .with_context(|| format!("malformed content asset '{}'", entry.location()))
 }
 
-/// The uncooked data of `entry`, read alone from `<project_root>/<entry.address>`; `None` when its record has none.
+/// The uncooked data of `entry`, read alone from `<project_root>/<entry.address>`.
+///
+/// `None` when its record has none.
+///
+/// # Errors
+///
+/// Returns an error when the file cannot be read or is malformed, or the
+/// section does not decode as `E`.
 pub fn read_uncooked<E: UncookedData>(
     project_root: &Path,
     entry: &AssetEntry,
@@ -230,7 +274,16 @@ fn written(
     }
 }
 
-/// Writes `value` as a content asset at `project_root/address`, records it in `registry`, and returns its id, reusing the one already in the file's header and keeping the file's uncooked section.
+/// Writes `value` as a content asset at `project_root/address`, records it in `registry`, and returns its id.
+///
+/// When a file is already there, its id is reused and, if it holds the same
+/// kind, its uncooked section is kept.
+///
+/// # Errors
+///
+/// Returns an error when the existing file cannot be read, belongs to an
+/// import that embeds other assets, or the new file cannot be serialized or
+/// written.
 pub fn save_content_asset_into<A: Asset>(
     value: &A,
     project_root: &Path,
@@ -241,6 +294,11 @@ pub fn save_content_asset_into<A: Asset>(
 }
 
 /// Writes `value` as [`save_content_asset_into`] does, with `uncooked` as the file's uncooked section.
+///
+/// # Errors
+///
+/// Fails as [`save_content_asset_into`] does, and when `uncooked` does not
+/// serialize.
 pub fn save_content_asset_with_uncooked<E: UncookedData>(
     value: &E::Asset,
     uncooked: &E,
@@ -307,7 +365,15 @@ fn save_into<A: Asset>(
     Ok(asset_id)
 }
 
-/// Writes `value` over the content asset at `address`, keeping its id, its import provenance and its uncooked section, and upserts its registry entry.
+/// Writes `value` over the content asset at `address` and upserts its registry entry.
+///
+/// The file keeps its id, its import provenance and its uncooked section.
+///
+/// # Errors
+///
+/// Returns an error when no content asset is at `address`, it holds another
+/// kind, it belongs to an import that embeds other assets, or the new file
+/// cannot be serialized or written.
 pub fn resave_content_asset<A: Asset>(
     value: &A,
     project_root: &Path,

@@ -39,16 +39,28 @@ use crate::{
     transform::UIValue,
 };
 
-/// A vertical tree whose items are its children that carry `UITreeElement`, nested through theirs, one row each in depth-first order; it clips them, owns its overflow, draws each parent's caret and the connector lines between items, owns the carets' clicks, so put no click listener or `UIInteractionStyle` on an item; its natural height is its content extent, so a tree that must fill its slot needs zero height and a flex grow.
+/// A vertical tree of items, one row each in depth-first order.
+///
+/// The items are the children that carry [`UITreeElement`], nested through
+/// theirs. The tree clips them, owns its overflow, draws each parent's caret and
+/// the connector lines between items, and owns the carets' clicks. Put no click
+/// listener or `UIInteractionStyle` on an item.
+///
+/// Its natural height is its content extent, so a tree that must fill its slot
+/// needs zero height and a flex grow.
 #[derive(Component, Clone, Debug, PartialEq)]
 pub struct UITree {
-    /// Height of every row in logical pixels; `None` takes the theme's `row_height`.
+    /// Height of every row in logical pixels, or `None` for the theme's `row_height`.
     pub row_height: Option<f32>,
-    /// Whether items can be highlighted, navigated by key, selected and activated; carets work either way.
+    /// Whether items can be highlighted, navigated by key, selected and activated.
+    ///
+    /// Carets work either way.
     pub selectable: bool,
     /// While true every item shows as if expanded, caret clicks are ignored and `expanded` is left untouched.
     pub filtering: bool,
-    /// Whether a left click on an item activates it as well as selecting it, as a menu's items do; double clicks then send nothing more.
+    /// Whether a left click on an item activates it as well as selecting it, as a menu's items do.
+    ///
+    /// Double clicks then send nothing more.
     pub click_activates: bool,
 }
 
@@ -63,10 +75,15 @@ impl Default for UITree {
     }
 }
 
-/// Makes a child of a `UITree`, or of another tree item, an item whose other children are its row content; put no click listener or `UIInteractionStyle` on it.
+/// Makes a child of a [`UITree`], or of another tree item, an item of that tree.
+///
+/// The item's children without a `UITreeElement` are its row content. Put no
+/// click listener or `UIInteractionStyle` on it.
 #[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct UITreeElement {
-    /// Whether the item's child items are shown; the caret toggles it, and the caller may set it.
+    /// Whether the item's child items are shown.
+    ///
+    /// The caret toggles it, and the caller may set it.
     pub expanded: bool,
 }
 
@@ -264,7 +281,9 @@ pub fn install_listeners(world: &mut World) {
     world.track_removals::<UITreeElement>();
 }
 
-/// The system that nests, places and draws each `UITree` whose inputs changed, for a world run without `UIPlugin`; it needs [`install_listeners`].
+/// The system that nests, places and draws each `UITree` whose inputs changed, for a world run without `UIPlugin`.
+///
+/// It needs [`install_listeners`] on the same world.
 pub fn update_trees_system() -> BoxedSystem {
     update_trees.into_boxed_system()
 }

@@ -59,7 +59,9 @@ use crate::{
 
 const DEFAULT_IMPULSE: Vec3 = Vec3::new(0.0, 0.0, 30.0);
 
-/// What a ragdoll tab does to its preview and how long it tries the body for; never saved.
+/// What a ragdoll tab does to its preview and how long it tries the body for.
+///
+/// It is never saved.
 #[derive(Clone, Debug, PartialEq, Reflect)]
 #[reflect(Default)]
 pub struct RagdollPreview {

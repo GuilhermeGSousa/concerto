@@ -224,6 +224,11 @@ pub(crate) fn sync_clip_preview(
 }
 
 /// Reads the clip `asset` names under `root`, checking its id and its kind.
+///
+/// # Errors
+///
+/// Returns an error when the file cannot be read or decoded as a clip, or when its header
+/// names another asset.
 pub fn read_clip(root: &Path, asset: &AssetEntry) -> anyhow::Result<AnimationClip> {
     let bytes = read_asset_record(root, asset)?;
     let (header, clip) = decode_content_asset::<AnimationClip>(&bytes)?;
@@ -262,6 +267,13 @@ pub(crate) fn default_scene<'a>(
 }
 
 /// Reads the `picked` scene, or else the one named `scene` in `clip`'s folder, with its id.
+///
+/// Returns `None` when nothing is picked and the folder has no such scene.
+///
+/// # Errors
+///
+/// Returns an error when the picked scene is not in `assets` or when the scene cannot be
+/// loaded.
 pub fn read_shown_scene(
     root: &Path,
     clip: Option<&AssetEntry>,

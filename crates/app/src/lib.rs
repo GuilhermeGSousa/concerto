@@ -159,17 +159,32 @@ impl App {
         self.plugin_types.contains(&std::any::TypeId::of::<P>())
     }
 
-    /// Registers an asset type and the system that tracks its handles, once per type; requires [`AssetManagerPlugin`](plugins::AssetManagerPlugin).
+    /// Registers an asset type and the system that tracks its handles, once per type.
+    ///
+    /// # Panics
+    ///
+    /// Panics without [`AssetManagerPlugin`](plugins::AssetManagerPlugin), or once the schedules
+    /// have been compiled.
     pub fn register_asset<A: Asset>(&mut self) -> &mut Self {
         self.register_asset_with::<A>(AssetServer::register_asset)
     }
 
     /// Registers a derived asset type as [`register_asset`](Self::register_asset) does, deriving its blob on every load.
+    ///
+    /// # Panics
+    ///
+    /// Panics without [`AssetManagerPlugin`](plugins::AssetManagerPlugin), or once the schedules
+    /// have been compiled.
     pub fn register_derived_asset<A: DerivedData>(&mut self) -> &mut Self {
         self.register_asset_with::<A>(AssetServer::register_derived_asset)
     }
 
     /// Registers `A` as an asset and a reflected type, and records it in [`InspectedAssets`] so the editor can create, inspect and save it.
+    ///
+    /// # Panics
+    ///
+    /// Panics without [`AssetManagerPlugin`](plugins::AssetManagerPlugin), or once the schedules
+    /// have been compiled.
     pub fn register_inspected_asset<
         A: CreatableAsset + LoadableAsset + Reflect + GetTypeRegistration,
     >(
@@ -187,6 +202,11 @@ impl App {
     }
 
     /// Registers `A` as an asset and records it in [`PlaceableAssets`] so the editor can place it in a scene.
+    ///
+    /// # Panics
+    ///
+    /// Panics without [`AssetManagerPlugin`](plugins::AssetManagerPlugin), or once the schedules
+    /// have been compiled.
     pub fn register_placeable_asset<A: PlaceableAsset>(&mut self) -> &mut Self {
         self.register_asset::<A>();
         placeable_asset::register::<A>(self);
@@ -231,7 +251,11 @@ impl App {
         self
     }
 
-    /// Adds systems to the main world's `update_group` schedule. Panics once the schedules have been compiled.
+    /// Adds systems to the main world's `update_group` schedule.
+    ///
+    /// # Panics
+    ///
+    /// Panics once the schedules have been compiled.
     pub fn add_system<M>(
         &mut self,
         update_group: impl ScheduleLabel,
@@ -244,7 +268,11 @@ impl App {
         self
     }
 
-    /// Adds systems to the render world's `update_group` schedule. Panics once the schedules have been compiled.
+    /// Adds systems to the render world's `update_group` schedule.
+    ///
+    /// # Panics
+    ///
+    /// Panics once the schedules have been compiled.
     pub fn add_render_system<M>(
         &mut self,
         update_group: impl ScheduleLabel,
@@ -259,7 +287,11 @@ impl App {
         self
     }
 
-    /// Adds ordering constraints between sets in the main world's `update_group` schedule. Panics once the schedules have been compiled.
+    /// Adds ordering constraints between sets in the main world's `update_group` schedule.
+    ///
+    /// # Panics
+    ///
+    /// Panics once the schedules have been compiled.
     pub fn configure_sets(
         &mut self,
         update_group: impl ScheduleLabel,
@@ -269,7 +301,11 @@ impl App {
         self
     }
 
-    /// Adds ordering constraints between sets in the render world's `update_group` schedule. Panics once the schedules have been compiled.
+    /// Adds ordering constraints between sets in the render world's `update_group` schedule.
+    ///
+    /// # Panics
+    ///
+    /// Panics once the schedules have been compiled.
     pub fn configure_render_sets(
         &mut self,
         update_group: impl ScheduleLabel,
@@ -281,7 +317,14 @@ impl App {
         self
     }
 
-    /// Registers an event type; without this its `EventChannel` resource never exists, so systems taking `EventWriter` or `EventReader` for it are skipped.
+    /// Registers an event type.
+    ///
+    /// Without this its `EventChannel` resource never exists, so systems taking `EventWriter`
+    /// or `EventReader` for it are skipped.
+    ///
+    /// # Panics
+    ///
+    /// Panics once the schedules have been compiled.
     pub fn register_event<T: Event + 'static>(&mut self) -> &mut Self {
         let event_channel = EventChannel::<T>::new();
 
@@ -291,6 +334,10 @@ impl App {
     }
 
     /// Records every removal of `T` in the main world, for systems taking `RemovedComponents<T>`.
+    ///
+    /// # Panics
+    ///
+    /// Panics once the schedules have been compiled.
     pub fn track_removals<T: Component>(&mut self) -> &mut Self {
         if self
             .get_resource::<EventChannel<ComponentRemoved<T>>>()
@@ -311,7 +358,10 @@ impl App {
         self
     }
 
-    /// Runs `listener` every time a `T` is triggered in the main world; an edit or preview `App` keeps only marked ones.
+    /// Runs `listener` every time a `T` is triggered in the main world.
+    ///
+    /// An edit or preview `App` keeps only listeners marked for it, with
+    /// [`AtEditTime`] or [`AtPreviewTime`](edit_time::AtPreviewTime).
     pub fn add_listener<T: Signal, M>(&mut self, listener: impl AppListener<T, M>) -> &mut Self {
         let mode = self.mode;
         listener.add_to(self.main_mut().world_mut(), mode);
@@ -324,7 +374,10 @@ impl App {
         self
     }
 
-    /// Makes `P` a member of every `InputSet<K>` in the main world; register before the schedules compile.
+    /// Makes `P` a member of every `InputSet<K>` in the main world.
+    ///
+    /// Register it before the schedules compile: an input set takes its members when its
+    /// system is initialized.
     pub fn register_input<
         K: 'static,
         P: concerto_ecs::system::input::ReadOnlySystemInput + 'static,
@@ -336,6 +389,11 @@ impl App {
     }
 
     /// Makes `T` require `U`, built with `U::default()`, in the main world.
+    ///
+    /// # Panics
+    ///
+    /// Panics if an entity holds `T` or a component that requires it, or if the requirement
+    /// forms a cycle.
     pub fn register_required_components<T: Component, U: Component + Default>(
         &mut self,
     ) -> &mut Self {
@@ -344,6 +402,11 @@ impl App {
     }
 
     /// Makes `T` require `U`, built by `constructor`, in the main world.
+    ///
+    /// # Panics
+    ///
+    /// Panics if an entity holds `T` or a component that requires it, or if the requirement
+    /// forms a cycle.
     pub fn register_required_components_with<T: Component, U: Component>(
         &mut self,
         constructor: fn() -> U,

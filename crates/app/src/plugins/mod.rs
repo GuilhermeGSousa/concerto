@@ -125,7 +125,12 @@ pub struct ContentSettings<'a> {
     pub project_root: Option<&'a str>,
 }
 
-/// Parses the embedded registry into the app's [`AssetRegistry`] and publishes it, with the derived-data cache, to its [`AssetServer`], if any; panics when malformed.
+/// Parses the embedded registry into the app's [`AssetRegistry`] and publishes it, with the
+/// derived-data cache, to its [`AssetServer`], if any.
+///
+/// # Panics
+///
+/// Panics if `settings.registry` is malformed.
 pub fn install_content_registry(app: &mut App, settings: ContentSettings) {
     let registry = AssetRegistry::parse(settings.registry)
         .unwrap_or_else(|error| panic!("the embedded content registry is malformed: {error:#}"));

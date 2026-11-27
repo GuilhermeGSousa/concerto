@@ -13,7 +13,9 @@ use serde::{Deserialize, Serialize};
 pub struct Ragdoll {
     pub skeleton: AssetHandle<Skeleton>,
     pub parts: Vec<RagdollPart>,
-    /// Named strength settings for the whole body, such as "flinch", "braced" and "limp"; a `CharacterRagdoll` in the powered mode names one.
+    /// Named strength settings for the whole body, such as "flinch", "braced" and "limp".
+    ///
+    /// A `CharacterRagdoll` in the powered mode names one.
     pub profiles: Vec<StrengthProfile>,
 }
 
@@ -86,7 +88,10 @@ pub enum PartStrength {
     /// The part follows its bone exactly and nothing moves it.
     #[default]
     Kinematic,
-    /// The part is dynamic and its joint's motor pulls it towards the animated pose: `stiffness` in N·m/rad, `damping` in N·m·s/rad, and no more torque than `torque_limit` N·m.
+    /// The part is dynamic and its joint's motor pulls it towards the animated pose.
+    ///
+    /// `stiffness` is in N·m/rad, `damping` in N·m·s/rad, and the motor
+    /// applies no more torque than `torque_limit` N·m.
     Powered {
         stiffness: f32,
         damping: f32,
@@ -197,7 +202,9 @@ impl Default for RagdollMotor {
     }
 }
 
-/// The joint between a part and the part of its nearest ancestor bone that has one; axes are in the part's bone space, angles in radians.
+/// The joint between a part and the part of its nearest ancestor bone that has one.
+///
+/// Axes are in the part's bone space, angles in radians.
 #[derive(Clone, Copy, Debug, PartialEq, Reflect, Serialize, Deserialize)]
 pub struct RagdollJoint {
     /// The axis the part twists around.
@@ -271,7 +278,11 @@ impl RagdollJoint {
     }
 }
 
-/// The kind of body segment a part is, which tells the sensing and the behaviours which parts are the feet, the trunk and the arms, and decides a generated part's mass, thickness and limits.
+/// The kind of body segment a part is.
+///
+/// It tells the sensing and the behaviours which parts are the feet, the
+/// trunk and the arms, and decides a generated part's mass, thickness and
+/// limits.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Reflect, Serialize, Deserialize)]
 pub enum Segment {
     /// A part that is none of the others: a tail, a prop.

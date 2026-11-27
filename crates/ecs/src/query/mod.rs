@@ -28,7 +28,7 @@ use crate::{
     world::UnsafeWorldCell,
 };
 
-/// A type-safe view over all entities in a [`World`](crate::world::World) that
+/// A type-safe view over all entities in a [`World`] that
 /// match a given set of components.
 ///
 /// `T` is a [`QueryData`] that describes which components to fetch.  `F` is an
@@ -112,7 +112,9 @@ impl<'world, 'state, T: QueryData, F: QueryFilter> Query<'world, 'state, T, F> {
         QueryIter::new(self.world, self.state, self.ticks)
     }
 
-    /// Returns an iterator over all matching entities; only a query whose data is read-only has it.
+    /// Returns an iterator over all matching entities.
+    ///
+    /// Only a query whose data is read-only has it; use [`Self::iter_mut`] on one that writes.
     pub fn iter(&self) -> QueryIter<'_, 'state, T, F>
     where
         T: ReadOnlyQueryData,
@@ -139,7 +141,9 @@ impl<'world, 'state, T: QueryData, F: QueryFilter> Query<'world, 'state, T, F> {
         QueryIter::new(self.world, self.state, self.ticks)
     }
 
-    /// Fetches the query data for a specific entity, returning `None` if it doesn't match; only a query whose data is read-only has it.
+    /// Fetches the query data for a specific entity, returning `None` if it doesn't match.
+    ///
+    /// Only a query whose data is read-only has it; use [`Self::get_entity_mut`] on one that writes.
     pub fn get_entity(&self, entity: Entity) -> Option<T::Item<'_>>
     where
         T: ReadOnlyQueryData,

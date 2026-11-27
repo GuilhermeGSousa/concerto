@@ -10,7 +10,10 @@ use crate::{
 pub(crate) mod blend_stack;
 pub(crate) mod inertialization_blender;
 
-/// How a state machine moves between states: `blend_time` is the cross-fade duration or the inertialization halflife.
+/// How a state machine moves between states.
+///
+/// A transition's `blend_time` is the cross-fade duration under [`Self::CrossFade`] and the
+/// inertialization halflife under [`Self::Inertialization`], in seconds.
 #[derive(
     Clone,
     Copy,

@@ -57,7 +57,9 @@ pub trait AnimationNode: Reflect + Send + Sync + 'static {
         output: &mut AnimationFrame,
     );
 
-    /// How the root moved this frame, from the node's state after `update` and its inputs' root motion; the first input's by default.
+    /// How the root moved this frame, from the node's state after `update` and its inputs' root motion.
+    ///
+    /// The default passes the first input's root motion through.
     fn root_motion(
         &self,
         _state: &mut Self::State,
@@ -89,7 +91,9 @@ pub trait AnimationNode: Reflect + Send + Sync + 'static {
     /// Visits the graph assets this node plays inside itself.
     fn inner_graphs(&self, _visit: &mut dyn FnMut(&AssetHandle<AnimationGraph>)) {}
 
-    /// Visits the graph states this node's state holds for the graphs it plays inside itself, each with the state that plays it when the node is a state machine.
+    /// Visits the graph states this node's state holds for the graphs it plays inside itself.
+    ///
+    /// When the node is a state machine, each comes with the name of the state that plays it.
     fn inner_states(
         &self,
         _state: &Self::State,

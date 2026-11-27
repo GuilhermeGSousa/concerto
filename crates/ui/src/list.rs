@@ -21,14 +21,22 @@ use crate::{
     theme::UITheme,
 };
 
-/// A vertical list whose items are the node's own children, one row each, in child order; it clips them, owns its overflow and owns their clicks, so put no click listener or `UIInteractionStyle` on an item; its natural height is its content extent, so a list that must fill its slot needs zero height and a flex grow.
+/// A vertical list whose items are the node's own children, one row each, in child order.
+///
+/// The list clips its items, owns its overflow and owns their clicks, so put no
+/// click listener or `UIInteractionStyle` on an item.
+///
+/// Its natural height is its content extent, so a list that must fill its slot
+/// needs zero height and a flex grow.
 #[derive(Component, Clone, Debug, PartialEq)]
 pub struct UIList {
-    /// Height of every row in logical pixels; `None` takes the theme's `row_height`.
+    /// Height of every row in logical pixels, or `None` for the theme's `row_height`.
     pub row_height: Option<f32>,
     /// Whether items can be highlighted, navigated by key, selected and activated.
     pub selectable: bool,
-    /// Whether a left click on an item activates it as well as selecting it, as a menu's items do; double clicks then send nothing more.
+    /// Whether a left click on an item activates it as well as selecting it, as a menu's items do.
+    ///
+    /// Double clicks then send nothing more.
     pub click_activates: bool,
 }
 

@@ -47,6 +47,10 @@ pub struct TextureSource {
 
 impl TextureSource {
     /// A source of `bytes` in `encoding`, reading its size from the image header and hashing the bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the image header cannot be read as `encoding`.
     pub fn new(bytes: Vec<u8>, encoding: SourceEncoding) -> anyhow::Result<Self> {
         let format = match encoding {
             SourceEncoding::Png => image::ImageFormat::Png,
@@ -84,7 +88,10 @@ pub struct SourceSummary {
     pub hash: u64,
 }
 
-/// A texture: its settings and a summary of its imported source, whose sampled levels are derived data, or levels built in code; the source itself is the file's uncooked data.
+/// A texture asset: its settings and either a summary of its imported source or levels built in code.
+///
+/// The sampled levels of an imported texture are derived data; the source
+/// image itself is the file's uncooked data.
 #[derive(Serialize, Deserialize)]
 pub struct Texture {
     pub kind: TextureKind,

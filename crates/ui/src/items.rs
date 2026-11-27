@@ -70,11 +70,15 @@ define_action!(
     UITreeCollapse
 );
 
-/// Marks the one selected item of a list or tree; inserting it on an item takes it from the others.
+/// Marks the one selected item of a list or tree.
+///
+/// Inserting it on an item takes it from the others.
 #[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct UISelected;
 
-/// Marks an item that its list or tree leaves out; a tree still shows it while a descendant is not hidden.
+/// Marks an item that its list or tree leaves out.
+///
+/// A tree still shows a hidden item while one of its descendants is not hidden.
 #[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct UIHidden;
 
@@ -90,7 +94,10 @@ pub struct UIItemContextMenu {
     pub position: Vec2,
 }
 
-/// Trigger on an item to scroll its list or tree until the item's row is in view; it reaches the item only once its widget has set it up and given it a `UIItem`.
+/// Trigger on an item to scroll its list or tree until the item's row is in view.
+///
+/// It reaches the item only once its widget has set it up and given it a
+/// [`UIItem`].
 pub struct UIReveal;
 
 impl Signal for UIItemSelected {}
@@ -102,7 +109,9 @@ impl EntitySignal for UIItemContextMenu {}
 impl Signal for UIReveal {}
 impl EntitySignal for UIReveal {}
 
-/// Registers the listeners that keep selection unique, focus off despawned items and culled rows undrawn; the world needs a `FocusedWidget`.
+/// Registers the listeners that keep selection unique, focus off despawned items and culled rows undrawn.
+///
+/// The world needs a `FocusedWidget`.
 pub fn install_listeners(world: &mut World) {
     world.add_listener(blank_culled_layouts);
     world.add_listener(keep_selection_unique);
@@ -483,12 +492,14 @@ impl UIItem {
         self.owner
     }
 
-    /// The item's row among the visible rows, counted from the top; 0 while a collapsed or hidden item hides it.
+    /// The item's row among the visible rows, counted from the top.
+    ///
+    /// It is 0 while a collapsed or hidden item hides it.
     pub fn index(&self) -> usize {
         self.index
     }
 
-    /// How many items this one is nested under; always 0 in a list.
+    /// How many items this one is nested under, always 0 in a list.
     pub fn depth(&self) -> usize {
         self.depth
     }

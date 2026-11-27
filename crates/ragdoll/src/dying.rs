@@ -19,7 +19,11 @@ use crate::{
     stagger::Stagger,
 };
 
-/// The game says a character is dying: its strength drains over `seconds`, from the hands and feet inwards, and it is `Dead` when none is left. Zero seconds is an instant kill. The engine has no health; the game decides when.
+/// The game says a character is dying.
+///
+/// Its strength drains over `seconds`, from the hands and feet inwards, and
+/// it is `Dead` when none is left. Zero seconds is an instant kill. The
+/// engine has no health; the game decides when.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Die {
     pub character: Entity,
@@ -76,7 +80,11 @@ impl Dying {
     }
 }
 
-/// A dead body that lies at rest: its parts are static where they lie, nothing drives or senses it, and its capsule stays where it was left, out of every collision layer. A `BodyHit` of at least `wake_impulse` wakes it, and it settles again.
+/// A dead body that lies at rest.
+///
+/// Its parts are static where they lie, nothing drives or senses it, and its
+/// capsule stays where it was left, out of every collision layer. A `BodyHit`
+/// of at least `wake_impulse` wakes it, and it settles again.
 #[derive(Component, Reflect, Clone, Copy, Debug, PartialEq)]
 #[reflect(Component, Default, SceneComponent)]
 pub struct Settled {
@@ -135,7 +143,10 @@ fn kill(
     }
 }
 
-/// Starts a character dying when the game says so; with zero seconds it is limp and `Dead` at once. A character that is already dying dies no slower.
+/// Starts a character dying when the game says so.
+///
+/// With zero seconds it is limp and `Dead` at once. A character that is
+/// already dying dies no slower.
 pub fn die_when_told(
     on: On<Die>,
     mut characters: Query<(
@@ -175,7 +186,11 @@ pub fn die_when_told(
     }
 }
 
-/// Each fixed step, in `BehaviourSet`: drains every dying character, whose parts the drive weakens by `Dying::left`, and when nothing is left makes it limp and `Dead` and ends the behaviours still on it.
+/// Drains every dying character, each fixed step in `BehaviourSet`.
+///
+/// The drive weakens the character's parts by `Dying::left`. When nothing is
+/// left the character is made limp and `Dead`, and the behaviours still on it
+/// end.
 pub fn drain_dying(
     mut characters: Query<(
         Entity,
@@ -206,7 +221,9 @@ pub fn drain_dying(
     }
 }
 
-/// Each fixed step, after the body is sensed: freezes every dead body that lies at rest, marks it `Settled` and triggers `BodySettled`.
+/// Freezes every dead body that lies at rest, each fixed step after the body is sensed.
+///
+/// It marks the body `Settled` and triggers `BodySettled`.
 pub fn settle_dead_bodies(
     characters: Query<(Entity, &PhysicalState, &BodySense, &RagdollId), Without<Settled>>,
     mut state: ResMut<PhysicsState>,
@@ -222,7 +239,10 @@ pub fn settle_dead_bodies(
     }
 }
 
-/// Wakes a settled body that is hit hard enough: its parts are simulated again, the struck part takes the impulse, and it settles once it is at rest again.
+/// Wakes a settled body that is hit hard enough.
+///
+/// Its parts are simulated again, the struck part takes the impulse, and it
+/// settles once it is at rest again.
 pub fn wake_when_hit(
     on: On<BodyHit>,
     mut characters: Query<(&Settled, &RagdollId, &RagdollBody, &mut BodySense)>,

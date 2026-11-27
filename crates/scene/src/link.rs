@@ -24,7 +24,10 @@ use crate::node_id::NodeId;
 use crate::scene::{LinkChange, Scene, SceneNode};
 use crate::spawner::{spawn_scene_in_world, RemovedComponent, SpawnFilter};
 
-/// A placed scene: spawns its nodes under this entity, applies its changes to them, and spawns them again when the scene loads again.
+/// A placed scene.
+///
+/// It spawns the scene's nodes under this entity, applies its changes to them,
+/// and spawns them again when the scene loads again.
 #[derive(Component)]
 #[require(SceneLinkState, Transform)]
 pub struct SceneLink {
@@ -90,7 +93,9 @@ impl SceneLink {
         self.own.push(change);
     }
 
-    /// Removes the own change at `index`; the linked nodes keep it until the next spawn.
+    /// Removes and returns the own change at `index`, or `None` when there is none.
+    ///
+    /// The linked nodes keep the change until the next spawn.
     pub fn remove_change(&mut self, index: usize) -> Option<LinkChange> {
         if index >= self.own.len() {
             return None;
@@ -155,7 +160,9 @@ pub struct OwnedPath {
     pub path: LinkPath,
 }
 
-/// The outermost link `entity` was spawned by, following nested links outwards, and the path joined on the way.
+/// The outermost link `entity` was spawned by, and the path to `entity` from it.
+///
+/// It follows nested links outwards, joining the path on the way.
 pub fn owning_link(world: &World, entity: Entity) -> Option<OwnedPath> {
     owning_link_by(entity, |entity| {
         world.get_component_for_entity::<LinkedNode>(entity)

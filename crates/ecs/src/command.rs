@@ -154,7 +154,7 @@ impl<'w, 's> CommandQueue<'w, 's> {
 
     /// Queues a signal to run matching listeners when commands are applied.
     ///
-    /// Uses the dispatch and reentrancy rules of [World::trigger].
+    /// Uses the dispatch and reentrancy rules of [`World::trigger`].
     pub fn trigger<T: Signal>(&mut self, signal: T) {
         self.queue_state.push(TriggerCommand(signal));
     }
@@ -163,9 +163,12 @@ impl<'w, 's> CommandQueue<'w, 's> {
         self.queue_state.push(InsertResource::<T>::new(resource));
     }
 
-    /// Queues a scene component to be spawned from `value`.
-    /// `node_entities` lets the component resolve `SceneEntityRef`s to the
-    /// other entities spawned for the same scene.
+    /// Queues the scene component registered under `type_name`, built from `value`, for
+    /// insertion onto `entity`.
+    ///
+    /// `node_entities` lets the component resolve
+    /// [`SceneEntityRef`](crate::component::scene::SceneEntityRef)s to the other entities
+    /// spawned for the same scene. See [`World::apply_scene_component`].
     pub fn apply_scene_component(
         &mut self,
         type_name: String,

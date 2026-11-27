@@ -19,7 +19,9 @@ const FRAME: Duration = Duration::from_micros(16_667);
 const IDLE_CHECK: Duration = Duration::from_millis(100);
 const CLOSING_GRACE: Duration = Duration::from_secs(5);
 
-/// Triggered by the headless host when its client disconnects; the `App` then has five seconds to send `WindowCommand::Close`.
+/// Triggered by the headless host when its client disconnects.
+///
+/// The `App` then has five seconds to send `WindowCommand::Close`.
 pub struct HostClosing;
 
 impl Signal for HostClosing {}
@@ -41,7 +43,13 @@ impl fmt::Display for NoAdapter {
     }
 }
 
-/// Serves the `App` that `build` makes over MCP on stdin and stdout, drawing into a texture of `size`; exits with status 1 without a GPU.
+/// Serves the `App` that `build` makes over MCP on stdin and stdout, drawing into a texture of `size`.
+///
+/// Without a GPU adapter it prints why and exits the process with status 1.
+///
+/// # Panics
+///
+/// Panics as [`run_with`] does.
 pub fn run(build: impl FnOnce(&mut App), size: (u32, u32)) {
     let Some(gpu) = pollster::block_on(Gpu::request(&Gpu::instance(None), None)) else {
         eprintln!("{NoAdapter}");
@@ -52,6 +60,10 @@ pub fn run(build: impl FnOnce(&mut App), size: (u32, u32)) {
 }
 
 /// Serves the `App` that `build` makes over MCP on `io` until the client disconnects or the `App` sends `WindowCommand::Close`.
+///
+/// # Panics
+///
+/// Panics when `build` does not add [`McpPlugin`](crate::McpPlugin).
 pub fn run_with<IO>(io: IO, gpu: Gpu, build: impl FnOnce(&mut App), size: (u32, u32))
 where
     IO: AsyncRead + AsyncWrite + Send + Unpin + 'static,

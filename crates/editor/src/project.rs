@@ -25,7 +25,14 @@ pub struct Project {
     pub default_scene: Option<String>,
 }
 
-/// Read-only catalogue discovery. Never creates or rewrites a project's registry.
+/// Reads the project at `root` and its asset catalogue.
+///
+/// Discovery is read-only: it never creates or rewrites a project's registry.
+///
+/// # Errors
+///
+/// Returns an error when `root` does not resolve to a directory, when its `content.toml`
+/// cannot be read, or when its content tree cannot be catalogued.
 pub fn discover_project(root: &Path) -> anyhow::Result<(Project, AssetRegistry)> {
     let root = root.canonicalize()?;
     anyhow::ensure!(root.is_dir(), "Project must be a directory");

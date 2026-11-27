@@ -18,7 +18,9 @@ use crate::tools::camera::{EditorCamera, EditorHelper};
 /// The ambient light the viewport gives a scene with no light and no sky, so a lone prop or character shows.
 pub const UNLIT_SCENE_AMBIENT: f32 = 1.0;
 
-/// Copies the scene's `MainCamera`'s `Sky` and `CameraEnvironment` onto the editor camera, so the viewport lights and draws the scene as it will play; a scene with no light and no sky gets a bright ambient light instead, and [`ViewportShading`] draws it unlit.
+/// Copies the scene's `MainCamera`'s `Sky` and `CameraEnvironment` onto the editor camera, so the viewport lights and draws the scene as it will play.
+///
+/// A scene with no light and no sky gets a bright ambient light instead, and [`ViewportShading`] draws it unlit.
 pub struct ViewportEnvironmentPlugin;
 
 impl Plugin for ViewportEnvironmentPlugin {

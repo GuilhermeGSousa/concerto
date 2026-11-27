@@ -7,8 +7,10 @@ pub struct Triangle {
     pub c: usize,
 }
 
-/// Result of [`Triangulation2D::locate`]: the containing triangle and the
-/// barycentric coordinates of the queried point within it.
+/// A point located in a [`Triangulation2D`].
+///
+/// Holds the containing triangle and the barycentric coordinates of the
+/// queried point within it, as [`Triangulation2D::locate`] returns them.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TriangulatedPoint2D {
     /// Index into [`Triangulation2D::triangles`].
@@ -22,7 +24,9 @@ pub struct TriangulatedPoint2D {
 }
 
 /// A completed Delaunay triangulation over a fixed set of 2D points.
-/// Indices in `triangles` refer to positions in `points`.
+///
+/// The indices in each [`Triangle`] refer to positions in
+/// [`points`](Self::points).
 pub struct Triangulation2D {
     points: Vec<Vec2>,
     triangles: Vec<Triangle>,
@@ -58,8 +62,12 @@ impl Triangulation2D {
     }
 
     /// Returns the barycentric coordinates `(λa, λb, λc)` of `point` relative
-    /// to `triangles[triangle_index]`. Coordinates are in `[0, 1]` when the
-    /// point is inside the triangle and sum to 1 by construction.
+    /// to the triangle at `triangle_index`.
+    ///
+    /// The coordinates sum to 1 by construction, and all lie in `[0, 1]` when
+    /// the point is inside the triangle.
+    ///
+    /// # Panics
     ///
     /// Panics if `triangle_index` is out of bounds.
     pub fn barycentric_in(&self, triangle_index: usize, point: Vec2) -> Vec3 {
@@ -73,10 +81,10 @@ impl Triangulation2D {
     }
 
     /// Like [`locate`](Self::locate), but always returns a result.
-    /// When `point` falls outside the triangulation it is projected onto the
-    /// nearest triangle boundary by clamping negative barycentric coordinates
-    /// to zero and renormalizing, so the returned weights always sum to 1 and
-    /// are all non-negative.
+    ///
+    /// When `point` falls outside the triangulation it is replaced by the
+    /// geometrically nearest point on any triangle's boundary, so the returned
+    /// weights sum to 1 and are all non-negative.
     pub fn locate_or_nearest(&self, point: Vec2) -> TriangulatedPoint2D {
         if let Some(loc) = self.locate(point) {
             return loc;
@@ -108,8 +116,9 @@ impl Triangulation2D {
     /// with its index and barycentric coordinates, or `None` if the point is
     /// outside the triangulation.
     ///
-    /// Prefer this over calling `triangle_containing` + `barycentric_in`
-    /// separately because it avoids computing the coordinates twice.
+    /// Prefer this over calling [`triangle_containing`](Self::triangle_containing)
+    /// and [`barycentric_in`](Self::barycentric_in) separately, because it
+    /// avoids computing the coordinates twice.
     pub fn locate(&self, point: Vec2) -> Option<TriangulatedPoint2D> {
         for (i, tri) in self.triangles.iter().enumerate() {
             let b = barycentric(

@@ -27,6 +27,10 @@ pub struct Name(&'static Entry);
 
 impl Name {
     /// The name of `text`, interning it on first use.
+    ///
+    /// # Panics
+    ///
+    /// Panics if more than `u32::MAX` distinct names have been interned.
     pub fn new(text: &str) -> Name {
         if let Some(entry) = TABLE.read().unwrap().get(text) {
             return Name(entry);

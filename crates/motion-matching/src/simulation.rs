@@ -43,7 +43,10 @@ fn frequency(halflife: f32) -> f32 {
     halflife_to_damping(halflife) / 2.0
 }
 
-/// The spring simulation of a character, stepped on the fixed timestep and sampled ahead for motion matching; its tuning is public and its state is private, read through `interpolated_facing`.
+/// The spring simulation of a character, stepped on the fixed timestep and sampled ahead for motion matching.
+///
+/// Its tuning is public and its state is private, read through
+/// [`interpolated_facing`](Self::interpolated_facing).
 #[derive(Component, Reflect, Clone, Debug, PartialEq)]
 #[reflect(Component, Default)]
 #[require(DesiredMotion)]

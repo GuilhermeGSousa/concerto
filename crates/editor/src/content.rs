@@ -167,7 +167,9 @@ struct ContentMenu {
 #[derive(Component)]
 struct ContentMenuRow;
 
-/// Creates an asset of a creatable `kind` named `name` in `folder`, or in the content root without one, as the Asset Browser's New does; `open` opens it in its editor.
+/// Creates an asset of a creatable `kind` named `name` in `folder`, as the Asset Browser's New does.
+///
+/// Without a `folder` the asset goes in the content root. With `open` set, the new asset opens in its editor.
 pub struct CreateAsset {
     pub kind: String,
     pub folder: Option<String>,

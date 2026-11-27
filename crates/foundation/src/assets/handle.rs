@@ -48,7 +48,9 @@ impl<A: Asset> AssetLoaded<A> {
     }
 }
 
-/// Sent when a load fails, with the id that was asked for; the reason is in the log.
+/// Sent when a load fails, with the id that was asked for.
+///
+/// The reason is in the log.
 #[derive(Event, Clone)]
 pub struct AssetLoadFailed {
     pub id: AssetId,
@@ -77,17 +79,14 @@ impl Debug for StrongAssetHandle {
 
 /// A handle to an asset of type `A`.
 ///
-/// `Strong` keeps the underlying asset alive (via the `Arc<StrongAssetHandle>`,
-/// whose `Drop` impl reports the asset as no longer referenced); `Weak` is
-/// just an `AssetId` reference that does not keep anything alive and does not
-/// resolve to a loaded asset on its own. This is unrelated to
-/// `std::sync::Weak<StrongAssetHandle>` used internally by
-/// `AssetHandleProvider` for handle-reuse/dedup (which is about not keeping
-/// the asset alive from the provider's cache, not about this enum's variant).
+/// `Strong` keeps the asset alive: once the last strong handle to it drops,
+/// the asset is reported as no longer referenced. `Weak` is a bare
+/// [`AssetId`] reference that keeps nothing alive and does not resolve to a
+/// loaded asset on its own.
 ///
-/// `AssetHandle` serializes to (and deserializes from) just its bare
-/// `AssetId`: deserializing always produces a `Weak` handle, since
-/// deserialization has no `AssetServer` to resolve a `Strong` handle against.
+/// `AssetHandle` serializes to and deserializes from its bare `AssetId`.
+/// Deserializing always produces a `Weak` handle, since deserialization has no
+/// [`AssetServer`] to resolve a `Strong` handle against.
 pub enum AssetHandle<A: Asset> {
     Strong(Arc<StrongAssetHandle>, PhantomData<A>),
     Weak(AssetId, PhantomData<A>),
@@ -241,7 +240,15 @@ impl ReflectAssetHandle {
         (self.id)(value)
     }
 
-    /// Writes into `value` a handle to `id` loaded through `server`, or a weak one when `server` only names the asset's kind.
+    /// Writes into `value` a handle to `id` loaded through `server`.
+    ///
+    /// The handle is a weak one when `server` only names the asset's kind.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SetHandleError::NotThisHandle`] when `value` is not this
+    /// handle type, and [`SetHandleError::AssetNotRegistered`] when `server`
+    /// neither loads nor names the asset's kind. `value` is left unchanged.
     pub fn set(
         &self,
         value: &mut dyn Reflect,
@@ -305,7 +312,10 @@ impl<A: LoadableAsset> FromType<AssetHandle<A>> for ReflectSceneLeaf {
     }
 }
 
-/// Writes values into a live world: entity references as [`LiveEntityRefs`] stores them, and asset handles loaded through the world's [`AssetServer`] as a scene spawns them.
+/// Writes values into a live world.
+///
+/// Entity references are written as [`LiveEntityRefs`] stores them, and asset
+/// handles are loaded through the world's [`AssetServer`] as a scene spawns them.
 pub struct LiveLeaves {
     server: Option<AssetServer>,
     handles: HashMap<TypeId, ReflectAssetHandle>,
@@ -324,7 +334,9 @@ impl LiveLeaves {
         }
     }
 
-    /// Takes the handle types registered in `registry` and the asset server to load them through, for a caller that reads a world's resources without holding the world.
+    /// Takes the handle types registered in `registry` and the asset server to load them through.
+    ///
+    /// For a caller that reads a world's resources without holding the world.
     pub fn from_parts(registry: &TypeRegistry, server: Option<&AssetServer>) -> Self {
         let handles = registry
             .iter()

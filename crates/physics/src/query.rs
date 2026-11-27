@@ -9,7 +9,10 @@ use crate::layers::Layers;
 pub struct QueryFilter<'a> {
     /// Bodies the query passes through.
     pub ignore: &'a [BodyId],
-    /// The query sees a body that is in any of these layers. By default every layer but `Layers::RAGDOLL`, so a foot ray or a camera boom meets a character's capsule and never its limbs.
+    /// The query sees a body that is in any of these layers.
+    ///
+    /// By default every layer but [`Layers::RAGDOLL`], so a foot ray or a
+    /// camera boom meets a character's capsule and never its limbs.
     pub layers: Layers,
 }
 

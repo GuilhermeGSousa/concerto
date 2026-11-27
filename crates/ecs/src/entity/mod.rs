@@ -17,7 +17,7 @@ pub mod hierarchy;
 
 pub use hash::{EntityHash, EntityHashMap, EntityHashSet, EntityHasher};
 
-/// A lightweight, copyable handle that uniquely identifies a game object in the [`World`](crate::world::World).
+/// A lightweight, copyable handle that uniquely identifies a game object in the [`World`].
 ///
 /// Entities are created with [`World::spawn`](crate::world::World::spawn) and destroyed with
 /// [`World::despawn`](crate::world::World::despawn).  An entity is just an `(index, generation)`
@@ -130,6 +130,10 @@ impl<'w> EntityWorldMut<'w> {
     }
 
     /// Makes `child` a child of this entity, detaching it from its previous parent.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `child` is not live in the world.
     pub fn add_child(&mut self, child: Entity) -> &mut Self {
         let parent = self
             .world

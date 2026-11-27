@@ -54,7 +54,10 @@ impl CameraPivot {
     }
 }
 
-/// Turns each pivot by the mouse and the `Look` stick; a pivot with a `ThirdPersonCamera` scales the sensitivity and takes its pitch limit from the rig's framing.
+/// Turns each pivot by the mouse and the `Look` stick.
+///
+/// A pivot with a `ThirdPersonCamera` scales the sensitivity and takes its pitch
+/// limit from the rig's framing.
 pub fn move_camera_pivot(
     mut pivots: Query<(&mut Transform, &mut CameraPivot, Option<&ThirdPersonCamera>)>,
     input: Res<Input>,
@@ -109,7 +112,9 @@ pub(crate) fn update_entity_follow(
 #[reflect(Component, Default, SceneComponent)]
 pub struct CameraBoom {
     pub offset: Vec3,
-    /// Where the boom hangs from: an offset from the pivot in its level frame, so pitching the pivot doesn't move it.
+    /// Where the boom hangs from, as an offset from the pivot in its level frame.
+    ///
+    /// Being in the level frame, it stays put when the pivot pitches.
     pub shoulder: Vec3,
     pub probe_radius: f32,
     pub min_distance: f32,

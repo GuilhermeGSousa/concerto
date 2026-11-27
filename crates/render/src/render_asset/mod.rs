@@ -24,13 +24,21 @@ pub trait RenderAsset: Send + Sync + Sized + 'static {
     type PreparationParams: SystemInput;
 
     /// The GPU form of the asset `id`, `source_asset`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AssetPreparationError::NotReady`] when the asset cannot be
+    /// prepared yet, such as when a texture it binds is not prepared; it is
+    /// tried again next frame.
     fn prepare_asset(
         id: AssetId,
         source_asset: &Self::SourceAsset,
         params: &mut SystemInputData<Self::PreparationParams>,
     ) -> Result<Self, AssetPreparationError>;
 
-    /// The bytes preparing `source` uploads, counted against [`RenderAssetBytesPerFrame`]; `None` is never deferred.
+    /// The bytes preparing `source` uploads, counted against [`RenderAssetBytesPerFrame`].
+    ///
+    /// An asset that returns `None` is never deferred.
     fn byte_len(_source: &Self::SourceAsset) -> Option<usize> {
         None
     }

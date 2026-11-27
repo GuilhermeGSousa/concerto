@@ -8,6 +8,12 @@ use ratatui::crossterm::event;
 use crate::TerminalInput;
 
 /// Builds an `App` with `build` and `content` installed, and drives it from the terminal until Esc is pressed.
+///
+/// # Panics
+///
+/// Panics if no GPU adapter is available, or if `build` does not register
+/// [`TerminalRendererPlugin`](crate::TerminalRendererPlugin), which provides the
+/// [`TerminalInput`] the loop reads Esc from.
 pub fn run(build: impl FnOnce(&mut App), content: ContentSettings<'static>) {
     let gpu = pollster::block_on(Gpu::request(&Gpu::instance(None), None))
         .expect("no GPU adapter is available");

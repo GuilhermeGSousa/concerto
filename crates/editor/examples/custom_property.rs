@@ -1,6 +1,8 @@
-//! A downstream composite editor. Run with `cargo run -p concerto-editor --example custom_property`
-//! for a headless commit demonstration. Call `register` in the recipe the editor builds each
-//! scene's `App` from, and `install` on the editor's own `App` after InspectorPlugin.
+//! A downstream composite editor.
+//!
+//! Run `cargo run -p concerto-editor --example custom_property` for a headless commit
+//! demonstration. Call `register` in the recipe the editor builds each scene's `App` from, and
+//! `install` on the editor's own `App` after `InspectorPlugin`.
 use concerto_app::{
     App,
     main_schedule::MainSchedulePlugin,
@@ -39,7 +41,9 @@ use concerto_ui::{
 };
 use concerto_window::{input::MouseButton, plugin::WindowPlugin};
 
-// Deliberately not Clone or PartialEq: the editor chooses what to snapshot.
+/// The component the custom editor edits.
+///
+/// It is deliberately neither `Clone` nor `PartialEq`: the editor chooses what to snapshot.
 #[derive(Component, Reflect, Default)]
 #[reflect(Component, Default)]
 pub struct Setting {

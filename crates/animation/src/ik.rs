@@ -30,6 +30,10 @@ impl Hinge {
     }
 
     /// The hinge in the mid bone's own frame, or `None` when this setting gives none.
+    ///
+    /// # Panics
+    ///
+    /// For [`Hinge::Rest`], panics if `root`, `mid` or `tip` is not a bone of `skeleton`.
     pub fn local(&self, skeleton: &Skeleton, root: usize, mid: usize, tip: usize) -> Option<Vec3> {
         match self {
             Hinge::Off | Hinge::Axis { .. } => self.axis(),
@@ -74,11 +78,16 @@ pub struct TwoBoneChain {
     pub root: Vec3,
     pub mid: Vec3,
     pub tip: Vec3,
-    /// The axis the mid joint bends about, in the chain's space, by the right-hand rule from the upper bone to the lower; it decides the bend where the chain is too straight to show its own, and `None` leaves the solve as it was.
+    /// The axis the mid joint bends about, in the chain's space, by the right-hand rule from the upper bone to the lower.
+    ///
+    /// It decides the bend where the chain is too straight to show its own; `None` leaves the
+    /// solve as it was.
     pub hinge: Option<Vec3>,
 }
 
-/// The rotations that bring a chain's tip to its goal, in the chain's space: each joint's rotation in that space is pre-multiplied by its entry.
+/// The rotations that bring a chain's tip to its goal, in the chain's space.
+///
+/// Each joint's rotation in that space is pre-multiplied by its entry.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TwoBoneSolution {
     pub root: Quat,
@@ -93,7 +102,9 @@ impl TwoBoneSolution {
     };
 }
 
-/// Solves a two-bone chain toward `target`, bending toward `pole` when given; reach past `chain length - softness` eases toward full length.
+/// Solves a two-bone chain toward `target`, bending toward `pole` when given.
+///
+/// Reach past `chain length - softness` eases toward full length instead of snapping straight.
 pub fn solve_two_bone(
     chain: &TwoBoneChain,
     target: Vec3,

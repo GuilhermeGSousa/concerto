@@ -14,7 +14,9 @@ use glam::{Quat, Vec3};
 
 const ADJUSTMENT_EPS: f32 = 1.0e-8;
 
-/// How a visible character is reconciled with its capsule each frame; the methods are mutually exclusive.
+/// How a visible character is reconciled with its capsule each frame.
+///
+/// The methods are mutually exclusive.
 #[derive(Component, Reflect, Clone, Debug, PartialEq)]
 #[reflect(Component, Default)]
 pub enum CharacterDisplacement {
@@ -29,7 +31,10 @@ impl Default for CharacterDisplacement {
     }
 }
 
-/// Places the character and the capsule at a weighted average of the two each frame, clamped to 0..=1: 0 is code-driven, 1 is data-driven, and the speed between them depends on the frame rate.
+/// Places the character and the capsule at a weighted average of the two each frame.
+///
+/// `data_factor` is clamped to `0..=1`: 0 is code-driven, 1 is data-driven,
+/// and how fast values in between converge depends on the frame rate.
 #[derive(Reflect, Clone, Debug, PartialEq)]
 #[reflect(Default)]
 pub struct Synchronization {
@@ -82,7 +87,12 @@ impl Default for Clamp {
     }
 }
 
-/// Names a character's capsule, which holds its `CharacterSimulation`, and its skeleton, which holds its `SkeletonComponent` and `AnimationPlayer`; it goes on the visible character, set in the editor or inserted by the game.
+/// Names a character's capsule and its skeleton.
+///
+/// The capsule holds the character's
+/// [`CharacterSimulation`](crate::simulation::CharacterSimulation), and the
+/// skeleton its `SkeletonComponent` and `AnimationPlayer`. The link goes on the
+/// visible character, set in the editor or inserted by the game.
 #[derive(Component, Reflect, Clone, Copy, Debug, Default, PartialEq)]
 #[reflect(Component, SceneComponent, Default)]
 pub struct CharacterLink {

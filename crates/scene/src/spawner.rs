@@ -56,14 +56,17 @@ impl SpawnFilter {
 /// Entity mapping produced when a [`Scene`] is queued for spawning.
 #[derive(Debug, Clone)]
 pub struct SpawnedScene {
-    /// One runtime entity for each scene node, in source-node order; a node the filter left out has an entity that was despawned.
+    /// One runtime entity for each scene node, in source-node order.
+    ///
+    /// A node the filter left out has an entity that was despawned.
     pub node_entities: Vec<Entity>,
     /// Runtime entities for nodes that have no valid parent in the scene.
     pub root_entities: Vec<Entity>,
 }
 
-/// Queues one entity per scene node, applies allowed serialized components,
-/// wires the source hierarchy, and parents every root to `parent`.
+/// Queues one entity per scene node, with the components `filter` allows, parenting every root to `parent`.
+///
+/// The entities are wired into the source hierarchy.
 ///
 /// The returned node vector is stable by source index and can be retained by
 /// editors for hierarchy selection and inspection.
@@ -141,7 +144,9 @@ pub fn spawn_scene(
     }
 }
 
-/// [`spawn_scene`] for callers holding the [`World`] itself; the scene exists when this returns.
+/// [`spawn_scene`] for callers holding the [`World`] itself.
+///
+/// The scene exists when this returns.
 pub fn spawn_scene_in_world(
     world: &mut World,
     scene: &Scene,

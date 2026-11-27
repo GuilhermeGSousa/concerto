@@ -6,10 +6,11 @@ use crate::physics_state::PhysicsState;
 use crate::settings::PhysicsSettings;
 use crate::ActiveBackend;
 
-/// Per-step scratch resources for advancing the simulation (what these are is
-/// up to the backend — e.g. a temp allocator and job system for Jolt). Owns
-/// them for the lifetime of the app, separate from [`PhysicsState`] so
-/// stepping can borrow both.
+/// Per-step scratch resources for advancing the simulation.
+///
+/// What these are is up to the backend: for Jolt, a temp allocator and a job
+/// system. It owns them for the lifetime of the app, separate from
+/// [`PhysicsState`] so stepping can borrow both.
 #[derive(Resource)]
 pub struct PhysicsPipeline {
     stepper: <ActiveBackend as PhysicsBackend>::Stepper,

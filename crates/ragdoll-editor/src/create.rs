@@ -64,7 +64,10 @@ impl ChainNames {
     }
 }
 
-/// Generates a humanoid `Ragdoll` from the retarget rig `rig` and saves it as a new asset; a `RagdollCreation` says how it went. The Create ragdoll button and the `create_ragdoll` tool both send it.
+/// Generates a humanoid `Ragdoll` from the retarget rig `rig` and saves it as a new asset.
+///
+/// A [`RagdollCreation`] says how it went. The Create ragdoll button and the
+/// `create_ragdoll` tool both send it.
 pub struct CreateRagdoll {
     pub rig: AssetId,
     /// Where the new asset goes, such as content/hero/ragdoll.gasset; next to the rig, as ragdoll.gasset, without one.

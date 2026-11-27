@@ -33,7 +33,9 @@ not do a neighbouring task.
 
 The rules you are most likely to break:
 
-- No comments in anything you write, except a one-line `///` on a public item.
+- No comments in anything you write, except doc comments on public API,
+  written to the Rust API guidelines as `AGENTS.md` describes, and one
+  `// SAFETY:` line on an `unsafe` block.
 - No system that takes `&World` or `&mut World`. Use `CommandQueue` or trigger
   a signal.
 - No `git add -A`. The owner may be editing other files while you work.

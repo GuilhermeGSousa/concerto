@@ -104,7 +104,9 @@ impl NavDestination {
     }
 }
 
-/// The velocity and facing an agent's navigation wants; present once the agent first plans.
+/// The velocity and facing an agent's navigation wants.
+///
+/// It is present once the agent first plans.
 #[derive(Component, Reflect, Clone, Copy, Debug, Default, PartialEq)]
 #[reflect(Component, Default)]
 pub struct NavSteering {
@@ -219,7 +221,15 @@ fn mesh_path(query: &NavMeshQuery, from: Vec3, point: &NavGraphPoint) -> Option<
     })
 }
 
-/// Plans a route for each agent without one, whose destination changed, whose route the changed graph may have broken, or whose route was planned on another navmesh than the one loaded now; while a `NavMeshComponent`'s mesh is still loading and none is loaded, an agent without a route, or whose destination changed, stops and waits, and every other route is kept as it is.
+/// Plans a route for each agent that needs one.
+///
+/// An agent needs one when it has none, when its destination changed, when the
+/// changed graph may have broken its route, or when its route was planned on
+/// another navmesh than the one loaded now.
+///
+/// While a `NavMeshComponent`'s mesh is still loading and none is loaded, an
+/// agent without a route, or whose destination changed, stops and waits, and
+/// every other route is kept as it is.
 pub fn plan_nav_routes(
     mut agents: Query<
         (

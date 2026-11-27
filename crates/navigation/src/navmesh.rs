@@ -87,7 +87,9 @@ pub struct NavPolygon {
     pub vertices: Vec<u32>,
 }
 
-/// The agent a navmesh is baked for, and the resolution it is baked at; lengths in metres, `max_slope` in degrees.
+/// The agent a navmesh is baked for, and the resolution it is baked at.
+///
+/// Lengths are in metres and `max_slope` is in degrees.
 #[derive(Reflect, Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[reflect(Default)]
 pub struct NavMeshSettings {

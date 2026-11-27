@@ -22,7 +22,9 @@ use uuid::Uuid;
 const MAX_ANGLE_CAP: f32 = 170.0 * PI / 180.0;
 const SNAP_WEIGHT: f32 = 1.0e-4;
 
-/// Turns a chain of bones, then each eye, toward a world-space point; passes its first input through first.
+/// Turns a chain of bones, then each eye, toward a world-space point.
+///
+/// It passes its first input through first.
 #[derive(Clone, Debug, PartialEq, Reflect, serde::Serialize, serde::Deserialize)]
 #[reflect(AnimationNode, Default)]
 pub struct LookAtNode {

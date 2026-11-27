@@ -30,7 +30,11 @@ pub const SHOT: &str = "shot";
 /// The priority of the shot behaviour's claims.
 pub const SHOT_PRIORITY: i32 = 30;
 
-/// Makes a character answer a `BodyHit` of `HitKind::Shot` with its whole body, by where it struck, instead of flinching: the muscles at the wound snap tight and then give, a hand goes to the wound, the head turns to it and then to where the shot came from, and balance keeps the body up or loses it.
+/// Makes a character answer a `BodyHit` of `HitKind::Shot` with its whole body, by where it struck, instead of flinching.
+///
+/// The muscles at the wound snap tight and then give, a hand goes to the
+/// wound, the head turns to it and then to where the shot came from, and
+/// balance keeps the body up or loses it.
 #[derive(Component, Reflect, Clone, Debug, PartialEq)]
 #[reflect(Component, Default, SceneComponent)]
 pub struct ShotReaction {
@@ -122,7 +126,10 @@ pub struct Wound {
     waiting: Option<u32>,
 }
 
-/// The share of its strength each wounded part of a character keeps. The shot behaviour leaves it on the character when it ends, for the game to read: a limp, a guarded arm.
+/// The share of its strength each wounded part of a character keeps.
+///
+/// The shot behaviour leaves it on the character when it ends, for the game
+/// to read: a limp, a guarded arm.
 #[derive(Component, Clone, Debug, Default, PartialEq)]
 pub struct Wounds {
     strength: Vec<f32>,
@@ -142,7 +149,9 @@ impl Wounds {
     }
 }
 
-/// A shot reaction in progress, beside the `ShotReaction` that started it. It runs on a `Balance` and ends when that ends, with the same outcome.
+/// A shot reaction in progress, beside the [`ShotReaction`] that started it.
+///
+/// It runs on a `Balance` and ends when that ends, with the same outcome.
 #[derive(Component, Clone, Debug, Default, PartialEq)]
 #[require(Balance, BodyDrive, BodySense, PhysicalState, Wounds)]
 pub struct Shot {
@@ -179,7 +188,10 @@ fn is_trunk(segment: Segment) -> bool {
     matches!(segment, Segment::Pelvis | Segment::Spine)
 }
 
-/// Starts a character's shot reaction, or adds a wound to the one in progress, when it is hit by a shot while it is on its feet. A character with no `ShotReaction`, or one that is limp, falling, down or dead, is left to `flinch_when_hit`.
+/// Starts a character's shot reaction, or adds a wound to the one in progress, when it is hit by a shot while it is on its feet.
+///
+/// A character with no [`ShotReaction`], or one that is limp, falling, down
+/// or dead, is left to `flinch_when_hit`.
 pub fn react_when_shot(
     on: On<BodyHit>,
     mut characters: Query<(
@@ -271,7 +283,13 @@ impl Arm {
     }
 }
 
-/// Each fixed step, in `BehaviourSet` before `balance_bodies`: for every shot body, gives the struck parts their impulses once they are simulated, snaps and slackens the muscles at each wound, folds the spine over a wound in the trunk, lets a shot arm hang, weakens a shot leg through balance, sends the nearer free hand to the newest wound and turns the head to it and then to where the shot came from.
+/// Drives every shot body, each fixed step in `BehaviourSet` before `balance_bodies`.
+///
+/// It gives the struck parts their impulses once they are simulated, snaps
+/// and slackens the muscles at each wound, folds the spine over a wound in
+/// the trunk, lets a shot arm hang and weakens a shot leg through balance.
+/// It sends the nearer free hand to the newest wound and turns the head to
+/// it and then to where the shot came from.
 pub fn shot_bodies(
     mut characters: Query<(
         &ShotReaction,

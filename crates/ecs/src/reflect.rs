@@ -289,6 +289,11 @@ impl SceneComponentType {
     }
 
     /// The component's value off `entity` as scene data, mapping entities and recording assets in `capture`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an [`EncodeError`] when `entity` does not carry the component, or when one of
+    /// its values cannot be encoded.
     pub fn capture(
         &self,
         world: &World,

@@ -139,7 +139,10 @@ impl Segment {
         }
     }
 
-    /// The stiffness of the muscles holding a segment of this kind in the generated profiles, in N·m/rad: enough that the segment and what hangs from it sag only a little under their own weight.
+    /// The stiffness of the muscles holding a segment of this kind in the generated profiles, in N·m/rad.
+    ///
+    /// It is enough that the segment and what hangs from it sag only a little
+    /// under their own weight.
     pub fn muscle_stiffness(self) -> f32 {
         match self {
             Segment::Pelvis | Segment::Spine => 3000.0,
@@ -230,7 +233,18 @@ fn chain(rig: &ResolvedRig, name: Name, needs: usize) -> Result<&ResolvedChain, 
     Ok(chain)
 }
 
-/// Generates a first-draft ragdoll for a humanoid: pelvis, up to three spine parts, head, upper and lower arms, hands, thighs, shins and feet. Capsules run along each bone, as thick as the vertices of `meshes` skinned to it, or in proportion to the bone when there are none.
+/// Generates a first-draft ragdoll for a humanoid.
+///
+/// The ragdoll has a pelvis, up to three spine parts, a head, upper and lower
+/// arms, hands, thighs, shins and feet. Capsules run along each bone, as
+/// thick as the vertices of `meshes` skinned to it, or in proportion to the
+/// bone when there are none.
+///
+/// # Errors
+///
+/// Returns [`GenerateError::MissingChain`] when `rig` has no chain of a name
+/// in the settings' [`HumanoidChains`], and [`GenerateError::ShortChain`]
+/// when a chain has fewer bones than its limb needs.
 pub fn generate_humanoid(
     skeleton_handle: AssetHandle<Skeleton>,
     skeleton: &Skeleton,

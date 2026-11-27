@@ -40,7 +40,9 @@ impl Default for NavigationGizmos {
     }
 }
 
-/// Draws the nav graph, agents' routes and loaded navmeshes; register it after `DefaultPlugins`.
+/// Draws the nav graph, agents' routes and loaded navmeshes.
+///
+/// Register it after `DefaultPlugins`.
 pub struct NavigationGizmosPlugin;
 
 impl Plugin for NavigationGizmosPlugin {

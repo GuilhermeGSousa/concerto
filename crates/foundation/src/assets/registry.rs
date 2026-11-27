@@ -21,10 +21,14 @@ pub struct AssetEntry {
     pub kind: String,
     /// The header's `kind_version`; `None` for every entry parsed from registry text.
     pub kind_version: Option<u32>,
-    /// Where an imported asset came from; `None` for an authored asset, and for
-    /// every entry parsed from registry text rather than from content headers.
+    /// Where an imported asset came from.
+    ///
+    /// `None` for an authored asset, and for every entry parsed from registry
+    /// text rather than from content headers.
     pub provenance: Option<ImportProvenance>,
-    /// The host whose file at `address` holds the asset, and its name there; `None` for the host or a loose asset.
+    /// The host whose file at `address` holds the asset, and its name there.
+    ///
+    /// `None` for the host itself or a loose asset.
     pub embedded_in: Option<EmbeddedIn>,
 }
 
@@ -122,11 +126,16 @@ impl AssetRegistry {
     /// Builds a registry by scanning `<project_root>/<content_root>` for
     /// `*.<extension>` files and reading each one's header.
     ///
-    /// This is the authoritative way to produce a registry: identity lives in
-    /// the header, so a scan re-points an id at wherever its file actually is
-    /// now — which is what lets a content asset be renamed or moved without
-    /// breaking the references that name its id. An absent content tree is an
-    /// empty registry, not an error.
+    /// This is the authoritative way to produce a registry. Identity lives in
+    /// the header, so a scan re-points an id at wherever its file is now,
+    /// which lets a content asset be renamed or moved without breaking the
+    /// references that name its id. An absent content tree is an empty
+    /// registry, not an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the tree cannot be scanned: a file cannot be read
+    /// or its header does not parse.
     pub fn from_content_tree(
         project_root: &Path,
         content_root: &str,
@@ -147,7 +156,10 @@ impl AssetRegistry {
         registry
     }
 
-    /// The registry's text: one `id = { address, kind }` line per asset, with `embedded_as` for an embedded one, ordered by id.
+    /// The registry's text.
+    ///
+    /// One `id = { address, kind }` line per asset, with `embedded_as` for an
+    /// embedded one, ordered by id.
     pub fn to_toml(&self) -> String {
         let entries: Vec<ScannedEntry> = self
             .entries

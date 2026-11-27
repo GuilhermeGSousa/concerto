@@ -22,7 +22,9 @@ use crate::look_at::{descends, halflife, limits, share};
 const AIM_PASSES: usize = 3;
 const SNAP_WEIGHT: f32 = 1.0e-4;
 
-/// Turns a chain of bones so a muzzle's barrel points at a world-space point; passes its first input through first.
+/// Turns a chain of bones so a muzzle's barrel points at a world-space point.
+///
+/// It passes its first input through first.
 #[derive(Clone, Debug, PartialEq, Reflect, serde::Serialize, serde::Deserialize)]
 #[reflect(AnimationNode, Default)]
 pub struct AimNode {

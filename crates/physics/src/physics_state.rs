@@ -104,7 +104,7 @@ impl PhysicsState {
         &mut self.backend
     }
 
-    /// The entity whose [`Collider`](crate::collider::Collider) owns `body`,
+    /// The entity whose [`Collider`] owns `body`,
     /// if any.
     pub fn get_entity(&self, body: BodyId) -> Option<Entity> {
         self.body_to_entity.get(&body).map(|owner| owner.entity)
@@ -120,7 +120,10 @@ impl PhysicsState {
             .insert(body, BodyOwner { entity, part: None });
     }
 
-    /// Creates a ragdoll owned by `owner` with each part at its world pose in `pose`, one per part in part order. `None` when the backend has no ragdolls (Rapier), `pose` has the wrong length, or the world is out of bodies.
+    /// Creates a ragdoll owned by `owner` with each part at its world pose in `pose`, one per part in part order.
+    ///
+    /// Returns `None` when the backend has no ragdolls (Rapier), `pose` has
+    /// the wrong length, or the world is out of bodies.
     pub fn create_ragdoll(
         &mut self,
         built: &BuiltRagdoll,
@@ -197,7 +200,9 @@ impl PhysicsState {
         }
     }
 
-    /// Moves every part to its world pose in `pose` at once, keeping velocities; ignored when `pose` has the wrong length.
+    /// Moves every part to its world pose in `pose` at once, keeping velocities.
+    ///
+    /// A `pose` of the wrong length is ignored.
     pub fn set_ragdoll_pose(&mut self, ragdoll: RagdollId, pose: &[BodyPose]) {
         if self.ragdolls.contains_key(&ragdoll) {
             self.backend.set_ragdoll_pose(ragdoll.0, pose);
@@ -233,7 +238,10 @@ impl PhysicsState {
         ))
     }
 
-    /// Sets each part's velocity so that it reaches its world pose in `pose` at the end of the next fixed step. Kinematic parts follow it exactly and push dynamic bodies aside; see [`set_ragdoll_part_motion`](Self::set_ragdoll_part_motion).
+    /// Sets each part's velocity so that it reaches its world pose in `pose` at the end of the next fixed step.
+    ///
+    /// Kinematic parts follow it exactly and push dynamic bodies aside; see
+    /// [`set_ragdoll_part_motion`](Self::set_ragdoll_part_motion).
     pub fn drive_ragdoll_kinematic(&mut self, ragdoll: RagdollId, pose: &[BodyPose]) {
         if self.ragdolls.contains_key(&ragdoll) {
             self.backend.drive_ragdoll_kinematic(
@@ -266,14 +274,21 @@ impl PhysicsState {
         }
     }
 
-    /// Freezes a ragdoll where it lies, or lets it go again. A frozen ragdoll's parts are static: they block bodies and are found by queries, but nothing moves them and they cost the solver nothing. Letting it go makes every part dynamic and awake.
+    /// Freezes a ragdoll where it lies, or lets it go again.
+    ///
+    /// A frozen ragdoll's parts are static: they block bodies and are found
+    /// by queries, but nothing moves them and they cost the solver nothing.
+    /// Letting it go makes every part dynamic and awake.
     pub fn set_ragdoll_frozen(&mut self, ragdoll: RagdollId, frozen: bool) {
         if self.ragdolls.contains_key(&ragdoll) {
             self.backend.set_ragdoll_frozen(ragdoll.0, frozen);
         }
     }
 
-    /// The angular impulse the motor of the joint between `part` and its parent applied in the last collision step, about the joint's twist, normal and plane axes; a motor at its torque limit is saturated.
+    /// The angular impulse the motor of the joint between `part` and its parent applied in the last collision step.
+    ///
+    /// The impulse is about the joint's twist, normal and plane axes. A motor
+    /// at its torque limit is saturated.
     pub fn ragdoll_joint_motor_impulse(&self, ragdoll: RagdollId, part: usize) -> Vec3 {
         if self.ragdolls.contains_key(&ragdoll) {
             self.backend.ragdoll_joint_motor_impulse(ragdoll.0, part)
@@ -358,7 +373,12 @@ impl PhysicsState {
         }
     }
 
-    /// Turns the reporting of `body`'s contacts with solid bodies on or off. A `Contacts` component does this for its entity's body; call it for a body that has no entity of its own, such as a ragdoll part, and read the contacts with [`contacts_of`](Self::contacts_of).
+    /// Turns the reporting of `body`'s contacts with solid bodies on or off.
+    ///
+    /// A [`Contacts`](crate::contact::Contacts) component does this for its
+    /// entity's body. Call it for a body that has no entity of its own, such
+    /// as a ragdoll part, and read the contacts with
+    /// [`contacts_of`](Self::contacts_of).
     pub fn set_contact_reporting(&mut self, body: BodyId, enabled: bool) {
         self.backend.set_contact_reporting(body.0, enabled);
         if enabled {
@@ -501,12 +521,17 @@ impl PhysicsState {
         }
     }
 
-    /// Gives the body its collision layers, as a `CollisionLayers` beside its `Collider` does when the body is created. `CollisionLayers::NONE` makes it collide with nothing and hides it from every query.
+    /// Gives the body its collision layers, as a [`CollisionLayers`] beside its [`Collider`] does when the body is created.
+    ///
+    /// [`CollisionLayers::NONE`] makes it collide with nothing and hides it
+    /// from every query.
     pub fn set_body_layers(&mut self, body: BodyId, layers: CollisionLayers) {
         self.backend.set_body_layers(body.0, layers);
     }
 
-    /// Sets the body's velocities so that it reaches `pose` at the end of the next fixed step; a kinematic body follows it exactly and pushes dynamic bodies aside.
+    /// Sets the body's velocities so that it reaches `pose` at the end of the next fixed step.
+    ///
+    /// A kinematic body follows it exactly and pushes dynamic bodies aside.
     pub fn move_body_kinematic(&mut self, body: BodyId, pose: BodyPose) {
         self.backend
             .move_body_kinematic(body.0, pose, Time::fixed_delta_time().as_secs_f32());

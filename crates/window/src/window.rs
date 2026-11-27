@@ -19,7 +19,9 @@ impl Default for CursorMode {
     }
 }
 
-/// What a game wants of its window; a host applies what makes sense for it.
+/// What a game wants of its window.
+///
+/// A host applies what makes sense for it and ignores the rest.
 #[derive(Clone, Debug, PartialEq)]
 pub struct WindowSettings {
     pub title: String,

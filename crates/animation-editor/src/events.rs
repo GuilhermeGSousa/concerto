@@ -43,7 +43,14 @@ fn decoded_name(type_name: &str, value: &ReflectedValue) -> Option<Name> {
 }
 
 impl TabEvent {
-    /// The event `key` holds: `Named` for an `AnimationEvent` that decodes to a name, `Typed` as stored otherwise.
+    /// Reads the event `key` holds.
+    ///
+    /// An [`AnimationEvent`] that decodes to a name becomes [`TabEventKind::Named`]; anything
+    /// else is kept as stored in [`TabEventKind::Typed`].
+    ///
+    /// # Errors
+    ///
+    /// Returns a message naming the type and time when the key's stored value cannot be read.
     pub fn read(key: &ClipEventKey) -> Result<Self, String> {
         let type_name = key.event.type_name();
         let value = key.event.value().map_err(|error| {
@@ -66,6 +73,10 @@ impl TabEvent {
     }
 
     /// The event key a save writes for this event, holding stored data.
+    ///
+    /// # Errors
+    ///
+    /// Returns a message naming the event and time when a named event cannot be encoded.
     pub fn write(&self) -> Result<ClipEventKey, String> {
         let event = match &self.kind {
             TabEventKind::Named(name) => ClipEventData::Stored {
@@ -105,11 +116,19 @@ impl TabEvent {
 }
 
 /// The tab events of `clip`, in its order.
+///
+/// # Errors
+///
+/// Returns the first event that [`TabEvent::read`] cannot read.
 pub fn read_events(clip: &AnimationClip) -> Result<Vec<TabEvent>, String> {
     clip.events().iter().map(TabEvent::read).collect()
 }
 
 /// The event keys a save writes for `events`, in their order.
+///
+/// # Errors
+///
+/// Returns the first event that [`TabEvent::write`] cannot write.
 pub fn write_events(events: &[TabEvent]) -> Result<Vec<ClipEventKey>, String> {
     events.iter().map(TabEvent::write).collect()
 }
@@ -123,7 +142,14 @@ fn checked_name(name: &str) -> Result<Name, String> {
 }
 
 impl ClipDocument {
-    /// Appends an `AnimationEvent` named `name` at `time`, snapped to a frame and clamped to the clip, and selects it.
+    /// Appends an [`AnimationEvent`] named `name` at `time` and selects it.
+    ///
+    /// `time` is in seconds and snaps to the nearest frame when the clip has a frame rate.
+    ///
+    /// # Errors
+    ///
+    /// Returns a message when `name` is empty, when `time` is outside the clip, or when an
+    /// event of that name already sits at the same frame.
     pub fn add_event(&mut self, name: &str, time: f32) -> Result<(), String> {
         let name = checked_name(name)?;
         let time = self.event_time(time)?;
@@ -136,7 +162,14 @@ impl ClipDocument {
         Ok(())
     }
 
-    /// Moves the event at `index` to `time`, snapped to a frame and clamped to the clip.
+    /// Moves the event at `index` to `time`.
+    ///
+    /// `time` is in seconds and snaps to the nearest frame when the clip has a frame rate.
+    ///
+    /// # Errors
+    ///
+    /// Returns a message when there is no event at `index`, when it is a typed event, when
+    /// `time` is outside the clip, or when an event of the same name already sits at that frame.
     pub fn move_event(&mut self, index: usize, time: f32) -> Result<(), String> {
         let name = self.editable(index)?;
         let time = self.event_time(time)?;
@@ -146,6 +179,11 @@ impl ClipDocument {
     }
 
     /// Renames the event at `index`.
+    ///
+    /// # Errors
+    ///
+    /// Returns a message when there is no event at `index`, when it is a typed event, when
+    /// `name` is empty, or when an event named `name` already sits at the same frame.
     pub fn rename_event(&mut self, index: usize, name: &str) -> Result<(), String> {
         self.editable(index)?;
         let name = checked_name(name)?;
@@ -155,6 +193,10 @@ impl ClipDocument {
     }
 
     /// Removes the event at `index` and clears the selection.
+    ///
+    /// # Errors
+    ///
+    /// Returns a message when there is no event at `index` or when it is a typed event.
     pub fn remove_event(&mut self, index: usize) -> Result<(), String> {
         self.editable(index)?;
         self.events.remove(index);

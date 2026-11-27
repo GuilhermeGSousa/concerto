@@ -9,7 +9,16 @@ const MAX_SIMPLIFICATION_ERROR: f32 = 1.3;
 const EDGE_LENGTH_FACTOR: u16 = 8;
 const MAX_VERTICES_PER_POLYGON: u16 = 6;
 
-/// Bakes the walkable polygons of `geometry` for the agent `settings` describes; nothing walkable gives an empty mesh.
+/// Bakes the walkable polygons of `geometry` for the agent `settings` describes.
+///
+/// Geometry with nothing walkable gives an empty mesh.
+///
+/// # Errors
+///
+/// Returns [`NavMeshBakeError::InvalidSettings`] for settings that cannot be baked
+/// with, [`NavMeshBakeError::TooManyCells`] or [`NavMeshBakeError::TooManyVertices`]
+/// when the geometry is too large to index, and [`NavMeshBakeError::Generation`]
+/// when a generator stage fails.
 pub fn bake(
     geometry: &NavMeshGeometry,
     settings: &NavMeshSettings,

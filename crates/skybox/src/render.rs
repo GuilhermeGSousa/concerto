@@ -42,7 +42,12 @@ const SKY_RADIANCE_MAP_WIDTH: u32 = 256;
 const SKY_RADIANCE_MAP_HEIGHT: u32 = 128;
 const SKY_RADIANCE_MAP_LEVELS: u32 = 7;
 
-/// Renders the sky-radiance map and draws the sky behind every camera with a [`Sky`]; requires `RenderPlugin`.
+/// Renders the sky-radiance map and draws the sky behind every camera with a [`Sky`].
+///
+/// # Panics
+///
+/// Panics during [`finish`](Plugin::finish) if [`RenderPlugin`](concerto_render::plugin::RenderPlugin)
+/// was not registered before it.
 pub struct SkyRenderPlugin;
 
 impl Plugin for SkyRenderPlugin {

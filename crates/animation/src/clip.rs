@@ -54,7 +54,9 @@ pub(crate) enum ChannelComponent {
     Scale,
 }
 
-/// Where a channel's last sample landed among its keys, kept by whoever plays it; a cursor from another channel or a changed one is safe to pass.
+/// Where a channel's last sample landed among its keys, kept by whoever plays it.
+///
+/// A cursor from another channel, or from a channel that has changed since, is safe to pass.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct KeyCursor {
     key: usize,
@@ -301,6 +303,10 @@ impl ClipEventData {
     }
 
     /// The reflected value a save writes.
+    ///
+    /// # Errors
+    ///
+    /// Returns an [`EncodeError`] when a live event cannot be encoded through reflection.
     pub fn value(&self) -> Result<Cow<'_, ReflectedValue>, EncodeError> {
         match self {
             Self::Stored { value, .. } => Ok(Cow::Borrowed(value)),
@@ -407,6 +413,11 @@ pub struct AdditiveSetting {
 
 impl AdditiveSetting {
     /// Checks `range` against a clip of `duration` seconds and builds the clip's [`Additive::LocalSpace`] with `roots`.
+    ///
+    /// # Errors
+    ///
+    /// Returns a message when `range` is set and is not finite with
+    /// `0 <= start < end <= duration`.
     pub fn additive(&self, duration: f32, roots: Vec<Uuid>) -> Result<Additive, String> {
         if self.range.is_some() {
             checked_range(self.range, duration, "range").map_err(|err| err.to_string())?;
@@ -730,7 +741,9 @@ impl AnimationClip {
         self.delta = None;
     }
 
-    /// The additive delta of `bone` at `time`, clamped to the delta's span; identity for a bone with no delta, a plain clip, or a delta not yet built.
+    /// The additive delta of `bone` at `time`, clamped to the delta's span.
+    ///
+    /// Returns identity for a bone with no delta, a plain clip, or a delta not yet built.
     pub fn sample_additive(&self, time: f32, bone: &Uuid) -> JointPose {
         self.delta
             .as_ref()
@@ -859,12 +872,24 @@ impl AnimationClip {
     }
 
     /// Stores the authored frame rate, snapping a rate within 0.01 of a whole number to it.
+    ///
+    /// # Panics
+    ///
+    /// In debug builds, panics if `frame_rate` is not finite and above 0.
     pub fn set_frame_rate(&mut self, frame_rate: f32) {
         debug_assert!(frame_rate.is_finite() && frame_rate > 0.0);
         self.frame_rate = Some(snap_rate(frame_rate));
     }
 
-    /// Writes the velocity of each bone in `bone_ids` between `time - dt` and `time`, both clamped to the clip.
+    /// Writes the velocity of each bone in `bone_ids` between `time - dt` and `time`.
+    ///
+    /// Both times are clamped to the clip. Velocities are per second; a span of zero length
+    /// writes zero.
+    ///
+    /// # Panics
+    ///
+    /// In debug builds, panics if `output` does not hold one linear and one angular velocity
+    /// per bone in `bone_ids`. Release builds stop at the shorter length.
     pub fn sample_velocity(
         &self,
         time: f32,
@@ -924,7 +949,12 @@ impl AnimationClip {
         &self.events
     }
 
-    /// Replaces the clip's events, sorted by time with equal times kept in the given order; fails on a time that is negative, non-finite or past the clip's end.
+    /// Replaces the clip's events, sorted by time with equal times kept in the given order.
+    ///
+    /// # Errors
+    ///
+    /// Returns a message, and keeps the current events, when an event's time is negative,
+    /// non-finite or past the clip's end.
     pub fn replace_events(&mut self, mut events: Vec<ClipEventKey>) -> Result<(), String> {
         if let Some(bad) = events
             .iter()
@@ -953,7 +983,12 @@ impl AnimationClip {
         start..end.max(start)
     }
 
-    /// Adds an [`AnimationEvent`] per name and distinct time, failing on a time that is negative, non-finite or past the clip's end.
+    /// Adds an [`AnimationEvent`] per name and distinct time.
+    ///
+    /// # Errors
+    ///
+    /// Returns a message when a time is negative, non-finite or past the clip's end. Names
+    /// before the failing one, in map order, have already been added.
     pub fn add_animation_events(
         &mut self,
         events: &BTreeMap<String, Vec<f32>>,
@@ -982,7 +1017,9 @@ impl AnimationClip {
         Ok(())
     }
 
-    /// Builds every stored event from the registry, loading handles through `server`; an event that cannot be built is dropped and leaves a warning naming its type.
+    /// Builds every stored event from the registry, loading handles through `server`.
+    ///
+    /// An event that cannot be built is dropped and leaves a warning naming its type.
     pub fn make_live(
         &mut self,
         registry: &TypeRegistry,

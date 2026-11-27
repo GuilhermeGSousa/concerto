@@ -78,6 +78,10 @@ pub trait SystemInput {
 
     /// Builds the input's data for one run with `ticks`, or declines with why.
     ///
+    /// # Errors
+    ///
+    /// Returns a [`ValidationError`] when the input declines, which skips its system.
+    ///
     /// # Safety
     /// `world` may be used only for what [`SystemInput::fill_access`] declared, and no
     /// running system may hold access that conflicts with it.
@@ -126,7 +130,11 @@ impl<P: ReadOnlySystemInput + 'static> InputState<P> {
         }
     }
 
-    /// The input's data for `world` now; a declined fetch is the error.
+    /// The input's data for `world` now.
+    ///
+    /// # Errors
+    ///
+    /// Returns the [`ValidationError`] the input declined with, as its system would be skipped.
     pub fn get<'w, 's>(&'s mut self, world: &'w World) -> Result<P::Data<'w, 's>, ValidationError> {
         let ticks = SystemTicks {
             last_run: Tick::default(),

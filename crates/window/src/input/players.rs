@@ -56,7 +56,9 @@ pub struct JoinSettings {
     pub join_on_press: bool,
     /// The pad buttons that join.
     pub join_buttons: Vec<GamepadButton>,
-    /// The unassigned keyboard joins by pressing a join key; it also needs `join_on_press`.
+    /// The unassigned keyboard joins by pressing a join key.
+    ///
+    /// Has no effect unless `join_on_press` is also set.
     pub keyboard_mouse_joins: bool,
     /// The keys that join the keyboard and mouse.
     pub join_keys: Vec<KeyCode>,
@@ -187,12 +189,22 @@ impl Players {
         &self.settings
     }
 
+    /// Replaces the join settings.
+    ///
     /// Lowering `max_players` keeps players already above it and only bounds later joins.
     pub fn set_settings(&mut self, settings: JoinSettings) {
         self.settings = settings;
     }
 
     /// Gives `device` to `player`, joining them if their place was empty.
+    ///
+    /// Giving a pad that another player is waiting for clears that player's wait.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AssignError::OutOfRange`] when `player` is not below
+    /// `max_players`, and [`AssignError::Taken`] when another player already holds
+    /// `device`.
     pub fn assign(&mut self, player: PlayerIndex, device: PlayerDevice) -> Result<(), AssignError> {
         if player.index() >= self.settings.max_players {
             return Err(AssignError::OutOfRange {

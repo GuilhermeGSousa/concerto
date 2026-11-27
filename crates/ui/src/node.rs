@@ -441,7 +441,10 @@ pub struct UILayout {
     pub paint_order: i64,
 }
 
-/// Set by lists and trees, never by callers, on rows they leave out of layout; a culled node and its subtree are not laid out, drawn or hit.
+/// Marks a row that its list or tree leaves out of layout.
+///
+/// Lists and trees set it, never callers. A culled node and its subtree are not
+/// laid out, drawn or hit.
 #[derive(Component)]
 pub struct UICulled;
 
@@ -471,7 +474,7 @@ pub(crate) fn blank_culled_layouts(
 #[derive(Resource, Default)]
 pub struct UILayoutDiagnostics {
     pub layout_passes: u64,
-    /// Taffy nodes whose style, measure context or children were set by the last layout run that had anything to look at.
+    /// How many Taffy nodes had their style, measure context or children set by the last layout run that had anything to look at.
     pub nodes_updated: u64,
 }
 
@@ -745,7 +748,9 @@ impl UILayout {
         self.rect.size
     }
 
-    /// Whether any of the node may be seen; false for a culled node, whose clip is empty.
+    /// Whether any of the node may be seen.
+    ///
+    /// It is false for a culled node, whose clip is empty.
     pub fn is_shown(&self) -> bool {
         self.clip_rect.has_area()
     }

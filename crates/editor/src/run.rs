@@ -115,7 +115,10 @@ pub(crate) fn register_editor(
     apply_plugins(app, plugins);
 }
 
-/// Opens the editor for the game whose recipe is `recipe`, on the project at `project_root` unless `--project` names another; `--mcp` serves it over MCP on stdin and stdout instead of opening a window.
+/// Opens the editor for the game whose recipe is `recipe`, on the project at `project_root`.
+///
+/// The `--project` argument names another project. With `--mcp`, the editor serves MCP on
+/// stdin and stdout instead of opening a window.
 pub fn run(recipe: fn(&mut App), project_root: impl Into<PathBuf>) {
     run_with(recipe, project_root, &[]);
 }

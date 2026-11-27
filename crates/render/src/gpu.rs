@@ -12,7 +12,11 @@ pub struct Gpu {
 }
 
 impl Gpu {
-    /// The wgpu instance a host creates its surface from before requesting a `Gpu`; a windowed host passes its event loop's display, which GLES needs to present.
+    /// The wgpu instance a host creates its surface from before requesting a `Gpu`.
+    ///
+    /// A windowed host passes its event loop's display, which GLES needs to
+    /// present. On wasm the instance uses only the GL backend, which renders
+    /// through WebGL2; native builds enable every backend.
     pub fn instance(display: Option<Box<dyn wgpu::wgt::WgpuHasDisplayHandle>>) -> wgpu::Instance {
         // wasm renders through WebGL2 (see the `webgl` feature and the
         // downlevel_webgl2 limits below). `Instance::default()` enables every
@@ -30,7 +34,13 @@ impl Gpu {
         })
     }
 
-    /// Requests a device, or returns `None`, logging why, when the machine has no suitable adapter or the adapter gives no device; panics when `WGPU_ADAPTER_NAME` names no usable adapter.
+    /// Requests a device, or returns `None` when the machine has no suitable adapter or the adapter gives no device.
+    ///
+    /// When there is no device, the reason is logged as a warning.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `WGPU_ADAPTER_NAME` is set and names no usable adapter.
     pub async fn request(
         instance: &wgpu::Instance,
         compatible_surface: Option<&wgpu::Surface<'_>>,
@@ -41,7 +51,17 @@ impl Gpu {
             .ok()
     }
 
-    /// Requests a device as `request` does, saying why when there is none.
+    /// Requests a device as [`Gpu::request`] does, saying why when there is none.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GpuRequestError::NoAdapter`] when no adapter matches the
+    /// request, and [`GpuRequestError::Device`] when the chosen adapter gives
+    /// no device.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `WGPU_ADAPTER_NAME` is set and names no usable adapter.
     pub async fn try_request(
         instance: &wgpu::Instance,
         compatible_surface: Option<&wgpu::Surface<'_>>,
@@ -99,7 +119,16 @@ impl Gpu {
         })
     }
 
-    /// Requests a `Gpu` for a test; without one it prints a skip line naming why and the adapters seen, and returns `None`, or panics with that reason when `CONCERTO_REQUIRE_GPU` is set.
+    /// Requests a `Gpu` for a test.
+    ///
+    /// Without one it prints a `SKIPPED` line to stderr naming why and the
+    /// adapters seen, and returns `None`.
+    ///
+    /// # Panics
+    ///
+    /// Panics with that reason when `CONCERTO_REQUIRE_GPU` is set to a
+    /// non-empty value and there is no GPU, and when `WGPU_ADAPTER_NAME` is set
+    /// and names no usable adapter.
     pub fn request_for_test() -> Option<Gpu> {
         let instance = Gpu::instance(None);
         let found = pollster::block_on(Gpu::try_request(&instance, None))

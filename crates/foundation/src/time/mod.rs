@@ -81,8 +81,10 @@ impl Time {
         Self::FIXED_DELTA_TIME
     }
 
-    /// Seconds elapsed since the last fixed step. The physics world is frozen between
-    /// steps, so systems running at frame rate must extrapolate by this to see current state.
+    /// Time elapsed since the last fixed step.
+    ///
+    /// The physics world is frozen between steps, so systems running at frame
+    /// rate must extrapolate by this to see current state.
     pub fn fixed_overstep(&self) -> Duration {
         self.fixed_overstep
     }

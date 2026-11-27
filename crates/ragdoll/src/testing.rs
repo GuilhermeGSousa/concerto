@@ -158,6 +158,10 @@ pub struct SpawnedHumanoid {
 
 impl SpawnedHumanoid {
     /// The entity of the bone called `name`.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the reference humanoid has no bone called `name`.
     pub fn bone(&self, name: &str) -> Entity {
         self.bones[index_of(name)]
     }

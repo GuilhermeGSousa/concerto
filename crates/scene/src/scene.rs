@@ -16,11 +16,11 @@ pub struct SerializedComponent {
     pub value: ReflectedValue,
 }
 
-/// One node in a [`Scene`]: an id, a name, the indices of its children within
-/// `Scene::nodes`, and the list of components authored onto it. Every
-/// runtime concern (transform, mesh, material, camera, light, ...) is carried
-/// as a [`SerializedComponent`]; the spawner applies them generically through
-/// the component registry.
+/// One node in a [`Scene`]: an id, a name, the indices of its children, and its components.
+///
+/// Every runtime concern (transform, mesh, material, camera, light, ...) is
+/// carried as a [`SerializedComponent`]; the spawner applies them generically
+/// through the component registry.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SceneNode {
     /// Names this node within its scene, whatever its name or index.
@@ -68,8 +68,13 @@ impl LinkChange {
 }
 
 impl SceneNode {
-    /// Stores `component` through reflection and appends it to this node, keyed
-    /// by its full type path, the name its registration resolves.
+    /// Stores `component` through reflection and appends it to this node.
+    ///
+    /// It is keyed by its full type path, the name its registration resolves.
+    ///
+    /// # Errors
+    ///
+    /// Fails when `component` cannot be converted to a reflected value.
     pub fn push_component<T: Reflect>(&mut self, component: &T) -> anyhow::Result<()> {
         self.components.push(SerializedComponent {
             type_name: std::any::type_name::<T>().to_owned(),
@@ -79,9 +84,9 @@ impl SceneNode {
     }
 }
 
-/// A format-agnostic scene graph, serialized directly (no separate DTO) and
-/// serialized as its own asset. `nodes[0]` is not special — roots are simply the
-/// nodes no other node lists as a child.
+/// A format-agnostic scene graph, serialized directly as its own asset.
+///
+/// `nodes[0]` is not special: roots are the nodes no other node lists as a child.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Scene {
     pub nodes: Vec<SceneNode>,
