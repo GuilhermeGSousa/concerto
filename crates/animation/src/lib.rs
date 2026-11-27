@@ -105,7 +105,7 @@ mod tests {
                 raised
                     .into_messages()
                     .iter()
-                    .any(|message| message.as_ref().downcast_ref::<ClipEnded>().is_some())
+                    .any(|message| message.message().downcast_ref::<ClipEnded>().is_some())
             })
         };
 

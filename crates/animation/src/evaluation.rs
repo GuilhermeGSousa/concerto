@@ -1,6 +1,6 @@
 use std::{cell::RefCell, sync::Arc};
 
-use concerto_ecs::{CommandQueue, Entity, signal::EntitySignal, system::input::Inputs};
+use concerto_ecs::{CommandQueue, Entity, system::input::Inputs};
 use concerto_mesh::Skeleton;
 use concerto_reflect::Reflect;
 use glam::{Affine3A, Vec3};
@@ -53,34 +53,43 @@ pub struct RootBone {
     pub up: Vec3,
 }
 
-pub(crate) trait EmittedSignal: Send + Sync {
-    fn trigger(self: Box<Self>, entity: Entity, cmd: &mut CommandQueue);
-}
+type TriggerFn = fn(&dyn Reflect, Entity, &mut CommandQueue);
 
-impl<S: EntitySignal> EmittedSignal for S {
-    fn trigger(self: Box<Self>, entity: Entity, cmd: &mut CommandQueue) {
-        cmd.entity(entity).trigger(*self);
+fn trigger_message<M: AnimationMessage>(
+    message: &dyn Reflect,
+    entity: Entity,
+    cmd: &mut CommandQueue,
+) {
+    if let Some(message) = message.downcast_ref::<M>() {
+        cmd.entity(entity).trigger(message.clone());
     }
 }
 
-#[derive(Default)]
-pub(crate) struct Outbox {
-    signals: RefCell<Vec<Box<dyn EmittedSignal>>>,
+#[derive(Clone)]
+pub(crate) struct RaisedMessage {
+    message: Arc<dyn Reflect>,
+    trigger: Option<TriggerFn>,
 }
 
-impl Outbox {
-    pub(crate) fn into_signals(self) -> Vec<Box<dyn EmittedSignal>> {
-        self.signals.into_inner()
+impl RaisedMessage {
+    pub(crate) fn message(&self) -> &dyn Reflect {
+        self.message.as_ref()
+    }
+
+    pub(crate) fn trigger(&self, entity: Entity, cmd: &mut CommandQueue) {
+        if let Some(trigger) = self.trigger {
+            trigger(self.message.as_ref(), entity, cmd);
+        }
     }
 }
 
 #[derive(Default)]
 pub(crate) struct Raised {
-    messages: RefCell<Vec<Arc<dyn Reflect>>>,
+    messages: RefCell<Vec<RaisedMessage>>,
 }
 
 impl Raised {
-    pub(crate) fn into_messages(self) -> Vec<Arc<dyn Reflect>> {
+    pub(crate) fn into_messages(self) -> Vec<RaisedMessage> {
         self.messages.into_inner()
     }
 }
@@ -93,7 +102,6 @@ pub struct AnimationGraphContext<'a> {
     pub(crate) model_to_world: Option<Affine3A>,
     pub(crate) inputs: &'a Inputs<'a, 'a>,
     pub(crate) entity: Entity,
-    pub(crate) outbox: &'a Outbox,
     pub(crate) messages: &'a [Box<dyn Reflect>],
     pub(crate) raised: Option<&'a Raised>,
 }
@@ -101,11 +109,6 @@ pub struct AnimationGraphContext<'a> {
 impl<'a> AnimationGraphContext<'a> {
     pub fn blackboard(&self) -> &AnimationBlackboard {
         self.blackboard
-    }
-
-    /// Queues `signal`, triggered on the player's entity when `animate_targets` next runs.
-    pub fn emit<S: EntitySignal>(&self, signal: S) {
-        self.outbox.signals.borrow_mut().push(Box::new(signal));
     }
 
     /// The entity of the player being walked.
@@ -124,16 +127,22 @@ impl<'a> AnimationGraphContext<'a> {
             .filter_map(|message| message.downcast_ref::<M>())
     }
 
-    /// In `update`, queues `message` for every state machine, slot and retarget this node plays in, which can act on it; dropped in every other walk and above the player's graph.
+    /// In `update`, queues `message` for every state machine, slot and retarget this node plays in, which can act on it, and, once it leaves the player's graph, triggers it on the player's entity; dropped in every other walk.
     pub fn raise<M: AnimationMessage>(&self, message: M) {
-        self.raise_boxed(Box::new(message));
+        self.raise_shared(RaisedMessage {
+            message: Arc::new(message),
+            trigger: Some(trigger_message::<M>),
+        });
     }
 
     pub(crate) fn raise_boxed(&self, message: Box<dyn Reflect>) {
-        self.raise_shared(Arc::from(message));
+        self.raise_shared(RaisedMessage {
+            message: Arc::from(message),
+            trigger: None,
+        });
     }
 
-    pub(crate) fn raise_shared(&self, message: Arc<dyn Reflect>) {
+    pub(crate) fn raise_shared(&self, message: RaisedMessage) {
         if let Some(raised) = self.raised {
             raised.messages.borrow_mut().push(message);
         }
@@ -147,7 +156,6 @@ impl<'a> AnimationGraphContext<'a> {
             model_to_world: self.model_to_world,
             inputs: self.inputs,
             entity: self.entity,
-            outbox: self.outbox,
             messages: self.messages,
             raised: Some(raised),
         }
@@ -169,7 +177,7 @@ impl<'a> AnimationGraphContext<'a> {
     }
 }
 
-/// What every node of one player's graph is driven with in one physics step: the step's length and the player's blackboard, root, skeleton, entity and outbox.
+/// What every node of one player's graph is driven with in one physics step: the step's length and the player's blackboard, root, skeleton and entity.
 pub struct DriveContext<'a> {
     pub(crate) delta_time: f32,
     pub(crate) graph: &'a AnimationGraphContext<'a>,
@@ -199,10 +207,5 @@ impl<'a> DriveContext<'a> {
     /// The entity of the player being driven.
     pub fn entity(&self) -> Entity {
         self.graph.entity
-    }
-
-    /// Queues `signal`, triggered on the player's entity when `animate_targets` next runs.
-    pub fn emit<S: EntitySignal>(&self, signal: S) {
-        self.graph.emit(signal);
     }
 }

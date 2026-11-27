@@ -15,7 +15,7 @@ use crate::{
     attributes::{MotorCommand, PhysicsAmount},
     character::Held,
     generate::BRACED,
-    messages::{BodyDead, Death, Drained},
+    messages::{BodyDead, Death},
     node::Decided,
     view::{BodyInput, BodyView},
 };
@@ -67,7 +67,7 @@ impl Dying {
     }
 }
 
-/// Drains a body's strength from the moment it receives a `Death` message, over its seconds, from the hands and feet inwards: every part is powered, a part that would be kinematic starting at a fixed strength, and each loses its muscles by how far its segment is from the trunk. It emits `BodyDead` and raises `Drained` once nothing is left. Zero seconds drains it at once.
+/// Drains a body's strength from the moment it receives a `Death` message, over its seconds, from the hands and feet inwards: every part is powered, a part that would be kinematic starting at a fixed strength, and each loses its muscles by how far its segment is from the trunk. It raises `BodyDead` once nothing is left. Zero seconds drains it at once.
 #[derive(Clone, Debug, PartialEq, Reflect, Serialize, Deserialize)]
 #[reflect(AnimationNode, Default)]
 pub struct DyingNode {
@@ -113,7 +113,7 @@ impl DyingNode {
 #[derive(Default)]
 pub struct DyingState {
     dying: Option<Dying>,
-    drained: Decided<Drained>,
+    drained: Decided<BodyDead>,
 }
 
 impl AnimationNode for DyingNode {
@@ -192,8 +192,7 @@ impl AnimationNode for DyingNode {
             && let Some(dying) = state.dying.as_mut()
             && dying.advance(context.delta_time())
         {
-            state.drained.decide(Drained);
-            context.emit(BodyDead);
+            state.drained.decide(BodyDead);
         }
         let commands = output
             .attributes_mut()

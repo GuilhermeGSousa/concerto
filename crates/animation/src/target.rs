@@ -75,10 +75,8 @@ pub fn animate_targets(
         } else if !animation_player.fired.is_empty() {
             animation_player.fired.clear();
         }
-        if !animation_player.emitted.is_empty() {
-            for signal in animation_player.emitted.drain(..) {
-                signal.trigger(entity, &mut cmd);
-            }
+        for raised in animation_player.take_raised() {
+            raised.trigger(entity, &mut cmd);
         }
     }
 }

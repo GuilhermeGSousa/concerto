@@ -1,4 +1,7 @@
-use concerto_ecs::Res;
+use concerto_ecs::{
+    Res,
+    signal::{EntitySignal, Signal},
+};
 use concerto_foundation::assets::handle::LiveLeaves;
 use concerto_foundation::assets::{asset_store::AssetStore, handle::AssetHandle};
 use concerto_name::{Name, name};
@@ -24,6 +27,10 @@ use crate::{
 pub struct PlayInSlot {
     pub entry: Name,
 }
+
+impl Signal for PlayInSlot {}
+
+impl EntitySignal for PlayInSlot {}
 
 impl AnimationMessage for PlayInSlot {}
 
@@ -267,7 +274,7 @@ impl AnimationNode for SlotNode {
             live.update(node_state, delta_time, &context.collecting(&raised));
             let mut ended = false;
             for message in raised.into_messages() {
-                ended |= entry.out.iter().any(|out| out.matches(message.as_ref()));
+                ended |= entry.out.iter().any(|out| out.matches(message.message()));
                 context.raise_shared(message);
             }
             if ended {

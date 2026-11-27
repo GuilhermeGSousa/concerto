@@ -114,7 +114,6 @@ fn horizontal(vector: Vec3) -> Vec3 {
 }
 
 pub(crate) struct FallStep {
-    pub(crate) landed: bool,
     pub(crate) relaxed: bool,
 }
 
@@ -169,10 +168,7 @@ impl FallController<'_> {
             let landed = run.landed.map_or(0.0, |landed| landed + dt);
             run.landed = Some(landed);
             if landed >= fall.relax_seconds {
-                return Some(FallStep {
-                    landed: true,
-                    relaxed: true,
-                });
+                return Some(FallStep { relaxed: true });
             }
         }
         let relaxed = run.landed.map_or(1.0, |landed| {
@@ -335,9 +331,6 @@ impl FallController<'_> {
             claims.claim(leg.foot, 1.0, PartCommand::held(muscle(fall.legs)));
         }
 
-        Some(FallStep {
-            landed: run.landed.is_some(),
-            relaxed: false,
-        })
+        Some(FallStep { relaxed: false })
     }
 }

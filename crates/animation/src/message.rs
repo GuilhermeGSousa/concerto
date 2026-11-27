@@ -3,7 +3,7 @@ use std::any::{Any, TypeId};
 use concerto_ecs::{
     Entity, Query, Res,
     reflect::AppTypeRegistry,
-    signal::{On, Signal},
+    signal::{EntitySignal, On, Signal},
 };
 use concerto_reflect::{
     PropertyVisitorMut, Reflect, ReflectDefault, ReflectedValue, TypeData, TypeRegistration,
@@ -13,12 +13,16 @@ use concerto_reflect::{
 use crate::player::AnimationPlayer;
 
 /// A value an animation graph can receive, queued with `AnimationPlayer::send`; register it with `register_animation_message`.
-pub trait AnimationMessage: Reflect + Clone + Send + Sync + 'static {}
+pub trait AnimationMessage: Reflect + Clone + EntitySignal {}
 
 /// Raised by a clip node on each frame its clip wraps, or, played once, stops.
 #[derive(Clone, Default, Reflect)]
 #[reflect(Default)]
 pub struct ClipEnded;
+
+impl Signal for ClipEnded {}
+
+impl EntitySignal for ClipEnded {}
 
 impl AnimationMessage for ClipEnded {}
 

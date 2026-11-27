@@ -1180,7 +1180,6 @@ impl Running {
             model_to_world: context.model_to_world,
             inputs: context.inputs,
             entity: context.entity,
-            outbox: context.outbox,
             messages: context.messages,
             raised: context.raised,
         }
@@ -3138,7 +3137,7 @@ mod tests {
                         raised
                             .into_messages()
                             .iter()
-                            .any(|message| message.as_ref().downcast_ref::<ClipEnded>().is_some())
+                            .any(|message| message.message().downcast_ref::<ClipEnded>().is_some())
                     }));
                 },
             );

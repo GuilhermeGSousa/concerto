@@ -54,32 +54,52 @@ struct Poke {
     strength: f32,
 }
 
+impl Signal for Poke {}
+
+impl EntitySignal for Poke {}
+
 impl AnimationMessage for Poke {}
 
 #[derive(Clone, Default, Reflect)]
 struct Other {}
+
+impl Signal for Other {}
+
+impl EntitySignal for Other {}
 
 impl AnimationMessage for Other {}
 
 #[derive(Clone, Default, Reflect)]
 struct Ring {}
 
+impl Signal for Ring {}
+
+impl EntitySignal for Ring {}
+
 impl AnimationMessage for Ring {}
 
 #[derive(Clone, Default, Reflect)]
 struct Rang {}
+
+impl Signal for Rang {}
+
+impl EntitySignal for Rang {}
 
 impl AnimationMessage for Rang {}
 
 #[derive(Clone, Default, Reflect)]
 struct Twice;
 
+impl Signal for Twice {}
+
+impl EntitySignal for Twice {}
+
 impl AnimationMessage for Twice {}
 
 #[derive(Component)]
 struct Marker(u32);
 
-#[derive(Clone)]
+#[derive(Clone, Default, Reflect)]
 struct Counted {
     count: u32,
 }
@@ -87,6 +107,8 @@ struct Counted {
 impl Signal for Counted {}
 
 impl EntitySignal for Counted {}
+
+impl AnimationMessage for Counted {}
 
 #[derive(Default, Reflect)]
 #[reflect(AnimationNode, Default)]
@@ -139,7 +161,7 @@ impl AnimationNode for Counter {
         for _ in context.message::<Poke>().filter(|poke| poke.strength > 0.0) {
             state.received += 1;
             state.marker = markers.get_entity(context.entity()).map(|marker| marker.0);
-            context.emit(Counted {
+            context.raise(Counted {
                 count: state.received,
             });
             if state.received == 2 {
@@ -227,6 +249,7 @@ fn spawn_waiting(app: &mut App, clip: AnimationClip, trigger: AnimationFSMTrigge
     app.main_mut().world_mut().spawn((
         AnimationPlayer::new(1),
         AnimationHandleComponent::new(machine),
+        hear_event.into_listener(),
     ))
 }
 
@@ -259,6 +282,13 @@ struct Heard {
 
 #[derive(Default, Resource)]
 struct HeardCounts(Vec<Heard>);
+
+#[derive(Default, Resource)]
+struct HeardEvents(u32);
+
+fn hear_event(_: On<AnimationEvent>, mut heard: ResMut<HeardEvents>) {
+    heard.0 += 1;
+}
 
 fn hear_counted(on: On<Counted>, mut heard: ResMut<HeardCounts>) {
     heard.0.push(Heard {
@@ -326,6 +356,7 @@ impl Stage {
         app.register_plugin(AssetManagerPlugin);
         app.insert_resource(Time::new());
         app.insert_resource(HeardCounts::default());
+        app.insert_resource(HeardEvents::default());
         app.register_plugin(AnimationPlugin);
         app.register_animation_node::<Counter>();
         app.register_animation_message::<Poke>();
@@ -1028,6 +1059,11 @@ fn messages_move_the_graph_and_nodes_answer_with_raised_messages_and_signals() {
     assert!(
         stage.in_state_of(other, name!("Waiting")),
         "a clip event of another name does not match the wanted value"
+    );
+    assert_eq!(
+        stage.world().get_resource::<HeardEvents>().unwrap().0,
+        0,
+        "a crossed clip event reaches its machine and is not triggered as a signal on the character"
     );
 
     let mistyped = AnimationFSMTrigger::OnMessage {

@@ -45,7 +45,7 @@ use concerto_physics_gizmos::{PhysicsGizmos, PhysicsGizmosPlugin};
 use concerto_ragdoll::{
     BalanceNode, BalanceSettings, BodyHit, BodySense, CharacterRagdoll, Death, Die, DyingNode,
     FallNode, LimpNode, RagdollBody, Settled, ShotNode, StaggerNode, active_states, describe_body,
-    messages::{Drained, Landed, Shot, Stagger, Steadied, Toppled},
+    messages::{BodyDead, BodyDown, Shot, Stagger, Steadied, Toppled},
     testing::reference_humanoid,
 };
 use glam::{Quat, Vec3};
@@ -260,7 +260,7 @@ fn reaction_graph(assets: &AssetServer, skeleton: &Skeleton) -> AnimationGraph {
             )
             .to(
                 name!("down"),
-                AnimationFSMTrigger::on_message::<Landed>(),
+                AnimationFSMTrigger::on_message::<BodyDown>(),
                 0.0,
             );
         })
@@ -274,7 +274,7 @@ fn reaction_graph(assets: &AssetServer, skeleton: &Skeleton) -> AnimationGraph {
         .state(name!("dying"), dying, |to| {
             to.to(
                 name!("dead"),
-                AnimationFSMTrigger::on_message::<Drained>(),
+                AnimationFSMTrigger::on_message::<BodyDead>(),
                 0.0,
             );
         })

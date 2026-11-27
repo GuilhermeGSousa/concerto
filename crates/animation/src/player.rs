@@ -19,7 +19,7 @@ use glam::{Affine3A, Vec2, Vec3};
 use crate::{
     attribute::PoseAttributes,
     blackboard::AnimationBlackboard,
-    evaluation::{AnimationGraphContext, DriveContext, EmittedSignal, Outbox, RootBone},
+    evaluation::{AnimationGraphContext, DriveContext, RaisedMessage, RootBone},
     graph::{AnimationGraph, AnimationGraphState, AnimationNodeIndex, NodeVisit},
     message::{AnimationMessage, is_animation_message},
     node::{AnimationNode, ErasedAnimationNode, NodeState},
@@ -52,7 +52,6 @@ pub struct AnimationPlayer {
     paused: bool,
     event_threshold: f32,
     pub(crate) fired: Vec<FiredEvent>,
-    pub(crate) emitted: Vec<Box<dyn EmittedSignal>>,
     attributes: PoseAttributes,
     drive_attributes: PoseAttributes,
     messages: Vec<Box<dyn Reflect>>,
@@ -68,7 +67,6 @@ impl AnimationPlayer {
             paused: false,
             event_threshold: 0.0,
             fired: Vec::new(),
-            emitted: Vec::new(),
             attributes: PoseAttributes::default(),
             drive_attributes: PoseAttributes::default(),
             messages: Vec::new(),
@@ -112,7 +110,6 @@ impl AnimationPlayer {
             self.drive_attributes.clear();
             return &self.drive_attributes;
         }
-        let outbox = Outbox::default();
         let graph = AnimationGraphContext {
             blackboard: &self.blackboard,
             root: self.root.clone(),
@@ -120,7 +117,6 @@ impl AnimationPlayer {
             model_to_world: None,
             inputs,
             entity,
-            outbox: &outbox,
             messages: &[],
             raised: None,
         };
@@ -142,7 +138,6 @@ impl AnimationPlayer {
             self.drive_attributes.clear();
         }
         self.frame_pool.release(output);
-        self.emitted.extend(outbox.into_signals());
         &self.drive_attributes
     }
 
@@ -258,7 +253,6 @@ impl AnimationPlayer {
         graphs: &AssetStore<AnimationGraph>,
         inputs: &Inputs<'_, '_>,
     ) {
-        let outbox = Outbox::default();
         let context = AnimationGraphContext {
             blackboard: &self.blackboard,
             root: None,
@@ -266,13 +260,11 @@ impl AnimationPlayer {
             model_to_world: None,
             inputs,
             entity,
-            outbox: &outbox,
             messages: &[],
             raised: None,
         };
         self.graph_state
             .initialize(animation_graph, graphs, &context);
-        self.emitted.extend(outbox.into_signals());
     }
 
     pub(crate) fn update(
@@ -285,7 +277,6 @@ impl AnimationPlayer {
         inputs: &Inputs<'_, '_>,
     ) {
         self.root = root;
-        let outbox = Outbox::default();
         let context = AnimationGraphContext {
             blackboard: &self.blackboard,
             root: self.root.clone(),
@@ -293,13 +284,15 @@ impl AnimationPlayer {
             model_to_world: None,
             inputs,
             entity,
-            outbox: &outbox,
             messages: &self.messages,
             raised: None,
         };
         self.graph_state.update(delta_time, graphs, &context);
-        self.emitted.extend(outbox.into_signals());
         self.messages.clear();
+    }
+
+    pub(crate) fn take_raised(&mut self) -> Vec<RaisedMessage> {
+        self.graph_state.take_raised()
     }
 
     pub(crate) fn root_motion(
@@ -309,7 +302,6 @@ impl AnimationPlayer {
         skeleton: &Skeleton,
         inputs: &Inputs<'_, '_>,
     ) -> RootMotion {
-        let outbox = Outbox::default();
         let context = AnimationGraphContext {
             blackboard: &self.blackboard,
             root: self.root.clone(),
@@ -317,15 +309,11 @@ impl AnimationPlayer {
             model_to_world: None,
             inputs,
             entity,
-            outbox: &outbox,
             messages: &[],
             raised: None,
         };
-        let motion = self
-            .graph_state
-            .root_motion(graphs, &context, &skeleton.bone_ids);
-        self.emitted.extend(outbox.into_signals());
-        motion
+        self.graph_state
+            .root_motion(graphs, &context, &skeleton.bone_ids)
     }
 
     pub(crate) fn evaluate(
@@ -353,7 +341,6 @@ impl AnimationPlayer {
                             .map(|transform| local_of(&transform))
                     })
                 });
-        let outbox = Outbox::default();
         let context = AnimationGraphContext {
             blackboard: &self.blackboard,
             root: self.root.clone(),
@@ -361,7 +348,6 @@ impl AnimationPlayer {
             model_to_world: Some(model_to_world),
             inputs,
             entity,
-            outbox: &outbox,
             messages: &[],
             raised: None,
         };
@@ -375,7 +361,6 @@ impl AnimationPlayer {
             &mut self.frame_pool,
             &mut output_frame,
         );
-        self.emitted.extend(outbox.into_signals());
         if !evaluated {
             // No graph evaluated — keep the bones' current (default) pose.
             self.attributes.clear();

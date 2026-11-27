@@ -16,7 +16,10 @@ use concerto_animation::{
 };
 use concerto_app::App;
 use concerto_ecs::{
-    IntoSystem, component::scene::SceneEntityRef, events::event_channel::EventChannel,
+    IntoSystem,
+    component::scene::SceneEntityRef,
+    events::event_channel::EventChannel,
+    signal::{EntitySignal, Signal},
 };
 use concerto_editor::{
     asset_editor::{ActiveEditor, AssetEditorRegistry, SaveRequested},
@@ -1253,6 +1256,10 @@ fn nodes_added_and_connected_by_edit_graph_are_saved_into_the_graphs_file() {
 struct Poke {
     strength: f32,
 }
+
+impl Signal for Poke {}
+
+impl EntitySignal for Poke {}
 
 impl AnimationMessage for Poke {}
 

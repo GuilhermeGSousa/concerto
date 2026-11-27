@@ -26,6 +26,10 @@ pub struct Hit {
     pub impulse: Vec3,
 }
 
+impl Signal for Hit {}
+
+impl EntitySignal for Hit {}
+
 impl AnimationMessage for Hit {}
 
 /// A gunshot on `part` of a character's ragdoll at the world `point`, with `impulse` in N·s, sent to its animation graph.
@@ -37,6 +41,10 @@ pub struct Shot {
     pub impulse: Vec3,
 }
 
+impl Signal for Shot {}
+
+impl EntitySignal for Shot {}
+
 impl AnimationMessage for Shot {}
 
 /// Tells a graph to stagger towards `direction`, with `severity` from 0 to 1.
@@ -47,6 +55,10 @@ pub struct Stagger {
     pub severity: f32,
 }
 
+impl Signal for Stagger {}
+
+impl EntitySignal for Stagger {}
+
 impl AnimationMessage for Stagger {}
 
 /// Tells a graph its character is dying, its strength draining over `seconds`.
@@ -56,12 +68,20 @@ pub struct Death {
     pub seconds: f32,
 }
 
+impl Signal for Death {}
+
+impl EntitySignal for Death {}
+
 impl AnimationMessage for Death {}
 
 /// Raised by a balance, stagger or shot behaviour once the body has stood still on its feet.
 #[derive(Clone, Debug, Default, PartialEq, Reflect)]
 #[reflect(Default)]
 pub struct Steadied;
+
+impl Signal for Steadied {}
+
+impl EntitySignal for Steadied {}
 
 impl AnimationMessage for Steadied {}
 
@@ -70,31 +90,25 @@ impl AnimationMessage for Steadied {}
 #[reflect(Default)]
 pub struct Toppled;
 
+impl Signal for Toppled {}
+
+impl EntitySignal for Toppled {}
+
 impl AnimationMessage for Toppled {}
-
-/// Raised by a fall behaviour once the body has landed and relaxed.
-#[derive(Clone, Debug, Default, PartialEq, Reflect)]
-#[reflect(Default)]
-pub struct Landed;
-
-impl AnimationMessage for Landed {}
 
 /// Raised by a flinch behaviour once the body has recovered from its hit.
 #[derive(Clone, Debug, Default, PartialEq, Reflect)]
 #[reflect(Default)]
 pub struct Recovered;
 
+impl Signal for Recovered {}
+
+impl EntitySignal for Recovered {}
+
 impl AnimationMessage for Recovered {}
 
-/// Raised by a dying behaviour once it has drained the body's last strength.
-#[derive(Clone, Debug, Default, PartialEq, Reflect)]
-#[reflect(Default)]
-pub struct Drained;
-
-impl AnimationMessage for Drained {}
-
-/// A behaviour wounded `part` of the character it triggers on: it keeps `share` of its strength.
-#[derive(Clone, Copy, Debug, PartialEq)]
+/// Raised by a shot behaviour for the part it wounds: the part keeps `share` of its strength.
+#[derive(Clone, Copy, Debug, PartialEq, Reflect)]
 pub struct Wounded {
     pub part: usize,
     pub share: f32,
@@ -104,21 +118,29 @@ impl Signal for Wounded {}
 
 impl EntitySignal for Wounded {}
 
-/// A behaviour put the character on the ground.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+impl AnimationMessage for Wounded {}
+
+/// Raised by a fall behaviour once the body has landed and relaxed, and triggered on the character.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Reflect)]
+#[reflect(Default)]
 pub struct BodyDown;
 
 impl Signal for BodyDown {}
 
 impl EntitySignal for BodyDown {}
 
-/// A behaviour drained the character's last strength.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+impl AnimationMessage for BodyDown {}
+
+/// Raised by a dying behaviour once it has drained the body's last strength, and triggered on the character.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Reflect)]
+#[reflect(Default)]
 pub struct BodyDead;
 
 impl Signal for BodyDead {}
 
 impl EntitySignal for BodyDead {}
+
+impl AnimationMessage for BodyDead {}
 
 const PATIENCE: u32 = 10;
 

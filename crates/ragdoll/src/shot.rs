@@ -7,7 +7,6 @@ use serde::{Deserialize, Serialize};
 use crate::{
     asset::{PartStrength, Segment, Side},
     ik::{Chain, bent_spine, reach_hinged},
-    messages::Wounded,
     node::balance::{ClaimsOut, Hindrance, PartCommand},
     resolve::{Limbs, ResolvedRagdoll},
     view::BodyView,
@@ -115,6 +114,18 @@ impl Wound {
     }
 }
 
+impl ShotSettings {
+    pub(crate) fn lasting_share(&self, segment: Segment) -> f32 {
+        if is_arm(segment) {
+            self.hanging_arm
+        } else if is_leg(segment) {
+            self.lame_leg
+        } else {
+            self.wounded
+        }
+    }
+}
+
 /// The share of its strength each wounded part of a character keeps. The shot behaviour leaves it on the character when it ends, for the game to read: a limp, a guarded arm.
 #[derive(Component, Clone, Debug, Default, PartialEq)]
 pub struct Wounds {
@@ -180,11 +191,10 @@ impl Arm {
     }
 }
 
-/// What a shot's step hands back: the claims on the parts and the wounds it weakened this step.
+/// What a shot's step hands back: the claims on the parts.
 #[derive(Default)]
 pub(crate) struct ShotOut {
     pub(crate) claims: ClaimsOut,
-    pub(crate) wounded: Vec<Wounded>,
 }
 
 pub(crate) struct ShotController<'a> {
@@ -205,7 +215,6 @@ impl ShotController<'_> {
         let settings = &resolved.settings().parts;
         let count = settings.len();
         out.claims.reset(count);
-        out.wounded.clear();
         let animated = view.animated();
         let mut pose = Vec::new();
         physics.ragdoll_pose(view.ragdoll_id(), &mut pose);
@@ -223,7 +232,7 @@ impl ShotController<'_> {
             touched: vec![false; count],
             targets: vec![None; count],
         };
-        let legs = weaken_wounded(reaction, wounds, resolved, &mut out.wounded, &mut muscles);
+        let legs = weaken_wounded(reaction, wounds, resolved, &mut muscles);
 
         let pelvis = landmarks.pelvis.unwrap_or(0);
         let turned = pose[pelvis].rotation * animated[pelvis].rotation.inverse();
@@ -282,7 +291,6 @@ fn weaken_wounded(
     reaction: &ShotSettings,
     struck: &[Wound],
     resolved: &ResolvedRagdoll,
-    wounded: &mut Vec<Wounded>,
     muscles: &mut Muscles,
 ) -> Hindrance {
     let mut legs = Hindrance::default();
@@ -296,17 +304,7 @@ fn weaken_wounded(
         } else {
             1.0
         };
-        let lasting = if is_arm(segment) {
-            reaction.hanging_arm
-        } else if is_leg(segment) {
-            reaction.lame_leg
-        } else {
-            reaction.wounded
-        };
-        wounded.push(Wounded {
-            part: wound.part,
-            share: lasting,
-        });
+        let lasting = reaction.lasting_share(segment);
         let now = if wound.age < reaction.snap_seconds {
             reaction.spike
         } else {

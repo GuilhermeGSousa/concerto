@@ -17,7 +17,7 @@ use crate::{
     attributes::{MotorCommand, PhysicsAmount},
     fall::{FallController, FallRun, FallSettings, LYING},
     generate::BRACED,
-    messages::{BodyDown, Landed},
+    messages::BodyDown,
     node::{
         Decided,
         balance::{ClaimsOut, CommandsOut, layered, wanted},
@@ -25,7 +25,7 @@ use crate::{
     view::{BodyInput, BodyView},
 };
 
-/// Makes a body fall as a person does, from the moment it is active: braced, the hands go to where it will land, with bent elbows that buckle on contact, the head is held away from the ground, the spine curls and the knees fold. It emits `BodyDown` when it has landed, drains its strength and goes limp, and raises `Landed` once it has landed and relaxed. A strength of 0 is the limp fall: the body is limp at once.
+/// Makes a body fall as a person does, from the moment it is active: braced, the hands go to where it will land, with bent elbows that buckle on contact, the head is held away from the ground, the spine curls and the knees fold. It drains its strength and goes limp once it has landed, and raises `BodyDown` once it has landed and relaxed. A strength of 0 is the limp fall: the body is limp at once.
 #[derive(Clone, Debug, PartialEq, Reflect, Serialize, Deserialize)]
 #[reflect(AnimationNode, Default)]
 pub struct FallNode {
@@ -101,8 +101,7 @@ pub struct FallState {
     commands: CommandsOut,
     claims: ClaimsOut,
     limp: bool,
-    announced: bool,
-    landed: Decided<Landed>,
+    landed: Decided<BodyDown>,
 }
 
 impl AnimationNode for FallNode {
@@ -193,15 +192,9 @@ impl AnimationNode for FallNode {
                 &mut state.claims,
             );
             state.limp = strength <= 0.0;
-            if let Some(step) = step {
-                if step.landed && !state.announced {
-                    state.announced = true;
-                    context.emit(BodyDown);
-                }
-                if step.relaxed {
-                    state.limp = true;
-                    state.landed.decide(Landed);
-                }
+            if step.is_some_and(|step| step.relaxed) {
+                state.limp = true;
+                state.landed.decide(BodyDown);
             }
         }
         let commands = output
@@ -231,7 +224,6 @@ impl EditorAnimationNode for FallNode {
     fn describe(&self, state: &FallState) -> Option<String> {
         let text = match state.landed.get() {
             Some(_) => format!("landed and relaxed at {}", self.profile),
-            None if state.announced => format!("landed, relaxing at {}", self.profile),
             None => format!("falling at {}", self.profile),
         };
         Some(text)

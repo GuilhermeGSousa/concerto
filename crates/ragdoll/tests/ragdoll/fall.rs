@@ -14,7 +14,7 @@ use concerto_physics::ragdoll::RagdollId;
 use concerto_physics::{collider::Collider, physics_state::PhysicsState};
 use concerto_ragdoll::{
     BalanceNode, BalanceSettings, BodySense, FallNode, LimpNode, RagdollBody,
-    messages::{Landed, Toppled},
+    messages::{BodyDown, Toppled},
     testing::humanoid_skeleton,
 };
 use glam::{Quat, Vec3};
@@ -75,7 +75,7 @@ fn falling_graph(server: &AssetServer) -> AnimationGraph {
         .state(name!("fall"), fall, |to| {
             to.to(
                 name!("down"),
-                AnimationFSMTrigger::on_message::<Landed>(),
+                AnimationFSMTrigger::on_message::<BodyDown>(),
                 0.0,
             );
         })
@@ -142,7 +142,7 @@ fn already_falling_graph(server: &AssetServer) -> AnimationGraph {
         .state(name!("fall"), fall, |to| {
             to.to(
                 name!("down"),
-                AnimationFSMTrigger::on_message::<Landed>(),
+                AnimationFSMTrigger::on_message::<BodyDown>(),
                 0.0,
             );
         })

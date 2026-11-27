@@ -52,9 +52,9 @@ impl Plugin for RagdollPlugin {
             .register_animation_message::<Death>()
             .register_animation_message::<messages::Steadied>()
             .register_animation_message::<messages::Toppled>()
-            .register_animation_message::<messages::Landed>()
+            .register_animation_message::<messages::BodyDown>()
             .register_animation_message::<messages::Recovered>()
-            .register_animation_message::<messages::Drained>();
+            .register_animation_message::<messages::BodyDead>();
         app.add_listener(route_hits.at_preview_time())
             .add_listener(forward_death.at_preview_time())
             .add_system(

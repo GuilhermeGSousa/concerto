@@ -11,7 +11,7 @@ use concerto_foundation::transform::GlobalTransform;
 use concerto_name::name;
 use concerto_ragdoll::{
     BodyHit, Dead, Die, DyingNode, LimpNode, RagdollBody, Settled,
-    messages::{Death, Drained},
+    messages::{BodyDead, Death},
     report_body,
     testing::humanoid_skeleton,
 };
@@ -37,7 +37,7 @@ fn dying_graph(server: &AssetServer) -> AnimationGraph {
         .state(name!("dying"), dying, |to| {
             to.to(
                 name!("dead"),
-                AnimationFSMTrigger::on_message::<Drained>(),
+                AnimationFSMTrigger::on_message::<BodyDead>(),
                 0.0,
             );
         })

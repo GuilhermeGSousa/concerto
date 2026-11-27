@@ -11,10 +11,10 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{
-    asset::StrengthProfile,
+    asset::{Segment, StrengthProfile},
     attributes::{MotorCommand, PhysicsAmount},
     generate::BRACED,
-    messages,
+    messages::{self, Wounded},
     node::{
         Decided,
         balance::{
@@ -25,7 +25,7 @@ use crate::{
     view::{BodyInput, BodyView},
 };
 
-/// Makes a body answer a gunshot from the moment it receives a `Shot` message, by where it struck: the muscles at the wound snap tight and then give, a hand goes to the wound, the head turns to it and then to where the shot came from, and it balances as a `BalanceNode` does, a shot leg hindering it. Each further `Shot` adds a wound. It emits `Wounded` for each part it weakens, raises `Steadied` when balance settles and `Toppled` when balance gives up; the impulses are applied by the character's hit routing, not by the node.
+/// Makes a body answer a gunshot from the moment it receives a `Shot` message, by where it struck: the muscles at the wound snap tight and then give, a hand goes to the wound, the head turns to it and then to where the shot came from, and it balances as a `BalanceNode` does, a shot leg hindering it. Each further `Shot` adds a wound. It raises `Wounded` for each part a shot weakens, `Steadied` when balance settles and `Toppled` when balance gives up; the impulses are applied by the character's hit routing, not by the node.
 #[derive(Clone, Debug, PartialEq, Reflect, Serialize, Deserialize)]
 #[reflect(AnimationNode, Default)]
 pub struct ShotNode {
@@ -127,6 +127,13 @@ impl AnimationNode for ShotNode {
                 continue;
             };
             state.started = true;
+            let segment = body.resolved().segment(shot.part);
+            if segment != Segment::Head {
+                context.raise(Wounded {
+                    part: shot.part,
+                    share: self.settings.lasting_share(segment),
+                });
+            }
             state.wounds.push(Wound::struck(
                 shot.part,
                 struck.inverse().transform_point(shot.point),
@@ -196,9 +203,6 @@ impl AnimationNode for ShotNode {
             }
             .step(body, physics, dt, &mut state.out)
             .unwrap_or_default();
-            for wounded in state.out.wounded.drain(..) {
-                context.emit(wounded);
-            }
             if let Some(end) = (BalanceController {
                 settings: &self.balance,
                 state: &mut state.balance,

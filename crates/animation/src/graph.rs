@@ -1,4 +1,4 @@
-use std::{borrow::Cow, collections::HashMap, fmt, ops::Deref, sync::Arc};
+use std::{borrow::Cow, collections::HashMap, fmt, ops::Deref};
 
 use concerto_foundation::assets::{
     Asset, CreatableAsset, LoadableAsset,
@@ -23,7 +23,9 @@ use uuid::Uuid;
 
 use crate::{
     blackboard::AnimationBlackboard,
-    evaluation::{AnimationGraphContext, AnimationGraphEvaluator, DriveContext, Raised},
+    evaluation::{
+        AnimationGraphContext, AnimationGraphEvaluator, DriveContext, Raised, RaisedMessage,
+    },
     message::resolve_message_types,
     node::{
         AnimationNode, ErasedAnimationNode, LayerNode, NodeState, PlaceholderNode,
@@ -656,7 +658,7 @@ pub struct AnimationGraphState {
     graph_handle: Option<AssetHandle<AnimationGraph>>,
     graph_state: HashMap<AnimationNodeIndex, ActiveNodeState>,
     warned_stateless: bool,
-    raised: Vec<Arc<dyn Reflect>>,
+    raised: Vec<RaisedMessage>,
 }
 
 impl AnimationGraphState {
@@ -910,12 +912,16 @@ impl AnimationGraphState {
             });
         self.raised = raised.into_messages();
         for message in &self.raised {
-            context.raise_shared(Arc::clone(message));
+            context.raise_shared(message.clone());
         }
     }
 
     pub(crate) fn raised(&self) -> impl Iterator<Item = &dyn Reflect> {
-        self.raised.iter().map(|message| message.as_ref())
+        self.raised.iter().map(RaisedMessage::message)
+    }
+
+    pub(crate) fn take_raised(&mut self) -> Vec<RaisedMessage> {
+        std::mem::take(&mut self.raised)
     }
 
     pub(crate) fn in_state(&self, graphs: &AssetStore<AnimationGraph>, name: &Name) -> bool {

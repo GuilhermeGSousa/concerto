@@ -19,6 +19,10 @@ pub struct AnimationEvent {
 
 impl ClipEvent for AnimationEvent {}
 
+impl Signal for AnimationEvent {}
+
+impl EntitySignal for AnimationEvent {}
+
 impl AnimationMessage for AnimationEvent {}
 
 /// Triggered on the player's entity when playback crosses a `S` on a clip.
