@@ -90,7 +90,11 @@ pub(crate) fn set_gizmo_always(on: On<SetGizmoAlways>, mut gizmos: ResMut<Compon
 
 /// Registers component gizmos in an `App` the editor hosts.
 pub trait ComponentGizmosAppExt {
-    /// Draws `G` for the selected entity, and lists its kind; panics when another gizmo type has its `NAME`.
+    /// Draws `G` for the selected entity, and lists its kind.
+    ///
+    /// # Panics
+    ///
+    /// Panics when another gizmo type registered in this `App` has the same `NAME`.
     fn register_component_gizmo<G: ComponentGizmo>(&mut self) -> &mut Self;
 }
 

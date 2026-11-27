@@ -58,7 +58,9 @@ pub(super) fn hosted_types(world: &World, document: Entity) -> Option<AppTypeReg
         .and_then(HostedApp::type_registry)
 }
 
-/// A graph tab's [`GraphPreview`], shown as the `Preview` value; an edit never marks the tab unsaved, and a speed of 0 or below, or not finite, is refused.
+/// A graph tab's [`GraphPreview`], shown as the `Preview` value.
+///
+/// An edit never marks the tab unsaved. A speed of 0 or below, or not finite, is refused.
 pub struct PreviewValue {
     pub document: Entity,
 }
@@ -110,7 +112,9 @@ impl PropertyTarget for PreviewValue {
     }
 }
 
-/// A graph tab's parameters, shown as the `Parameters` value, one field per parameter the graph in view names; an edit never marks the tab unsaved.
+/// A graph tab's parameters, shown as the `Parameters` value, one field per parameter the graph in view names.
+///
+/// An edit never marks the tab unsaved.
 pub struct ParametersValue {
     pub document: Entity,
 }

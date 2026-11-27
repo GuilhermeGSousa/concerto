@@ -53,11 +53,13 @@ impl FallNode {
         }
     }
 
+    /// Sets `strength`.
     pub fn with_strength(mut self, strength: impl Into<Param<f32>>) -> Self {
         self.strength = strength.into();
         self
     }
 
+    /// Sets `settings`.
     pub fn with_settings(mut self, settings: FallSettings) -> Self {
         self.settings = settings;
         self

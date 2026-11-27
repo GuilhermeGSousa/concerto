@@ -209,7 +209,10 @@ fn toggle_asset_picker(row: Entity, kind: &'static str) -> Listener<UIClick> {
     .into_listener()
 }
 
-/// Opens the shared menu under `button` on `kind`'s assets, searchable by name and folder, each item's pick built by `pick`, or closes it if `button` opened it; `row` is `None` for a menu that commits to no property.
+/// Opens the shared menu under `button` on `kind`'s assets, or closes it if `button` opened it.
+///
+/// The menu is searchable by name and folder, and each item's pick is built by `pick`. `row` is
+/// `None` for a menu that commits to no property.
 pub fn open_asset_menu(
     button: Entity,
     kind: &str,

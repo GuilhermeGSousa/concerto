@@ -103,7 +103,12 @@ impl DepthOfField {
     }
 }
 
-/// Draws [`DepthOfField`] for the cameras that have it, in [`RenderSet::PostProcess`] before bloom; requires `RenderPlugin`, registered before it.
+/// Draws [`DepthOfField`] for the cameras that have it, in [`RenderSet::PostProcess`] before bloom.
+///
+/// # Panics
+///
+/// Panics during [`finish`](Plugin::finish) if [`RenderPlugin`](crate::plugin::RenderPlugin)
+/// was not registered before it.
 pub struct DepthOfFieldPlugin;
 
 impl Plugin for DepthOfFieldPlugin {

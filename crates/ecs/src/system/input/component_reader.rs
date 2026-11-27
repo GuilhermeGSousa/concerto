@@ -51,7 +51,9 @@ impl<'w> ComponentMetadata<'w> {
         self.read().get_component_for_entity::<T>(entity)
     }
 
-    /// Whether `entity`'s component `id` was added or written since the reading system last ran, or, from [`new`](Self::new), since the last [`World::tick`].
+    /// Whether `entity`'s component `id` was added or written since the reading system last ran.
+    ///
+    /// A reader built with [`new`](Self::new) looks back to the last [`World::tick`] instead.
     pub fn is_component_changed(&self, entity: Entity, id: ComponentId) -> bool {
         self.read().was_component_changed_in(entity, id, self.ticks)
     }

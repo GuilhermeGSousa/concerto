@@ -50,7 +50,9 @@ impl TerminalInput {
         self.prev_mouse_row = self.mouse_row;
     }
 
-    /// True if the key had a Press or Repeat event this frame. Use for held-down movement.
+    /// Whether `key` had a press or repeat event this frame.
+    ///
+    /// Use it for held-down movement.
     pub fn is_key_active(&self, key: KeyCode) -> bool {
         self.keys_active.contains(&key)
     }
@@ -77,7 +79,9 @@ impl TerminalInput {
         self.mouse_buttons_held.contains(&btn)
     }
 
-    /// Positive = scroll up, negative = scroll down. Resets to 0 each frame.
+    /// How far the wheel scrolled this frame.
+    ///
+    /// Positive scrolls up and negative scrolls down. It resets to 0 each frame.
     pub fn scroll_delta(&self) -> f32 {
         self.scroll_delta
     }

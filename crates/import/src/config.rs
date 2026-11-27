@@ -3,8 +3,10 @@ use std::path::Path;
 use concerto_asset_format::sub_asset_file_stem;
 pub use concerto_asset_format::ContentConfig;
 
-/// Default address for a source relative to the project. A conventional leading
-/// `assets/` directory is stripped. Absolute external sources use their stem.
+/// The default address for a source's output, relative to the project.
+///
+/// A conventional leading `assets/` directory is stripped. Absolute external
+/// sources use their stem.
 pub fn content_address(config: &ContentConfig, source: &Path, sub_name: &str) -> String {
     let stem = source
         .file_stem()

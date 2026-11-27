@@ -13,8 +13,9 @@ use crate::{
 /// System parameter for sending events of type `T`.
 ///
 /// Obtain one as a system parameter and call [`write`](EventWriter::write) to enqueue an event.
-/// The event will be available to all [`EventReader`](super::event_reader::EventReader)s until
-/// the end of the current frame.
+/// The event stays readable by every [`EventReader`](super::event_reader::EventReader) until the
+/// second buffer swap after it was written, so a reader that runs before the writer in one
+/// frame still sees it in the next.
 ///
 /// # Example
 /// ```ignore
@@ -29,6 +30,11 @@ pub struct EventWriter<'world, T: Event + 'static> {
 impl<'w, T: Event> EventWriter<'w, T> {
     /// Borrows `T`'s channel from `world` for a run with `ticks`, or reports it missing.
     ///
+    /// # Errors
+    ///
+    /// Returns a [`ValidationError`] of kind `Missing` when `T` was never registered, so its
+    /// [`EventChannel`] does not exist.
+    ///
     /// # Safety
     /// The caller must hold write access to `T`'s [`EventChannel`].
     pub unsafe fn new(
@@ -41,8 +47,7 @@ impl<'w, T: Event> EventWriter<'w, T> {
         })
     }
 
-    /// Enqueues `event` so that [`EventReader`](super::event_reader::EventReader)s can read it
-    /// this frame.
+    /// Enqueues `event` for every [`EventReader`](super::event_reader::EventReader) of `T`.
     pub fn write(&mut self, event: T) {
         self.channel.push_event(event);
     }

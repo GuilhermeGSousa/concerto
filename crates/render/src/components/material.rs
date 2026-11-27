@@ -7,7 +7,7 @@ use concerto_reflect::{Reflect, ReflectDefault};
 
 use crate::{assets::material::StandardMaterial, Material};
 
-/// Attach this component (alongside [`MeshComponent`]) to an entity to tell the engine
+/// Attach this component (alongside [`MeshComponent`](concerto_mesh::MeshComponent)) to an entity to tell the engine
 /// which material the mesh should be rendered with.
 ///
 /// The type parameter `M` defaults to [`StandardMaterial`] so existing code that writes

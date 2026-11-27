@@ -16,7 +16,11 @@ use crate::{
     simulation::{CharacterSimulation, DesiredMotion},
 };
 
-/// Advances the springs one fixed step towards the desired motion and sets the body's horizontal velocity to the spring's, plus half of any pull, at no more than `max_pull_speed` or the spring's own speed, whichever is higher. A `Carried` body is left alone.
+/// Advances the springs one fixed step towards the desired motion and sets the body's horizontal velocity.
+///
+/// The velocity is the spring's plus half of any pull, at no more than
+/// `max_pull_speed` or the spring's own speed, whichever is higher. A
+/// `Carried` body is left alone.
 pub fn drive_body(
     mut query: Query<(&mut CharacterSimulation, &DesiredMotion, &BodyId), Without<Carried>>,
     mut physics: ResMut<PhysicsState>,
@@ -97,7 +101,11 @@ fn root_motion_of(
     Some(in_world_space(bone.root_motion, space))
 }
 
-/// Places each character by the root motion of its skeleton and its `CharacterDisplacement`, and gives a `Synchronization`'s target to the capsule. A character whose capsule is `Carried` is put on the capsule, with no root motion.
+/// Places each character by the root motion of its skeleton and its [`CharacterDisplacement`].
+///
+/// A [`Synchronization`](crate::displacement::Synchronization)'s target is
+/// given to the capsule. A character whose capsule is `Carried` is put on the
+/// capsule, with no root motion.
 pub fn apply_character_displacement(
     characters: Query<(Entity, &CharacterDisplacement, &CharacterLink)>,
     skeletons: Query<(&SkeletonComponent, &GlobalTransform)>,

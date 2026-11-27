@@ -44,19 +44,29 @@ use crate::{
     shot::Wounds,
 };
 
-/// Triggered on a character whose root part has been further than `lost_distance` from its animated place for `lost_seconds`: it can no longer hold the pose.
+/// Triggered on a character that can no longer hold its pose.
+///
+/// That is when its root part has been further than `lost_distance` from its
+/// animated place for `lost_seconds`.
 pub struct PoseLost;
 
 impl Signal for PoseLost {}
 impl EntitySignal for PoseLost {}
 
-/// Gives a character a physical body: goes on the entity with the `SkeletonComponent`, names the ragdoll asset of that skeleton, and builds the ragdoll at the current pose once both have loaded.
+/// Gives a character a physical body.
+///
+/// It goes on the entity with the `SkeletonComponent` and names the ragdoll
+/// asset of that skeleton. The ragdoll is built at the current pose once both
+/// have loaded.
 #[derive(Component, Reflect, Clone, Debug, PartialEq)]
 #[reflect(Component, Default, SceneComponent)]
 #[require(PendingImpulses, Wounds, BodySense, Listener<Wounded> = keep_wounds(), Listener<BodyDead> = mark_dead())]
 pub struct CharacterRagdoll {
     pub ragdoll: AssetHandle<Ragdoll>,
-    /// The character's own capsule, carried under the body while the character is physical; it should have `CollisionLayers::character()` so the parts pass through it.
+    /// The character's own capsule, carried under the body while the character is physical.
+    ///
+    /// It should have `CollisionLayers::character()` so the parts pass
+    /// through it.
     pub capsule: SceneEntityRef,
     /// How far the root part may be from its animated place, in metres, before the pose counts as lost.
     pub lost_distance: f32,
@@ -180,7 +190,9 @@ impl RagdollBody {
         &self.resolved
     }
 
-    /// The bone entity the part follows; a `RayHit::part` of this character resolves through it.
+    /// The bone entity the part follows.
+    ///
+    /// A `RayHit::part` of this character resolves through it.
     pub fn bone(&self, part: usize) -> Option<Entity> {
         self.bones.get(part).copied()
     }
@@ -251,7 +263,9 @@ impl RagdollBody {
     }
 }
 
-/// Marks a character whose ragdoll asset does not fit its skeleton, so it is reported once; inserting `CharacterRagdoll` again clears it.
+/// Marks a character whose ragdoll asset does not fit its skeleton, so it is reported once.
+///
+/// Inserting [`CharacterRagdoll`] again clears it.
 #[derive(Component, Clone, Copy, Debug, Default)]
 pub struct RagdollRefused;
 
@@ -266,7 +280,10 @@ fn part_poses(bones: &[Entity], transforms: &Query<&GlobalTransform>) -> Option<
         .collect()
 }
 
-/// Builds the ragdoll of every character whose ragdoll asset and skeleton have loaded, at its bones' current pose, with every part kinematic. Does nothing where physics is not stepped.
+/// Builds the ragdoll of every character whose ragdoll asset and skeleton have loaded.
+///
+/// The ragdoll is built at the bones' current pose, with every part
+/// kinematic. Does nothing where physics is not stepped.
 pub fn create_character_ragdolls(
     characters: Query<
         (Entity, &CharacterRagdoll, &SkeletonComponent),
@@ -527,7 +544,12 @@ fn heading(rotation: Quat) -> Quat {
     }
 }
 
-/// Each fixed step, before physics steps, while a character's root part is drawn from physics by any amount: its capsule is `Carried`, is in no collision layer, and is put on the ground under the ragdoll's root part. When the amount is back at 0 the capsule is let go where it stands.
+/// Carries each character's capsule under its ragdoll, each fixed step before physics steps.
+///
+/// While the character's root part is drawn from physics by any amount, its
+/// capsule is `Carried`, is in no collision layer, and is put on the ground
+/// under the ragdoll's root part. When the amount is back at 0 the capsule is
+/// let go where it stands.
 pub fn carry_capsules(
     mut characters: Query<
         (
@@ -646,7 +668,16 @@ fn blend(drawn: Drawn, simulated: BodyPose, weight: f32) -> Mat4 {
     )
 }
 
-/// Each frame, after the animation has written the bones and before transforms propagate, notes the animated pose of every part and writes onto the bones the ragdoll's pose, interpolated between the last two fixed steps, by each bone's `PhysicsAmount` in the graph: a bone's world rotation is slerped from its own animated one toward its part's, and it keeps its animated offset from its drawn parent, so no bone stretches; only the root part's place is blended. A bone with no part keeps its animated pose under its drawn parent, so fingers and a face still animate on a limp body.
+/// Writes each ragdoll's pose onto its bones, each frame after the animation has written the bones and before transforms propagate.
+///
+/// It notes the animated pose of every part, then writes the ragdoll's pose,
+/// interpolated between the last two fixed steps, by each bone's
+/// [`PhysicsAmount`](crate::PhysicsAmount) in the graph. A bone's world
+/// rotation is slerped from its own animated one toward its part's, and it
+/// keeps its animated offset from its drawn parent, so no bone stretches; only
+/// the root part's place is blended. A bone with no part keeps its animated
+/// pose under its drawn parent, so fingers and a face still animate on a limp
+/// body.
 pub fn write_ragdoll_poses(
     mut characters: Query<(
         &mut RagdollBody,
@@ -745,7 +776,9 @@ pub fn write_ragdoll_poses(
     }
 }
 
-/// Each frame, after transforms have propagated, places every part's animated pose in the world: the pose the animation asked for, whatever was drawn.
+/// Places every part's animated pose in the world, each frame after transforms have propagated.
+///
+/// The animated pose is the one the animation asked for, whatever was drawn.
 pub fn record_animated_poses(
     mut characters: Query<&mut RagdollBody>,
     globals: Query<&GlobalTransform>,

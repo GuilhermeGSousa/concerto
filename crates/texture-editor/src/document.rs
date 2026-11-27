@@ -28,7 +28,9 @@ use crate::derive::DeriveJob;
 
 const VALUE: &str = "Texture";
 
-/// What a texture tab edits: the settings, and the role its importer set, which an edit cannot change.
+/// What a texture tab edits: the settings, and the role its importer set.
+///
+/// An edit cannot change the role.
 #[derive(Reflect, Clone, Copy, PartialEq, Debug, Default)]
 #[reflect(Default)]
 pub struct TextureDocument {
@@ -45,7 +47,10 @@ impl TextureDocument {
     }
 }
 
-/// A texture tab's state: the value being edited, the file's as last read or saved, its source, and the derived preview or why it failed.
+/// A texture tab's state.
+///
+/// It holds the value being edited, the file's value as last read or saved, its
+/// source, and the derived preview or why deriving it failed.
 #[derive(Component, Default)]
 pub struct TextureTab {
     pub value: Option<TextureDocument>,

@@ -40,23 +40,30 @@ impl AssetId {
         self.0.is_nil()
     }
 
-    /// Derives a deterministic UUID for legacy content and callers that need
-    /// a namespaced path hash. Imported asset identity is minted and persisted
-    /// separately; runtime content loading must resolve it through the registry.
+    /// Derives a deterministic id from `path`, the same in every process and on every machine.
+    ///
+    /// It serves legacy content and callers that need a namespaced path hash.
+    /// Imported asset identity is minted and persisted separately, and runtime
+    /// content loading resolves it through the registry.
     pub fn from_path(path: &str) -> Self {
         AssetId(Uuid::new_v5(&ASSET_PATH_NAMESPACE, path.as_bytes()))
     }
 
-    /// The AssetId's underlying UUID as 32 lowercase hex digits, no hyphens —
-    /// used as the `AssetRegistry` key (a text-friendly, collision-free pure
-    /// function of the ID).
+    /// The id's UUID as 32 lowercase hex digits, without hyphens.
+    ///
+    /// It keys the asset registry, being a text-friendly, collision-free pure
+    /// function of the id.
     pub fn simple_hex(&self) -> String {
         self.0.simple().to_string()
     }
 
-    /// Inverse of `simple_hex()` — parses an AssetId back from its
-    /// 32-lowercase-hex-digit form. Used by `AssetRegistry` to reconstruct
-    /// ids read back from registry TOML.
+    /// Parses an id back from the 32-hex-digit form [`Self::simple_hex`] writes.
+    ///
+    /// The registry reconstructs ids read back from its TOML with it.
+    ///
+    /// # Errors
+    ///
+    /// Returns the [`uuid::Error`] when `hex` is not a UUID.
     pub fn from_simple_hex(hex: &str) -> Result<Self, uuid::Error> {
         Uuid::parse_str(hex).map(AssetId)
     }
@@ -71,15 +78,17 @@ impl Default for AssetId {
 /// Leading bytes of every content asset file.
 pub const CONTENT_ASSET_MAGIC: [u8; 4] = *b"GRDY";
 
-/// The version of the framing and `ContentAssetHeader`, written before the header; it changes only when they change, never for a payload.
+/// The version of the framing and [`ContentAssetHeader`], written before the header.
+///
+/// It changes only when they change, never for a payload.
 pub const CONTENT_FORMAT_VERSION: u32 = 8;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContentAssetHeader {
-    /// Identity: a UUID minted when the asset is first written and carried
-    /// here from then on, so it survives the file being renamed or moved.
-    /// Deliberately not derived from the address — only the asset registry
-    /// connects an address back to the id.
+    /// The asset's identity, minted when it is first written and carried here from then on.
+    ///
+    /// It survives the file being renamed or moved. It is not derived from the
+    /// address: only the asset registry connects an address back to the id.
     pub asset_id: AssetId,
     /// Outbound references, so a registry scan never reads payloads.
     pub references: Vec<AssetId>,
@@ -489,9 +498,7 @@ fn section_start(
     Ok(start + header.uncooked_len() + before)
 }
 
-/// The offline source (and sub-asset within it) that `import` produced a
-/// content asset from — lets a future editor show "re-import" provenance
-/// without re-deriving it from the address string.
+/// The offline source, and the sub-asset within it, that `import` produced a content asset from.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ImportProvenance {
     /// Project-relative source path, or an absolute path for external sources.
@@ -513,6 +520,11 @@ pub fn write_content_asset(header: &ContentAssetHeader, payload: &[u8]) -> anyho
 }
 
 /// Writes a loose file with `uncooked` as its section, encoded at `version`.
+///
+/// # Errors
+///
+/// Fails when `header` describes a derived section or lists embedded assets,
+/// or when the header does not serialize or exceeds 4 GiB.
 pub fn write_content_asset_with_uncooked(
     header: &ContentAssetHeader,
     payload: &[u8],
@@ -540,7 +552,17 @@ fn refuse_a_directory(header: &ContentAssetHeader) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Writes a host file: `header` and `payload`, then each embedded asset's payload and blob, listed in the header's directory, then their uncooked sections.
+/// Writes a host file with `embedded` stored inside it.
+///
+/// The file holds `header` and `payload`, then each embedded asset's payload and
+/// blob, listed in the header's directory, then their uncooked sections.
+///
+/// # Errors
+///
+/// Fails when `header` already lists embedded assets or describes a derived or
+/// uncooked section; when an embedded asset has no provenance, lists embedded
+/// assets of its own, or has sections its header does not match; when two share
+/// a name or id; and when the header does not serialize or exceeds 4 GiB.
 pub fn write_content_asset_with_embedded(
     header: &ContentAssetHeader,
     payload: &[u8],
@@ -604,7 +626,12 @@ pub fn write_content_asset_with_embedded(
     frame_content_asset(&header, &pieces)
 }
 
-/// Writes a content asset whose header describes `section` and whose payload is followed by its blob, with no uncooked section.
+/// Writes a content asset whose payload is followed by the blob of `section`, with no uncooked section.
+///
+/// # Errors
+///
+/// Fails when `header` lists embedded assets, or when the header does not
+/// serialize or exceeds 4 GiB.
 pub fn write_cooked_content_asset(
     header: &ContentAssetHeader,
     payload: &[u8],
@@ -646,7 +673,14 @@ pub fn read_content_asset(bytes: &[u8]) -> anyhow::Result<(ContentAssetHeader, &
     Ok((parts.header, parts.payload))
 }
 
-/// Reads a content asset's header, its payload and the uncooked section and derived blob trailing it, if any; of a host, the host's own.
+/// Reads a content asset's header, its payload, and the uncooked section and derived blob trailing it, if any.
+///
+/// Of a host, the parts are the host's own.
+///
+/// # Errors
+///
+/// Fails as [`ContentFile::parse`] does, and when the header's sections claim
+/// more bytes than follow it.
 pub fn read_content_asset_parts(bytes: &[u8]) -> anyhow::Result<ContentAssetParts<'_>> {
     let file = ContentFile::parse(bytes)?;
     let extent = HostExtent::of(&file.header, file.body.len() as u64)?;
@@ -727,7 +761,9 @@ impl AssetRecord<'_> {
     }
 }
 
-/// A content file with its header parsed once; the host's record and each embedded asset's are slices of it.
+/// A content file with its header parsed once.
+///
+/// The host's record and each embedded asset's are slices of it.
 #[derive(Debug)]
 pub struct ContentFile<'a> {
     header: ContentAssetHeader,
@@ -736,6 +772,12 @@ pub struct ContentFile<'a> {
 
 impl<'a> ContentFile<'a> {
     /// Parses the header of `bytes` and checks its directory against the bytes that follow.
+    ///
+    /// # Errors
+    ///
+    /// Fails when `bytes` lacks the magic prefix, is truncated, holds a header of
+    /// an unsupported format version or one that does not decode, or has a
+    /// malformed directory of embedded assets.
     pub fn parse(bytes: &'a [u8]) -> anyhow::Result<Self> {
         if bytes.len() < 8 || bytes[..4] != CONTENT_ASSET_MAGIC {
             bail!("not a content asset: missing the GRDY magic prefix");
@@ -768,6 +810,10 @@ impl<'a> ContentFile<'a> {
     }
 
     /// The record of the host, or of the one asset of a loose file.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the header's sections claim more bytes than the file holds.
     pub fn host(&self) -> anyhow::Result<AssetRecord<'_>> {
         let body = self.body;
         let header = &self.header;
@@ -787,6 +833,11 @@ impl<'a> ContentFile<'a> {
     }
 
     /// The record of `asset`, an entry of this file's directory.
+    ///
+    /// # Errors
+    ///
+    /// Fails when no embedded asset of this file has `asset`'s name, or when its
+    /// bytes lie outside the file.
     pub fn embedded<'file>(
         &'file self,
         asset: &'file EmbeddedAsset,
@@ -823,6 +874,11 @@ impl<'a> ContentFile<'a> {
 }
 
 /// The bytes a loose file of the host (`None`) or of the named embedded asset would have.
+///
+/// # Errors
+///
+/// Fails when `file` is not a readable content asset, or holds no embedded asset
+/// named `embedded_as`.
 pub fn asset_record(file: &[u8], embedded_as: Option<&str>) -> anyhow::Result<Vec<u8>> {
     let Some(name) = embedded_as else {
         let parts = read_content_asset_parts(file)?;
@@ -881,7 +937,14 @@ fn without_sections(header: &ContentAssetHeader) -> ContentAssetHeader {
     }
 }
 
-/// The file with every uncooked section removed, which is the file cut where they start under a header that describes none; a file with none comes back byte for byte.
+/// The file with every uncooked section removed.
+///
+/// That is the file cut where the sections start, under a header that describes
+/// none. A file with none comes back byte for byte.
+///
+/// # Errors
+///
+/// Fails when `file` is not a readable content asset.
 pub fn without_uncooked(file: &[u8]) -> anyhow::Result<Vec<u8>> {
     let parsed = ContentFile::parse(file)?;
     if !parsed.header.has_uncooked() {
@@ -968,7 +1031,13 @@ impl OpenedContentAsset {
     }
 }
 
-/// Reads the file at `path` as [`without_uncooked`] would give it, stopping where the sections start; a file it cannot understand is read whole.
+/// Reads the file at `path` as [`without_uncooked`] would give it, stopping where the sections start.
+///
+/// A file it cannot understand is read whole.
+///
+/// # Errors
+///
+/// Fails when the file cannot be read.
 pub fn read_content_without_uncooked(path: &Path) -> std::io::Result<Vec<u8>> {
     let Ok(mut opened) = OpenedContentAsset::open(path) else {
         return std::fs::read(path);
@@ -999,7 +1068,14 @@ struct Stripped {
     kept: u64,
 }
 
-/// Reads only the uncooked section of the host (`None`) or of the named embedded asset of the file at `path`; `None` when the record has none.
+/// Reads only the uncooked section of the host (`None`) or of the named embedded asset of the file at `path`.
+///
+/// Returns `None` when the record has no uncooked section.
+///
+/// # Errors
+///
+/// Fails when the file cannot be read, is not a content asset, has a malformed
+/// header, or holds no embedded asset named `embedded_as`.
 pub fn read_uncooked_section(
     path: &Path,
     embedded_as: Option<&str>,
@@ -1035,9 +1111,14 @@ pub fn read_uncooked_section(
 
 /// Reads just the header of the content asset at `path`, never the payload.
 ///
-/// A content tree holds whole textures and meshes — tens of megabytes each —
-/// so indexing one by reading every file whole is not viable. This reads the
-/// 8-byte magic-and-length prefix, then exactly `header_len` more bytes.
+/// A content tree holds whole textures and meshes of tens of megabytes each, so
+/// indexing one by reading every file whole is not viable. This reads the
+/// 8-byte magic-and-length prefix, then exactly the header's length in bytes.
+///
+/// # Errors
+///
+/// Fails when the file cannot be opened or read, lacks the magic prefix, is
+/// truncated, or holds a header that does not decode or a malformed directory.
 pub fn read_content_asset_header(path: &Path) -> anyhow::Result<ContentAssetHeader> {
     OpenedContentAsset::open(path)?.header(path)
 }
@@ -1088,7 +1169,10 @@ fn fnv1a32(text: &str) -> u32 {
     })
 }
 
-/// The file stem a sub-asset name gets: path separators and `#` replaced, capped so the name with `extension` fits a file name.
+/// The file stem a sub-asset name gets.
+///
+/// Path separators and `#` are replaced, and a long name is cut and suffixed with
+/// a hash of it, so the stem with `extension` fits a file name.
 pub fn sub_asset_file_stem(sub_asset: &str, extension: &str) -> String {
     let sanitized = sub_asset.replace(['/', '\\', '#'], "_");
     if sanitized.len() + 1 + extension.len() <= MAX_FILE_NAME_BYTES {
@@ -1122,7 +1206,14 @@ fn normalise_lexically(path: &Path) -> PathBuf {
     out
 }
 
-/// Lists every asset in the `*.<extension>` files under `dir` by their headers, addressed relative to `base`: each file's host, then its embedded assets.
+/// Lists every asset in the `*.<extension>` files under `dir` by their headers, addressed relative to `base`.
+///
+/// Each file gives its host, then its embedded assets.
+///
+/// # Errors
+///
+/// Fails when a directory or header cannot be read, and when two assets carry
+/// the same id.
 pub fn scan_content(base: &Path, dir: &Path, extension: &str) -> anyhow::Result<Vec<ScannedEntry>> {
     let base = normalise_lexically(base);
     let dir = normalise_lexically(dir);
@@ -1235,7 +1326,10 @@ struct RegistryFile {
     assets: BTreeMap<String, StoredRecord>,
 }
 
-/// The registry text: one `id = { address, kind }` line per entry, with `embedded_as` for an embedded asset, ordered by id.
+/// The registry text for `entries`, ordered by id.
+///
+/// It holds one `id = { address, kind }` line per entry, with `embedded_as` for
+/// an embedded asset.
 pub fn write_registry(entries: &[ScannedEntry]) -> String {
     let mut ordered: Vec<&ScannedEntry> = entries.iter().collect();
     ordered.sort_by_key(|entry| entry.id);
@@ -1268,6 +1362,12 @@ fn two_ids_at(location: &str, first: AssetId, second: AssetId) -> anyhow::Error 
 }
 
 /// Reads registry text written by [`write_registry`], ordered by id.
+///
+/// # Errors
+///
+/// Fails when the text is not valid TOML, holds an invalid id or a line without
+/// a kind, maps two ids to one location, or places an asset in an address that
+/// holds no host.
 pub fn parse_registry(text: &str) -> anyhow::Result<Vec<ScannedEntry>> {
     let file: RegistryFile = toml::from_str(text).context("failed to parse asset registry")?;
     let mut records = Vec::with_capacity(file.assets.len());
@@ -1331,7 +1431,9 @@ pub fn parse_registry(text: &str) -> anyhow::Result<Vec<ScannedEntry>> {
     Ok(entries)
 }
 
-/// `content.toml` at a project root, read by the import, the editor's scan and `track_assets`, never at runtime.
+/// `content.toml` at a project root.
+///
+/// The import, the editor's scan and `track_assets` read it; nothing reads it at runtime.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct ContentConfig {
@@ -1365,7 +1467,12 @@ impl ContentConfig {
         Ok(config)
     }
 
-    /// Rejects a root other than `content` and an extension that is empty or holds a dot or path separator.
+    /// Checks the root and the extension.
+    ///
+    /// # Errors
+    ///
+    /// Fails on a root other than `content`, and on an extension that is empty
+    /// or holds a dot or path separator.
     pub fn validate(&self) -> anyhow::Result<()> {
         anyhow::ensure!(
             self.root == "content",
@@ -1379,6 +1486,11 @@ impl ContentConfig {
     }
 
     /// Loads `content.toml` from `dir` if present, else the defaults.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the file's presence cannot be checked, or when it exists and
+    /// cannot be read, does not parse, or fails [`Self::validate`].
     pub fn load_or_default(dir: &Path) -> anyhow::Result<Self> {
         let path = dir.join("content.toml");
         if path.try_exists()? {

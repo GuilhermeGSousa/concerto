@@ -11,7 +11,12 @@ pub struct OsClipboard {
 }
 
 impl OsClipboard {
-    /// Opens the operating system's clipboard, or says why it cannot.
+    /// Opens the operating system's clipboard.
+    ///
+    /// # Errors
+    ///
+    /// Returns the platform's reason when the clipboard cannot be opened, as on
+    /// a Linux session with no display server.
     pub fn open() -> Result<Self, String> {
         Ok(Self {
             clipboard: Clipboard::new().map_err(|error| error.to_string())?,

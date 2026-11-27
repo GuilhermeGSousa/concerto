@@ -85,7 +85,11 @@ impl BitAnd for Layers {
     }
 }
 
-/// Which collision layers a body is in and which it collides with: two bodies collide when each is in a layer the other collides with. Goes beside a `Collider`; without it a body is in `Layers::DEFAULT` and collides with every layer.
+/// Which collision layers a body is in and which it collides with.
+///
+/// Two bodies collide when each is in a layer the other collides with. It
+/// goes beside a `Collider`; without it a body is in [`Layers::DEFAULT`] and
+/// collides with every layer.
 #[derive(Component, Reflect, Clone, Copy, Debug, PartialEq, Eq)]
 #[reflect(Component, Default, SceneComponent)]
 pub struct CollisionLayers {

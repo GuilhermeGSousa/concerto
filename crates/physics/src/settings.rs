@@ -4,7 +4,9 @@ use concerto_foundation::time::Time;
 /// How the simulation divides each fixed step.
 #[derive(Resource, Clone, Copy, Debug, PartialEq)]
 pub struct PhysicsSettings {
-    /// The longest collision step in seconds; a fixed step is split into the fewest equal steps no longer than this.
+    /// The longest collision step, in seconds.
+    ///
+    /// A fixed step is split into the fewest equal steps no longer than this.
     pub max_collision_step: f32,
 }
 

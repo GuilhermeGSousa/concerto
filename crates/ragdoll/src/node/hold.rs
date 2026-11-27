@@ -60,21 +60,25 @@ impl HoldNode {
         }
     }
 
+    /// Sets `mask`.
     pub fn with_mask(mut self, mask: AssetHandle<BoneMask>) -> Self {
         self.mask = Some(mask);
         self
     }
 
+    /// Sets `weight`.
     pub fn with_weight(mut self, weight: impl Into<Param<f32>>) -> Self {
         self.weight = weight.into();
         self
     }
 
+    /// Sets `strength`.
     pub fn with_strength(mut self, strength: impl Into<Param<f32>>) -> Self {
         self.strength = strength.into();
         self
     }
 
+    /// Sets `fade`.
     pub fn with_fade(mut self, fade: f32) -> Self {
         self.fade = fade;
         self

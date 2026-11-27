@@ -24,7 +24,9 @@ use log::warn;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-/// Adds rotations that wave or wander over time to the bones of each channel's mask; passes its first input through first.
+/// Adds rotations that wave or wander over time to the bones of each channel's mask.
+///
+/// It passes its first input through first.
 #[derive(Clone, Debug, Default, PartialEq, Reflect, Serialize, Deserialize)]
 #[reflect(AnimationNode, Default)]
 pub struct ProceduralMotionNode {

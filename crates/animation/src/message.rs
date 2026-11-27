@@ -49,7 +49,12 @@ pub fn is_animation_message(registry: &TypeRegistry, message: &dyn Reflect) -> b
         .is_some_and(|registration| registration.data::<ReflectAnimationMessage>().is_some())
 }
 
-/// Reads JSON shaped as the inspector shows it as a message of the registered type `type_path`, or says why not; the type must be registered with `register_animation_message` and have a `Default`.
+/// Reads JSON shaped as the inspector shows it as a message of the registered type `type_path`.
+///
+/// # Errors
+///
+/// Returns a message saying why when `type_path` is not registered with
+/// `register_animation_message`, has no `Default`, or `json` does not fit it.
 pub fn decode_animation_message(
     registry: &TypeRegistry,
     type_path: &str,

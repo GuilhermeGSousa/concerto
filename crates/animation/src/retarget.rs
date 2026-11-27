@@ -45,7 +45,9 @@ pub struct RetargetChain {
     pub end: JointName,
 }
 
-/// A named IK goal on a bone, matched to the goal of the same name on another rig; the bone is the tip of a two-bone chain made of it, its parent and its grandparent.
+/// A named IK goal on a bone, matched to the goal of the same name on another rig.
+///
+/// The bone is the tip of a two-bone chain made of it, its parent and its grandparent.
 #[derive(Clone, Debug, Default, PartialEq, Reflect, Serialize, Deserialize)]
 pub struct RetargetGoal {
     pub name: Name,
@@ -62,7 +64,10 @@ impl RetargetGoal {
     }
 }
 
-/// How a retarget pairing solves one goal that both rigs name: `weight` 0 leaves the FK result and 1 reaches the goal; `softness` eases reach near full extension; `hinge` is the target leg's hinge axis.
+/// How a retarget pairing solves one goal that both rigs name.
+///
+/// A `weight` of 0 leaves the FK result and 1 reaches the goal. `softness` eases reach near
+/// full extension, and `hinge` is the target leg's hinge axis.
 #[derive(Clone, Debug, PartialEq, Reflect, Serialize, Deserialize)]
 pub struct RetargetGoalSettings {
     pub goal: Name,
@@ -212,7 +217,16 @@ impl RetargetRig {
         self
     }
 
-    /// Resolves the rig against `skeleton`, the one `self.skeleton` names, reading the reference frame from `clip`, the one `ReferencePose::ClipFrame` names.
+    /// Resolves the rig against `skeleton`, the one `self.skeleton` names.
+    ///
+    /// A [`ReferencePose::ClipFrame`] reference reads its frame from `clip`, the clip it names.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`RigError`] when the skeleton is invalid, when the rig names no root or a
+    /// bone the skeleton lacks, when a chain or goal is unnamed, duplicated or does not fit
+    /// the hierarchy, when a clip reference is missing, unusable or not for the skeleton, or
+    /// when the root sits at or below height zero in the reference pose.
     pub fn resolve(
         &self,
         skeleton: &Skeleton,
@@ -647,6 +661,11 @@ struct GoalPair {
 
 impl PoseRetarget {
     /// Pairs `source` and `target`, each resolved against the skeleton given beside it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RetargetError::RigNotForSkeleton`] when a rig does not fit the skeleton
+    /// beside it, and [`RetargetError::NoSharedChain`] when the rigs share no chain name.
     pub fn new(
         source: &ResolvedRig,
         source_skeleton: &Skeleton,
@@ -750,6 +769,11 @@ impl PoseRetarget {
     }
 
     /// Writes `source`, a pose of the source skeleton in bone order, retargeted onto the target skeleton into `out`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RetargetError::PoseLength`] when `source` or `out` does not hold one joint
+    /// per bone of its skeleton.
     pub fn retarget_into(
         &mut self,
         source: &[JointPose],
@@ -837,7 +861,12 @@ impl PoseRetarget {
         Ok(())
     }
 
-    /// Sets the weight and softness of the goal `settings` names; fails, changing nothing, when the two rigs do not both name it.
+    /// Sets the weight, softness and hinge of the goal `settings` names.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RetargetError::UnknownGoal`], changing nothing, when the two rigs do not both
+    /// name the goal.
     pub fn set_goal(&mut self, settings: &RetargetGoalSettings) -> Result<(), RetargetError> {
         let pair = self
             .goals
@@ -856,7 +885,9 @@ impl PoseRetarget {
         Ok(())
     }
 
-    /// The scale from source to target root motion: the target root's reference height over the source's.
+    /// The scale from source to target root motion.
+    ///
+    /// It is the target root's reference height over the source's.
     pub fn scale(&self) -> f32 {
         self.scale
     }
@@ -1003,7 +1034,11 @@ impl fmt::Display for RetargetError {
 
 impl std::error::Error for RetargetError {}
 
-/// Plays `graph` on the source rig's skeleton, retargeted onto the player's, with nodes that read the world (foot placement, IK, look-at) kept outside it; it fails, until the player's graph changes, on a nested retarget node or an inner node whose `CreateInput` is not an update input.
+/// Plays `graph` on the source rig's skeleton, retargeted onto the player's.
+///
+/// Nodes that read the world, such as foot placement, IK and look-at, belong outside it. The
+/// node fails on a nested retarget node or an inner node whose `CreateInput` is not an update
+/// input, and stays failed until the player's graph changes.
 #[derive(Clone, Default, Reflect, Serialize, Deserialize)]
 #[reflect(AnimationNode)]
 pub struct RetargetNode {

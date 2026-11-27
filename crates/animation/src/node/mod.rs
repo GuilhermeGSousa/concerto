@@ -37,7 +37,10 @@ pub use layer::{LayerNode, LayerSpace};
 pub use slot::{PlayInSlot, SlotEntry, SlotNode, SlotState};
 pub use two_bone_ik::{IkGoal, IkTarget, TipRotation, TwoBoneIkNode, TwoBoneIkState};
 
-/// The rate a node plays at: `play_rate` times the `f32` under `param`, or `play_rate` alone when `param` is `None` or holds no `f32`; never negative.
+/// The rate a node plays at.
+///
+/// It is `play_rate` times the `f32` under `param`, or `play_rate` alone when `param` is `None`
+/// or holds no `f32`. A negative or non-finite result is 0.
 pub fn effective_play_rate(
     play_rate: f32,
     param: Option<Param<f32>>,
@@ -52,7 +55,10 @@ pub fn effective_play_rate(
     }
 }
 
-/// The weight a node applies: `weight` times the `f32` under `param`, or `weight` alone when `param` is `None` or holds no `f32`; clamped to [0, 1], and 0 when NaN.
+/// The weight a node applies.
+///
+/// It is `weight` times the `f32` under `param`, or `weight` alone when `param` is `None` or
+/// holds no `f32`, clamped to 0 to 1. A NaN result is 0.
 pub fn effective_weight(
     weight: f32,
     param: Option<Param<f32>>,

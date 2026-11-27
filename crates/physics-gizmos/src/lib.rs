@@ -1,4 +1,8 @@
-//! The debug drawing of physics: colliders coloured by how their body moves, each ragdoll's parts and joint limits, contacts, and what a `BodySense` perceives; and the component gizmos of the colliders a scene authors.
+//! The debug drawing of physics.
+//!
+//! It draws colliders coloured by how their body moves, each ragdoll's parts
+//! and joint limits, contacts, and what a `BodySense` perceives, and provides
+//! the component gizmos of the colliders a scene authors.
 
 mod component;
 mod gizmos;

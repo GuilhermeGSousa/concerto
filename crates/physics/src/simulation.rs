@@ -9,7 +9,9 @@ use crate::{
     physics_state::PhysicsState, rigid_body::RigidBody, settings::PhysicsSettings,
 };
 
-/// Steps the simulation and writes each simulated body's pose to its `Transform`; a static collider's `Transform` is left to whoever moves the entity.
+/// Steps the simulation and writes each simulated body's pose to its `Transform`.
+///
+/// A static collider's `Transform` is left to whoever moves the entity.
 pub fn step_simulation(
     mut query: Query<
         (&BodyId, &mut Transform, Option<&mut TransformInterpolation>),

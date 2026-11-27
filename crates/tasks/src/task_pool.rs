@@ -49,6 +49,10 @@ impl TaskPool {
     }
 
     /// A pool of exactly `threads` workers named `{name}-{i}`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the operating system fails to spawn a worker thread.
     pub fn with_threads(name: &str, threads: usize) -> Self {
         let executor = Arc::new(Executor::new());
 
@@ -105,7 +109,12 @@ impl TaskPool {
         Task::new(Self::LOCAL_EXECUTOR.with(|local_executor| local_executor.spawn(future)))
     }
 
-    /// Runs `f` and every task it spawns; a panic in either is raised again only after every spawned task has finished.
+    /// Runs `f` and every task it spawns, returning the tasks' outputs.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `f` or a spawned task panicked, raising it again only after every spawned
+    /// task has finished.
     pub fn scope<'env, F, T>(&self, f: F) -> Vec<T>
     where
         F: for<'scope> FnOnce(&'scope ScopedTaskPool<'scope, 'env, T>),

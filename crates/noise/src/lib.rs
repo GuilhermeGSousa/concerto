@@ -16,7 +16,10 @@ pub fn unit_from_seed(seed: u64) -> f32 {
     (mix_seed(seed, 0) >> 40) as f32 / (1u32 << 24) as f32
 }
 
-/// 1D gradient (Perlin) noise at `x`: in `[-1, 1]`, 0 at every integer, with continuous first and second derivatives.
+/// 1D gradient (Perlin) noise at `x`.
+///
+/// The value is in `[-1, 1]`, 0 at every integer, with continuous first and
+/// second derivatives. A non-finite `x` gives 0.
 pub fn gradient_noise(seed: u64, x: f64) -> f32 {
     if !x.is_finite() {
         return 0.0;
@@ -32,7 +35,10 @@ pub fn gradient_noise(seed: u64, x: f64) -> f32 {
     (value as f32).clamp(-1.0, 1.0)
 }
 
-/// `octaves` octaves of gradient noise at `x`, each twice the frequency and half the amplitude of the one before, summed and rescaled into `[-1, 1]`.
+/// `octaves` octaves of gradient noise at `x`, summed and rescaled into `[-1, 1]`.
+///
+/// Each octave has twice the frequency and half the amplitude of the one
+/// before. `octaves` is clamped to `1..=8`.
 pub fn fractal_noise(seed: u64, x: f64, octaves: u32) -> f32 {
     let octaves = octaves.clamp(1, MAX_OCTAVES);
     let mut sum = 0.0f64;

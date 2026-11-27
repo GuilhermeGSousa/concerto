@@ -13,7 +13,11 @@ pub struct FeatureQuery {
 }
 
 impl FeatureQuery {
-    /// Copies the live channels of a loaded database; a channel not yet loaded is an error.
+    /// Copies the live channels of a loaded database.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BakeError::UnloadedChannel`] when a channel is not loaded yet.
     pub fn new(database: &MotionDatabase) -> Result<Self, BakeError> {
         Ok(Self {
             channels: database
@@ -29,7 +33,14 @@ impl FeatureQuery {
         &self.channels
     }
 
-    /// The normalised feature vector for a character whose pose is database frame `pose_frame` and whose predicted path is `trajectory`, expressed in `simulation`.
+    /// The normalised feature vector for a character whose pose is database frame `pose_frame` and whose predicted path is `trajectory`.
+    ///
+    /// The trajectory is expressed in `simulation`.
+    ///
+    /// # Errors
+    ///
+    /// Fails as [`raw`](Self::raw) does, and with [`BakeError::NotBaked`] when
+    /// the database cannot normalise the vector.
     pub fn build(
         &self,
         database: &MotionDatabase,
@@ -45,7 +56,21 @@ impl FeatureQuery {
         Ok(features)
     }
 
-    /// The vector `build` normalises, in the units `preview_features` reads: pose channels as baked for `pose_frame`, and trajectory channels from `trajectory` expressed in `simulation`.
+    /// The vector [`build`](Self::build) normalises, in the units [`preview_features`](crate::channel::preview_features) reads.
+    ///
+    /// Pose channels hold their values as baked for `pose_frame`, and
+    /// trajectory channels are extracted from `trajectory` expressed in
+    /// `simulation`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BakeError::NotBaked`] before the database is derived,
+    /// [`BakeError::BoneCountMismatch`] when `skeleton` does not match the bake,
+    /// [`BakeError::ChannelCountMismatch`] when the database's channels changed
+    /// since this query was built, [`BakeError::FrameOutOfRange`] for a
+    /// `pose_frame` outside the baked frames, and
+    /// [`BakeError::TrajectoryTooShort`] when a trajectory channel needs more
+    /// samples than `trajectory` holds.
     pub fn raw(
         &self,
         database: &MotionDatabase,

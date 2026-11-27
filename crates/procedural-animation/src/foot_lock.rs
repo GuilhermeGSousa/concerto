@@ -22,7 +22,9 @@ use crate::leg::{ResolvedLeg, bend_leg, ease, elapsed_after, horizontal, resolve
 const MIN_WEIGHT: f32 = 1.0e-4;
 const RELEASED: f32 = 1.0e-3;
 
-/// Holds each planted foot where it was planted, horizontally, and eases back to the animated foot when the plant ends; passes its first input through first.
+/// Holds each planted foot where it was planted, horizontally, and eases back to the animated foot when the plant ends.
+///
+/// It passes its first input through first.
 #[derive(Clone, Debug, PartialEq, Reflect, serde::Serialize, serde::Deserialize)]
 #[reflect(AnimationNode, Default)]
 pub struct FootLockNode {
@@ -114,7 +116,11 @@ impl FootLockNode {
     }
 }
 
-/// A leg: the foot bone names the chain (its parent the knee, its grandparent the hip), an optional toe bone is the point a plant is read from and held at, and `hinge` is the knee's hinge axis.
+/// A leg of a [`FootLockNode`].
+///
+/// The foot bone names the chain: its parent is the knee and its grandparent
+/// the hip. An optional toe bone is the point a plant is read from and held
+/// at, and `hinge` is the knee's hinge axis.
 #[derive(Clone, Debug, Default, PartialEq, Reflect, serde::Serialize, serde::Deserialize)]
 pub struct FootLockLeg {
     pub foot: JointName,

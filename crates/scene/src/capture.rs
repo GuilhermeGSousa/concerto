@@ -19,13 +19,23 @@ use crate::link_path::LinkPath;
 use crate::node_id::{derive_missing_ids, NodeId, SceneNodeId};
 use crate::scene::{LinkChange, Scene, SceneLinkData, SceneNode, SerializedComponent};
 
-/// Reads every descendant of `root` back into a [`Scene`]; the inverse of
-/// [`spawn_scene`](crate::spawner::spawn_scene), listing every asset its handles name.
+/// Reads every descendant of `root` back into a [`Scene`], listing every asset its handles name.
+///
+/// It is the inverse of [`spawn_scene`](crate::spawner::spawn_scene).
+///
+/// # Errors
+///
+/// Fails when a component cannot be written to a scene, as when it references
+/// a node inside a link or a component a link adds holds an entity reference.
 pub fn capture_scene(world: &World, root: Entity) -> anyhow::Result<Scene> {
     capture(world, child_entities(world, root))
 }
 
 /// Like [`capture_scene`], but `entity` itself is node 0.
+///
+/// # Errors
+///
+/// Fails as [`capture_scene`] does.
 pub fn capture_subtree(world: &World, entity: Entity) -> anyhow::Result<Scene> {
     capture(world, vec![entity])
 }

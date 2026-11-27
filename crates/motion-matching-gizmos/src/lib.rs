@@ -1,4 +1,7 @@
-//! The debug drawing of motion matching: `MotionMatchingGizmos` for the running game, and the colours, shapes and baked frames it shares with the editor's preview.
+//! The debug drawing of motion matching.
+//!
+//! [`MotionMatchingGizmos`] draws it in the running game, and the colours,
+//! shapes and baked frames here are shared with the editor's preview.
 
 mod frame;
 mod gizmos;

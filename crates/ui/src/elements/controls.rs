@@ -44,7 +44,9 @@ pub struct ColorPicker {
     picker: UIColorPicker,
 }
 
-/// A draggable gap between two siblings, with a line while hovered or dragged; its owner decides what a drag means.
+/// A draggable gap between two siblings, with a line while hovered or dragged.
+///
+/// It moves nothing itself: its owner decides what a drag means.
 pub struct Splitter {
     node: UINode,
     splitter: UISplitter,
@@ -92,7 +94,9 @@ impl UITheme {
         }
     }
 
-    /// A splitter dragged along `axis`: `Horizontal` stands between columns, `Vertical` between rows.
+    /// A splitter dragged along `axis`.
+    ///
+    /// A `Horizontal` splitter stands between columns, a `Vertical` one between rows.
     pub fn splitter(&self, axis: UISplitAxis) -> Splitter {
         let node = match axis {
             UISplitAxis::Horizontal => UINode::default()
@@ -118,7 +122,9 @@ impl UITheme {
 }
 
 impl Checkbox {
-    /// Runs `listener` each time the box is toggled; attach it after the other modifiers.
+    /// Runs `listener` each time the box is toggled.
+    ///
+    /// Attach it after the other modifiers.
     pub fn on_change<M>(
         self,
         listener: impl IntoListener<UICheckboxChanged, M>,
@@ -128,7 +134,9 @@ impl Checkbox {
 }
 
 impl Slider {
-    /// Runs `listener` each time a drag changes the value; attach it after the other modifiers.
+    /// Runs `listener` each time a drag changes the value.
+    ///
+    /// Attach it after the other modifiers.
     pub fn on_change<M>(
         self,
         listener: impl IntoListener<UISliderChanged, M>,
@@ -138,7 +146,9 @@ impl Slider {
 }
 
 impl ColorPicker {
-    /// Runs `listener` each time the user changes the color; attach it after the other modifiers.
+    /// Runs `listener` each time the user changes the color.
+    ///
+    /// Attach it after the other modifiers.
     pub fn on_change<M>(
         self,
         listener: impl IntoListener<UIColorChanged, M>,
@@ -148,7 +158,9 @@ impl ColorPicker {
 }
 
 impl Splitter {
-    /// Runs `listener` with each movement of a drag along the axis; attach it after the other modifiers.
+    /// Runs `listener` with each movement of a drag along the axis.
+    ///
+    /// Attach it after the other modifiers.
     pub fn on_drag<M>(
         self,
         listener: impl IntoListener<UISplitterDragged, M>,

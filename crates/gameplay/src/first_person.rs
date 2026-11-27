@@ -18,7 +18,10 @@ const GROUND_PROBE_SCALE: f32 = 0.9;
 const GROUND_FOLLOW_RATE: f32 = 15.0;
 const GRAVITY: f32 = 9.81;
 
-/// A first-person character with no jump: a capsule held `step_height` above the ground, so it walks up steps that high and stops at anything taller.
+/// A first-person character with no jump.
+///
+/// Its body is a capsule held `step_height` above the ground, so it walks up
+/// steps that high and stops at anything taller.
 #[derive(Component, Clone, Debug, PartialEq)]
 pub struct FirstPersonWalker {
     /// Metres per second with the `Move` stick pushed to `hurry_threshold`.
@@ -37,7 +40,9 @@ pub struct FirstPersonWalker {
     pub height: f32,
     /// From the feet to the eyes, where a `FirstPersonView` sits.
     pub eye_height: f32,
-    /// How far ahead of the body's centre the eyes are, so a view looks out past a body drawn on the walker; keep it inside `radius`.
+    /// How far ahead of the body's centre the eyes are, so a view looks out past a body drawn on the walker.
+    ///
+    /// Keep it inside `radius`.
     pub eye_forward: f32,
     /// Radians per second the view turns with the `Look` stick pushed all the way.
     pub look_rate: f32,
@@ -47,7 +52,9 @@ pub struct FirstPersonWalker {
     pub pitch_limit: f32,
     /// Pushing the `Look` stick up looks down.
     pub invert_y: bool,
-    /// Whether the player's `Move` and `Look` drive it; while false it stands still and keeps its view, as when a menu is open.
+    /// Whether the player's `Move` and `Look` drive it.
+    ///
+    /// While false it stands still and keeps its view, as when a menu is open.
     pub controlled: bool,
     yaw: f32,
     pitch: f32,
@@ -210,7 +217,9 @@ impl FirstPersonWalker {
     }
 }
 
-/// Puts the entity at the eyes of `walker`, looking where it looks; give it a `Camera` or a `VirtualCamera`.
+/// Puts the entity at the eyes of `walker`, looking where it looks.
+///
+/// Give the entity a `Camera` or a `VirtualCamera`.
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
 pub struct FirstPersonView {
     pub walker: Entity,
@@ -279,7 +288,10 @@ pub fn read_first_person_input(
     }
 }
 
-/// Sets each walker's body velocity for the fixed step: its push along the ground, and whatever holds its feet on the ground under it. A `Carried` walker is left alone.
+/// Sets each walker's body velocity for the fixed step.
+///
+/// The velocity is its push along the ground, plus whatever holds its feet on
+/// the ground under it. A `Carried` walker is left alone.
 pub fn step_first_person_walkers(
     mut walkers: Query<(&mut FirstPersonWalker, &BodyId), Without<Carried>>,
     mut physics: ResMut<PhysicsState>,

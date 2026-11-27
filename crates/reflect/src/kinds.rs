@@ -83,11 +83,20 @@ impl std::fmt::Display for LeafError {
 impl std::error::Error for LeafError {}
 
 /// Encodes a serde value as a leaf's bytes.
+///
+/// # Errors
+///
+/// Returns a [`LeafError`] when serialization fails.
 pub fn encode_leaf<T: serde::Serialize>(value: &T) -> Result<Vec<u8>, LeafError> {
     bincode::serialize(value).map_err(|error| LeafError(error.to_string()))
 }
 
 /// Decodes a leaf's bytes into a serde value in place.
+///
+/// # Errors
+///
+/// Returns a [`LeafError`] when `bytes` do not deserialize as `T`; `value` is then left as
+/// it was.
 pub fn decode_leaf<T: serde::de::DeserializeOwned>(
     value: &mut T,
     bytes: &[u8],

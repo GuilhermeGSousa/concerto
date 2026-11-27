@@ -52,7 +52,14 @@ use concerto_ui::plugin::UIPlugin;
 use concerto_window::plugin::WindowPlugin;
 use concerto_world_grid::plugin::WorldGridPlugin;
 
-/// Sets up logging, opens a window, and runs the `App` that `build` makes with `content`, from [`content_registry!`], installed; natively, `--cook <out>` runs [`cook`] instead and exits.
+/// Sets up logging, opens a window, and runs the `App` that `build` makes, with `content`
+/// from [`content_registry!`] installed.
+///
+/// Natively, `--cook <out>` on the command line runs [`cook`] instead and exits with its status.
+///
+/// # Panics
+///
+/// Panics if `content.registry` is malformed.
 pub fn run(
     build: impl FnOnce(&mut app::App) + 'static,
     content: concerto_app::plugins::ContentSettings<'static>,
@@ -102,7 +109,18 @@ fn cook_arg(args: impl IntoIterator<Item = String>) -> CookArg {
 #[cfg(not(target_arch = "wasm32"))]
 const COOK_MARKER: &str = ".concerto-cook";
 
-/// Builds the `App` that `build` makes, with no GPU and no window, and writes to `out` every file of `content` whose asset derives, with its derived blob, and every other file that has an uncooked section, all without those sections; `out` must be missing, empty, or a previous cook output, which it replaces.
+/// Builds the `App` that `build` makes, with no GPU and no window, and cooks `content` into `out`.
+///
+/// Every file whose asset derives is written with its derived blob, and every other file that
+/// has an uncooked section is written too, all without those sections. `out` must be missing,
+/// empty, or a previous cook output, which it replaces.
+///
+/// # Errors
+///
+/// Returns an error when `content` has no project root or a malformed registry, when `build`
+/// registers no [`AssetServer`](concerto_foundation::assets::asset_server::AssetServer), when
+/// `out` holds anything but a previous cook output, or when reading, deriving or writing a
+/// file fails.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn cook(
     build: impl FnOnce(&mut App),
@@ -228,7 +246,9 @@ impl Plugin for DefaultPlugins {
     }
 }
 
-/// Builds an `App` with a GPU, no window and the mock audio backend, ready to step; `None` when there is no GPU adapter.
+/// Builds an `App` with a GPU, no window and the mock audio backend, ready to step.
+///
+/// Returns `None` when there is no GPU adapter.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn headless(build: impl FnOnce(&mut App)) -> Option<App> {
     use concerto_app::plugins::PluginsState;

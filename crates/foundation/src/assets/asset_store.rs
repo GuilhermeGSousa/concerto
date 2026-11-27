@@ -58,7 +58,9 @@ impl<A: Asset + 'static> AssetStore<A> {
         self.assets.insert(id, entry);
     }
 
-    /// Removes the assets whose last handle dropped and reports each; returns whether any was removed.
+    /// Removes the assets whose last handle dropped and reports each as an event.
+    ///
+    /// Returns whether any was removed.
     pub fn track_assets(
         &mut self,
         mut asset_server: ResMut<AssetServer>,

@@ -17,7 +17,12 @@ use crate::{
     sensing::BodySense,
 };
 
-/// The game says a character is dying: its strength drains over `seconds`, from the hands and feet inwards, and it is `Dead` when none is left. Zero seconds is an instant kill. The engine has no health; the game decides when. A `Die` sent to a `Settled` body is dropped, even if a hit wakes it later.
+/// The game says a character is dying.
+///
+/// Its strength drains over `seconds`, from the hands and feet inwards, and
+/// it is `Dead` when none is left. Zero seconds is an instant kill. The
+/// engine has no health; the game decides when. A `Die` sent to a
+/// [`Settled`] body is dropped, even if a hit wakes it later.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Die {
     pub character: Entity,
@@ -46,7 +51,12 @@ pub fn mark_dead() -> Listener<BodyDead> {
     .into_listener()
 }
 
-/// A dead body that lies at rest: its parts are static where they lie, nothing moves or senses it, and its capsule stays where it was left, out of every collision layer. Its graph still runs, but nothing it asks reaches physics. A `BodyHit` of at least `wake_impulse` wakes it, and it settles again.
+/// A dead body that lies at rest.
+///
+/// Its parts are static where they lie, nothing moves or senses it, and its
+/// capsule stays where it was left, out of every collision layer. Its graph
+/// still runs, but nothing it asks reaches physics. A [`BodyHit`] of at least
+/// `wake_impulse` wakes it, and it settles again.
 #[derive(Component, Reflect, Clone, Copy, Debug, PartialEq)]
 #[reflect(Component, Default, SceneComponent)]
 pub struct Settled {
@@ -70,7 +80,9 @@ pub fn forward_death(on: On<Die>, mut players: Query<&mut AnimationPlayer, Witho
     }
 }
 
-/// Each fixed step, after the body is sensed: freezes every dead body that lies at rest, marks it `Settled` and triggers `BodySettled`.
+/// Freezes every dead body that lies at rest, each fixed step after the body is sensed.
+///
+/// It marks the body `Settled` and triggers `BodySettled`.
 pub fn settle_dead_bodies(
     characters: Query<(Entity, &BodySense, &RagdollId), (With<Dead>, Without<Settled>)>,
     mut state: ResMut<PhysicsState>,
@@ -86,7 +98,10 @@ pub fn settle_dead_bodies(
     }
 }
 
-/// Wakes a settled body that is hit hard enough: its parts are simulated again, the struck part takes the impulse, and it settles once it is at rest again.
+/// Wakes a settled body that is hit hard enough.
+///
+/// Its parts are simulated again, the struck part takes the impulse, and it
+/// settles once it is at rest again.
 pub fn wake_when_hit(
     on: On<BodyHit>,
     mut characters: Query<(&Settled, &RagdollId, &RagdollBody, &mut BodySense)>,

@@ -15,7 +15,10 @@ use crate::player::FADE;
 
 const MOCK_SAMPLE_RATE: u32 = 1000;
 
-/// Which output `AudioPlugin` opens: the device, falling back to `Mock` when there is none, or `Mock` always.
+/// Which output [`AudioPlugin`](crate::AudioPlugin) opens.
+///
+/// `Device` opens the audio device, falling back to `Mock` when there is none;
+/// `Mock` always opens the mock backend.
 #[derive(Resource, Default, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AudioBackend {
     #[default]
@@ -46,7 +49,9 @@ impl Output {
     }
 }
 
-/// The audio device and the mixer's buses; absent in an edit `App` and, on the web, until the first input.
+/// The audio device and the mixer's buses.
+///
+/// It is absent in an edit `App` and, on the web, until the first input.
 #[derive(Resource)]
 pub struct Audio {
     output: Output,
@@ -82,7 +87,9 @@ impl Audio {
         }
     }
 
-    /// Renders `seconds` of audio on the mock backend; does nothing on a device, whose audio thread renders on its own.
+    /// Renders `seconds` of audio on the mock backend.
+    ///
+    /// It does nothing on a device, whose audio thread renders on its own.
     pub fn advance(&mut self, seconds: f32) {
         let Output::Mock(manager) = &mut self.output else {
             return;

@@ -17,7 +17,9 @@ use concerto_ecs::{
 };
 use std::sync::Arc;
 
-/// The values a document shows in the inspector while it is the active one; each lives in [`TargetWorld::Editor`] and has a name of its own.
+/// The values a document shows in the inspector while it is the active one.
+///
+/// Each lives in [`TargetWorld::Editor`] and has a name of its own.
 #[derive(Component, Clone, Default)]
 pub struct InspectedValues(pub Vec<Arc<dyn PropertyTarget>>);
 

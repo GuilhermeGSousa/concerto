@@ -80,7 +80,9 @@ pub trait Layout: Sized {
         self.node(|node| node.with_max_height(max_height))
     }
 
-    /// Lays children out left to right and centres them; call `align_items` after it to change that.
+    /// Lays children out left to right and centres them.
+    ///
+    /// Call `align_items` after it to change the alignment.
     fn row(self) -> Self {
         self.node(|node| {
             node.with_flex_direction(FlexDirection::Row)
@@ -199,7 +201,9 @@ pub trait Typography: Themed + Sized {
         self
     }
 
-    /// One line, cut short with an ellipsis when it does not fit; a text field's label never shows an ellipsis.
+    /// One line, cut short with an ellipsis when it does not fit.
+    ///
+    /// A text field's label never shows an ellipsis.
     fn single_line(mut self) -> Self {
         let text = self.text_mut();
         text.wrap = false;
@@ -262,7 +266,9 @@ pub trait Shape: Themed + Sized {
     }
 }
 
-/// How an interactive element colours itself; resolved against the theme at spawn.
+/// How an interactive element colours itself.
+///
+/// It is resolved against the theme when the element spawns.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct InteractionSpec {
     pub variant: ButtonVariant,

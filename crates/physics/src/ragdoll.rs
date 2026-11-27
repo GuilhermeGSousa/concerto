@@ -116,7 +116,10 @@ pub struct JointTarget {
     pub motor: MotorSettings,
 }
 
-/// Where a joint's motor aims, held by a spring given in absolute terms: unlike a frequency, its pull does not shrink with the size of the part, so it holds a limb against the weight of what hangs from it.
+/// Where a joint's motor aims, held by a spring given in absolute terms.
+///
+/// Unlike a frequency, a stiffness does not shrink its pull with the size of
+/// the part, so it holds a limb against the weight of what hangs from it.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct JointSpring {
     /// The rotation the part should have relative to its parent part.
@@ -262,7 +265,11 @@ pub struct RagdollSettings {
     pub max_speed: f32,
     /// The collision layers of every part; by default `CollisionLayers::ragdoll()`.
     pub layers: CollisionLayers,
-    /// The fewest velocity iterations the solver runs on bodies joined to this ragdoll. The default of 10 for other bodies cannot carry a heavy trunk through a chain of light parts: powered joints then give under the load and the body sways.
+    /// The fewest velocity iterations the solver runs on bodies joined to this ragdoll.
+    ///
+    /// The default of 10 for other bodies cannot carry a heavy trunk through
+    /// a chain of light parts: powered joints then give under the load and
+    /// the body sways.
     pub velocity_steps: u32,
     /// The fewest position iterations the solver runs on bodies joined to this ragdoll.
     pub position_steps: u32,
@@ -307,7 +314,18 @@ impl RagdollSettings {
         self
     }
 
-    /// Builds the backend's ragdoll recipe: masses stabilized, and each part's collisions with its parent disabled.
+    /// Builds the backend's ragdoll recipe.
+    ///
+    /// Masses are stabilized, and each part's collisions with its parent are
+    /// disabled.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RagdollBuildError::NoParts`] when there are no parts,
+    /// [`RagdollBuildError::BadParent`] when the first part has a parent or a
+    /// later part has none or one that does not come before it,
+    /// [`RagdollBuildError::BadMass`] when a part's mass is not above zero, and
+    /// [`RagdollBuildError::Rejected`] when the backend refuses the parts.
     pub fn build(&self) -> Result<BuiltRagdoll, RagdollBuildError> {
         if self.parts.is_empty() {
             return Err(RagdollBuildError::NoParts);
@@ -379,7 +397,10 @@ impl BuiltRagdoll {
     }
 }
 
-/// A ragdoll living inside the physics simulation, owned by [`PhysicsState`](crate::physics_state::PhysicsState) until it is destroyed. As a component it marks the entity that owns the ragdoll: removing it, or despawning the entity, destroys the ragdoll.
+/// A ragdoll living inside the physics simulation, owned by [`PhysicsState`](crate::physics_state::PhysicsState) until it is destroyed.
+///
+/// As a component it marks the entity that owns the ragdoll: removing it, or
+/// despawning the entity, destroys the ragdoll.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct RagdollId(pub(crate) <ActiveBackend as PhysicsBackend>::RagdollHandle);
 

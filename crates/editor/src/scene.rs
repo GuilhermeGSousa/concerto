@@ -148,6 +148,11 @@ impl AssetEditor for SceneEditor {
 }
 
 /// Reads the scene at `address` under `root`, checking its id and its kind.
+///
+/// # Errors
+///
+/// Returns an error when the file cannot be read, when its header's id is not `id`, or when
+/// it does not decode as a [`Scene`].
 pub fn load_scene(root: PathBuf, address: String, id: AssetId) -> anyhow::Result<Scene> {
     let bytes = std::fs::read(root.join(address))?;
     let (header, _) = read_content_asset(&bytes)?;

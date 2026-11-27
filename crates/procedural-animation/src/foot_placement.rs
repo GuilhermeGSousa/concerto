@@ -25,7 +25,9 @@ const MIN_TOE_DISTANCE: f32 = 0.01;
 const MIN_NORMAL_LENGTH: f32 = 1.0e-3;
 const MIN_WEIGHT: f32 = 1.0e-4;
 
-/// Puts each leg's foot on the ground under it and lowers the pelvis for the lowest; passes its first input through first.
+/// Puts each leg's foot on the ground under it and lowers the pelvis for the lowest.
+///
+/// It passes its first input through first.
 #[derive(Clone, Debug, PartialEq, Reflect, serde::Serialize, serde::Deserialize)]
 #[reflect(AnimationNode, Default)]
 pub struct FootPlacementNode {
@@ -154,7 +156,11 @@ impl FootPlacementNode {
     }
 }
 
-/// A leg: the foot bone names the chain (its parent the knee, its grandparent the hip), an optional toe bone adds a second ray, and `hinge` is the knee's hinge axis.
+/// A leg of a [`FootPlacementNode`].
+///
+/// The foot bone names the chain: its parent is the knee and its grandparent
+/// the hip. An optional toe bone adds a second ray, and `hinge` is the knee's
+/// hinge axis.
 #[derive(Clone, Debug, Default, PartialEq, Reflect, serde::Serialize, serde::Deserialize)]
 pub struct FootPlacementLeg {
     pub foot: JointName,

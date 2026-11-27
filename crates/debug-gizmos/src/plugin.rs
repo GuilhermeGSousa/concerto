@@ -22,6 +22,11 @@ use crate::{
 ///
 /// Must be registered *after* the render plugin: it reads GPU resources such as
 /// [`RenderDevice`] and [`CameraLayout`] during [`Plugin::finish`].
+///
+/// # Panics
+///
+/// Panics during [`Plugin::finish`] if [`RenderPlugin`](concerto_render::plugin::RenderPlugin)
+/// was not registered before it.
 pub struct DebugGizmosPlugin;
 
 impl Plugin for DebugGizmosPlugin {

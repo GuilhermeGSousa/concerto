@@ -44,7 +44,10 @@ pub struct BalanceSettings {
     pub height_damping: f32,
     /// The most force the height assist applies, in N.
     pub max_lift: f32,
-    /// The assist: a horizontal force on the pelvis that pushes the capture point back over the feet, in N per metre it is outside them; nothing while it is inside.
+    /// The assist: a horizontal force on the pelvis that pushes the capture point back over the feet.
+    ///
+    /// In N per metre the point is outside the feet; nothing while it is
+    /// inside.
     pub centring: f32,
     /// The assist: a horizontal force on the pelvis against the centre of mass's horizontal velocity, in N per m/s, which stills the sway of a standing body.
     pub sway_damping: f32,
@@ -104,111 +107,133 @@ impl Default for BalanceSettings {
 }
 
 impl BalanceSettings {
+    /// Sets `leg_stiffness`.
     pub fn with_leg_stiffness(mut self, leg_stiffness: f32) -> Self {
         self.leg_stiffness = leg_stiffness;
         self
     }
 
+    /// Sets `leg_torque`.
     pub fn with_leg_torque(mut self, leg_torque: f32) -> Self {
         self.leg_torque = leg_torque;
         self
     }
 
+    /// Sets `upright_stiffness`.
     pub fn with_upright_stiffness(mut self, upright_stiffness: f32) -> Self {
         self.upright_stiffness = upright_stiffness;
         self
     }
 
+    /// Sets `upright_damping`.
     pub fn with_upright_damping(mut self, upright_damping: f32) -> Self {
         self.upright_damping = upright_damping;
         self
     }
 
+    /// Sets `max_upright_torque`.
     pub fn with_max_upright_torque(mut self, max_upright_torque: f32) -> Self {
         self.max_upright_torque = max_upright_torque;
         self
     }
 
+    /// Sets `height_stiffness`.
     pub fn with_height_stiffness(mut self, height_stiffness: f32) -> Self {
         self.height_stiffness = height_stiffness;
         self
     }
 
+    /// Sets `height_damping`.
     pub fn with_height_damping(mut self, height_damping: f32) -> Self {
         self.height_damping = height_damping;
         self
     }
 
+    /// Sets `max_lift`.
     pub fn with_max_lift(mut self, max_lift: f32) -> Self {
         self.max_lift = max_lift;
         self
     }
 
+    /// Sets `centring`.
     pub fn with_centring(mut self, centring: f32) -> Self {
         self.centring = centring;
         self
     }
 
+    /// Sets `sway_damping`.
     pub fn with_sway_damping(mut self, sway_damping: f32) -> Self {
         self.sway_damping = sway_damping;
         self
     }
 
+    /// Sets `max_centring`.
     pub fn with_max_centring(mut self, max_centring: f32) -> Self {
         self.max_centring = max_centring;
         self
     }
 
+    /// Sets `step_margin`.
     pub fn with_step_margin(mut self, step_margin: f32) -> Self {
         self.step_margin = step_margin;
         self
     }
 
+    /// Sets `step_beyond`.
     pub fn with_step_beyond(mut self, step_beyond: f32) -> Self {
         self.step_beyond = step_beyond;
         self
     }
 
+    /// Sets `max_step`.
     pub fn with_max_step(mut self, max_step: f32) -> Self {
         self.max_step = max_step;
         self
     }
 
+    /// Sets `step_height`.
     pub fn with_step_height(mut self, step_height: f32) -> Self {
         self.step_height = step_height;
         self
     }
 
+    /// Sets `step_seconds`.
     pub fn with_step_seconds(mut self, step_seconds: f32) -> Self {
         self.step_seconds = step_seconds;
         self
     }
 
+    /// Sets `step_rest`.
     pub fn with_step_rest(mut self, step_rest: f32) -> Self {
         self.step_rest = step_rest;
         self
     }
 
+    /// Sets `max_steps`.
     pub fn with_max_steps(mut self, max_steps: u32) -> Self {
         self.max_steps = max_steps;
         self
     }
 
+    /// Sets `max_lean`.
     pub fn with_max_lean(mut self, max_lean: f32) -> Self {
         self.max_lean = max_lean;
         self
     }
 
+    /// Sets `min_height`.
     pub fn with_min_height(mut self, min_height: f32) -> Self {
         self.min_height = min_height;
         self
     }
 
+    /// Sets `settle_seconds`.
     pub fn with_settle_seconds(mut self, settle_seconds: f32) -> Self {
         self.settle_seconds = settle_seconds;
         self
     }
 
+    /// Sets `settle_speed`.
     pub fn with_settle_speed(mut self, settle_speed: f32) -> Self {
         self.settle_speed = settle_speed;
         self
@@ -234,7 +259,10 @@ pub struct Hindrance {
     pub strength: f32,
     /// How much of their strength the knees lose for a moment after each landing, from 0 to 1.
     pub give: f32,
-    /// The share of its strength the left leg keeps, from 0 to 1. A leg under a half is lame: its knee sags, and it is the one that steps, never the one stood on.
+    /// The share of its strength the left leg keeps, from 0 to 1.
+    ///
+    /// A leg under a half is lame: its knee sags, and it is the one that
+    /// steps, never the one stood on.
     pub left_leg: f32,
     /// The share of its strength the right leg keeps.
     pub right_leg: f32,
@@ -855,6 +883,7 @@ impl BalanceNode {
         }
     }
 
+    /// Sets `settings`.
     pub fn with_settings(mut self, settings: BalanceSettings) -> Self {
         self.settings = settings;
         self

@@ -11,29 +11,39 @@ use crate::{
     pose::{EvaluatedFrame, JointPose},
 };
 
+/// The stack of evaluated frames a graph is evaluated on, each node pushing its result for its parent to pop.
 pub struct AnimationGraphEvaluator {
     pub(crate) evaluation_stack: Vec<EvaluatedFrame>,
 }
 
 impl AnimationGraphEvaluator {
+    /// An evaluator with an empty stack.
     pub fn new() -> Self {
         Self {
             evaluation_stack: Vec::new(),
         }
     }
 
+    /// Pushes a node's evaluated frame onto the stack.
     pub fn push_evaluation(&mut self, evaluated_frame: EvaluatedFrame) {
         self.evaluation_stack.push(evaluated_frame);
     }
 
+    /// Pops the frame on top of the stack, or `None` when it is empty.
     pub fn pop_evaluation(&mut self) -> Option<EvaluatedFrame> {
         self.evaluation_stack.pop()
     }
 
+    /// The number of frames on the stack.
     pub fn stack_len(&self) -> usize {
         self.evaluation_stack.len()
     }
 
+    /// The frames from `start` to the top of the stack.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `start` is greater than [`stack_len`](Self::stack_len).
     pub fn view_stack(&self, start: usize) -> &[EvaluatedFrame] {
         &self.evaluation_stack[start..]
     }
@@ -107,6 +117,7 @@ pub struct AnimationGraphContext<'a> {
 }
 
 impl<'a> AnimationGraphContext<'a> {
+    /// The player's blackboard, which params are read from.
     pub fn blackboard(&self) -> &AnimationBlackboard {
         self.blackboard
     }
@@ -171,7 +182,10 @@ impl<'a> AnimationGraphContext<'a> {
         self.skeleton
     }
 
-    /// In `evaluate`, the world transform of the skeleton's model space as of this frame, after the character moved by its root motion: bone 0's parent's, or identity when it has none.
+    /// In `evaluate`, the world transform of the skeleton's model space as of this frame.
+    ///
+    /// It is taken after the character moved by its root motion: the world transform of bone
+    /// 0's parent, or identity when bone 0 has none.
     pub fn model_to_world(&self) -> Option<Affine3A> {
         self.model_to_world
     }

@@ -28,7 +28,9 @@ use crate::{
 
 const HISTORY_SECONDS: f32 = 1.0;
 
-/// Which layers of a character's motion matching are drawn; goes on the entity that holds `CharacterLink`.
+/// Which layers of a character's motion matching are drawn.
+///
+/// It goes on the entity that holds the [`CharacterLink`].
 #[derive(Component, Reflect, Clone, Debug, PartialEq)]
 #[reflect(Component, Default)]
 pub struct MotionMatchingGizmos {
@@ -52,7 +54,9 @@ impl Default for MotionMatchingGizmos {
     }
 }
 
-/// Draws `MotionMatchingGizmos` in game time; register it after `DefaultPlugins`.
+/// Draws [`MotionMatchingGizmos`] in game time.
+///
+/// Register it after `DefaultPlugins`.
 pub struct MotionMatchingGizmosPlugin;
 
 impl Plugin for MotionMatchingGizmosPlugin {
@@ -99,7 +103,9 @@ fn placed_channels(
     )
 }
 
-/// The shapes of the frame the node plays, per channel and placed at `bone`; `None` when they can't be read.
+/// The shapes of the frame the node plays, per channel and placed at `bone`.
+///
+/// `None` when they can't be read.
 pub fn matched_shapes(
     state: &MotionMatchingState,
     database: &MotionDatabase,
@@ -124,7 +130,9 @@ pub fn matched_shapes(
     )
 }
 
-/// The shapes of the last search's query, per channel and placed at `bone`; `None` before a search or when they can't be read.
+/// The shapes of the last search's query, per channel and placed at `bone`.
+///
+/// `None` before a search or when they can't be read.
 pub fn query_shapes(
     state: &MotionMatchingState,
     database: &MotionDatabase,
@@ -169,7 +177,7 @@ fn draw_channels(
     }
 }
 
-/// Draws what each character's `MotionMatchingGizmos` turns on, at where its capsule is drawn this frame.
+/// Draws what each character's [`MotionMatchingGizmos`] turns on, at where its capsule is drawn this frame.
 pub fn draw_motion_matching(
     mut characters: Query<(&mut MotionMatchingGizmos, &CharacterLink, &GlobalTransform)>,
     players: Query<&AnimationPlayer>,

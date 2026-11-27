@@ -43,7 +43,9 @@ use crate::{
 const RAW_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg16Float;
 const OCCLUSION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
 
-/// Darkens the ambient light of the standard material where nearby surfaces block it: creases, corners and contact with the ground. Goes on the camera's entity; a camera without one has none.
+/// Darkens the ambient light of the standard material where nearby surfaces block it: creases, corners and contact with the ground.
+///
+/// Goes on the camera's entity. A camera without one has none.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Reflect)]
 #[reflect(Component, Default, SceneComponent)]
 pub struct ScreenSpaceAmbientOcclusion {
@@ -76,7 +78,12 @@ impl ScreenSpaceAmbientOcclusion {
     }
 }
 
-/// Draws [`ScreenSpaceAmbientOcclusion`] for the cameras that have it, from a depth prepass in [`RenderSet::Prepass`]; requires `RenderPlugin`, registered before it.
+/// Draws [`ScreenSpaceAmbientOcclusion`] for the cameras that have it, from a depth prepass in [`RenderSet::Prepass`].
+///
+/// # Panics
+///
+/// Panics during [`finish`](Plugin::finish) if [`RenderPlugin`](crate::plugin::RenderPlugin)
+/// was not registered before it.
 pub struct AmbientOcclusionPlugin;
 
 impl Plugin for AmbientOcclusionPlugin {

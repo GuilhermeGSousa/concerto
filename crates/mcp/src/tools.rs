@@ -15,7 +15,9 @@ use serde_json::Value;
 
 use crate::{McpRead, McpServe, ToolError, answer_unanswered, receive_read_only_calls};
 
-/// What a tool needs before it can answer; a call no system answered gets the error its need names.
+/// What a tool needs before it can answer.
+///
+/// A call that no system answered gets the error its need names.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Needs {
     None,
@@ -143,7 +145,13 @@ fn assert_reads_only<M>(name: &str, system: impl IntoSystem<(), M>) {
 
 /// Adds MCP tools to an `App`; [`McpPlugin`](crate::McpPlugin) comes first.
 pub trait AppMcpExt {
-    /// Registers tool `A` and adds `system` to [`McpServe`], and also to [`McpRead`] for a read-only tool, whose system must only read; does nothing in an `App` without [`McpPlugin`](crate::McpPlugin).
+    /// Registers tool `A` and adds `system` to [`McpServe`], and also to [`McpRead`] for a read-only tool.
+    ///
+    /// It does nothing in an `App` without [`McpPlugin`](crate::McpPlugin).
+    ///
+    /// # Panics
+    ///
+    /// Panics when `tool` is read-only and `system` writes anything.
     fn add_tool<A, M>(
         &mut self,
         tool: McpTool,

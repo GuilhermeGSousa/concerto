@@ -51,6 +51,11 @@ impl Plugin for RagdollEditorPlugin {
 }
 
 /// Adds the ragdoll generator to the editor's `App`.
+///
+/// # Panics
+///
+/// Panics when `app` holds no asset-editor registry, which only the editor's
+/// `App` does, or when the `Ragdoll` asset already has an editor there.
 pub fn install(app: &mut App) {
     app.register_plugin(RagdollEditorPlugin);
 }

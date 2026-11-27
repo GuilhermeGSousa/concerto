@@ -56,26 +56,31 @@ impl FlinchNode {
         }
     }
 
+    /// Sets `dip`.
     pub fn with_dip(mut self, dip: f32) -> Self {
         self.dip = dip;
         self
     }
 
+    /// Sets `neighbour_dip`.
     pub fn with_neighbour_dip(mut self, neighbour_dip: f32) -> Self {
         self.neighbour_dip = neighbour_dip;
         self
     }
 
+    /// Sets `recover`.
     pub fn with_recover(mut self, recover: f32) -> Self {
         self.recover = recover;
         self
     }
 
+    /// Sets `hold`.
     pub fn with_hold(mut self, hold: f32) -> Self {
         self.hold = hold;
         self
     }
 
+    /// Sets `settle`.
     pub fn with_settle(mut self, settle: f32) -> Self {
         self.settle = settle;
         self

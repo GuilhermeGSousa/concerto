@@ -275,6 +275,10 @@ impl World {
     /// Adds components to an existing entity, migrating it to the appropriate archetype.
     ///
     /// If the entity already has a component of type `T`, the existing value is replaced.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `entity` is not live in this world.
     pub fn insert<T: IntoBundle>(&mut self, bundle: T, entity: Entity) {
         self.insert_internal(bundle.into_bundle(), entity);
         self.flush_commands();
@@ -492,7 +496,7 @@ impl World {
         }
     }
 
-    // Inserts a resource into the world with its default value.
+    /// Inserts a resource into the world with its default value.
     pub fn init_resource<T: Resource + Default>(&mut self) {
         self.insert_resource(T::default());
     }
@@ -505,6 +509,12 @@ impl World {
     }
 
     /// Takes `T` out of the world while `f` runs, then puts it back with its change ticks as they were.
+    ///
+    /// Does nothing when `T` is missing.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `f` inserts a new `T` into the world.
     pub fn resource_scope<T: Resource + 'static>(&mut self, f: impl FnOnce(&mut World, &T)) {
         let id = TypeId::of::<T>();
         let Some(data) = self.resources.remove(&id) else {
@@ -808,10 +818,11 @@ impl World {
             })
     }
 
-    /// Spawns the component registered under `type_name` from `value` onto `entity`,
-    /// resolving node references through `node_entities`. Returns `false`, having
-    /// logged why, when no scene component is registered under that name; parts of
-    /// `value` that do not fit are skipped with a warning.
+    /// Inserts the scene component registered under `type_name`, built from `value`, onto
+    /// `entity`, resolving node references through `node_entities`.
+    ///
+    /// Returns `false`, having logged why, when no scene component is registered under that
+    /// name. Parts of `value` that do not fit are skipped with a warning.
     pub fn apply_scene_component(
         &mut self,
         type_name: &str,
@@ -1050,6 +1061,10 @@ impl<'w> UnsafeWorldCell<'w> {
     }
 
     /// Borrows the whole world for writing.
+    ///
+    /// # Panics
+    ///
+    /// In debug builds, panics if the cell was made from a shared borrow of the world.
     ///
     /// # Safety
     /// The caller must have exclusive access to everything it touches, and no other

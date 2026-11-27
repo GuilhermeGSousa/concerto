@@ -40,12 +40,19 @@ use crate::{
 const BLINK: Duration = Duration::from_millis(530);
 const CARET: f32 = 1.0;
 
-/// A single-line text input, edited through cosmic-text while focused and selected whole when it gains focus; with a `UIText` and a `UINode` it is drawn by a label inside it that holds that text, and scrolls horizontally to keep the caret visible.
+/// A single-line text input, edited through cosmic-text while focused.
+///
+/// Its whole text is selected when it gains focus. With a `UIText` and a
+/// `UINode` it is drawn by a label inside it that holds that text, and scrolls
+/// horizontally to keep the caret visible.
 #[derive(Component)]
 pub struct UITextInput {
     /// Current string value of the field.
     pub value: String,
-    /// Shown when the field is empty, drawn at half the alpha of the field's text colour, which is fixed when the field is set up.
+    /// Shown when the field is empty.
+    ///
+    /// It is drawn at half the alpha of the field's text colour, which is fixed
+    /// when the field is set up.
     pub placeholder: String,
     /// Byte offset of the insert cursor within `value`.
     pub cursor: usize,

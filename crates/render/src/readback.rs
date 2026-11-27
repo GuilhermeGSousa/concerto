@@ -3,6 +3,11 @@ use image::RgbaImage;
 use crate::gpu::Gpu;
 
 /// Bytes per row of `width` texels of `format`, rounded up to `COPY_BYTES_PER_ROW_ALIGNMENT`.
+///
+/// # Panics
+///
+/// Panics when `format` has no single copy size over all its aspects, as a
+/// combined depth-stencil format does.
 pub fn padded_bytes_per_row(width: u32, format: wgpu::TextureFormat) -> u32 {
     let block_copy_size = format
         .block_copy_size(Some(wgpu::TextureAspect::All))
@@ -12,6 +17,11 @@ pub fn padded_bytes_per_row(width: u32, format: wgpu::TextureFormat) -> u32 {
 }
 
 /// Copies an RGBA8 texture back from the GPU, blocking until it arrives.
+///
+/// # Panics
+///
+/// Panics when `texture` is not a 4-byte-per-texel format, when it lacks
+/// `COPY_SRC` usage, or when the device fails while waiting for the copy.
 pub fn read_texture(gpu: &Gpu, texture: &wgpu::Texture) -> RgbaImage {
     let size = texture.size();
     let (width, height) = (size.width, size.height);

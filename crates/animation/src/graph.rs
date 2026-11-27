@@ -41,7 +41,10 @@ type AnimationDirectedGraph = DiGraph<AnimationNodeData, ()>;
 
 static PLACEHOLDER: PlaceholderNode = PlaceholderNode {};
 
-/// One node as a graph holds it: `Stored` until built, `Live` once built, or a `Placeholder` that plays as [`PlaceholderNode`] and keeps the value it could not build.
+/// One node as a graph holds it.
+///
+/// A node is `Stored` until built and `Live` once built. One that could not be built becomes a
+/// `Placeholder`, which plays as [`PlaceholderNode`] and keeps the value it could not build.
 #[derive(Reflect)]
 #[reflect(opaque, Json)]
 pub enum AnimationNodeData {
@@ -61,6 +64,10 @@ pub enum AnimationNodeData {
 
 impl AnimationNodeData {
     /// The stored data of a typed node.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `node` cannot be encoded through reflection.
     pub fn of<T: AnimationNode>(node: &T) -> Self {
         Self::Stored {
             type_name: std::any::type_name::<T>().to_owned(),
@@ -86,6 +93,10 @@ impl AnimationNodeData {
     }
 
     /// The reflected value a save writes.
+    ///
+    /// # Errors
+    ///
+    /// Returns an [`EncodeError`] when a live node cannot be encoded through reflection.
     pub fn value(&self) -> Result<Cow<'_, ReflectedValue>, EncodeError> {
         match self {
             Self::Stored { value, .. } | Self::Placeholder { value, .. } => {
@@ -359,7 +370,14 @@ impl AnimationGraph {
         }
     }
 
-    /// Builds every node not yet live from its stored value, loading handles through `server`; a node that cannot be built becomes a placeholder and leaves a warning.
+    /// Builds every node not yet live from its stored value, loading handles through `server`.
+    ///
+    /// A node that cannot be built becomes a placeholder and leaves a warning in the graph's
+    /// load warnings.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the graph's result node is not one of its nodes.
     pub fn make_live(
         &mut self,
         registry: &TypeRegistry,
@@ -499,6 +517,11 @@ impl AnimationGraph {
     }
 
     /// Appends `child` as the next input of `parent`.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`ConnectError`] when either index is not a node of the graph, when `child`
+    /// is the result node or already has a parent, or when the edge would close a cycle.
     pub fn connect(
         &mut self,
         parent: AnimationNodeIndex,
@@ -605,7 +628,11 @@ impl<'a> AnimationNodeContext<'a> {
         )
     }
 
-    /// Adds `node` as an input, its base through `base` and then its overlay through `overlay`; panics unless each closure adds exactly one input.
+    /// Adds `node` as an input, its base through `base` and then its overlay through `overlay`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `base` or `overlay` does not add exactly one input.
     pub fn add_layer_input_with(
         &mut self,
         node: LayerNode,
@@ -731,7 +758,9 @@ impl AnimationGraphState {
         }
     }
 
-    /// Calls `f` with each playing node in node order, the nodes of the graphs it plays inside itself after it: its path from this graph, its weight, the node and its state.
+    /// Calls `f` with each playing node in node order, with its path from this graph, its weight, the node and its state.
+    ///
+    /// The nodes of the graphs a node plays inside itself come right after it.
     pub fn for_each_node(
         &self,
         graphs: &AssetStore<AnimationGraph>,

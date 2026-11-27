@@ -168,12 +168,25 @@ the checks for the owner in its review comment.
 
 ## Code rules
 
-**Comments.** Write none, in any file type, except a one-line `///` on a public
-item. That covers Rust, WGSL, TOML, YAML, and shell. Two exceptions: an
-`unsafe` block may carry one `// SAFETY:` line saying why it is sound, and an
-`unsafe fn` may carry a `# Safety` section in its doc comment. Design reasoning
-goes in your reply or in the spec. Leave existing comments alone unless the
-code they describe changes.
+**Comments.** Only public API carries comments, as doc comments: `///` on a
+public item, and `//!` at the top of a crate or a public module. Write them to
+the Rust API guidelines and the rustdoc conventions:
+
+- Open with a one-sentence summary of what the item is or does. Add
+  paragraphs only for what the signature and the summary do not say:
+  invariants, units, ownership, when to reach for it.
+- A function that returns `Result` has an `# Errors` section, one that can
+  panic a `# Panics` section, and an `unsafe fn` or `unsafe trait` a
+  `# Safety` section saying what the caller must uphold.
+- Add an `# Examples` section where usage is not obvious from the signature;
+  it is a doctest, so it compiles and runs.
+- Link the items you name with intra-doc links: ``[`Query`]``.
+
+Nothing else carries a comment, in any file type: no `//` in Rust, and none in
+WGSL, TOML, YAML or shell. The one exception is an `unsafe` block, which may
+carry one `// SAFETY:` line saying why it is sound. Design reasoning goes in
+your reply or in the spec. Leave existing comments alone unless the code they
+describe changes.
 
 **Systems never take the world.** A system's parameters are `Query`, `Res`,
 `Option<Res<T>>`, `ResMut`, `Option<ResMut<T>>`, `CommandQueue`, `EventReader`, `EventWriter`, `RemovedComponents<T>` (once a plugin calls `App::track_removals::<T>()`), `SystemLocal`,

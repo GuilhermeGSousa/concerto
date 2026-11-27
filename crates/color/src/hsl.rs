@@ -1,6 +1,9 @@
 use crate::{LinearRgba, Srgba};
 
-/// Hue-Saturation-Lightness + alpha over sRGB-encoded values: hue in degrees, `s` and `l` not clamped.
+/// A hue, saturation and lightness color with alpha, over sRGB-encoded values.
+///
+/// The hue `h` is in degrees. Saturation `s` and lightness `l` are nominally in
+/// 0.0 to 1.0 and are not clamped.
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Hsla {
     pub h: f32,

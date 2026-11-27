@@ -51,7 +51,7 @@ impl Aabb {
 }
 
 impl Mesh {
-    /// The nearest triangle the ray hits, from either side.
+    /// The distance along the ray to the nearest triangle it hits, from either side.
     pub fn ray_hit(&self, ray: &Ray) -> Option<f32> {
         let position = |index: u32| {
             self.vertices

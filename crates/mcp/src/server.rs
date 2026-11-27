@@ -85,6 +85,11 @@ impl ServerHandle {
 }
 
 /// Serves MCP over `io` on a new thread, offering the tools `app` has registered so far.
+///
+/// # Panics
+///
+/// Panics when `app` has no [`McpPlugin`](crate::McpPlugin), or when the thread
+/// or its runtime cannot start.
 pub fn spawn_server<IO>(app: &App, io: IO) -> ServerHandle
 where
     IO: AsyncRead + AsyncWrite + Send + Unpin + 'static,

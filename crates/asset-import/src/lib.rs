@@ -71,12 +71,24 @@ pub trait ErasedImporter: Send + Sync {
     fn default_asset_settings(&self) -> Option<Box<dyn Reflect>>;
 
     /// Reads importer settings from a sidecar's `[settings]` table.
+    ///
+    /// # Errors
+    ///
+    /// Returns the deserializer's message when the table does not match the importer's settings type.
     fn settings_from_toml(&self, table: &toml::Table) -> Result<Box<dyn Reflect>, String>;
 
     /// Writes importer settings as a sidecar's `[settings]` table.
+    ///
+    /// # Errors
+    ///
+    /// Returns a message when `settings` is not of the importer's settings type or does not serialize to TOML.
     fn settings_to_toml(&self, settings: &dyn Reflect) -> Result<toml::Table, String>;
 
     /// A copy of this importer's settings or asset settings.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `settings` is of neither the importer's settings type nor its asset settings type.
     fn clone_settings(&self, settings: &dyn Reflect) -> Box<dyn Reflect>;
 
     /// The asset settings the source's asset holds now, or `None` when it has none yet.
@@ -85,7 +97,12 @@ pub trait ErasedImporter: Send + Sync {
     /// Whether the importer has asset settings.
     fn has_asset_settings(&self) -> bool;
 
-    /// Imports with settings of this importer's types; a value of another type fails, naming the expected one.
+    /// Imports with settings of this importer's types.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ImportError::MalformedSource`] naming the expected type when `settings` or
+    /// `asset_settings` is of another type, and otherwise whatever the importer returns.
     fn import(
         &self,
         source_path: &Path,

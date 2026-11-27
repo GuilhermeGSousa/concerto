@@ -54,11 +54,13 @@ impl StaggerNode {
         }
     }
 
+    /// Sets `settings`.
     pub fn with_settings(mut self, settings: StaggerSettings) -> Self {
         self.settings = settings;
         self
     }
 
+    /// Sets `balance`.
     pub fn with_balance(mut self, balance: BalanceSettings) -> Self {
         self.balance = balance;
         self

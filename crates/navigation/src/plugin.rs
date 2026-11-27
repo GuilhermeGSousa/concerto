@@ -24,7 +24,9 @@ use crate::{
     point::{NavLink, NavLinks, NavPoint},
 };
 
-/// Registers the navigation components and the `NavMesh` asset, keeps `NavGraph` in step with them, and steers agents; needs an `AssetServer`.
+/// Registers the navigation components and the `NavMesh` asset, keeps `NavGraph` in step with them, and steers agents.
+///
+/// It needs an `AssetServer`.
 pub struct NavigationPlugin;
 
 impl Plugin for NavigationPlugin {

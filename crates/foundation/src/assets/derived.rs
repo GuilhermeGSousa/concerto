@@ -25,17 +25,31 @@ use super::{
     Asset, AssetId, ContentAssetRoot, LoadableAsset, UncookedData,
 };
 
-/// An asset whose runtime part is a blob derived from other content assets, cached by a key it defines.
+/// An asset whose runtime part is a blob derived from other content assets.
+///
+/// The blob is cached by a key the asset defines, and a cook writes it into
+/// the asset's file.
 pub trait DerivedData: LoadableAsset {
-    /// Bumped when `derive`'s output changes for the same inputs; part of the cache path.
+    /// The version of [`derive`](Self::derive)'s output.
+    ///
+    /// Bump it when the output changes for the same inputs. It is part of the
+    /// cache path, and a cooked blob of another version is derived again.
     const DERIVED_VERSION: u32;
 
-    /// Whether this asset has a blob to derive; one that doesn't loads as it is and is not cooked.
+    /// Whether this asset has a blob to derive.
+    ///
+    /// One that doesn't loads as it is and is not cooked.
     fn is_derived(&self) -> bool {
         true
     }
 
-    /// Whether the content asset with this header and payload derives; decodes it and asks [`is_derived`](Self::is_derived) unless overridden.
+    /// Whether the content asset with this header and payload derives.
+    ///
+    /// The default decodes it and asks [`is_derived`](Self::is_derived).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the payload does not decode.
     fn file_is_derived(header: &ContentAssetHeader, payload: &[u8]) -> anyhow::Result<bool> {
         Ok(
             decode_content_payload::<Self>(&header.kind, header.kind_version, payload)?
@@ -47,14 +61,28 @@ pub trait DerivedData: LoadableAsset {
     fn derived_inputs(&self) -> Vec<AssetId>;
 
     /// Further inputs named by the first inputs, such as the meshes a scene places.
+    ///
+    /// # Errors
+    ///
+    /// An error fails the load or cook that derives the asset.
     fn further_inputs(&self, _inputs: &DerivedInputs) -> anyhow::Result<Vec<AssetId>> {
         Ok(Vec::new())
     }
 
-    /// The cache key for the blob these inputs give; equal keys mean an equal blob.
+    /// The cache key for the blob these inputs give.
+    ///
+    /// Equal keys mean an equal blob.
+    ///
+    /// # Errors
+    ///
+    /// An error fails the load or cook that derives the asset.
     fn derived_key(&self, inputs: &DerivedInputs) -> anyhow::Result<u64>;
 
     /// Builds the blob, calling `progress(finished, total)` as it goes.
+    ///
+    /// # Errors
+    ///
+    /// An error fails the load or cook that derives the asset.
     fn derive(
         &self,
         inputs: &DerivedInputs,
@@ -62,6 +90,12 @@ pub trait DerivedData: LoadableAsset {
     ) -> anyhow::Result<Vec<u8>>;
 
     /// Takes the blob into the asset's runtime part.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the blob does not fit the asset. A cached or
+    /// cooked blob that is refused is derived again; a freshly derived one that
+    /// is refused fails the load or cook.
     fn apply_derived(&mut self, blob: &[u8]) -> anyhow::Result<()>;
 }
 
@@ -93,7 +127,12 @@ pub struct DerivedInputs {
 }
 
 impl DerivedInputs {
-    /// Reads each of `ids` as a load would, failing on an id that is missing or names an asset that itself derives.
+    /// Reads each of `ids` as a load would.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when an id is not in `registry`, its file cannot be
+    /// read or is malformed, or it names an asset that itself derives.
     pub async fn read(
         root: &ContentAssetRoot,
         registry: &AssetRegistry,
@@ -105,6 +144,10 @@ impl DerivedInputs {
     }
 
     /// Reads each of `ids` not read yet, under the same rules as [`read`](Self::read).
+    ///
+    /// # Errors
+    ///
+    /// Fails as [`read`](Self::read) does.
     pub async fn read_more(
         &mut self,
         root: &ContentAssetRoot,
@@ -125,6 +168,10 @@ impl DerivedInputs {
     }
 
     /// Inputs that carry `value` as the deriving asset's own uncooked data.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `value` does not serialize.
     pub fn with_own_uncooked<E: UncookedData>(mut self, value: &E) -> anyhow::Result<Self> {
         self.own_uncooked = Some(UncookedBytes {
             kind: E::Asset::name().to_string(),
@@ -134,7 +181,15 @@ impl DerivedInputs {
         Ok(self)
     }
 
-    /// The deriving asset's own uncooked data, decoded as `E`; only `derive` may ask, and it fails for a file that holds none.
+    /// The deriving asset's own uncooked data, decoded as `E`.
+    ///
+    /// Only [`DerivedData::derive`] may ask for it, since
+    /// [`DerivedData::derived_key`] must come from the payload.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the file holds no uncooked data, as a cooked file
+    /// never does, or the data does not decode as `E`.
     pub fn own_uncooked<E: UncookedData>(&self) -> anyhow::Result<E> {
         let section = self.own_uncooked.as_ref().with_context(|| {
             format!(
@@ -151,6 +206,11 @@ impl DerivedInputs {
     }
 
     /// Decodes input `id` as a `T`, checking its kind and migrating it as a load does, without `on_load`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `id` was not read, or its record does not decode
+    /// as a `T`.
     pub fn decode<T: Asset>(&self, id: AssetId) -> anyhow::Result<T> {
         let bytes = self
             .bytes(id)
@@ -244,7 +304,9 @@ impl DerivedDataCache {
         Some((dir, format!("{key:016x}.blob")))
     }
 
-    /// The blob cached for `type_name` at `version` under `key`; a read error is a miss.
+    /// The blob cached for `type_name` at `version` under `key`.
+    ///
+    /// A read error is logged and counts as a miss.
     pub fn get(&self, type_name: &str, version: u32, key: u64) -> Option<Vec<u8>> {
         let (dir, name) = self.entry(type_name, version, key)?;
         let path = dir.join(name);
@@ -258,7 +320,10 @@ impl DerivedDataCache {
         }
     }
 
-    /// Stores `blob` for `type_name` at `version` under `key`, through a uniquely named temporary file; a failure is logged.
+    /// Stores `blob` for `type_name` at `version` under `key`.
+    ///
+    /// The blob is written through a uniquely named temporary file, so a reader
+    /// never sees half of it. A failure is logged.
     pub fn put(&self, type_name: &str, version: u32, key: u64, blob: &[u8]) {
         let Some((dir, name)) = self.entry(type_name, version, key) else {
             return;
@@ -291,7 +356,10 @@ pub(crate) type CookHook = fn(id: AssetId, file: Vec<u8>, server: AssetServer) -
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CookReport {
-    /// The address of every file written under the output directory: one whose asset derives, with its blob, and any other that had an uncooked section, without it.
+    /// The address of every file written under the output directory.
+    ///
+    /// A file is written when its asset derives, with its blob, or when it had
+    /// an uncooked section, without that section.
     pub cooked: Vec<String>,
 }
 

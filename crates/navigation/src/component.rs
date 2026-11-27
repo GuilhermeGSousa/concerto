@@ -45,7 +45,9 @@ fn status_of(data: &NavMeshData) -> NavMeshStatus {
     }
 }
 
-/// Writes a [`NavMeshStatus`] on each [`NavMeshComponent`] entity whose navmesh is loaded, and removes it from those whose navmesh is not.
+/// Writes a [`NavMeshStatus`] on each [`NavMeshComponent`] entity whose navmesh is loaded.
+///
+/// It removes the status from those whose navmesh is not.
 pub fn update_nav_mesh_status(
     components: Query<(Entity, &NavMeshComponent, Option<&NavMeshStatus>)>,
     navmeshes: Res<AssetStore<NavMesh>>,

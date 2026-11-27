@@ -26,6 +26,7 @@ use derive_more::Deref;
 use glam::Vec2;
 use uuid::Uuid;
 
+/// A state to build an [`AnimationStateMachine`] with: its name and the graph it plays.
 pub struct AnimationFSMStateDefinition {
     pub name: Name,
     pub graph: AssetHandle<AnimationGraph>,
@@ -37,6 +38,7 @@ pub(crate) struct AnimationFSMState {
     graph: AssetHandle<AnimationGraph>,
 }
 
+/// What makes a transition of an [`AnimationStateMachine`] fire.
 #[derive(Debug, Clone, Default, Reflect, serde::Serialize, serde::Deserialize)]
 pub enum AnimationFSMTrigger {
     #[default]
@@ -56,6 +58,7 @@ pub enum AnimationFSMTrigger {
 }
 
 impl AnimationFSMTrigger {
+    /// Fires while the bool param `param` equals `cond`.
     pub fn on_bool(param: impl Into<Param<bool>>, cond: bool) -> Self {
         Self::BoolEquals {
             param: param.into(),
@@ -63,6 +66,7 @@ impl AnimationFSMTrigger {
         }
     }
 
+    /// Fires while the `Vec2` param `param` is not zero.
     pub fn on_non_zero_vec(param: impl Into<Param<Vec2>>) -> Self {
         Self::Vec2NonZero {
             param: param.into(),
@@ -78,6 +82,10 @@ impl AnimationFSMTrigger {
     }
 
     /// Fires on a message of type `M` whose every field equals the one in `message`, defaults included.
+    ///
+    /// # Errors
+    ///
+    /// Returns an [`EncodeError`] when `message` cannot be encoded through reflection.
     pub fn on_message_value<M: AnimationMessage>(message: &M) -> Result<Self, EncodeError> {
         Ok(Self::OnMessage {
             message: MessageType::of::<M>(),
@@ -86,6 +94,7 @@ impl AnimationFSMTrigger {
     }
 }
 
+/// A transition to build an [`AnimationStateMachine`] with: the state it goes to, what fires it and how long it blends, in seconds.
 pub struct AnimationStateMachineTransitionDefinition {
     pub target_state: Name,
     pub trigger: AnimationFSMTrigger,
@@ -99,6 +108,7 @@ pub(crate) struct AnimationStateMachineTransition {
     blend_time: f32,
 }
 
+/// The index of a state in its [`AnimationStateMachine`].
 #[derive(Clone, Copy, Default, Deref, Reflect, serde::Serialize, serde::Deserialize)]
 pub struct StateId(usize);
 
@@ -154,6 +164,7 @@ impl StateId {
     }
 }
 
+/// A node that plays one graph per state and blends to another state when a transition fires.
 #[derive(Default, Reflect, serde::Serialize, serde::Deserialize)]
 #[reflect(AnimationNode)]
 pub struct AnimationStateMachine {
@@ -165,6 +176,10 @@ pub struct AnimationStateMachine {
 }
 
 impl AnimationStateMachine {
+    /// A machine of `states_definition` starting in `initial_state`, with the transitions out of each named state.
+    ///
+    /// A transition to an unknown state goes to the first state, and so does an unknown
+    /// `initial_state`.
     pub fn new(
         initial_state: Name,
         states_definition: Vec<AnimationFSMStateDefinition>,
@@ -211,6 +226,7 @@ impl AnimationStateMachine {
         }
     }
 
+    /// Starts a builder whose first state, `state_name`, is the initial one, adding its transitions through `f`.
     pub fn from_initial_state(
         state_name: Name,
         state_graph: AssetHandle<AnimationGraph>,
@@ -247,6 +263,10 @@ impl AnimationStateMachine {
     }
 
     /// The transitions out of `from`, in the order the machine tries them.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StateMachineEditError::UnknownState`] when the machine has no state `from`.
     pub fn transitions(
         &self,
         from: Name,
@@ -269,7 +289,13 @@ impl AnimationStateMachine {
             }))
     }
 
-    /// Adds a state after the others; the first state added is the initial one.
+    /// Adds a state after the others.
+    ///
+    /// The first state added is the initial one.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StateMachineEditError::DuplicateState`] when a state named `name` exists.
     pub fn add_state(
         &mut self,
         name: Name,
@@ -283,7 +309,13 @@ impl AnimationStateMachine {
         Ok(())
     }
 
-    /// Removes a state with every transition to or from it; a removed initial state hands over to the first state.
+    /// Removes a state with every transition to or from it.
+    ///
+    /// When the removed state was the initial one, the first remaining state becomes initial.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StateMachineEditError::UnknownState`] when the machine has no state `name`.
     pub fn remove_state(&mut self, name: Name) -> Result<(), StateMachineEditError> {
         let removed = self.state_index(name)?;
         self.states.remove(removed);
@@ -306,6 +338,11 @@ impl AnimationStateMachine {
     }
 
     /// Renames a state; its transitions follow it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StateMachineEditError::UnknownState`] when the machine has no state `name`,
+    /// and [`StateMachineEditError::DuplicateState`] when another state is named `to`.
     pub fn rename_state(&mut self, name: Name, to: Name) -> Result<(), StateMachineEditError> {
         let index = self.state_index(name)?;
         if to != name && self.state_index(to).is_ok() {
@@ -316,6 +353,10 @@ impl AnimationStateMachine {
     }
 
     /// Replaces the graph a state plays.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StateMachineEditError::UnknownState`] when the machine has no state `name`.
     pub fn set_state_graph(
         &mut self,
         name: Name,
@@ -327,6 +368,11 @@ impl AnimationStateMachine {
     }
 
     /// Adds a transition after the others out of `from` and returns its index among them.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StateMachineEditError::UnknownState`] when the machine has no state `from`
+    /// or `to`.
     pub fn add_transition(
         &mut self,
         from: Name,
@@ -349,6 +395,11 @@ impl AnimationStateMachine {
     }
 
     /// Removes the transition at `index` among those out of `from`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StateMachineEditError::UnknownState`] when the machine has no state `from`,
+    /// and [`StateMachineEditError::TransitionOutOfRange`] when it has no transition `index`.
     pub fn remove_transition(
         &mut self,
         from: Name,
@@ -365,6 +416,11 @@ impl AnimationStateMachine {
     }
 
     /// Replaces the trigger and blend time of the transition at `index` among those out of `from`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StateMachineEditError::UnknownState`] when the machine has no state `from`,
+    /// and [`StateMachineEditError::TransitionOutOfRange`] when it has no transition `index`.
     pub fn set_transition(
         &mut self,
         from: Name,
@@ -384,6 +440,10 @@ impl AnimationStateMachine {
     }
 
     /// Makes a state the one the machine starts in.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StateMachineEditError::UnknownState`] when the machine has no state `name`.
     pub fn set_initial(&mut self, name: Name) -> Result<(), StateMachineEditError> {
         self.initial_state = StateId(self.state_index(name)?);
         Ok(())
@@ -420,8 +480,9 @@ impl AnimationStateMachine {
         self.transitions.get(*state_index)
     }
 
-    /// Every transition trigger, flattened across states — lets callers inspect
-    /// trigger payloads without exposing the private transition table.
+    /// Every transition trigger, flattened across states.
+    ///
+    /// Lets callers inspect trigger payloads without reaching the transition table.
     pub fn triggers(&self) -> impl Iterator<Item = &AnimationFSMTrigger> + '_ {
         self.transitions
             .iter()
@@ -438,6 +499,7 @@ pub struct TransitionView {
     pub progress: f32,
 }
 
+/// The per-player state of an [`AnimationStateMachine`]: its states' graph states, the current state and the blend in flight.
 pub struct AnimationStateMachineState {
     state_graphs: AnimationGraphStates,
     current_state: StateId,
@@ -479,6 +541,7 @@ impl AnimationStateMachineState {
         self.reset_pending = true;
     }
 
+    /// The name of the state the machine is in.
     pub fn current_state_name(&self) -> Option<Name> {
         self.state_names.get(*self.current_state).copied()
     }
@@ -761,6 +824,7 @@ struct FSMTransitionEntry {
     blend_time: f32,
 }
 
+/// Builds an [`AnimationStateMachine`] state by state; see [`AnimationStateMachine::from_initial_state`].
 pub struct AnimationStateMachineBuilder {
     initial_state: Name,
     states: Vec<FSMStateEntry>,
@@ -775,6 +839,7 @@ impl AnimationStateMachineBuilder {
         self
     }
 
+    /// Adds the state `state_name`, playing `state_graph`, and its transitions through `f`.
     pub fn state(
         mut self,
         state_name: Name,
@@ -793,6 +858,7 @@ impl AnimationStateMachineBuilder {
         self
     }
 
+    /// The machine, with a transition to an unknown state going to the first state.
     pub fn build(self) -> AnimationStateMachine {
         let mut name_to_index: HashMap<Name, StateId> = HashMap::new();
         let mut states = Vec::new();
@@ -833,12 +899,14 @@ impl AnimationStateMachineBuilder {
     }
 }
 
+/// Adds the transitions out of one state of an [`AnimationStateMachineBuilder`].
 pub struct TransitionBuilder<'a> {
     builder: &'a mut AnimationStateMachineBuilder,
     from: Name,
 }
 
 impl TransitionBuilder<'_> {
+    /// Adds a transition to `state_name`, fired by `trigger` and blended over `blend_time` seconds.
     pub fn to(
         &mut self,
         state_name: Name,

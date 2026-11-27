@@ -94,19 +94,14 @@ impl SkeletonLayout {
     }
 }
 
-// Bind-group layout for `@group(2)` in the default material convention:
-// the lights uniform, both shadow-map arrays, and the spot/directional
-// shadow view-proj array, merged into one group.
-// wgpu only guarantees 4 bind groups (`max_bind_groups`); camera(1) +
-// lighting(2) + skeleton(3) fits that without requesting an elevated device
-// limit, whereas splitting lights/spot-directional-shadows/point-shadows
-// into three separate groups (as they used to be) would need 6 groups
-// total for a material needing lighting+skeleton+shadows. Lights and
-// shadow sampling are both "once per frame, not per-draw" data, unlike
-// camera (per-`RenderCamera`) or skeleton (per-mesh dynamic offset), so
-// merging them doesn't introduce the per-camera invalidation cost that
-// merging camera in as well would have.
 /// Bind-group layout for the lights uniform and the shadow maps, `@group(2)` in the default material convention.
+///
+/// The group holds the lights uniform, both shadow-map arrays and the spot and
+/// directional shadow view-projection array. Keeping them in one group lets
+/// camera (1), lighting (2) and skeleton (3) fit the four bind groups wgpu
+/// guarantees (`max_bind_groups`) without an elevated device limit. Lights and
+/// shadow sampling change once per frame rather than per draw, so merging them
+/// adds no per-camera invalidation.
 #[derive(Resource, Deref)]
 pub struct LightingLayout(pub(crate) wgpu::BindGroupLayout);
 

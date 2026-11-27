@@ -36,7 +36,9 @@ impl Medium {
     }
 }
 
-/// A table of linear values for an `Rgba16Float` texture, row by row from `v = 0`; texel `(x, y)` holds the value at `(x / (width - 1), y / (height - 1))`.
+/// A table of linear values for an `Rgba16Float` texture, row by row from `v = 0`.
+///
+/// Texel `(x, y)` holds the value at `(x / (width - 1), y / (height - 1))`.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Lut {
     pub width: u32,
@@ -60,6 +62,10 @@ impl Lut {
     }
 
     /// Bilinear sample at unit coordinates, clamped to the edges; zero for an empty table.
+    ///
+    /// # Panics
+    ///
+    /// Panics when a non-empty table holds fewer than `width * height` texels.
     pub fn sample(&self, unit: Vec2) -> Vec3 {
         if self.texels.is_empty() {
             return Vec3::ZERO;

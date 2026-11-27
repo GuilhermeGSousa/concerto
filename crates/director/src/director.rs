@@ -58,7 +58,9 @@ enum DirectorState {
 }
 
 impl CameraDirector {
-    /// The [`MainCamera`] being driven: the one with the lowest entity index, `None` while the level has none.
+    /// The [`MainCamera`] being driven, the one with the lowest entity index.
+    ///
+    /// It is `None` while the level has none.
     pub fn main_camera(&self) -> Option<Entity> {
         self.main_camera
     }

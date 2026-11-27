@@ -6,12 +6,13 @@ pub use crate::asset_id;
 #[doc(hidden)]
 pub use concerto_foundation_macros::asset_id_bytes as __asset_id_bytes;
 
-/// Read a content asset's persistent UUID at compile time.
+/// Reads a content asset's persistent UUID at compile time.
 ///
 /// Paths are relative to the calling package's manifest. Register the content
 /// directory with `concerto_asset_build::track_assets` in that package's build script.
 /// Only the header is read; the expansion is a constant UUID, not asset bytes.
 /// A missing file expands to `AssetId::nil()` with a warning.
+///
 /// `"content/hero/scene.gasset#mesh/0"` names an asset embedded in a file.
 ///
 /// ```ignore
@@ -34,10 +35,11 @@ pub mod handle;
 pub mod registry;
 pub mod utils;
 
-/// Where the runtime finds content asset files. Only the root differs per
-/// platform; every address is a full path relative to it (e.g.
-/// `"content/hero/scene.gasset"` — the `content/` segment is part of the
-/// address, not injected by the root).
+/// Where the runtime finds content asset files.
+///
+/// Only the root differs per platform. Every address is a full path relative
+/// to it, such as `"content/hero/scene.gasset"`: the `content/` segment is
+/// part of the address, not injected by the root.
 #[derive(Debug, Clone)]
 pub enum ContentAssetRoot {
     /// Native: the directory containing the executable.
@@ -47,13 +49,17 @@ pub enum ContentAssetRoot {
 }
 
 impl ContentAssetRoot {
-    /// Native: [`content_root_for_exe`] of the running executable, an
+    /// The content root of the running program on this platform.
+    ///
+    /// Natively it is [`content_root_for_exe`] of the running executable: an
     /// executable-specific content directory when it holds `content/`,
     /// otherwise the directory containing the executable. Cargo workspace
     /// binaries can therefore coexist in one target directory by placing
-    /// content under `<exe-dir>/<exe-name>-content/`; packaged applications
-    /// can place `content/` directly beside the executable. wasm uses the
-    /// page's base URL, so games hosted under a sub-path find their content.
+    /// content under `<exe-dir>/<exe-name>-content/`, while packaged
+    /// applications place `content/` directly beside the executable.
+    ///
+    /// On wasm it is the page's base URL, so games hosted under a sub-path
+    /// find their content.
     pub fn default_for_platform() -> Self {
         cfg_if::cfg_if! {
             if #[cfg(target_arch = "wasm32")] {
@@ -111,19 +117,26 @@ impl Default for ContentAssetRoot {
 
 pub use concerto_asset_format::AssetId;
 
-/// A unit of loadable engine content. The `Serialize + DeserializeOwned`
-/// supertrait means a serialized, on-disk asset is just an `Asset` —
-/// `ImportContext::emit` needs no separate DTO trait. Reach for a distinct
-/// DTO type only when the live asset holds data that genuinely cannot
-/// serialize (GPU descriptor handles, `&'static` refs) — never merely for an
-/// `AssetHandle<T>` field, which serializes to its bare `AssetId`.
+/// A unit of loadable engine content.
+///
+/// The `Serialize + DeserializeOwned` supertrait means a serialized, on-disk
+/// asset is just an `Asset`, so `ImportContext::emit` needs no separate DTO
+/// trait. Reach for a distinct DTO type only when the live asset holds data
+/// that cannot serialize, such as GPU descriptor handles or `&'static`
+/// references; never merely for an [`AssetHandle`](handle::AssetHandle)
+/// field, which serializes to its bare [`AssetId`].
 pub trait Asset: Send + Sync + 'static + serde::Serialize + serde::de::DeserializeOwned {
     /// The version of this type's payload encoding, stored in each content asset's header.
     const FORMAT_VERSION: u32 = 1;
 
     fn name() -> &'static str;
 
-    /// Decodes a payload written at `version`, older than `FORMAT_VERSION`; the default rejects it.
+    /// Decodes a payload written at `version`, older than [`FORMAT_VERSION`](Self::FORMAT_VERSION).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the payload cannot be migrated. The default
+    /// implementation rejects every version.
     fn migrate(version: u32, _payload: &[u8]) -> anyhow::Result<Self> {
         anyhow::bail!(
             "{} version {version} has no migration to version {}; re-import its source, or re-create it if it was authored in the editor",
@@ -132,14 +145,18 @@ pub trait Asset: Send + Sync + 'static + serde::Serialize + serde::de::Deseriali
         )
     }
 
-    /// AssetIds of every sub-asset this one references — the import tool's
-    /// reference-integrity pass. Empty for leaf assets.
+    /// The ids of every sub-asset this one references.
+    ///
+    /// The import tool's reference-integrity pass reads it. Empty for leaf assets.
     fn referenced_sub_assets(&self) -> Vec<AssetId> {
         Vec::new()
     }
 }
 
-/// Data an asset's file keeps in a section of its own, for tools and for a derive that misses its cache; loads never read it and a cook drops it.
+/// Data an asset's file keeps in a section of its own.
+///
+/// It serves tools and a derive that misses its cache. Loads never read it,
+/// and a cook drops it.
 pub trait UncookedData:
     Send + Sync + 'static + serde::Serialize + serde::de::DeserializeOwned
 {
@@ -149,7 +166,12 @@ pub trait UncookedData:
     /// The version of this type's encoding, stored with each section.
     const VERSION: u32 = 1;
 
-    /// Decodes a section written at `version`, older than `VERSION`; the default rejects it.
+    /// Decodes a section written at `version`, older than [`VERSION`](Self::VERSION).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the section cannot be migrated. The default
+    /// implementation rejects every version.
     fn migrate(version: u32, _bytes: &[u8]) -> anyhow::Result<Self> {
         anyhow::bail!(
             "the uncooked data of {} version {version} has no migration to version {}; re-import its source, or re-create it if it was authored in the editor",
@@ -164,9 +186,16 @@ pub trait CreatableAsset: Asset {
     fn new_asset() -> Self;
 }
 
-// Merge into Asset
 pub trait LoadableAsset: Asset {
-    /// Finishes runtime initialization after a cooked load deserializes the payload, or inline in `AssetServer::add`.
+    /// Finishes runtime initialization once the payload is deserialized.
+    ///
+    /// A load calls it after decoding the payload, and
+    /// [`AssetServer::add`](asset_server::AssetServer::add) calls it inline.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the asset cannot be initialized. A load then
+    /// fails, and `add` logs the error and leaves the handle unresolved.
     fn on_load(&mut self, _context: &asset_server::AssetLoadContext) -> anyhow::Result<()> {
         Ok(())
     }

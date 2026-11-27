@@ -44,7 +44,10 @@ impl Span {
     }
 }
 
-/// What a bake computes from a motion database's inputs: per-frame features and simulation bone, where each entry's frames sit, and the normalization.
+/// What a bake computes from a motion database's inputs.
+///
+/// It holds the per-frame features and simulation bone, where each entry's
+/// frames sit, and the normalization.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct BakedDatabase {
     bone_count: usize,
@@ -130,7 +133,10 @@ impl BakedDatabase {
     }
 }
 
-/// A motion database: the clips, sampling, simulation bone, trajectory and feature channels it is built from, and once derived, the baked frames.
+/// A motion database.
+///
+/// It holds the clips, sampling, simulation bone, trajectory and feature
+/// channels it is built from, and once derived, the baked frames.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct MotionDatabase {
     pub skeleton: AssetHandle<Skeleton>,
@@ -175,14 +181,23 @@ impl MotionDatabase {
         self.baked.is_some()
     }
 
-    /// Builds every stored channel into a live one; the first channel that can't be built is the error.
+    /// Builds every stored channel into a live one.
+    ///
+    /// # Errors
+    ///
+    /// Returns the error of the first channel that can't be built, as
+    /// [`FeatureChannelData::load`] gives it.
     pub fn load_channels(&mut self, registry: &TypeRegistry) -> Result<(), BakeError> {
         self.channels
             .iter_mut()
             .try_for_each(|channel| channel.load(registry))
     }
 
-    /// The live channels, in order; a channel not yet loaded is an error.
+    /// The live channels, in order.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BakeError::UnloadedChannel`] for the first channel not yet loaded.
     pub fn live_channels(&self) -> Result<Vec<&dyn FeatureChannel>, BakeError> {
         self.channels
             .iter()
@@ -190,7 +205,11 @@ impl MotionDatabase {
             .collect()
     }
 
-    /// Whether every loaded channel's weight is positive and finite, which a search needs.
+    /// Checks that every loaded channel's weight is positive and finite, which a search needs.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BakeError::InvalidWeight`] with the first weight that is not.
     pub fn check_weights(&self) -> Result<(), BakeError> {
         self.channels
             .iter()
@@ -270,7 +289,10 @@ impl MotionDatabase {
         })
     }
 
-    /// The trajectory samples of `frame` as the bake saw them, in sample order and clamped to its range's last frame.
+    /// The trajectory samples of `frame` as the bake saw them.
+    ///
+    /// They are in sample order, and a sample past the end of the frame's
+    /// range is clamped to its last frame.
     pub fn trajectory_samples(&self, frame: usize) -> Option<Vec<TrajectorySample>> {
         let range = self.range_of(frame)?;
         (0..self.trajectory.sample_count)
@@ -297,6 +319,16 @@ impl MotionDatabase {
     }
 
     /// The local pose of `frame`, sampled from its clip with each parentless bone re-expressed under the simulation bone.
+    ///
+    /// `clips` holds one clip per entry, in entry order.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BakeError::NotBaked`] before the database is derived,
+    /// [`BakeError::BoneCountMismatch`] or [`BakeError::ClipCountMismatch`]
+    /// when `skeleton` or `clips` do not match the bake,
+    /// [`BakeError::FrameOutOfRange`] for a frame outside the baked frames, and
+    /// [`BakeError::Mirror`] when a mirrored entry's pose cannot be mirrored.
     pub fn pose(
         &self,
         frame: usize,
@@ -386,7 +418,10 @@ impl MotionDatabase {
             .collect()
     }
 
-    /// The divisor of every feature dimension: its group's floored deviation over the weight its live channel has now.
+    /// The divisor of every feature dimension.
+    ///
+    /// Each is its group's floored deviation over the weight its live channel
+    /// has now.
     pub fn scales(&self) -> Option<Vec<f32>> {
         let mut scales = vec![1.0; self.feature_dims()?];
         for (range, deviation, weight) in self.weighted_spans()? {
@@ -405,7 +440,11 @@ impl MotionDatabase {
         Some(divisors)
     }
 
-    /// Subtracts the offset and divides by the scale in place; a group with no deviation becomes 0.
+    /// Subtracts the offset and divides by the scale in place.
+    ///
+    /// A group with no deviation becomes 0. `None` when the database is not
+    /// baked, a channel is not loaded or has an invalid weight, or `features`
+    /// is shorter than a feature vector.
     pub fn normalise(&self, features: &mut [f32]) -> Option<()> {
         let scales = self.scales()?;
         let offset = self.offset()?;
@@ -422,7 +461,7 @@ impl MotionDatabase {
         Some(())
     }
 
-    /// The feature vector of `frame` after `normalise`.
+    /// The feature vector of `frame` after [`normalise`](Self::normalise).
     pub fn normalised_features(&self, frame: usize) -> Option<Vec<f32>> {
         let mut features = self.features(frame)?.to_vec();
         self.normalise(&mut features)?;

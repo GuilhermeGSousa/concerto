@@ -1,8 +1,8 @@
-//! Offline importer that relocates the runtime `OBJLoader`/`MTLLoader` parsing
-//! into the import pipeline. A single `.obj` (plus the `.mtl` named in its
-//! first `mtllib` line) is split into independently-imported `mesh/*`, a single
-//! `material/<mtl stem>`, and one flat `scene` sub-asset, cross-referenced by
-//! stable `AssetId`.
+//! The offline importer of `.obj` sources.
+//!
+//! A single `.obj`, plus the `.mtl` named in its first `mtllib` line, is split
+//! into independently imported `mesh/*`, a single `material/<mtl stem>`, and
+//! one flat `scene` sub-asset, cross-referenced by stable `AssetId`.
 
 use std::path::Path;
 

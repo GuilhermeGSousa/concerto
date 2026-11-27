@@ -3,7 +3,8 @@
 //!
 //! The engine-facing API is shared code; everything backend-specific hides
 //! behind the [`backend::PhysicsBackend`] trait. Native builds use Jolt
-//! Physics (via the in-repo `jolt-ffi` bindings).
+//! Physics (via the in-repo `jolt-ffi` bindings); wasm builds, and builds
+//! with the `force-rapier` feature, use Rapier.
 
 pub mod aabb;
 pub mod backend;
@@ -29,10 +30,11 @@ mod simulation;
 
 pub use simulation::step_simulation;
 
-/// The physics engine compiled into this build. Exactly one exists per
-/// build; this alias is the only place the choice is made: Rapier on wasm
-/// (where Jolt's C++ cannot be compiled) or under `force-rapier`, Jolt
-/// everywhere else.
+/// The physics engine compiled into this build.
+///
+/// Exactly one exists per build, and this alias is the only place the choice
+/// is made: Rapier on wasm (where Jolt's C++ cannot be compiled) or under
+/// `force-rapier`, Jolt everywhere else.
 #[cfg(any(target_arch = "wasm32", feature = "force-rapier"))]
 pub type ActiveBackend = backend::rapier::RapierBackend;
 #[cfg(all(

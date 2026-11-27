@@ -139,7 +139,7 @@ pub(crate) fn set_gizmo_mode(
     }
 }
 
-/// The handle length that spans [`SCREEN_FRACTION`] of the viewport at `origin`.
+/// The handle length that spans a fixed fraction of the viewport at `origin`.
 pub fn gizmo_size(origin: Vec3, camera: Vec3, fovy: f32) -> f32 {
     origin.distance(camera) * (fovy * 0.5).tan() * 2.0 * SCREEN_FRACTION
 }

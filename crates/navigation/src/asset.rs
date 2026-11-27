@@ -63,7 +63,10 @@ impl NavMesh {
         self
     }
 
-    /// A navmesh already baked into `data`, for [`AssetServer::add`](concerto_foundation::assets::asset_server::AssetServer::add), which derives nothing.
+    /// A navmesh already baked into `data`.
+    ///
+    /// It is for [`AssetServer::add`](concerto_foundation::assets::asset_server::AssetServer::add),
+    /// which derives nothing.
     pub fn baked(settings: NavMeshSettings, data: NavMeshData) -> Self {
         Self {
             scenes: Vec::new(),

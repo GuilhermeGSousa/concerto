@@ -53,6 +53,10 @@ pub struct Creator(Box<dyn Fn(&Path, &str, &mut AssetRegistry) -> Result<AssetId
 
 impl Creator {
     /// Writes a new asset at `project_root/address`, records it in `registry`, and returns its id.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the asset cannot be written or recorded.
     pub fn create(
         &self,
         project_root: &Path,
@@ -80,6 +84,12 @@ pub(crate) fn new_asset_name(kind: &str, number: usize) -> String {
 }
 
 /// Checks `name` against the rules for an asset name typed in the editor.
+///
+/// # Errors
+///
+/// Returns a message for the user when `name` is empty, holds anything but ASCII letters,
+/// digits, spaces, `-` and `_`, is longer than 64 characters, starts or ends with a space, or
+/// is a name Windows reserves for devices, such as `CON` or `COM1`.
 pub fn valid_asset_name(name: &str) -> Result<(), String> {
     const RESERVED: [&str; 22] = [
         "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
@@ -119,6 +129,11 @@ impl AssetEditorRegistry {
     }
 
     /// Registers `E` for `T`, and lets the editor create a new `T` with `T::new_asset`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `T` already has an editor, or when the name of a new `T`,
+    /// such as `New <kind> 999`, is not a valid asset name.
     pub fn register_creatable<T: CreatableAsset, E: AssetEditor + Default>(
         &mut self,
     ) -> Result<()> {
@@ -136,7 +151,10 @@ impl AssetEditorRegistry {
         Ok(())
     }
 
-    /// Gives `record`'s kind the generic inspector editor and makes it creatable, unless the kind has an editor already.
+    /// Gives `record`'s kind the generic inspector editor and makes it creatable.
+    ///
+    /// Does nothing when the kind has an editor already. When the name of a new asset of the
+    /// kind is not a valid asset name, logs a warning and registers nothing.
     pub fn register_inspected(&mut self, record: InspectedAsset) {
         if self.editors.contains_key(record.kind) {
             return;
@@ -188,7 +206,9 @@ impl AssetEditorRegistry {
             .is_some_and(|editor| editor.bottom_host())
     }
 
-    /// Whether a document of `kind` shows its inspected values in place of the centre: its editor says `form` and hosts no preview.
+    /// Whether a document of `kind` shows its inspected values in place of the centre.
+    ///
+    /// True when its editor says [`AssetEditor::form`] and hosts no preview.
     pub fn form(&self, kind: &str) -> bool {
         self.editors
             .get(kind)
@@ -200,6 +220,11 @@ impl AssetEditorRegistry {
 pub trait AssetEditorAppExt {
     fn register_asset_editor<T: Asset, E: AssetEditor + Default>(&mut self) -> Result<&mut Self>;
     /// Registers `E` for `T`, and lets the content browser create a new `T` with `T::new_asset`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when [`AssetEditorRegistry`] is not installed, when `T` already has an
+    /// editor, or when the name of a new `T` is not a valid asset name.
     fn register_creatable_asset_editor<T: CreatableAsset, E: AssetEditor + Default>(
         &mut self,
     ) -> Result<&mut Self>;
@@ -388,7 +413,7 @@ pub fn asset_request_is_current(doc: &EditorDocument, asset: &AssetEntry) -> boo
     doc.pending.as_ref() == Some(asset)
 }
 
-/// Process tab commands using declared ECS access.
+/// Applies the queued [`AssetEditorCommands`]: opens, activates and closes documents.
 pub fn process_editor_commands(
     mut requests: ResMut<AssetEditorCommands>,
     registry: Res<AssetEditorRegistry>,

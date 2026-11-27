@@ -49,7 +49,9 @@ pub(crate) const SPEEDS: [Speed; 4] = [
     },
 ];
 
-/// Where a document's clip is and how it plays; the owner sets `duration` and `rate`, and the transport keeps the rest.
+/// Where a document's clip is and how it plays.
+///
+/// The owner sets `duration` and `rate`, and the transport keeps the rest.
 #[derive(Component, Clone, Debug, PartialEq)]
 pub struct ClipTransport {
     pub duration: f32,

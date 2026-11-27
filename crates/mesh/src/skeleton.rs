@@ -75,7 +75,9 @@ impl fmt::Display for SkeletonError {
 
 impl std::error::Error for SkeletonError {}
 
-/// The name of a bone of a [`Skeleton`], stored as a reflected leaf so an editor can offer the skeleton's bones.
+/// The name of a bone of a [`Skeleton`].
+///
+/// It is stored as a reflected leaf, so an editor can offer the skeleton's bones.
 #[derive(Reflect, Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[reflect(opaque, Default, Json)]
 pub struct JointName(pub Name);
@@ -104,7 +106,9 @@ impl JsonLeaf for JointName {
     }
 }
 
-/// Bone hierarchy, names, rest pose and bind data; every slice has one entry per bone.
+/// Bone hierarchy, names, rest pose and bind data.
+///
+/// Every slice has one entry per bone, and each bone's parent comes before it.
 #[derive(Asset, Serialize, Deserialize)]
 pub struct Skeleton {
     pub inverse_bindposes: Box<[Mat4]>,
@@ -116,6 +120,12 @@ pub struct Skeleton {
 
 impl Skeleton {
     /// Builds a skeleton, checking that the slices agree in length and that each parent precedes its child.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SkeletonError::LengthMismatch`] when a slice's length differs from
+    /// `inverse_bindposes`, and [`SkeletonError::ParentNotBefore`] when a parent
+    /// does not precede its child.
     pub fn new(
         inverse_bindposes: Vec<Mat4>,
         parents: Vec<Option<u16>>,
@@ -135,6 +145,12 @@ impl Skeleton {
     }
 
     /// Checks that every slice has one entry per inverse bind pose and that each parent precedes its child.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SkeletonError::LengthMismatch`] for the first slice of another
+    /// length, and [`SkeletonError::ParentNotBefore`] for the first parent that
+    /// does not precede its child.
     pub fn validate(&self) -> Result<(), SkeletonError> {
         let expected = self.inverse_bindposes.len();
         for (field, actual) in [
@@ -174,6 +190,14 @@ impl Skeleton {
     }
 
     /// The global transform of every bone for the given local poses.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SkeletonError::PoseLength`] when `local` does not hold one pose per bone.
+    ///
+    /// # Panics
+    ///
+    /// Panics when a parent does not precede its child, which [`Self::validate`] rejects.
     pub fn forward_kinematics(&self, local: &[JointPose]) -> Result<Vec<Mat4>, SkeletonError> {
         if local.len() != self.bone_count() {
             return Err(SkeletonError::PoseLength {
@@ -221,7 +245,9 @@ fn skeleton_of<T: SkeletonSource>(value: &dyn Reflect) -> Option<AssetId> {
     value.downcast_ref::<T>()?.skeleton().map(AssetHandle::id)
 }
 
-/// The skeleton a skinned entity is posed by, and the scene entities that are its bones; the importer fills it.
+/// The skeleton a skinned entity is posed by, and the scene entities that are its bones.
+///
+/// The importer fills it.
 #[derive(Component, Clone, Reflect, Default)]
 #[reflect(Component, SceneComponent)]
 pub struct SkeletonComponent {

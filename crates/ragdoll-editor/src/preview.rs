@@ -47,7 +47,10 @@ use concerto_scene::{
 };
 use glam::Vec3;
 
-/// Replaces what the preview stands on its floor: the skeleton's character, posed in the rest pose, in `scene` when it has one and as bare bones otherwise.
+/// Replaces what the preview stands on its floor.
+///
+/// It stands the skeleton's character there, posed in the rest pose, in
+/// `scene` when it has one and as bare bones otherwise.
 pub struct ShowRagdollStage {
     pub skeleton: Arc<Skeleton>,
     pub skeleton_id: AssetId,

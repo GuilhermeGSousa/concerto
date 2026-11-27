@@ -66,7 +66,11 @@ use crate::{
 
 pub use crate::tools::links::{LinkChangeRemoved, RemoveLinkChange};
 
-/// Shows links and their linked nodes in the tree and the inspector, and reloads, in every `App` but a playing game's, the assets of the files a save or an import rewrote, so the links to their scenes spawn again.
+/// Shows links and their linked nodes in the tree and the inspector, and reloads what a save or
+/// an import rewrote.
+///
+/// In every `App` but a playing game's, the assets of the rewritten files are reloaded, so the
+/// links to their scenes spawn again.
 pub struct LinksPlugin;
 
 impl Plugin for LinksPlugin {

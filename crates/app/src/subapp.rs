@@ -96,6 +96,11 @@ impl SubApp {
     }
 
     /// Makes `T` require `U`, built with `U::default()`, in this world.
+    ///
+    /// # Panics
+    ///
+    /// Panics if an entity holds `T` or a component that requires it, or if the requirement
+    /// forms a cycle.
     pub fn register_required_components<T: Component, U: Component + Default>(
         &mut self,
     ) -> &mut Self {
@@ -104,6 +109,11 @@ impl SubApp {
     }
 
     /// Makes `T` require `U`, built by `constructor`, in this world.
+    ///
+    /// # Panics
+    ///
+    /// Panics if an entity holds `T` or a component that requires it, or if the requirement
+    /// forms a cycle.
     pub fn register_required_components_with<T: Component, U: Component>(
         &mut self,
         constructor: fn() -> U,
@@ -113,7 +123,11 @@ impl SubApp {
         self
     }
 
-    /// Adds systems to this world's `update_group` schedule. Panics once the schedules have been compiled.
+    /// Adds systems to this world's `update_group` schedule.
+    ///
+    /// # Panics
+    ///
+    /// Panics once the schedules have been compiled.
     pub fn add_system<M>(
         &mut self,
         update_group: impl ScheduleLabel,
@@ -125,7 +139,11 @@ impl SubApp {
         self
     }
 
-    /// Adds ordering constraints between sets in this world's `update_group` schedule. Panics once the schedules have been compiled.
+    /// Adds ordering constraints between sets in this world's `update_group` schedule.
+    ///
+    /// # Panics
+    ///
+    /// Panics once the schedules have been compiled.
     pub fn configure_sets(
         &mut self,
         update_group: impl ScheduleLabel,

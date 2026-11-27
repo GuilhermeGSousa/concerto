@@ -635,7 +635,7 @@ pub(crate) fn rebind_sky_radiance(
 
 /// Creates a single [`RenderTexture`] for use as a camera render target.
 ///
-/// The texture is owned exclusively by [`RenderCamera::color_target`].
+/// The texture is owned exclusively by [`RenderCamera::render_target`].
 /// Viewports that want to display this camera's output look up the matching
 /// camera by handle ID and borrow the view directly — no shared allocation needed.
 pub fn create_rtt(

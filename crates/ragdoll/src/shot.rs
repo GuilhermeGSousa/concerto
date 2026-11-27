@@ -126,7 +126,10 @@ impl ShotSettings {
     }
 }
 
-/// The share of its strength each wounded part of a character keeps. The shot behaviour leaves it on the character when it ends, for the game to read: a limp, a guarded arm.
+/// The share of its strength each wounded part of a character keeps.
+///
+/// The shot behaviour leaves it on the character when it ends, for the game
+/// to read: a limp, a guarded arm.
 #[derive(Component, Clone, Debug, Default, PartialEq)]
 pub struct Wounds {
     strength: Vec<f32>,

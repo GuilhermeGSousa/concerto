@@ -1,7 +1,12 @@
 use concerto_ecs::{Entity, signal::Signal};
 use glam::Vec3;
 
-/// A character's body was hit: on this part of its ragdoll, at this world point, with this impulse in N·s. It says nothing about damage or death; the game decides those and reacts to the same signal. It is triggered for every listener, with the character it is about, so the engine's hit routing and a game's own listeners all hear it.
+/// A character's body was hit on this part of its ragdoll, at this world point, with this impulse in N·s.
+///
+/// It says nothing about damage or death; the game decides those and reacts
+/// to the same signal. It is triggered for every listener, with the
+/// character it is about, so the engine's hit routing and a game's own
+/// listeners all hear it.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct BodyHit {
     pub character: Entity,

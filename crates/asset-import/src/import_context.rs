@@ -55,7 +55,8 @@ pub struct ImportOutputs {
     pub renames: Vec<(String, String)>,
 }
 
-/// Maps a sub-asset name and its hinted old name to the `AssetId` that references to it should use.
+/// Maps a sub-asset name and its hinted old name to the [`AssetId`] that references to it should use.
+///
 /// The default addresses sub-assets against the source file
 /// (`"<source>#<sub>"`); the `import` tool substitutes content-tree paths.
 pub type SubAssetIdResolver = Box<dyn Fn(&str, Option<&str>) -> AssetId + Send + Sync>;
@@ -108,7 +109,9 @@ impl ImportContext {
         self
     }
 
-    /// The output `name` as the content holds it before this import, or `None` when there is none or it does not decode at this build's version.
+    /// The output `name` as the content holds it before this import.
+    ///
+    /// Returns `None` when there is no such output or it does not decode at this build's version.
     pub fn previous<T: Asset>(&self, name: &str) -> Option<T> {
         let resolve = self.previous_outputs.as_ref()?;
         let record = resolve(name).or_else(|| resolve(self.renames.get(name)?))?;
@@ -117,11 +120,11 @@ impl ImportContext {
             .ok()
     }
 
-    /// Computes the stable AssetId a sub-asset name resolves to *within this
-    /// source file*, without needing to know the final content-tree
-    /// address. Importers use this to build same-file cross-references
-    /// (e.g. a material's texture, a scene node's mesh) as real
-    /// `AssetHandle::weak(id)` values on the structs they emit.
+    /// The stable [`AssetId`] a sub-asset name resolves to within this source file.
+    ///
+    /// It needs no final content-tree address. Importers use it to build
+    /// same-file cross-references, such as a material's texture or a scene
+    /// node's mesh, as real `AssetHandle::weak(id)` values on the structs they emit.
     ///
     /// When a [`SubAssetIdResolver`] was supplied via
     /// [`ImportContext::with_sub_asset_id_resolver`], it decides the id
@@ -133,7 +136,9 @@ impl ImportContext {
         }
     }
 
-    /// Records that `new_name` replaces `old_name` so the sub-asset keeps its id; call it before the first `sub_asset_id` or `emit` for `new_name`.
+    /// Records that `new_name` replaces `old_name`, so the sub-asset keeps its id.
+    ///
+    /// Call it before the first [`Self::sub_asset_id`] or [`Self::emit`] for `new_name`.
     pub fn renamed_from(&mut self, new_name: &str, old_name: &str) {
         if new_name != old_name {
             self.renames
@@ -142,11 +147,19 @@ impl ImportContext {
     }
 
     /// Emits `value` as the output `name`, with no uncooked section.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ImportError::SerializationFailed`] when `value` does not serialize.
     pub fn emit<T: Asset>(&mut self, name: &str, value: &T) -> Result<(), ImportError> {
         self.push(name, value, None)
     }
 
     /// Emits `value` as the output `name`, with `uncooked` as its uncooked section.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ImportError::SerializationFailed`] when `value` or `uncooked` does not serialize.
     pub fn emit_with<E: UncookedData>(
         &mut self,
         name: &str,

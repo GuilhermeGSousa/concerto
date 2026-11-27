@@ -103,11 +103,20 @@ impl std::fmt::Display for ValueWarning {
 }
 
 /// Stores `value` as a tree, each leaf encoding itself.
+///
+/// # Errors
+///
+/// Returns an [`EncodeError`] naming the first leaf that could not be encoded.
 pub fn to_value(value: &dyn Reflect) -> Result<ReflectedValue, EncodeError> {
     to_value_with(value, &mut NoHook)
 }
 
 /// Stores `value` as a tree, letting `hook` encode any leaf first.
+///
+/// # Errors
+///
+/// Returns an [`EncodeError`] naming the first leaf that `hook` or the leaf itself could not
+/// encode.
 pub fn to_value_with(
     value: &dyn Reflect,
     hook: &mut dyn LeafHook,

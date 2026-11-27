@@ -47,6 +47,10 @@ pub struct GraphBytes {
 
 impl GraphBytes {
     /// `graph` as a save writes it, to stand in for the asset `id`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `graph` cannot be serialized.
     pub fn of(id: AssetId, graph: &AnimationGraph) -> anyhow::Result<Self> {
         Ok(Self {
             id,
@@ -55,7 +59,9 @@ impl GraphBytes {
     }
 }
 
-/// Stands each of `graphs` in for its asset, puts a graph shown before and left out now back to its file, and restarts every player on the graph `play`.
+/// Stands each of `graphs` in for its asset and restarts every player on the graph `play`.
+///
+/// A graph shown before and left out now goes back to its file.
 pub struct ShowGraphs {
     pub graphs: Vec<GraphBytes>,
     pub play: AssetId,
@@ -123,7 +129,9 @@ impl PreviewNode {
     }
 }
 
-/// What a graph preview's first player plays, written each frame the preview plays; `nodes` is empty while no player plays the graph.
+/// What a graph preview's first player plays, written each frame the preview plays.
+///
+/// `nodes` is empty while no player plays the graph.
 #[derive(Event, Clone, Debug, Default, PartialEq)]
 pub struct GraphPreviewState {
     pub nodes: Vec<PreviewNode>,
@@ -357,7 +365,10 @@ fn carry_root_motion(
     }
 }
 
-/// What a graph's preview adds to the game's recipe: [`preview_stage`], a player on every rooted skeleton playing what [`ShowGraphs`] names, root motion moving the character, and the types of the tab's document values.
+/// Adds what a graph's preview needs to the game's recipe.
+///
+/// That is [`preview_stage`], a player on every rooted skeleton playing what [`ShowGraphs`]
+/// names, root motion moving the character, and the types of the tab's document values.
 pub fn graph_preview(app: &mut App) {
     preview_stage(app);
     app.register_type::<StateValue>()

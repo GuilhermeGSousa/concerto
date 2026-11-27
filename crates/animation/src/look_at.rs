@@ -10,7 +10,9 @@ pub struct LookFrame {
 }
 
 impl LookFrame {
-    /// `forward` normalized and `up` made perpendicular to it; `None` when either is zero or not finite, or they are parallel.
+    /// `forward` normalized and `up` made perpendicular to it.
+    ///
+    /// Returns `None` when either is zero or not finite, or when they are parallel.
     pub fn new(forward: Vec3, up: Vec3) -> Option<LookFrame> {
         let forward = forward.try_normalize()?;
         let up = up.try_normalize()?;

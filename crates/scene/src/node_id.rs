@@ -11,7 +11,9 @@ use crate::scene::SceneNode;
 const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
 const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
 
-/// A scene node's id, unique within its scene; an imported node's is a pure function of its name path.
+/// A scene node's id, unique within its scene.
+///
+/// An imported node's id is a pure function of its name path.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Reflect)]
 pub struct NodeId(pub u64);
 

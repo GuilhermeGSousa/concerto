@@ -1,3 +1,46 @@
+//! The generic material plugin, which renders meshes with any [`Material`].
+//!
+//! Registering `MaterialPlugin::<M>::new()` sets up everything needed to
+//! render meshes that use material type `M`:
+//!
+//! * Registers `M` as an asset type and [`MaterialComponent<M>`] for
+//!   reflection.
+//! * Creates an opaque and a blended `wgpu::RenderPipeline`, each for one and
+//!   for four samples, whose layout is built from `M`'s own bind group layout
+//!   plus whichever engine bind groups `M` declares it needs via
+//!   [`Material::needs_camera`], [`Material::needs_lighting`] and
+//!   [`Material::needs_skeleton`].
+//! * Adds `queue_material_meshes<M>`, which culls and bins the mesh entities
+//!   carrying [`MaterialComponent<M>`] for each camera, opaque ones by key and
+//!   [`AlphaMode::Blend`] ones one draw each, and queues them in the camera's
+//!   view phase: the opaque phase is drawn in [`RenderSet::Draw`] and the
+//!   transparent phase, sorted back to front across every material type, in
+//!   [`RenderSet::Transparent`].
+//! * Adds `flag_alpha_instances<M>`, which flags blended instances so they stay
+//!   out of the shadow maps, and masked instances of a material with a cutout
+//!   shader so the cutout pass draws them.
+//!
+//! # Using a custom material
+//!
+//! 1. Derive (or implement by hand) [`AsBindGroup`] for your type, then
+//!    implement [`Material`] (usually with its default methods) and
+//!    `LoadableAsset`.
+//! 2. Register the plugin: `app.register_plugin(MaterialPlugin::<MyMaterial>::new())`.
+//! 3. Attach [`MaterialComponent<MyMaterial>`](MaterialComponent) and a
+//!    [`concerto_mesh::MeshComponent`] to an entity.
+//!
+//! # Shader bind-group convention
+//!
+//! | Group | Contents                                  | Condition                    |
+//! |-------|-------------------------------------------|------------------------------|
+//! | 0     | Material's own bindings                   | always                       |
+//! | 1     | Camera uniform                            | `M::needs_camera()` is true  |
+//! | 2     | Lighting uniform + both shadow-map arrays | `M::needs_lighting()` is true |
+//! | 3     | Skeleton (bone) uniforms                  | `M::needs_skeleton()` is true |
+//!
+//! Your WGSL declares only the groups (and, within group 2, the bindings) that
+//! your material uses.
+
 use std::marker::PhantomData;
 
 use concerto_app::{
@@ -54,59 +97,17 @@ use crate::{
     Material,
 };
 
-// Generic material plugin.
-//
-// Registering `MaterialPlugin::<M>::new()` sets up everything needed to render
-// meshes that use material type `M`:
-//
-// * Registers `M` as an asset type and `MaterialComponent<M>` for reflection.
-// * Creates an opaque and a blended `wgpu::RenderPipeline`, each for one and
-//   for four samples, whose layout is built
-//   from `M`'s own bind group layout plus whichever engine bind groups `M`
-//   declares it needs via [`Material::needs_camera`],
-//   [`Material::needs_lighting`] and [`Material::needs_skeleton`].
-// * Adds `queue_material_meshes<M>`, which culls and bins the mesh entities
-//   carrying [`MaterialComponent<M>`] for each camera, opaque ones by key and
-//   `AlphaMode::Blend` ones one draw each, and queues them in the camera's
-//   `ViewPhase`: the opaque phase is drawn in `RenderSet::Draw` and the
-//   transparent phase, sorted back to front across every material type, in
-//   `RenderSet::Transparent`.
-// * Adds `flag_blended_instances<M>`, which keeps blended instances out of
-//   the shadow maps.
-//
-// # Using a custom material
-//
-// 1. Derive (or manually implement) [`AsBindGroup`] for your type, then implement
-//    [`Material`] (usually with default methods) and `LoadableAsset`.
-// 2. Register the plugin: `app.register_plugin(MaterialPlugin::<MyMaterial>::new())`.
-// 3. Attach [`MaterialComponent::<MyMaterial>`] + [`MeshComponent`] to an entity.
-//
-// # Shader bind-group convention
-//
-// | Group | Contents                              | Condition                      |
-// |-------|----------------------------------------|--------------------------------|
-// | 0     | Material's own bindings                | always                         |
-// | 1     | Camera uniform                         | `M::needs_camera()` → true     |
-// | 2     | Lighting uniform + both shadow-map arrays | `M::needs_lighting()` → true |
-// | 3     | Skeleton (bone) uniforms               | `M::needs_skeleton()` → true   |
-//
-// Your WGSL only needs to declare the groups (and, within group 2, the
-// specific bindings) that your material actually uses.
-
-// ─── Default (built-in) shader source ────────────────────────────────────────
-
 pub(crate) const DEFAULT_SHADER_SOURCE: &str = include_str!("shaders/shader.wgsl");
 
-// ─── MaterialPipeline ─────────────────────────────────────────────────────────
-
-// Stores the wgpu render pipelines and material bind-group layout for `M`.
-//
-// Inserted as a resource by [`MaterialPlugin<M>::finish`].
+/// The wgpu render pipelines and material bind-group layout for `M`.
+///
+/// [`MaterialPlugin<M>`] inserts it as a render-world resource when it
+/// finishes.
 pub struct MaterialPipeline<M: 'static> {
     pipelines: ViewPipelines,
     blended_pipelines: Option<ViewPipelines>,
     masked_pipeline: Option<wgpu::RenderPipeline>,
-    // The `@group(0)` bind-group layout for `M`'s own data.
+    /// The `@group(0)` bind-group layout for `M`'s own data.
     pub bind_group_layout: wgpu::BindGroupLayout,
     _marker: PhantomData<fn() -> M>,
 }
@@ -132,7 +133,10 @@ impl<M: 'static> MaterialPipeline<M> {
         self
     }
 
-    /// The pipeline that draws an asset of `alpha_mode` into the opaque phase of a target of `samples` samples: the alpha-to-coverage one for a masked asset on a multisampled target, when the material has one.
+    /// The pipeline that draws an asset of `alpha_mode` into the opaque phase of a target of `samples` samples.
+    ///
+    /// A masked asset on a multisampled target gets the alpha-to-coverage
+    /// pipeline when the material has one.
     pub fn pipeline_for(&self, alpha_mode: AlphaMode, samples: u32) -> &wgpu::RenderPipeline {
         match &self.masked_pipeline {
             Some(masked) if samples > 1 && matches!(alpha_mode, AlphaMode::Mask { .. }) => masked,
@@ -145,7 +149,9 @@ impl<M: 'static> MaterialPipeline<M> {
         self.pipelines.get(samples)
     }
 
-    /// The pipeline that blends `AlphaMode::Blend` assets without writing depth into a target of `samples` samples; `None` for a pipeline-only plugin.
+    /// The pipeline that blends [`AlphaMode::Blend`] assets without writing depth into a target of `samples` samples.
+    ///
+    /// Returns `None` for a pipeline-only plugin.
     pub fn blended_pipeline(&self, samples: u32) -> Option<&wgpu::RenderPipeline> {
         self.blended_pipelines
             .as_ref()
@@ -160,10 +166,10 @@ impl<M: 'static> Resource for MaterialPipeline<M> {
     }
 }
 
-// GPU-side representation of a prepared `M` instance.
-//
-// Stores the `wgpu::BindGroup` built from the material's data and ready to be
-// bound at `@group(0)` during the material render pass.
+/// The GPU-side form of a prepared `M` asset.
+///
+/// Holds the `wgpu::BindGroup` built from the material's data, bound at
+/// `@group(0)` during the material render pass.
 pub struct RenderMaterial<M: 'static> {
     pub bind_group: wgpu::BindGroup,
     /// The source asset's alpha mode when it was prepared.
@@ -227,8 +233,6 @@ impl<M: 'static> Resource for MaterialViewBatches<M> {
         std::any::type_name::<MaterialViewBatches<M>>()
     }
 }
-
-// ─── Systems ──────────────────────────────────────────────────────────────────
 
 pub(crate) const FALLBACK_MATERIAL: AssetId = AssetId::from_bytes([
     0x5f, 0x0a, 0x3c, 0x91, 0x7b, 0x2e, 0x4d, 0x18, 0x9c, 0x44, 0xe1, 0x6a, 0x02, 0xd7, 0xb3, 0x8f,
@@ -588,24 +592,22 @@ struct PipelineVariant<'a> {
     alpha_to_coverage: bool,
 }
 
-// ─── MaterialPlugin ───────────────────────────────────────────────────────────
-
-// Register this plugin to enable rendering with material `M`.
-//
-// ```rust,ignore
-// app.register_plugin(MaterialPlugin::<UnlitMaterial>::new());
-// ```
-//
-// The plugin uses `M`'s [`Material`] flags to build a pipeline layout that
-// contains only the bind groups the shaders actually need.  Shader code
-// therefore never has to declare unused `@group(N)` bindings.
-//
-// # Pipeline-only mode
-//
-// For materials that have their own custom render pass (e.g. skybox, UI)
-// you can use [`MaterialPlugin::pipeline_only`] to create just the
-// [`MaterialPipeline<M>`] resource without registering the generic mesh
-// rendering systems.
+/// The plugin that renders meshes with material `M`.
+///
+/// It uses `M`'s [`Material`] flags to build a pipeline layout holding only the
+/// bind groups the shaders need, so shader code never declares unused
+/// `@group(N)` bindings. See the [module docs](crate::material_plugin) for the bind-group
+/// convention.
+///
+/// A material with its own render pass, such as the skybox or UI, uses
+/// [`MaterialPlugin::pipeline_only`] to create just the
+/// [`MaterialPipeline<M>`] resource without the generic mesh rendering
+/// systems.
+///
+/// # Panics
+///
+/// Panics during [`finish`](Plugin::finish) if [`RenderPlugin`](crate::plugin::RenderPlugin)
+/// was not registered before it.
 pub struct MaterialPlugin<M: Material> {
     // When `true`, only the [`MaterialPipeline<M>`] resource is set up.
     // No asset registration and no mesh rendering systems are added.
@@ -623,18 +625,18 @@ impl<M: Material> Default for MaterialPlugin<M> {
 }
 
 impl<M: Material> MaterialPlugin<M> {
-    // Full material plugin: registers the asset type, the render-asset
-    // pipeline, and the generic mesh rendering systems.
+    /// The full material plugin, which registers the asset type, the
+    /// render-asset pipeline and the generic mesh rendering systems.
     pub fn new() -> Self {
         Self::default()
     }
 
-    // Pipeline-only mode: only creates the [`MaterialPipeline<M>`] resource,
-    // whose pipeline targets the window's format rather than the view target's.
-    //
-    // Use this when the material has its own custom render pass (e.g. skybox,
-    // UI) and you only need the wgpu pipeline to be built from the material's
-    // trait methods without the generic mesh rendering systems.
+    /// A plugin that only creates the [`MaterialPipeline<M>`] resource, whose
+    /// pipeline targets the window's format rather than the view target's.
+    ///
+    /// Use it when the material has its own render pass, such as the skybox or
+    /// UI, and needs only the wgpu pipeline built from its trait methods,
+    /// without the generic mesh rendering systems.
     pub fn pipeline_only() -> Self {
         Self {
             pipeline_only: true,

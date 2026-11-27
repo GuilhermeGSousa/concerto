@@ -17,7 +17,11 @@ pub enum GridStep {
     Right,
 }
 
-/// The cell reached from `index` by `step` in a grid of `count` cells, `columns` across; it holds at an edge and where the cell below does not exist.
+/// The cell reached from `index` by `step` in a grid of `count` cells, `columns` across.
+///
+/// The cursor holds at an edge, and where the cell below does not exist. An
+/// `index` past the last cell counts as the last cell, and an empty grid
+/// answers 0.
 pub fn grid_step(index: usize, columns: usize, count: usize, step: GridStep) -> usize {
     let columns = columns.max(1);
     if count == 0 {
@@ -57,7 +61,7 @@ impl UIGrid {
         self
     }
 
-    /// Moves the cursor by `step`; false when it was held where it is.
+    /// Moves the cursor by `step`, returning false when it was held where it is.
     pub fn step(&mut self, step: GridStep) -> bool {
         let next = grid_step(self.selected, self.columns, self.count, step);
         let moved = next != self.selected;
@@ -66,7 +70,10 @@ impl UIGrid {
     }
 }
 
-/// A cell of `grid`: its `UIMaterial` takes `selected_fill` while the grid's cursor is on `index`, and `fill` otherwise.
+/// A cell of `grid`, coloured by whether the grid's cursor is on it.
+///
+/// Its `UIMaterial` takes `selected_fill` while the cursor is on `index`, and
+/// `fill` otherwise.
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
 pub struct UIGridCell {
     pub grid: Entity,

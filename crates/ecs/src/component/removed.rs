@@ -27,7 +27,10 @@ pub struct ComponentRemoved<T: Component> {
 type ChannelParam<T> = Res<'static, EventChannel<ComponentRemoved<T>>>;
 type CursorParam<T> = SystemLocal<'static, EventCursor<ComponentRemoved<T>>>;
 
-/// Reads the entities that lost `T`, each once per system; needs `App::track_removals::<T>()` or `World::track_removals::<T>()`.
+/// Reads the entities that lost `T`, each once per system.
+///
+/// Removals are recorded only after `App::track_removals::<T>()` or
+/// [`World::track_removals::<T>()`](World::track_removals) was called.
 pub struct RemovedComponents<'w, 's, T: Component> {
     channel: Res<'w, EventChannel<ComponentRemoved<T>>>,
     cursor: SystemLocal<'s, EventCursor<ComponentRemoved<T>>>,
@@ -71,7 +74,9 @@ impl<T: Component> SystemInput for RemovedComponents<'_, '_, T> {
 impl<T: Component> ReadOnlySystemInput for RemovedComponents<'_, '_, T> {}
 
 impl World {
-    /// Records every removal of `T` in this world, for systems taking `RemovedComponents<T>`; a second call does nothing.
+    /// Records every removal of `T` in this world, for systems taking [`RemovedComponents<T>`].
+    ///
+    /// A second call does nothing.
     pub fn track_removals<T: Component>(&mut self) {
         if self
             .get_resource::<EventChannel<ComponentRemoved<T>>>()

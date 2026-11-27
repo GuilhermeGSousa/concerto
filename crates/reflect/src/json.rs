@@ -14,6 +14,10 @@ use crate::{
 pub trait JsonLeaf: Reflect + Sized {
     fn to_json(&self) -> Value;
     /// Reads the value back, or says what shape was expected.
+    ///
+    /// # Errors
+    ///
+    /// Returns a message naming the expected shape when `value` does not have it.
     fn from_json(value: &Value) -> Result<Self, String>;
 
     /// [`JsonLeaf::to_json`] for a leaf whose form depends on the registered types.
@@ -106,7 +110,14 @@ fn fields_to_json(fields: &dyn Fields, registry: &TypeRegistry) -> Value {
     Value::Object(object)
 }
 
-/// Builds the stored value of the type `type_id` from JSON shaped as [`to_json`] writes it, leaving out fields it omits or marks opaque.
+/// Builds the stored value of the type `type_id` from JSON shaped as [`to_json`] writes it.
+///
+/// Fields the JSON omits or marks opaque are left out of the stored value.
+///
+/// # Errors
+///
+/// Returns a message when `type_id` is neither a JSON leaf nor a registered type with a
+/// `Default`, or when part of `value` does not have the shape its type expects.
 pub fn json_to_value(
     value: &Value,
     type_id: TypeId,
@@ -116,6 +127,10 @@ pub fn json_to_value(
 }
 
 /// [`json_to_value`], letting `hook` encode any leaf first.
+///
+/// # Errors
+///
+/// Returns a message in the same cases as [`json_to_value`], or when `hook` rejects a leaf.
 pub fn json_to_value_with(
     value: &Value,
     type_id: TypeId,

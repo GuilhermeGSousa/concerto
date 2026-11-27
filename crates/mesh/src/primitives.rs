@@ -43,7 +43,9 @@ pub fn cuboid(size: Vec3) -> Mesh {
     mesh
 }
 
-/// A sphere of `radius` centred on the origin, with at least 2 `rings` from pole to pole and 3 `segments` around Y.
+/// A sphere of `radius` centred on the origin.
+///
+/// It has at least 2 `rings` from pole to pole and 3 `segments` around Y.
 pub fn uv_sphere(radius: f32, rings: u32, segments: u32) -> Mesh {
     let rings = rings.max(2);
     let profile: Vec<(Vec2, Vec2)> = (0..=rings)
@@ -55,7 +57,10 @@ pub fn uv_sphere(radius: f32, rings: u32, segments: u32) -> Mesh {
     revolve(&profile, segments)
 }
 
-/// A capsule along Y: a cylinder of `half_height` either side of the origin, capped by hemispheres of at least 1 ring each, with at least 3 `segments`; a `half_height` of 0 or less gives a sphere.
+/// A capsule along Y: a cylinder of `half_height` either side of the origin, capped by hemispheres.
+///
+/// Each hemisphere has at least 1 ring, and the capsule at least 3 `segments`.
+/// A `half_height` of 0 or less gives a sphere.
 pub fn capsule(radius: f32, half_height: f32, rings: u32, segments: u32) -> Mesh {
     let rings = rings.max(1);
     if half_height <= 0.0 {

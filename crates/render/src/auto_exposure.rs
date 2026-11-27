@@ -31,7 +31,11 @@ use crate::{
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R16Float;
 const LEVEL_SIZES: [u32; 5] = [256, 64, 16, 4, 1];
 
-/// Makes a camera's exposure follow the brightness of what it sees, as an eye does: the scene's average is brought toward middle grey. Goes on the camera's entity; [`Exposure`](crate::Exposure) still applies on top, as a compensation.
+/// Makes a camera's exposure follow the brightness of what it sees, as an eye does.
+///
+/// The scene's average is brought toward middle grey. Goes on the camera's
+/// entity; [`Exposure`](crate::Exposure) still applies on top, as a
+/// compensation.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Reflect)]
 #[reflect(Component, Default, SceneComponent)]
 pub struct AutoExposure {
@@ -68,7 +72,12 @@ impl AutoExposure {
     }
 }
 
-/// Measures and adapts the exposure of cameras with [`AutoExposure`], in [`RenderSet::PostProcess`]; requires `RenderPlugin`, registered before it.
+/// Measures and adapts the exposure of cameras with [`AutoExposure`], in [`RenderSet::PostProcess`].
+///
+/// # Panics
+///
+/// Panics during [`finish`](Plugin::finish) if [`RenderPlugin`](crate::plugin::RenderPlugin)
+/// was not registered before it.
 pub struct AutoExposurePlugin;
 
 impl Plugin for AutoExposurePlugin {

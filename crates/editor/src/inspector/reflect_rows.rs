@@ -10,7 +10,9 @@ use std::sync::Arc;
 const NAME: &str = "Value";
 const EMPTY: &str = "No settings";
 
-/// Rows for a reflected value on a UI entity; their edits change `value`, so `Changed<ReflectRows>` tells the owner.
+/// Rows for a reflected value on a UI entity.
+///
+/// Their edits change `value`, so `Changed<ReflectRows>` tells the owner.
 #[derive(Component)]
 pub struct ReflectRows {
     pub value: Box<dyn Reflect>,
