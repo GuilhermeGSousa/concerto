@@ -5,7 +5,6 @@ import sys
 from collections import deque
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-EXAMPLES = os.path.join(ROOT, "examples") + os.sep
 ALLOWED = {
     "engine": {"engine"},
     "gizmos": {"engine", "gizmos"},
@@ -22,14 +21,21 @@ JOLT = "concerto-jolt-ffi"
 WASM = "wasm32-unknown-unknown"
 
 
+class CargoFailed(Exception):
+    pass
+
+
 def metadata(*extra):
     command = ["cargo", "metadata", "--locked", "--format-version", "1", *extra]
-    return json.loads(subprocess.run(command, cwd=ROOT, check=True, capture_output=True, text=True).stdout)
+    result = subprocess.run(command, cwd=ROOT, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise CargoFailed(f"{' '.join(command)} failed:\n{result.stderr.strip()}")
+    return json.loads(result.stdout)
 
 
-def layer(package):
+def layer(package, examples):
     name = package["name"]
-    if os.path.abspath(package["manifest_path"]).startswith(EXAMPLES):
+    if os.path.realpath(package["manifest_path"]).startswith(examples):
         return "example"
     if name == "concerto-editor" or (name.startswith("concerto-") and name.endswith("-editor")):
         return "editor"
@@ -44,18 +50,19 @@ def members(data):
 
 
 def layer_violations(data):
+    examples = os.path.join(os.path.realpath(data["workspace_root"]), "examples") + os.sep
     workspace = members(data)
     wrong = set()
     for node in data["resolve"]["nodes"]:
         package = workspace.get(node["id"])
         if package is None:
             continue
-        own = layer(package)
+        own = layer(package, examples)
         for dep in node["deps"]:
             target = workspace.get(dep["pkg"])
             if target is None:
                 continue
-            theirs = layer(target)
+            theirs = layer(target, examples)
             if theirs not in ALLOWED[own]:
                 wrong.add(f"{package['name']} ({own}) depends on {target['name']} ({theirs}): {ADVICE[own]}")
     return sorted(wrong)
@@ -64,7 +71,9 @@ def layer_violations(data):
 def wasm_violations(data):
     names = {package["id"]: package["name"] for package in data["packages"]}
     nodes = {node["id"]: node for node in data["resolve"]["nodes"]}
-    start = next(id for id, package in members(data).items() if package["name"] == ROOT_PACKAGE)
+    start = next((id for id, package in members(data).items() if package["name"] == ROOT_PACKAGE), None)
+    if start is None:
+        return [f"The workspace has no package named {ROOT_PACKAGE}, which the wasm32 check starts from. Update ROOT_PACKAGE in this script."]
     parent = {start: None}
     queue = deque([start])
     while queue:
@@ -85,7 +94,11 @@ def wasm_violations(data):
 
 
 def main():
-    wrong = layer_violations(metadata()) + wasm_violations(metadata("--filter-platform", WASM))
+    try:
+        wrong = layer_violations(metadata()) + wasm_violations(metadata("--filter-platform", WASM))
+    except CargoFailed as error:
+        print(error, file=sys.stderr)
+        return 2
     for line in wrong:
         print(line)
     return 1 if wrong else 0
