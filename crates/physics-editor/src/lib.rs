@@ -6,7 +6,8 @@ use concerto_physics_gizmos::{
     RagdollGizmo, SensorGizmo,
 };
 
-/// Draws each `Collider`, `RagdollId`, `Contacts`, `BoxCollider`, `MeshCollider` and `Sensor` in every edit and play `App` while its entity is selected.
+/// Draws each `Collider`, `RagdollId`, `Contacts`, `BoxCollider`, `MeshCollider`, `Sensor` and
+/// `BodySense` in every edit and play `App` while its entity is selected.
 pub fn install(app: &mut App) {
     app.add_scene_tools_plugin(register_gizmos);
 }
