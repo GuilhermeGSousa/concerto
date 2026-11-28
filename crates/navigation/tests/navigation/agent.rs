@@ -359,7 +359,7 @@ fn obstacle_mesh() -> NavMesh {
         Vec3::splat(0.5),
     );
     let settings = NavMeshSettings::new();
-    NavMesh::baked(settings.clone(), bake(&geometry, &settings).unwrap())
+    NavMesh::baked(settings.clone(), geometry.bake(&settings).unwrap())
 }
 
 fn add_mesh(app: &mut App, navmesh: NavMesh) -> AssetHandle<NavMesh> {
