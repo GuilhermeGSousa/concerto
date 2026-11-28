@@ -11,9 +11,9 @@ use concerto_mesh::{JointPose, Skeleton, SkeletonComponent};
 use glam::{Mat4, Quat, Vec3};
 
 use crate::asset::Ragdoll;
-use crate::generate::{HumanoidSettings, generate_humanoid};
+use crate::generate::HumanoidSettings;
 use crate::resolve::ResolvedRagdoll;
-pub use crate::sandbox::{PlacedRagdoll, RagdollWorld, joint_gaps};
+pub use crate::sandbox::{PlacedRagdoll, RagdollWorld};
 
 struct Bone {
     name: &'static str,
@@ -145,7 +145,7 @@ pub fn reference_humanoid() -> ReferenceHumanoid {
     let rig = humanoid_rig()
         .resolve(&skeleton, None)
         .expect("the reference rig fits the reference skeleton");
-    let ragdoll = generate_humanoid(
+    let ragdoll = Ragdoll::humanoid(
         AssetHandle::default(),
         &skeleton,
         &rig,

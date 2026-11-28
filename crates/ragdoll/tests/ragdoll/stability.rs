@@ -1,5 +1,5 @@
 use concerto_physics::ragdoll::BodyPose;
-use concerto_ragdoll::testing::{RagdollWorld, joint_gaps, reference_humanoid};
+use concerto_ragdoll::testing::{RagdollWorld, reference_humanoid};
 use glam::Vec3;
 use proptest::prelude::*;
 
@@ -44,12 +44,12 @@ proptest! {
             for (index, speed) in world.speeds(placed).into_iter().enumerate() {
                 prop_assert!(speed.is_finite() && speed <= MAX_SPEED * 1.01, "part {index} moves at {speed} m/s at step {step}");
             }
-            for (joint, gap) in joint_gaps(&humanoid.resolved, &pose).into_iter().enumerate() {
+            for (joint, gap) in humanoid.resolved.joint_gaps(&pose).into_iter().enumerate() {
                 prop_assert!(gap < MAX_JOINT_GAP, "joint {joint} is {gap} m apart at step {step}");
             }
         }
         let pose = world.pose(placed);
-        for (joint, gap) in joint_gaps(&humanoid.resolved, &pose).into_iter().enumerate() {
+        for (joint, gap) in humanoid.resolved.joint_gaps(&pose).into_iter().enumerate() {
             prop_assert!(gap < RESTING_JOINT_GAP, "joint {joint} rests {gap} m apart");
         }
         for (index, speed) in world.speeds(placed).into_iter().enumerate() {

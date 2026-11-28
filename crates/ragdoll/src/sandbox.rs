@@ -159,27 +159,6 @@ impl Default for RagdollWorld {
     }
 }
 
-/// How far each part of `pose` but the root is from where its joint holds it on its parent, in metres, in part order.
-pub fn joint_gaps(ragdoll: &ResolvedRagdoll, pose: &[BodyPose]) -> Vec<f32> {
-    let parts = &ragdoll.settings().parts;
-    parts
-        .iter()
-        .enumerate()
-        .filter_map(|(index, part)| {
-            let parent = part.parent?;
-            let anchor = parts[parent]
-                .pose
-                .inverse()
-                .transform_point(part.pose.translation);
-            Some(
-                pose[parent]
-                    .transform_point(anchor)
-                    .distance(pose[index].translation),
-            )
-        })
-        .collect()
-}
-
 /// What to do to a ragdoll standing in its rest pose on a floor.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Trial {
@@ -212,60 +191,81 @@ pub struct TrialReport {
 
 const REST_SPEED: f32 = 0.2;
 
-/// Runs `trial` on `ragdoll` for `seconds` in a world of its own and reports what happened.
-///
-/// Returns `None` when the trial names a bone with no part or the backend
-/// has no ragdolls.
-pub fn run_trial(ragdoll: &ResolvedRagdoll, trial: Trial, seconds: f32) -> Option<TrialReport> {
-    let mut world = RagdollWorld::new();
-    let height = match trial {
-        Trial::Drop { height } => height.max(0.0),
-        Trial::Poke { .. } => 0.02,
-    };
-    let lowest = ragdoll
-        .rest()
-        .iter()
-        .map(|bone| bone.translation.y)
-        .fold(f32::MAX, f32::min)
-        .min(0.0);
-    let owner = world.world.spawn(Transform::default());
-    let pose: Vec<BodyPose> = ragdoll
-        .settings()
-        .parts
-        .iter()
-        .map(|part| {
-            BodyPose::from_translation(Vec3::new(0.0, height - lowest, 0.0)).then(part.pose)
-        })
-        .collect();
-    let id = world
-        .state()
-        .create_ragdoll(ragdoll.built(), owner, &pose)?;
-    let placed = PlacedRagdoll { id, owner };
-    if let Trial::Poke { bone, impulse } = trial {
-        let part = ragdoll.part_of(&bone)?;
-        let body = world.state().ragdoll_bodies(id)[part];
-        world.state().add_impulse(body, impulse);
+impl ResolvedRagdoll {
+    /// How far each part of `pose` but the root is from where its joint holds it on its parent, in metres, in part order.
+    pub fn joint_gaps(&self, pose: &[BodyPose]) -> Vec<f32> {
+        let parts = &self.settings().parts;
+        parts
+            .iter()
+            .enumerate()
+            .filter_map(|(index, part)| {
+                let parent = part.parent?;
+                let anchor = parts[parent]
+                    .pose
+                    .inverse()
+                    .transform_point(part.pose.translation);
+                Some(
+                    pose[parent]
+                        .transform_point(anchor)
+                        .distance(pose[index].translation),
+                )
+            })
+            .collect()
     }
-    let step = Time::fixed_delta_time().as_secs_f32();
-    let steps = (seconds / step).round().max(1.0) as usize;
-    let mut report = TrialReport {
-        rested_after: None,
-        peak_speed: 0.0,
-        peak_joint_gap: 0.0,
-        overlaps: ragdoll.overlapping_parts(),
-    };
-    for index in 0..steps {
-        world.step();
-        let fastest = world.speeds(placed).into_iter().fold(0.0, f32::max);
-        report.peak_speed = report.peak_speed.max(fastest);
-        let pose = world.pose(placed);
-        let widest = joint_gaps(ragdoll, &pose).into_iter().fold(0.0, f32::max);
-        report.peak_joint_gap = report.peak_joint_gap.max(widest);
-        if fastest >= REST_SPEED {
-            report.rested_after = None;
-        } else if report.rested_after.is_none() {
-            report.rested_after = Some((index + 1) as f32 * step);
+
+    /// Runs `trial` on the ragdoll for `seconds` in a world of its own and reports what happened.
+    ///
+    /// Returns `None` when the trial names a bone with no part or the backend
+    /// has no ragdolls.
+    pub fn run_trial(&self, trial: Trial, seconds: f32) -> Option<TrialReport> {
+        let mut world = RagdollWorld::new();
+        let height = match trial {
+            Trial::Drop { height } => height.max(0.0),
+            Trial::Poke { .. } => 0.02,
+        };
+        let lowest = self
+            .rest()
+            .iter()
+            .map(|bone| bone.translation.y)
+            .fold(f32::MAX, f32::min)
+            .min(0.0);
+        let owner = world.world.spawn(Transform::default());
+        let pose: Vec<BodyPose> = self
+            .settings()
+            .parts
+            .iter()
+            .map(|part| {
+                BodyPose::from_translation(Vec3::new(0.0, height - lowest, 0.0)).then(part.pose)
+            })
+            .collect();
+        let id = world.state().create_ragdoll(self.built(), owner, &pose)?;
+        let placed = PlacedRagdoll { id, owner };
+        if let Trial::Poke { bone, impulse } = trial {
+            let part = self.part_of(&bone)?;
+            let body = world.state().ragdoll_bodies(id)[part];
+            world.state().add_impulse(body, impulse);
         }
+        let step = Time::fixed_delta_time().as_secs_f32();
+        let steps = (seconds / step).round().max(1.0) as usize;
+        let mut report = TrialReport {
+            rested_after: None,
+            peak_speed: 0.0,
+            peak_joint_gap: 0.0,
+            overlaps: self.overlapping_parts(),
+        };
+        for index in 0..steps {
+            world.step();
+            let fastest = world.speeds(placed).into_iter().fold(0.0, f32::max);
+            report.peak_speed = report.peak_speed.max(fastest);
+            let pose = world.pose(placed);
+            let widest = self.joint_gaps(&pose).into_iter().fold(0.0, f32::max);
+            report.peak_joint_gap = report.peak_joint_gap.max(widest);
+            if fastest >= REST_SPEED {
+                report.rested_after = None;
+            } else if report.rested_after.is_none() {
+                report.rested_after = Some((index + 1) as f32 * step);
+            }
+        }
+        Some(report)
     }
-    Some(report)
 }

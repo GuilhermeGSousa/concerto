@@ -24,8 +24,8 @@ use concerto_foundation::assets::{
 use concerto_mcp::{PendingCall, ToolCalls, ToolError};
 use concerto_mesh::Skeleton;
 use concerto_ragdoll::{
-    RagdollPart, RagdollShape,
-    generate::{HumanoidChains, HumanoidSettings, generate_humanoid},
+    Ragdoll, RagdollPart, RagdollShape,
+    generate::{HumanoidChains, HumanoidSettings},
 };
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -239,7 +239,7 @@ fn generate(
     let settings = HumanoidSettings::default()
         .with_total_mass(total_mass)
         .with_chains(request.chains.over(HumanoidChains::default()));
-    let ragdoll = generate_humanoid(
+    let ragdoll = Ragdoll::humanoid(
         AssetHandle::weak(skeleton_id),
         &skeleton,
         &resolved,

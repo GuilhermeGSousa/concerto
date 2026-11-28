@@ -248,269 +248,6 @@ fn chain(rig: &ResolvedRig, name: Name, needs: usize) -> Result<&ResolvedChain, 
     Ok(chain)
 }
 
-/// Generates a first-draft ragdoll for a humanoid.
-///
-/// The ragdoll has a pelvis, up to three spine parts, a head, upper and lower
-/// arms, hands, thighs, shins and feet. Capsules run along each bone, as
-/// thick as the vertices of `meshes` skinned to it, or in proportion to the
-/// bone when there are none.
-///
-/// # Errors
-///
-/// Returns [`GenerateError::MissingChain`] when `rig` has no chain of a name
-/// in the settings' [`HumanoidChains`], and [`GenerateError::ShortChain`]
-/// when a chain has fewer bones than its limb needs.
-///
-/// # Panics
-///
-/// Panics if a chain of `rig` names a bone outside `rig`'s reference model, which a rig
-/// resolved against `skeleton` rules out.
-pub fn generate_humanoid(
-    skeleton_handle: AssetHandle<Skeleton>,
-    skeleton: &Skeleton,
-    rig: &ResolvedRig,
-    meshes: &[&Mesh],
-    settings: &HumanoidSettings,
-) -> Result<Ragdoll, GenerateError> {
-    let model = &rig.reference_model;
-    let at = |bone: usize| position(&model[bone]);
-    let chains = &settings.chains;
-    let spine = chain(rig, chains.spine, 1)?;
-    let neck = chain(rig, chains.neck, 1)?;
-    let left_arm = chain(rig, chains.left_arm, 3)?;
-    let right_arm = chain(rig, chains.right_arm, 3)?;
-    let left_leg = chain(rig, chains.left_leg, 3)?;
-    let right_leg = chain(rig, chains.right_leg, 3)?;
-
-    let up = Vec3::Y;
-    let hips = at(left_leg.bones[0]) - at(right_leg.bones[0]);
-    let left = (hips - up * hips.dot(up))
-        .try_normalize()
-        .unwrap_or(Vec3::X);
-    let frame = Frame {
-        up,
-        forward: left.cross(up).normalize(),
-        left,
-    };
-    let hip_width = hips.length().max(0.05);
-    let mass = settings.total_mass;
-    let mut planned = Vec::new();
-
-    let hip_centre = (at(left_leg.bones[0]) + at(right_leg.bones[0])) / 2.0;
-    planned.push(Planned {
-        bone: rig.root,
-        segment: Segment::Pelvis,
-        side: Side::Centre,
-        start: hip_centre - frame.left * hip_width / 2.0,
-        end: hip_centre + frame.left * hip_width / 2.0,
-        mass: mass * Segment::Pelvis.mass_fraction(),
-        joint_model: JointModel::Ball {
-            swing_normal: 0.0,
-            swing_plane: 0.0,
-            twist: 0.0,
-        },
-        max_radius: f32::MAX,
-    });
-
-    let spine_bones: Vec<usize> = match spine.bones.len() {
-        0..=3 => spine.bones.clone(),
-        count => vec![
-            spine.bones[0],
-            spine.bones[count / 2],
-            spine.bones[count - 1],
-        ],
-    };
-    let head = *neck.bones.last().expect("the neck chain has a bone");
-    let spine_top = if neck.bones.len() > 1 {
-        at(neck.bones[0])
-    } else {
-        at(head)
-    };
-    for (index, bone) in spine_bones.iter().enumerate() {
-        let end = spine_bones
-            .get(index + 1)
-            .map_or(spine_top, |next| at(*next));
-        planned.push(Planned {
-            bone: *bone,
-            segment: Segment::Spine,
-            side: Side::Centre,
-            start: at(*bone),
-            end,
-            mass: mass * Segment::Spine.mass_fraction() / spine_bones.len() as f32,
-            joint_model: JointModel::Ball {
-                swing_normal: 0.3,
-                swing_plane: 0.3,
-                twist: 0.3,
-            },
-            max_radius: f32::MAX,
-        });
-    }
-
-    let below_head = neck
-        .bones
-        .iter()
-        .rev()
-        .nth(1)
-        .copied()
-        .unwrap_or(*spine_bones.last().expect("the spine chain has a bone"));
-    let head_direction = (at(head) - at(below_head)).try_normalize().unwrap_or(up);
-    let head_length = ((at(head) - at(below_head)).length() * 2.0).max(0.12);
-    planned.push(Planned {
-        bone: head,
-        segment: Segment::Head,
-        side: Side::Centre,
-        start: at(head),
-        end: at(head) + head_direction * head_length,
-        mass: mass * Segment::Head.mass_fraction(),
-        joint_model: JointModel::Ball {
-            swing_normal: 0.6,
-            swing_plane: 0.6,
-            twist: 0.8,
-        },
-        max_radius: f32::MAX,
-    });
-
-    for (arm, side) in [left_arm, right_arm]
-        .into_iter()
-        .zip([Side::Left, Side::Right])
-    {
-        let count = arm.bones.len();
-        let upper = arm.bones[count - 3];
-        let lower = arm.bones[count - 2];
-        let hand = arm.bones[count - 1];
-        let upper_direction = (at(lower) - at(upper))
-            .try_normalize()
-            .unwrap_or(frame.left);
-        let lower_vector = at(hand) - at(lower);
-        let lower_direction = lower_vector.try_normalize().unwrap_or(upper_direction);
-        planned.push(Planned {
-            bone: upper,
-            segment: Segment::UpperArm,
-            side,
-            start: at(upper),
-            end: at(lower),
-            mass: mass * Segment::UpperArm.mass_fraction(),
-            joint_model: JointModel::Ball {
-                swing_normal: 1.4,
-                swing_plane: 1.4,
-                twist: 0.8,
-            },
-            max_radius: f32::MAX,
-        });
-        planned.push(Planned {
-            bone: lower,
-            segment: Segment::LowerArm,
-            side,
-            start: at(lower),
-            end: at(hand),
-            mass: mass * Segment::LowerArm.mass_fraction(),
-            joint_model: JointModel::Hinge {
-                axis: hinge_axis(lower_direction, frame.forward, frame.up),
-                min: 0.0,
-                max: 2.4,
-                swing: 0.0,
-            },
-            max_radius: f32::MAX,
-        });
-        planned.push(Planned {
-            bone: hand,
-            segment: Segment::Hand,
-            side,
-            start: at(hand),
-            end: at(hand) + lower_direction * lower_vector.length().max(0.05) * 0.4,
-            mass: mass * Segment::Hand.mass_fraction(),
-            joint_model: JointModel::Ball {
-                swing_normal: 0.8,
-                swing_plane: 0.5,
-                twist: 0.3,
-            },
-            max_radius: f32::MAX,
-        });
-    }
-
-    for (leg, side) in [left_leg, right_leg]
-        .into_iter()
-        .zip([Side::Left, Side::Right])
-    {
-        let thigh = leg.bones[0];
-        let shin = leg.bones[1];
-        let foot = leg.bones[2];
-        let shin_direction = (at(foot) - at(shin)).try_normalize().unwrap_or(-frame.up);
-        let foot_end = match leg.bones.get(3) {
-            Some(toe) => at(foot) + (at(*toe) - at(foot)) * 1.5,
-            None => at(foot) + frame.forward * 0.18 - frame.up * 0.05,
-        };
-        planned.push(Planned {
-            bone: thigh,
-            segment: Segment::Thigh,
-            side,
-            start: at(thigh),
-            end: at(shin),
-            mass: mass * Segment::Thigh.mass_fraction(),
-            joint_model: JointModel::Ball {
-                swing_normal: 1.0,
-                swing_plane: 0.8,
-                twist: 0.4,
-            },
-            max_radius: hip_width * 0.48,
-        });
-        planned.push(Planned {
-            bone: shin,
-            segment: Segment::Shin,
-            side,
-            start: at(shin),
-            end: at(foot),
-            mass: mass * Segment::Shin.mass_fraction(),
-            joint_model: JointModel::Hinge {
-                axis: hinge_axis(shin_direction, -frame.forward, frame.left),
-                min: 0.0,
-                max: 2.4,
-                swing: 0.0,
-            },
-            max_radius: hip_width * 0.48,
-        });
-        planned.push(Planned {
-            bone: foot,
-            segment: Segment::Foot,
-            side,
-            start: at(foot),
-            end: foot_end,
-            mass: mass * Segment::Foot.mass_fraction(),
-            joint_model: JointModel::Hinge {
-                axis: frame.left,
-                min: -0.6,
-                max: 0.6,
-                swing: 0.2,
-            },
-            max_radius: f32::MAX,
-        });
-    }
-
-    let owners = part_owners(skeleton, &planned);
-    let skin = skin_points(skeleton, model, meshes, &owners);
-    let mut ragdoll = Ragdoll::new(skeleton_handle);
-    for (index, plan) in planned.iter().enumerate() {
-        ragdoll = ragdoll.with_part(part(skeleton, model, plan, &skin[index], &frame));
-    }
-    let mut flinch = StrengthProfile::new(FLINCH, PartStrength::Kinematic);
-    let mut braced = StrengthProfile::new(BRACED, PartStrength::Kinematic);
-    for plan in &planned {
-        let bone = skeleton.names[plan.bone].as_ref();
-        let muscle = PartStrength::powered(
-            plan.segment.muscle_stiffness(),
-            plan.segment.muscle_torque(),
-        );
-        braced = braced.with_part(bone, muscle);
-        if plan.segment.above_the_pelvis() {
-            flinch = flinch.with_part(bone, muscle);
-        }
-    }
-    Ok(ragdoll
-        .with_profile(flinch)
-        .with_profile(braced)
-        .with_profile(StrengthProfile::new(LIMP, PartStrength::Limp)))
-}
-
 fn hinge_axis(bone_direction: Vec3, bend_towards: Vec3, fallback: Vec3) -> Vec3 {
     bone_direction
         .cross(bend_towards)
@@ -692,4 +429,269 @@ fn part(
         .with_mass(plan.mass)
         .with_segment(plan.segment, plan.side)
         .with_joint(joint.with_friction((plan.mass * FRICTION_PER_KG).clamp(0.3, 5.0)))
+}
+
+impl Ragdoll {
+    /// Generates a first-draft ragdoll for a humanoid.
+    ///
+    /// The ragdoll has a pelvis, up to three spine parts, a head, upper and lower
+    /// arms, hands, thighs, shins and feet. Capsules run along each bone, as
+    /// thick as the vertices of `meshes` skinned to it, or in proportion to the
+    /// bone when there are none.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GenerateError::MissingChain`] when `rig` has no chain of a name
+    /// in the settings' [`HumanoidChains`], and [`GenerateError::ShortChain`]
+    /// when a chain has fewer bones than its limb needs.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a chain of `rig` names a bone outside `rig`'s reference model, which a rig
+    /// resolved against `skeleton` rules out.
+    pub fn humanoid(
+        skeleton_handle: AssetHandle<Skeleton>,
+        skeleton: &Skeleton,
+        rig: &ResolvedRig,
+        meshes: &[&Mesh],
+        settings: &HumanoidSettings,
+    ) -> Result<Ragdoll, GenerateError> {
+        let model = &rig.reference_model;
+        let at = |bone: usize| position(&model[bone]);
+        let chains = &settings.chains;
+        let spine = chain(rig, chains.spine, 1)?;
+        let neck = chain(rig, chains.neck, 1)?;
+        let left_arm = chain(rig, chains.left_arm, 3)?;
+        let right_arm = chain(rig, chains.right_arm, 3)?;
+        let left_leg = chain(rig, chains.left_leg, 3)?;
+        let right_leg = chain(rig, chains.right_leg, 3)?;
+
+        let up = Vec3::Y;
+        let hips = at(left_leg.bones[0]) - at(right_leg.bones[0]);
+        let left = (hips - up * hips.dot(up))
+            .try_normalize()
+            .unwrap_or(Vec3::X);
+        let frame = Frame {
+            up,
+            forward: left.cross(up).normalize(),
+            left,
+        };
+        let hip_width = hips.length().max(0.05);
+        let mass = settings.total_mass;
+        let mut planned = Vec::new();
+
+        let hip_centre = (at(left_leg.bones[0]) + at(right_leg.bones[0])) / 2.0;
+        planned.push(Planned {
+            bone: rig.root,
+            segment: Segment::Pelvis,
+            side: Side::Centre,
+            start: hip_centre - frame.left * hip_width / 2.0,
+            end: hip_centre + frame.left * hip_width / 2.0,
+            mass: mass * Segment::Pelvis.mass_fraction(),
+            joint_model: JointModel::Ball {
+                swing_normal: 0.0,
+                swing_plane: 0.0,
+                twist: 0.0,
+            },
+            max_radius: f32::MAX,
+        });
+
+        let spine_bones: Vec<usize> = match spine.bones.len() {
+            0..=3 => spine.bones.clone(),
+            count => vec![
+                spine.bones[0],
+                spine.bones[count / 2],
+                spine.bones[count - 1],
+            ],
+        };
+        let head = *neck.bones.last().expect("the neck chain has a bone");
+        let spine_top = if neck.bones.len() > 1 {
+            at(neck.bones[0])
+        } else {
+            at(head)
+        };
+        for (index, bone) in spine_bones.iter().enumerate() {
+            let end = spine_bones
+                .get(index + 1)
+                .map_or(spine_top, |next| at(*next));
+            planned.push(Planned {
+                bone: *bone,
+                segment: Segment::Spine,
+                side: Side::Centre,
+                start: at(*bone),
+                end,
+                mass: mass * Segment::Spine.mass_fraction() / spine_bones.len() as f32,
+                joint_model: JointModel::Ball {
+                    swing_normal: 0.3,
+                    swing_plane: 0.3,
+                    twist: 0.3,
+                },
+                max_radius: f32::MAX,
+            });
+        }
+
+        let below_head = neck
+            .bones
+            .iter()
+            .rev()
+            .nth(1)
+            .copied()
+            .unwrap_or(*spine_bones.last().expect("the spine chain has a bone"));
+        let head_direction = (at(head) - at(below_head)).try_normalize().unwrap_or(up);
+        let head_length = ((at(head) - at(below_head)).length() * 2.0).max(0.12);
+        planned.push(Planned {
+            bone: head,
+            segment: Segment::Head,
+            side: Side::Centre,
+            start: at(head),
+            end: at(head) + head_direction * head_length,
+            mass: mass * Segment::Head.mass_fraction(),
+            joint_model: JointModel::Ball {
+                swing_normal: 0.6,
+                swing_plane: 0.6,
+                twist: 0.8,
+            },
+            max_radius: f32::MAX,
+        });
+
+        for (arm, side) in [left_arm, right_arm]
+            .into_iter()
+            .zip([Side::Left, Side::Right])
+        {
+            let count = arm.bones.len();
+            let upper = arm.bones[count - 3];
+            let lower = arm.bones[count - 2];
+            let hand = arm.bones[count - 1];
+            let upper_direction = (at(lower) - at(upper))
+                .try_normalize()
+                .unwrap_or(frame.left);
+            let lower_vector = at(hand) - at(lower);
+            let lower_direction = lower_vector.try_normalize().unwrap_or(upper_direction);
+            planned.push(Planned {
+                bone: upper,
+                segment: Segment::UpperArm,
+                side,
+                start: at(upper),
+                end: at(lower),
+                mass: mass * Segment::UpperArm.mass_fraction(),
+                joint_model: JointModel::Ball {
+                    swing_normal: 1.4,
+                    swing_plane: 1.4,
+                    twist: 0.8,
+                },
+                max_radius: f32::MAX,
+            });
+            planned.push(Planned {
+                bone: lower,
+                segment: Segment::LowerArm,
+                side,
+                start: at(lower),
+                end: at(hand),
+                mass: mass * Segment::LowerArm.mass_fraction(),
+                joint_model: JointModel::Hinge {
+                    axis: hinge_axis(lower_direction, frame.forward, frame.up),
+                    min: 0.0,
+                    max: 2.4,
+                    swing: 0.0,
+                },
+                max_radius: f32::MAX,
+            });
+            planned.push(Planned {
+                bone: hand,
+                segment: Segment::Hand,
+                side,
+                start: at(hand),
+                end: at(hand) + lower_direction * lower_vector.length().max(0.05) * 0.4,
+                mass: mass * Segment::Hand.mass_fraction(),
+                joint_model: JointModel::Ball {
+                    swing_normal: 0.8,
+                    swing_plane: 0.5,
+                    twist: 0.3,
+                },
+                max_radius: f32::MAX,
+            });
+        }
+
+        for (leg, side) in [left_leg, right_leg]
+            .into_iter()
+            .zip([Side::Left, Side::Right])
+        {
+            let thigh = leg.bones[0];
+            let shin = leg.bones[1];
+            let foot = leg.bones[2];
+            let shin_direction = (at(foot) - at(shin)).try_normalize().unwrap_or(-frame.up);
+            let foot_end = match leg.bones.get(3) {
+                Some(toe) => at(foot) + (at(*toe) - at(foot)) * 1.5,
+                None => at(foot) + frame.forward * 0.18 - frame.up * 0.05,
+            };
+            planned.push(Planned {
+                bone: thigh,
+                segment: Segment::Thigh,
+                side,
+                start: at(thigh),
+                end: at(shin),
+                mass: mass * Segment::Thigh.mass_fraction(),
+                joint_model: JointModel::Ball {
+                    swing_normal: 1.0,
+                    swing_plane: 0.8,
+                    twist: 0.4,
+                },
+                max_radius: hip_width * 0.48,
+            });
+            planned.push(Planned {
+                bone: shin,
+                segment: Segment::Shin,
+                side,
+                start: at(shin),
+                end: at(foot),
+                mass: mass * Segment::Shin.mass_fraction(),
+                joint_model: JointModel::Hinge {
+                    axis: hinge_axis(shin_direction, -frame.forward, frame.left),
+                    min: 0.0,
+                    max: 2.4,
+                    swing: 0.0,
+                },
+                max_radius: hip_width * 0.48,
+            });
+            planned.push(Planned {
+                bone: foot,
+                segment: Segment::Foot,
+                side,
+                start: at(foot),
+                end: foot_end,
+                mass: mass * Segment::Foot.mass_fraction(),
+                joint_model: JointModel::Hinge {
+                    axis: frame.left,
+                    min: -0.6,
+                    max: 0.6,
+                    swing: 0.2,
+                },
+                max_radius: f32::MAX,
+            });
+        }
+
+        let owners = part_owners(skeleton, &planned);
+        let skin = skin_points(skeleton, model, meshes, &owners);
+        let mut ragdoll = Ragdoll::new(skeleton_handle);
+        for (index, plan) in planned.iter().enumerate() {
+            ragdoll = ragdoll.with_part(part(skeleton, model, plan, &skin[index], &frame));
+        }
+        let mut flinch = StrengthProfile::new(FLINCH, PartStrength::Kinematic);
+        let mut braced = StrengthProfile::new(BRACED, PartStrength::Kinematic);
+        for plan in &planned {
+            let bone = skeleton.names[plan.bone].as_ref();
+            let muscle = PartStrength::powered(
+                plan.segment.muscle_stiffness(),
+                plan.segment.muscle_torque(),
+            );
+            braced = braced.with_part(bone, muscle);
+            if plan.segment.above_the_pelvis() {
+                flinch = flinch.with_part(bone, muscle);
+            }
+        }
+        Ok(ragdoll
+            .with_profile(flinch)
+            .with_profile(braced)
+            .with_profile(StrengthProfile::new(LIMP, PartStrength::Limp)))
+    }
 }

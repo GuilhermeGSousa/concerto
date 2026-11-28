@@ -467,7 +467,7 @@ inspector's form.
 
 #### Generating a humanoid
 
-Typing fifteen parts by hand is an afternoon of guessing. `generate_humanoid`
+Typing fifteen parts by hand is an afternoon of guessing. `Ragdoll::humanoid`
 gives a first draft to adjust: a pelvis, up to three spine parts, a head, upper
 and lower arms, hands, thighs, shins and feet. Each foot is a flat box whose
 underside is the sole, so a standing body rests on two faces and not on two
@@ -475,10 +475,10 @@ rolling capsules. A part whose segment is `Foot` is built with a friction of 4,
 which holds a planted foot where it is; every other part has 0.5.
 
 ```rust
-use concerto::ragdoll::{HumanoidSettings, generate_humanoid};
+use concerto::ragdoll::{HumanoidSettings, Ragdoll};
 
 let rig = retarget_rig.resolve(&skeleton, None)?;
-let ragdoll = generate_humanoid(skeleton_handle, &skeleton, &rig, &[&body_mesh], &HumanoidSettings::default())?;
+let ragdoll = Ragdoll::humanoid(skeleton_handle, &skeleton, &rig, &[&body_mesh], &HumanoidSettings::default())?;
 ```
 
 It needs the skeleton's `RetargetRig`, which already says which bones are the
@@ -497,7 +497,7 @@ small ones, and every joint a little friction so a fallen body comes to rest.
 In the editor, a retarget rig's tab has a **Create ragdoll** button, and an
 agent has the `create_ragdoll` tool; both come from the extension crate
 `concerto-ragdoll-editor` and send one signal, `CreateRagdoll`. It reads the
-rig, its skeleton and its reference clip, runs `generate_humanoid`, checks the
+rig, its skeleton and its reference clip, runs `Ragdoll::humanoid`, checks the
 result with `Ragdoll::resolve`, and saves `ragdoll.gasset` beside the rig, or
 at an `address` you give. The tool takes `rig`, and optionally `address`,
 `total_mass` and `chains`, and answers one line per part with its bone, shape
@@ -518,7 +518,7 @@ it go limp, Poke hits the part on `poke_bone` with `poke_impulse` (making the
 body limp first), Play plays the `clip` of the **Preview** value with the
 ragdoll following it kinematically, and Reset stands it in its rest pose again.
 Powered playback, where the body pulls itself toward the clip, does not exist
-yet. Drop and Poke also run the headless trial `run_trial` on the tab's current
+yet. Drop and Poke also run the headless trial `ResolvedRagdoll::run_trial` on the tab's current
 value and print its report under the buttons.
 
 The tools do the same without a screenshot. `ragdoll_parts` lists the parts:
