@@ -6,7 +6,7 @@ use concerto_animation::{
     look_at::{LookFrame, YawPitch},
     node::{
         AnimationNode, EditorAnimationNode, InputSlots, ReflectAnimationNode,
-        model_space::{WorldToModel, bone_under_first, model_joint, parent},
+        model_space::{ModelJoint, WorldToModel, bone_under_first, parent},
     },
     param::Param,
     pose::{AnimationFrame, EvaluatedFrame, FramePool, JointPose},
@@ -255,7 +255,7 @@ impl LookAtNode {
     }
 
     fn look_frame(&self, skeleton: &Skeleton, bone: usize) -> Result<LookFrame, String> {
-        let rest = model_joint(skeleton, &skeleton.rest_pose, bone)
+        let rest = ModelJoint::of(skeleton, &skeleton.rest_pose, bone)
             .ok_or("the skeleton's rest pose is missing a bone")?;
         let inverse = rest.rotation.inverse();
         LookFrame::new(inverse * self.forward, inverse * self.up)
@@ -282,7 +282,7 @@ impl LookAtNode {
         let Some(first) = look.bones.first() else {
             return 0.0;
         };
-        let Some(joint) = model_joint(look.skeleton, joints, first.bone) else {
+        let Some(joint) = ModelJoint::of(look.skeleton, joints, first.bone) else {
             return 0.0;
         };
         let gaze = joint.rotation * first.frame.forward();
@@ -347,7 +347,7 @@ impl ResolvedLook<'_> {
         working: &mut [JointPose],
     ) {
         for (look_bone, offset) in self.bones.iter().zip(offsets.iter_mut()) {
-            let Some(joint) = model_joint(self.skeleton, working, look_bone.bone) else {
+            let Some(joint) = ModelJoint::of(self.skeleton, working, look_bone.bone) else {
                 continue;
             };
             let direction =

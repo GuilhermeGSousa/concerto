@@ -30,6 +30,80 @@ impl BoneMask {
         self.branches.push(branch);
         self
     }
+
+    /// Resolves `mask` against `skeleton` into one weight per bone, in bone order, with `root` at weight 0.
+    pub fn resolve_into(&self, skeleton: &Skeleton, root: Option<usize>, out: &mut MaskResolution) {
+        let bones = skeleton.bone_count();
+        out.weights.clear();
+        out.weights.resize(bones, 0.0);
+        out.missing.clear();
+        out.names_root = false;
+        out.entry_at.clear();
+        out.entry_at.resize(bones, None);
+        out.covering.clear();
+        out.covering.resize(bones, None);
+        out.inherited.clear();
+        out.inherited.resize(bones, None);
+
+        for (entry, branch) in self.branches.iter().enumerate() {
+            if branch.bone.is_empty() {
+                continue;
+            }
+            match skeleton.bone_index(branch.bone.0) {
+                Some(bone) if bone < bones => {
+                    out.entry_at[bone] = Some(entry as u32);
+                    if Some(bone) == root {
+                        out.names_root = true;
+                    }
+                }
+                _ => {
+                    if !out.missing.contains(&branch.bone) {
+                        out.missing.push(branch.bone);
+                    }
+                }
+            }
+        }
+
+        for bone in 0..bones {
+            let from_parent = skeleton
+                .parents
+                .get(bone)
+                .copied()
+                .flatten()
+                .map(usize::from)
+                .filter(|parent| *parent < bone)
+                .and_then(|parent| out.inherited[parent])
+                .map(Cover::one_level_down);
+            let (covering, inherited) = match out.entry_at[bone] {
+                Some(entry) => {
+                    let own = Cover { entry, levels: 0 };
+                    let passed = if self.branches[entry as usize].descendants {
+                        Some(own)
+                    } else {
+                        from_parent
+                    };
+                    (Some(own), passed)
+                }
+                None => (from_parent, from_parent),
+            };
+            out.covering[bone] = covering;
+            out.inherited[bone] = inherited;
+
+            if Some(bone) == root {
+                continue;
+            }
+            if let Some(cover) = covering {
+                let branch = &self.branches[cover.entry as usize];
+                let weight = if branch.weight.is_nan() {
+                    0.0
+                } else {
+                    branch.weight
+                };
+                let ramp = ((cover.levels as f32 + 1.0) / (branch.depth as f32 + 1.0)).min(1.0);
+                out.weights[bone] = (weight * ramp).clamp(0.0, 1.0);
+            }
+        }
+    }
 }
 
 impl Asset for BoneMask {
@@ -138,85 +212,6 @@ impl Cover {
     }
 }
 
-/// Resolves `mask` against `skeleton` into one weight per bone, in bone order, with `root` at weight 0.
-pub fn resolve_mask(
-    mask: &BoneMask,
-    skeleton: &Skeleton,
-    root: Option<usize>,
-    out: &mut MaskResolution,
-) {
-    let bones = skeleton.bone_count();
-    out.weights.clear();
-    out.weights.resize(bones, 0.0);
-    out.missing.clear();
-    out.names_root = false;
-    out.entry_at.clear();
-    out.entry_at.resize(bones, None);
-    out.covering.clear();
-    out.covering.resize(bones, None);
-    out.inherited.clear();
-    out.inherited.resize(bones, None);
-
-    for (entry, branch) in mask.branches.iter().enumerate() {
-        if branch.bone.is_empty() {
-            continue;
-        }
-        match skeleton.bone_index(branch.bone.0) {
-            Some(bone) if bone < bones => {
-                out.entry_at[bone] = Some(entry as u32);
-                if Some(bone) == root {
-                    out.names_root = true;
-                }
-            }
-            _ => {
-                if !out.missing.contains(&branch.bone) {
-                    out.missing.push(branch.bone);
-                }
-            }
-        }
-    }
-
-    for bone in 0..bones {
-        let from_parent = skeleton
-            .parents
-            .get(bone)
-            .copied()
-            .flatten()
-            .map(usize::from)
-            .filter(|parent| *parent < bone)
-            .and_then(|parent| out.inherited[parent])
-            .map(Cover::one_level_down);
-        let (covering, inherited) = match out.entry_at[bone] {
-            Some(entry) => {
-                let own = Cover { entry, levels: 0 };
-                let passed = if mask.branches[entry as usize].descendants {
-                    Some(own)
-                } else {
-                    from_parent
-                };
-                (Some(own), passed)
-            }
-            None => (from_parent, from_parent),
-        };
-        out.covering[bone] = covering;
-        out.inherited[bone] = inherited;
-
-        if Some(bone) == root {
-            continue;
-        }
-        if let Some(cover) = covering {
-            let branch = &mask.branches[cover.entry as usize];
-            let weight = if branch.weight.is_nan() {
-                0.0
-            } else {
-                branch.weight
-            };
-            let ramp = ((cover.levels as f32 + 1.0) / (branch.depth as f32 + 1.0)).min(1.0);
-            out.weights[bone] = (weight * ramp).clamp(0.0, 1.0);
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use concerto_mesh::{Skeleton, skeleton::JointPose};
@@ -224,7 +219,7 @@ mod tests {
     use glam::Mat4;
     use uuid::Uuid;
 
-    use super::{BoneMask, BoneMaskBranch, MaskResolution, resolve_mask};
+    use super::{BoneMask, BoneMaskBranch, MaskResolution};
 
     const NAMES: [&str; 10] = [
         "root",
@@ -271,7 +266,7 @@ mod tests {
 
     fn resolve(mask: &BoneMask, root: Option<usize>) -> MaskResolution {
         let mut out = MaskResolution::default();
-        resolve_mask(mask, &rig(), root, &mut out);
+        mask.resolve_into(&rig(), root, &mut out);
         out
     }
 

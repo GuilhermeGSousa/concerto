@@ -1,6 +1,6 @@
 use concerto_animation::{
-    ik::{Hinge, TwoBoneChain, solve_two_bone},
-    node::model_space::{bone_under_first, model_joint, parent},
+    ik::{Hinge, TwoBoneChain},
+    node::model_space::{ModelJoint, bone_under_first, parent},
     pose::AnimationFrame,
 };
 use concerto_foundation::math::{Spring, SpringValue};
@@ -75,33 +75,29 @@ impl ResolvedLeg {
         output: &mut AnimationFrame,
     ) {
         let joints = output.joints();
-        let Some(hip) = model_joint(skeleton, joints, self.hip) else {
+        let Some(hip) = ModelJoint::of(skeleton, joints, self.hip) else {
             return;
         };
-        let Some(knee) = model_joint(skeleton, joints, self.knee) else {
+        let Some(knee) = ModelJoint::of(skeleton, joints, self.knee) else {
             return;
         };
-        let Some(foot) = model_joint(skeleton, joints, self.foot) else {
+        let Some(foot) = ModelJoint::of(skeleton, joints, self.foot) else {
             return;
         };
         let parent_rotation = match parent(skeleton, self.hip) {
-            Some(up) => match model_joint(skeleton, joints, up) {
+            Some(up) => match ModelJoint::of(skeleton, joints, up) {
                 Some(joint) => joint.rotation,
                 None => return,
             },
             None => Quat::IDENTITY,
         };
-        let solution = solve_two_bone(
-            &TwoBoneChain {
-                root: hip.transform.translation.into(),
-                mid: knee.transform.translation.into(),
-                tip: foot.transform.translation.into(),
-                hinge: self.hinge.map(|axis| knee.rotation * axis),
-            },
-            goal_position,
-            None,
-            softness,
-        );
+        let solution = (TwoBoneChain {
+            root: hip.transform.translation.into(),
+            mid: knee.transform.translation.into(),
+            tip: foot.transform.translation.into(),
+            hinge: self.hinge.map(|axis| knee.rotation * axis),
+        })
+        .solve(goal_position, None, softness);
         let hip_rotation = solution.root * hip.rotation;
         let knee_rotation = solution.mid * knee.rotation;
         let foot_rotation = goal_tilt * foot.rotation;

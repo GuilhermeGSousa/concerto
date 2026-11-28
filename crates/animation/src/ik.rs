@@ -112,85 +112,6 @@ impl TwoBoneSolution {
     };
 }
 
-/// Solves a two-bone chain toward `target`, bending toward `pole` when given.
-///
-/// Reach past `chain length - softness` eases toward full length instead of snapping straight.
-pub fn solve_two_bone(
-    chain: &TwoBoneChain,
-    target: Vec3,
-    pole: Option<Vec3>,
-    softness: f32,
-) -> TwoBoneSolution {
-    let a = chain.root;
-    let upper = chain.mid - a;
-    let lower = chain.tip - chain.mid;
-    let l1 = upper.length();
-    let l2 = lower.length();
-    if !(l1.is_finite() && l2.is_finite())
-        || l1 * l1 <= MIN_LENGTH_SQUARED
-        || l2 * l2 <= MIN_LENGTH_SQUARED
-    {
-        return TwoBoneSolution::IDENTITY;
-    }
-    let u1 = upper / l1;
-    let u2 = lower / l2;
-    let full = l1 + l2;
-    let shortest = (l1 - l2).abs();
-
-    let reach = soft_reach((target - a).length(), full, shortest, softness);
-
-    let chain_dir = unit(chain.tip - a).unwrap_or(u1);
-    let own = unit(chain_dir.cross(upper));
-    let hinge = chain
-        .hinge
-        .filter(|hinge| hinge.is_finite())
-        .and_then(|hinge| unit(hinge - chain_dir * hinge.dot(chain_dir)))
-        .map(|hinge| -hinge);
-    let normal = match hinge {
-        Some(hinge) => own.map_or(hinge, |own| {
-            let bend = u1.dot(u2).clamp(-1.0, 1.0).acos();
-            let weight = smoothstep(bend / CLEAR_BEND) * own.dot(hinge).clamp(0.0, 1.0);
-            unit(own * weight + hinge * (1.0 - weight)).unwrap_or(hinge)
-        }),
-        None => own
-            .or_else(|| pole.and_then(|pole| unit(chain_dir.cross(pole - a))))
-            .unwrap_or_else(|| chain_dir.any_orthonormal_vector()),
-    };
-
-    let cos_a = if reach * reach <= MIN_LENGTH_SQUARED {
-        1.0
-    } else {
-        (l1 * l1 + reach * reach - l2 * l2) / (2.0 * l1 * reach)
-    };
-    let angle_a = cos_a.clamp(-1.0, 1.0).acos();
-    let upper_after = chain_dir * angle_a.cos() + normal.cross(chain_dir) * angle_a.sin();
-    let lower_after = unit(chain_dir * reach - upper_after * l1).unwrap_or(u2);
-
-    let mut root = arc(u1, upper_after, normal);
-    let mut mid = arc(u2, lower_after, normal);
-
-    let Some(target_dir) = unit(target - a) else {
-        return TwoBoneSolution { root, mid };
-    };
-    let aim = arc(chain_dir, target_dir, normal);
-    root = aim * root;
-    mid = aim * mid;
-
-    if let Some(pole) = pole {
-        let across = |v: Vec3| unit(v - target_dir * v.dot(target_dir));
-        if let (Some(mid_side), Some(pole_side)) = (across(root * upper), across(pole - a)) {
-            let angle = target_dir
-                .dot(mid_side.cross(pole_side))
-                .atan2(mid_side.dot(pole_side));
-            let swing = Quat::from_axis_angle(target_dir, angle);
-            root = swing * root;
-            mid = swing * mid;
-        }
-    }
-
-    TwoBoneSolution { root, mid }
-}
-
 fn soft_reach(distance: f32, full: f32, shortest: f32, softness: f32) -> f32 {
     let softness = if softness.is_nan() {
         0.0
@@ -225,6 +146,82 @@ fn unit(v: Vec3) -> Option<Vec3> {
     (v.length_squared() > MIN_LENGTH_SQUARED).then(|| v.normalize())
 }
 
+impl TwoBoneChain {
+    /// Solves a two-bone chain toward `target`, bending toward `pole` when given.
+    ///
+    /// Reach past `chain length - softness` eases toward full length instead of snapping straight.
+    pub fn solve(&self, target: Vec3, pole: Option<Vec3>, softness: f32) -> TwoBoneSolution {
+        let a = self.root;
+        let upper = self.mid - a;
+        let lower = self.tip - self.mid;
+        let l1 = upper.length();
+        let l2 = lower.length();
+        if !(l1.is_finite() && l2.is_finite())
+            || l1 * l1 <= MIN_LENGTH_SQUARED
+            || l2 * l2 <= MIN_LENGTH_SQUARED
+        {
+            return TwoBoneSolution::IDENTITY;
+        }
+        let u1 = upper / l1;
+        let u2 = lower / l2;
+        let full = l1 + l2;
+        let shortest = (l1 - l2).abs();
+
+        let reach = soft_reach((target - a).length(), full, shortest, softness);
+
+        let chain_dir = unit(self.tip - a).unwrap_or(u1);
+        let own = unit(chain_dir.cross(upper));
+        let hinge = self
+            .hinge
+            .filter(|hinge| hinge.is_finite())
+            .and_then(|hinge| unit(hinge - chain_dir * hinge.dot(chain_dir)))
+            .map(|hinge| -hinge);
+        let normal = match hinge {
+            Some(hinge) => own.map_or(hinge, |own| {
+                let bend = u1.dot(u2).clamp(-1.0, 1.0).acos();
+                let weight = smoothstep(bend / CLEAR_BEND) * own.dot(hinge).clamp(0.0, 1.0);
+                unit(own * weight + hinge * (1.0 - weight)).unwrap_or(hinge)
+            }),
+            None => own
+                .or_else(|| pole.and_then(|pole| unit(chain_dir.cross(pole - a))))
+                .unwrap_or_else(|| chain_dir.any_orthonormal_vector()),
+        };
+
+        let cos_a = if reach * reach <= MIN_LENGTH_SQUARED {
+            1.0
+        } else {
+            (l1 * l1 + reach * reach - l2 * l2) / (2.0 * l1 * reach)
+        };
+        let angle_a = cos_a.clamp(-1.0, 1.0).acos();
+        let upper_after = chain_dir * angle_a.cos() + normal.cross(chain_dir) * angle_a.sin();
+        let lower_after = unit(chain_dir * reach - upper_after * l1).unwrap_or(u2);
+
+        let mut root = arc(u1, upper_after, normal);
+        let mut mid = arc(u2, lower_after, normal);
+
+        let Some(target_dir) = unit(target - a) else {
+            return TwoBoneSolution { root, mid };
+        };
+        let aim = arc(chain_dir, target_dir, normal);
+        root = aim * root;
+        mid = aim * mid;
+
+        if let Some(pole) = pole {
+            let across = |v: Vec3| unit(v - target_dir * v.dot(target_dir));
+            if let (Some(mid_side), Some(pole_side)) = (across(root * upper), across(pole - a)) {
+                let angle = target_dir
+                    .dot(mid_side.cross(pole_side))
+                    .atan2(mid_side.dot(pole_side));
+                let swing = Quat::from_axis_angle(target_dir, angle);
+                root = swing * root;
+                mid = swing * mid;
+            }
+        }
+
+        TwoBoneSolution { root, mid }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use concerto_mesh::{JointPose, Skeleton};
@@ -232,7 +229,7 @@ mod tests {
     use proptest::prelude::*;
     use uuid::Uuid;
 
-    use super::{Hinge, TwoBoneChain, TwoBoneSolution, solve_two_bone};
+    use super::{Hinge, TwoBoneChain, TwoBoneSolution};
 
     const L1: f32 = 1.0;
     const L2: f32 = 0.8;
@@ -260,7 +257,7 @@ mod tests {
 
     fn tip_distance(target: Vec3, softness: f32) -> f32 {
         let chain = bent();
-        apply(&chain, &solve_two_bone(&chain, target, None, softness))
+        apply(&chain, &chain.solve(target, None, softness))
             .tip
             .distance(chain.root)
     }
@@ -283,7 +280,7 @@ mod tests {
         ) {
             let chain = TwoBoneChain { hinge, ..bent() };
 
-            let solution = solve_two_bone(&chain, target, pole, softness);
+            let solution = chain.solve(target, pole, softness);
 
             prop_assert!(is_finite(&solution));
             let solved = apply(&chain, &solution);
@@ -328,7 +325,7 @@ mod tests {
             hinge: Some(Vec3::Z),
             ..chain
         };
-        let solve = |chain: &TwoBoneChain| apply(chain, &solve_two_bone(chain, goal, None, 0.0));
+        let solve = |chain: &TwoBoneChain| apply(chain, &chain.solve(goal, None, 0.0));
         let straight = solve(&hinged(bend_toward(Vec3::X, 0.0)));
         assert!(straight.mid.z.abs() < 1e-4, "mid {}", straight.mid);
         let cases = [
@@ -473,7 +470,7 @@ mod tests {
         let chain = bent();
         let target = Vec3::new(1.1, 0.2, 0.0);
 
-        let unpoled = apply(&chain, &solve_two_bone(&chain, target, None, 0.0));
+        let unpoled = apply(&chain, &chain.solve(target, None, 0.0));
 
         assert!(unpoled.tip.distance(target) < 1e-4);
         assert!(unpoled.mid.z.abs() < 1e-4, "mid {}", unpoled.mid);
@@ -486,7 +483,7 @@ mod tests {
         );
 
         let pole = Vec3::new(0.5, -1.0, -0.7);
-        let poled = apply(&chain, &solve_two_bone(&chain, target, Some(pole), 0.0));
+        let poled = apply(&chain, &chain.solve(target, Some(pole), 0.0));
 
         assert!(poled.tip.distance(target) < 1e-4);
         let normal = target.cross(pole).normalize();
@@ -574,7 +571,7 @@ mod tests {
         ];
 
         for case in cases {
-            let solution = solve_two_bone(&case.chain, case.target, case.pole, case.softness);
+            let solution = case.chain.solve(case.target, case.pole, case.softness);
 
             match case.outcome {
                 Outcome::Reaches(goal) => {

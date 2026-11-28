@@ -1,7 +1,7 @@
 use concerto_animation::{
     clip::AnimationClip,
     evaluation::AnimationGraphContext,
-    node::{effective_play_rate, AnimationNode, EditorAnimationNode, ReflectAnimationNode},
+    node::{AnimationNode, EditorAnimationNode, ReflectAnimationNode},
     param::Param,
     pose::{AnimationFrame, EvaluatedFrame, FramePool, RootMotion, WeightedMotion},
 };
@@ -206,8 +206,9 @@ impl AnimationNode for MotionMatchingNode {
         state.clear_fired();
         match sources(self, databases, skeletons, clips, context.skeleton()) {
             Some(sources) => {
-                let rate =
-                    effective_play_rate(self.play_rate, self.play_rate_param, context.blackboard());
+                let rate = context
+                    .blackboard()
+                    .effective_play_rate(self.play_rate, self.play_rate_param);
                 state.step(self, delta_time, rate, context.blackboard(), sources)
             }
             None => state.clear_root_motion(),

@@ -11,7 +11,7 @@ use crate::{
     evaluation::AnimationGraphContext,
     node::{
         AnimationNode, AnimationPlayMode, ClipClock, ClockSpan, EditorAnimationNode, InputSlots,
-        ReflectAnimationNode, effective_play_rate, effective_weight,
+        ReflectAnimationNode,
     },
     param::Param,
     pose::{AnimationFrame, EvaluatedFrame, FiredEvent, FramePool, apply_additive, twist_about},
@@ -155,7 +155,9 @@ impl AnimationNode for AdditiveNode {
         let Some(span) = clip.delta_span() else {
             return;
         };
-        let rate = effective_play_rate(self.play_rate, self.play_rate_param, context.blackboard());
+        let rate = context
+            .blackboard()
+            .effective_play_rate(self.play_rate, self.play_rate_param);
         state
             .clock
             .advance(clip, span, delta_time, rate, &self.play_mode);
@@ -197,7 +199,9 @@ impl AnimationNode for AdditiveNode {
         if clip.additive_duration() <= 0.0 {
             return;
         }
-        let weight = effective_weight(self.weight, self.weight_param, context.blackboard());
+        let weight = context
+            .blackboard()
+            .effective_weight(self.weight, self.weight_param);
         if weight <= 0.0 {
             return;
         }

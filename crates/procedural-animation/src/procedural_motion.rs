@@ -3,7 +3,7 @@ use std::f64::consts::TAU;
 use concerto_animation::{
     blackboard::AnimationBlackboard,
     evaluation::AnimationGraphContext,
-    mask::{BoneMask, MaskResolution, resolve_mask},
+    mask::{BoneMask, MaskResolution},
     node::{
         AnimationNode, EditorAnimationNode, InputSlots, ReflectAnimationNode, model_space::parent,
     },
@@ -340,7 +340,7 @@ impl ProceduralMotionNode {
             let Some(mask) = masks.get(&channel.mask) else {
                 continue;
             };
-            resolve_mask(mask, skeleton, None, &mut channel_state.mask);
+            mask.resolve_into(skeleton, None, &mut channel_state.mask);
             if !channel_state.mask.missing.is_empty() && !channel_state.warned_missing {
                 let names: Vec<&str> = channel_state
                     .mask

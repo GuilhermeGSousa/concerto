@@ -4,7 +4,7 @@ use concerto_animation::{
     look_at::{LookFrame, YawPitch},
     node::{
         AnimationNode, EditorAnimationNode, InputSlots, ReflectAnimationNode,
-        model_space::{WorldToModel, bone_under_first, model_joint},
+        model_space::{ModelJoint, WorldToModel, bone_under_first},
     },
     param::Param,
     pose::{AnimationFrame, EvaluatedFrame, FramePool, JointPose},
@@ -285,7 +285,7 @@ struct Barrel {
 
 impl ResolvedAim<'_> {
     fn barrel(&self, joints: &[JointPose]) -> Option<Barrel> {
-        let joint = model_joint(self.skeleton, joints, self.muzzle)?;
+        let joint = ModelJoint::of(self.skeleton, joints, self.muzzle)?;
         Some(Barrel {
             point: joint.transform.transform_point3(self.offset),
             direction: joint.rotation * self.direction,
@@ -299,7 +299,9 @@ impl ResolvedAim<'_> {
         barrel: &Barrel,
         up: Vec3,
     ) -> Option<LookFrame> {
-        let inverse = model_joint(self.skeleton, joints, bone)?.rotation.inverse();
+        let inverse = ModelJoint::of(self.skeleton, joints, bone)?
+            .rotation
+            .inverse();
         LookFrame::new(inverse * barrel.direction, inverse * up)
     }
 }
@@ -391,7 +393,7 @@ impl AimNode {
         working: &mut Vec<JointPose>,
     ) -> Option<Vec<Quat>> {
         let barrel = aim.barrel(input)?;
-        let first = model_joint(aim.skeleton, input, aim.links.first()?.bone)?;
+        let first = ModelJoint::of(aim.skeleton, input, aim.links.first()?.bone)?;
         let first = Vec3::from(first.transform.translation);
         if (target - barrel.point).dot(barrel.direction) <= 0.0
             || target.distance(first) < barrel.point.distance(first)

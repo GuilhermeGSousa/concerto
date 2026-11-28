@@ -66,22 +66,27 @@ pub fn bone_under_first(skeleton: &Skeleton, name: JointName) -> Result<usize, S
     }
 }
 
-/// The model-space transform of `bone` in the local pose `joints`.
-pub fn model_joint(skeleton: &Skeleton, joints: &[JointPose], bone: usize) -> Option<ModelJoint> {
-    let joint = joints.get(bone)?;
-    let local =
-        Affine3A::from_scale_rotation_translation(joint.scale, joint.rotation, joint.translation);
-    Some(match parent(skeleton, bone) {
-        Some(up) => {
-            let parent = model_joint(skeleton, joints, up)?;
-            ModelJoint {
-                transform: parent.transform * local,
-                rotation: parent.rotation * joint.rotation,
+impl ModelJoint {
+    /// The model-space transform of `bone` in the local pose `joints`.
+    pub fn of(skeleton: &Skeleton, joints: &[JointPose], bone: usize) -> Option<ModelJoint> {
+        let joint = joints.get(bone)?;
+        let local = Affine3A::from_scale_rotation_translation(
+            joint.scale,
+            joint.rotation,
+            joint.translation,
+        );
+        Some(match parent(skeleton, bone) {
+            Some(up) => {
+                let parent = Self::of(skeleton, joints, up)?;
+                ModelJoint {
+                    transform: parent.transform * local,
+                    rotation: parent.rotation * joint.rotation,
+                }
             }
-        }
-        None => ModelJoint {
-            transform: local,
-            rotation: joint.rotation,
-        },
-    })
+            None => ModelJoint {
+                transform: local,
+                rotation: joint.rotation,
+            },
+        })
+    }
 }

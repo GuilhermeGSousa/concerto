@@ -4,7 +4,7 @@ use concerto_animation::{
     ik::Hinge,
     node::{
         AnimationNode, EditorAnimationNode, InputSlots, ReflectAnimationNode,
-        model_space::{WorldToModel, model_joint},
+        model_space::{ModelJoint, WorldToModel},
     },
     param::Param,
     pose::{AnimationFrame, EvaluatedFrame, FramePool, RootMotion, WeightedMotion},
@@ -349,7 +349,7 @@ struct LegPoints {
 impl ResolvedLegs<'_> {
     fn leg_points(&self, output: &AnimationFrame) -> Option<Vec<LegPoints>> {
         let position = |bone| {
-            model_joint(self.skeleton, output.joints(), bone)
+            ModelJoint::of(self.skeleton, output.joints(), bone)
                 .map(|joint| Vec3::from(joint.transform.translation))
         };
         self.legs
@@ -379,7 +379,7 @@ impl ModelMotion {
         motion: RootMotion,
     ) -> Self {
         let up = root.map_or(Vec3::Y, |root| root.up);
-        let joint = root.and_then(|root| model_joint(skeleton, frame.joints(), root.index));
+        let joint = root.and_then(|root| ModelJoint::of(skeleton, frame.joints(), root.index));
         let facing = root
             .zip(joint.as_ref())
             .map(|(root, joint)| joint.rotation * root.rest.rotation.inverse())

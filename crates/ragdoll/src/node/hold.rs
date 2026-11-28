@@ -4,7 +4,7 @@ use concerto_animation::{
     attribute::PoseAttribute,
     blackboard::AnimationBlackboard,
     evaluation::{AnimationGraphContext, DriveContext},
-    mask::{BoneMask, MaskResolution, resolve_mask},
+    mask::{BoneMask, MaskResolution},
     node::{AnimationNode, EditorAnimationNode, InputSlots, ReflectAnimationNode},
     param::Param,
     pose::{AnimationFrame, EvaluatedFrame, FramePool},
@@ -126,7 +126,7 @@ impl HoldNode {
     ) -> Option<Vec<HeldPart>> {
         let weights = match &self.mask {
             Some(handle) => {
-                resolve_mask(masks.get(handle)?, skeleton, root, mask);
+                masks.get(handle)?.resolve_into(skeleton, root, mask);
                 Some(&mask.weights)
             }
             None => None,

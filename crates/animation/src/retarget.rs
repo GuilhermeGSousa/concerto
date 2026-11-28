@@ -19,7 +19,7 @@ use crate::{
     clip::AnimationClip,
     evaluation::{AnimationGraphContext, RootBone},
     graph::{AnimationGraph, AnimationGraphState},
-    ik::{Hinge, TwoBoneChain, solve_two_bone},
+    ik::{Hinge, TwoBoneChain},
     node::{AnimationNode, EditorAnimationNode, ReflectAnimationNode},
     pose::{AnimationFrame, EvaluatedFrame, FramePool, RootMotion, WeightedMotion, twist_about},
 };
@@ -983,7 +983,7 @@ impl PoseRetarget {
             tip,
             hinge: pair.hinge.map(|axis| self.target_rotation[pair.mid] * axis),
         };
-        let solution = solve_two_bone(&chain, tip.lerp(full, weight), None, pair.softness);
+        let solution = chain.solve(tip.lerp(full, weight), None, pair.softness);
         let root_rotation = (solution.root * self.target_rotation[pair.root]).normalize();
         let mid_rotation = (solution.mid * self.target_rotation[pair.mid]).normalize();
         let tip_rotation = self.target_rotation[pair.tip];
@@ -1686,7 +1686,7 @@ mod tests {
         evaluation::{AnimationGraphContext, RootBone},
         event::AnimationEvent,
         graph::AnimationGraph,
-        ik::{Hinge, TwoBoneChain, solve_two_bone},
+        ik::{Hinge, TwoBoneChain},
         message::ClipEnded,
         node::{AnimationClipNode, AnimationNode, AnimationPlayMode},
         player::AnimationPlayer,
@@ -2877,17 +2877,13 @@ mod tests {
         let rest_model = skeleton.forward_kinematics(&skeleton.rest_pose).unwrap();
         let [root, mid, tip] = bones.map(|name| bone(skeleton, name));
         let at = |bone: usize| model_position(&rest_model, bone) + shift;
-        let solution = solve_two_bone(
-            &TwoBoneChain {
-                root: at(root),
-                mid: at(mid),
-                tip: at(tip),
-                hinge: None,
-            },
-            goal,
-            None,
-            0.0,
-        );
+        let solution = (TwoBoneChain {
+            root: at(root),
+            mid: at(mid),
+            tip: at(tip),
+            hinge: None,
+        })
+        .solve(goal, None, 0.0);
         deltas[root] = solution.root;
         deltas[mid] = solution.mid;
     }

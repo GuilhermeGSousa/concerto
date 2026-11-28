@@ -4,7 +4,7 @@ use concerto_animation::{
     ik::Hinge,
     node::{
         AnimationNode, EditorAnimationNode, InputSlots, ReflectAnimationNode,
-        model_space::{WorldToModel, bone_under_first, model_joint, parent},
+        model_space::{ModelJoint, WorldToModel, bone_under_first, parent},
     },
     param::Param,
     pose::{AnimationFrame, EvaluatedFrame, FramePool, JointPose},
@@ -364,7 +364,7 @@ impl FootPlacementNode {
             down: self.max_step_down,
         };
         let world = |bone| {
-            model_joint(resolved.skeleton, joints, bone)
+            ModelJoint::of(resolved.skeleton, joints, bone)
                 .map(|joint| model_to_world.transform_point3(joint.transform.translation.into()))
         };
         resolved
@@ -481,7 +481,7 @@ impl ResolvedLegs<'_> {
         let skeleton = self.skeleton;
         let in_model = world_to_model.transform.transform_vector3(Vec3::Y * drop);
         let local = match parent(skeleton, self.pelvis) {
-            Some(up) => match model_joint(skeleton, output.joints(), up) {
+            Some(up) => match ModelJoint::of(skeleton, output.joints(), up) {
                 Some(joint) => joint.transform.inverse().transform_vector3(in_model),
                 None => return,
             },

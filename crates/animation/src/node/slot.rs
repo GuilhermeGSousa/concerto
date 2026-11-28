@@ -9,7 +9,7 @@ use uuid::Uuid;
 use crate::{
     evaluation::{AnimationGraphContext, DriveContext},
     graph::AnimationNodeData,
-    mask::{BoneMask, MaskResolution, resolve_mask},
+    mask::{BoneMask, MaskResolution},
     message::{AnimationMessage, ClipEnded, MessageType},
     node::{
         AnimationNode, EditorAnimationNode, InputSlots, NodeState, PlaceholderNode,
@@ -186,8 +186,7 @@ impl EntryMask {
         let (Some(asset), Some(skeleton)) = (masks.get(handle), context.skeleton()) else {
             return false;
         };
-        resolve_mask(
-            asset,
+        asset.resolve_into(
             skeleton,
             context.root().map(|root| root.index),
             &mut self.resolution,

@@ -1288,7 +1288,7 @@ A graph is a tree of nodes under a result node:
   input. Wire it after the nodes whose pose it corrects. A target param the
   game has not set yet leaves the pose as it is. Its `hinge` setting is `Off`
   by default. The same solve is
-  `concerto_animation::ik::solve_two_bone` for code outside a graph: it takes
+  `concerto_animation::ik::TwoBoneChain::solve` for code outside a graph: it takes
   the three joint positions in any one space and returns rotations in that
   space. A `TwoBoneChain` may also carry a `hinge`, a chain-space axis the
   lower bone turns about, positively by the right-hand rule, relative to the
