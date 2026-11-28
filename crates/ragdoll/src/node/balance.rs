@@ -366,12 +366,10 @@ impl CommandsOut {
         profile: Option<&StrengthProfile>,
         part: usize,
     ) -> Option<MotorCommand> {
-        let target = body.animated_target(part);
         if let Some(ordered) = self.get(part) {
-            return Some(ordered.motor(target));
+            return Some(ordered.motor(body.animated_target(part)));
         }
-        let strength = profile?.strength_of(&body.resolved().bone_name(part)?);
-        (strength != PartStrength::Kinematic).then(|| MotorCommand::holding(strength, 1.0, target))
+        profile?.command_for(body, part)
     }
 
     pub(crate) fn layered(
@@ -382,11 +380,27 @@ impl CommandsOut {
         part: usize,
     ) -> Option<MotorCommand> {
         let base = self.wanted(body, profile, part);
-        let Some(claim) = claim else {
-            return base;
-        };
-        let weight = claim.weight;
-        let claimed = claim.command.motor(body.animated_target(part));
+        match claim {
+            Some(claim) => claim.layer_onto(base, body.animated_target(part)),
+            None => base,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct OrderedClaim {
+    pub(crate) weight: f32,
+    pub(crate) command: PartCommand,
+}
+
+impl OrderedClaim {
+    pub(crate) fn layer_onto(
+        self,
+        base: Option<MotorCommand>,
+        animated: Quat,
+    ) -> Option<MotorCommand> {
+        let weight = self.weight;
+        let claimed = self.command.motor(animated);
         match base {
             Some(mut base) => {
                 let force = base.force;
@@ -399,12 +413,6 @@ impl CommandsOut {
             None => (weight >= 0.5).then_some(claimed),
         }
     }
-}
-
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct OrderedClaim {
-    pub(crate) weight: f32,
-    pub(crate) command: PartCommand,
 }
 
 #[derive(Clone, Debug, Default)]

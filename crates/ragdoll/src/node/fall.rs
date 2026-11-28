@@ -17,7 +17,7 @@ use crate::{
     fall::{FallController, FallRun, FallSettings, LYING},
     generate::BRACED,
     messages::BodyDown,
-    node::balance::{ClaimsOut, CommandsOut},
+    node::balance::ClaimsOut,
     view::{BodyInput, BodyView},
 };
 
@@ -79,15 +79,15 @@ impl FallNode {
         profile: Option<&StrengthProfile>,
         part: usize,
     ) -> Option<MotorCommand> {
+        let base = profile.and_then(|profile| profile.command_for(body, part));
+        let animated = body.animated_target(part);
         if state.limp {
-            return Some(MotorCommand::limp(
-                state.commands.wanted(body, profile, part),
-                body.animated_target(part),
-            ));
+            return Some(MotorCommand::limp(base, animated));
         }
-        state
-            .commands
-            .layered(state.claims.get(part), body, profile, part)
+        match state.claims.get(part) {
+            Some(claim) => claim.layer_onto(base, animated),
+            None => base,
+        }
     }
 }
 
@@ -95,7 +95,6 @@ impl FallNode {
 #[derive(Default)]
 pub struct FallState {
     run: FallRun,
-    commands: CommandsOut,
     claims: ClaimsOut,
     limp: bool,
     down: bool,
