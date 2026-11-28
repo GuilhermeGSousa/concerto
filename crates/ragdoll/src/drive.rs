@@ -41,6 +41,11 @@ impl RagdollBody {
             .map_or(0.0, |bone| PhysicsAmount::driven(player, *bone))
     }
 
+    /// Whether the body is drawn wholly from the animation: the drive pass of `player`'s graph gives none of its bones a [`PhysicsAmount`].
+    pub fn is_animated(&self, player: &AnimationPlayer) -> bool {
+        (0..self.resolved().part_count()).all(|part| self.drawn_amount(Some(player), part) <= 0.0)
+    }
+
     fn follow(&self, profile: Option<&StrengthProfile>, part: usize) -> Option<Held> {
         let strength = profile?.strength_of(&self.bone_name(part)?);
         matches!(strength, PartStrength::Powered { .. }).then(|| Held::of(strength))

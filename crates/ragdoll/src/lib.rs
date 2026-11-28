@@ -36,6 +36,8 @@ pub mod node;
 pub mod overlap;
 /// The plugin that adds ragdolls to an app.
 pub mod plugin;
+/// What a character's body and its animation graph are doing, as text an agent can read.
+pub mod report;
 /// Fitting a ragdoll asset to its skeleton and building it for the physics backend.
 pub mod resolve;
 pub mod sandbox;
@@ -77,6 +79,7 @@ pub use node::{
 };
 pub use overlap::PartOverlap;
 pub use plugin::RagdollPlugin;
+pub use report::active_states;
 pub use resolve::{Landmarks, Limbs, RagdollError, ResolvedRagdoll};
 pub use sandbox::{Trial, TrialReport, run_trial};
 pub use sensing::{BodySense, Impact, MassPoint};
