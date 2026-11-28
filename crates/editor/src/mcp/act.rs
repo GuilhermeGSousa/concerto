@@ -20,7 +20,7 @@ use concerto_import::importer_for;
 use concerto_mcp::{
     AppMcpExt, McpServe, McpTool, Needs, PendingCall, ToolCalls, ToolError, answer_unanswered,
 };
-use concerto_reflect::{Reflect, TypeRegistry, apply_value, json_to_value, to_json};
+use concerto_reflect::{Reflect, ReflectedValue, TypeRegistry, to_json};
 use concerto_scene::scene::Scene;
 use glam::Vec3;
 use schemars::JsonSchema;
@@ -668,8 +668,8 @@ fn patched(
         )
     };
     let type_id = (value.as_ref() as &dyn std::any::Any).type_id();
-    let stored = json_to_value(patch, type_id, types).map_err(&refused)?;
-    let warnings = apply_value(value.as_mut(), &stored);
+    let stored = ReflectedValue::from_json(patch, type_id, types).map_err(&refused)?;
+    let warnings = stored.apply(value.as_mut());
     if let Some(warning) = warnings.first() {
         return Err(refused(warning.to_string()));
     }

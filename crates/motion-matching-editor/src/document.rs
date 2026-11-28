@@ -19,7 +19,7 @@ use concerto_editor::{
 };
 use concerto_foundation::assets::{
     Asset, AssetId,
-    content::{decode_content_asset, read_asset_record, read_content_asset},
+    content::{ContentAssetHeader, decode_content_asset},
     handle::AssetHandle,
     registry::AssetEntry,
 };
@@ -289,8 +289,8 @@ pub(crate) fn publish_values(
 /// Returns an error when the file cannot be read or decoded, or holds another
 /// id or kind than `asset` names.
 pub fn read_definition(root: &Path, asset: &AssetEntry) -> anyhow::Result<MotionDatabase> {
-    let bytes = read_asset_record(root, asset)?;
-    let (header, _) = read_content_asset(&bytes)?;
+    let bytes = asset.read_record(root)?;
+    let (header, _) = ContentAssetHeader::read(&bytes)?;
     anyhow::ensure!(
         header.asset_id == asset.id && header.kind == MotionDatabase::name(),
         "Asset identity or type mismatch"

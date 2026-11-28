@@ -4,7 +4,7 @@ use std::{
 };
 
 use concerto_app::App;
-use concerto_foundation::assets::content::read_content_asset;
+use concerto_foundation::assets::content::ContentAssetHeader;
 use concerto_mcp::host::run_with;
 use concerto_render::gpu::Gpu;
 use rmcp::{
@@ -77,7 +77,11 @@ async fn pick_a_database(client: Client, project: &Path) -> Picked {
         .await;
     }
     let file = std::fs::read(project.join("content/Moves.gasset")).unwrap();
-    let database = read_content_asset(&file).unwrap().0.asset_id.simple_hex();
+    let database = ContentAssetHeader::read(&file)
+        .unwrap()
+        .0
+        .asset_id
+        .simple_hex();
     ok(
         &client,
         "open_asset",

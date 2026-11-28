@@ -15,8 +15,7 @@ use concerto_ecs::{
 use concerto_reflect::TypeRegistry;
 use concerto_scene::{
     link::{
-        LinkParent, LinkedNode, OwnedPath, SceneLink, SceneLinkState, owning_link_by,
-        scene_address, shown_name,
+        LinkParent, LinkedNode, OwnedPath, SceneLink, SceneLinkState, scene_address, shown_name,
     },
     scene::{LinkChange, SerializedComponent},
 };
@@ -63,7 +62,7 @@ fn linked_in_open_scene_with<'a>(
     node: impl Fn(Entity) -> Option<&'a LinkedNode>,
     member: impl FnOnce(Entity) -> anyhow::Result<bool>,
 ) -> Option<OwnedPath> {
-    let owned = owning_link_by(entity, node)?;
+    let owned = OwnedPath::of_by(entity, node)?;
     member(owned.link).ok()?;
     Some(owned)
 }

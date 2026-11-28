@@ -43,7 +43,7 @@ use concerto_ragdoll::{
 use concerto_render::plugin::RenderPlugin;
 use concerto_scene::{
     scene::Scene,
-    spawner::{SpawnFilter, SpawnedScene, spawn_scene},
+    spawner::{SpawnFilter, SpawnedScene},
 };
 use glam::Vec3;
 
@@ -184,7 +184,7 @@ fn show_stage(
     let scene = signal
         .scene
         .as_ref()
-        .map(|scene| spawn_scene(&mut cmd, scene, root, &SpawnFilter::default()));
+        .map(|scene| scene.spawn(&mut cmd, root, &SpawnFilter::default()));
     *stage = RagdollStage {
         root: Some(root),
         floor: stage.floor,

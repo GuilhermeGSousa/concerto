@@ -5,7 +5,7 @@ use concerto_animation::{
 };
 use concerto_editor::timeline::{frame_at, time_of_frame};
 use concerto_name::Name;
-use concerto_reflect::{ReflectedValue, apply_value, to_value};
+use concerto_reflect::ReflectedValue;
 
 use super::ClipDocument;
 
@@ -44,7 +44,7 @@ fn decoded_name(type_name: &str, value: &ReflectedValue) -> Option<Name> {
         return None;
     }
     let mut event = AnimationEvent::default();
-    let warnings = apply_value(&mut event, value);
+    let warnings = value.apply(&mut event);
     (warnings.is_empty() && !event.name.is_empty()).then_some(event.name)
 }
 
@@ -87,12 +87,14 @@ impl TabEvent {
         let event = match &self.kind {
             TabEventKind::Named(name) => ClipEventData::Stored {
                 type_name: animation_event_type().to_owned(),
-                value: to_value(&AnimationEvent { name: *name }).map_err(|error| {
-                    format!(
-                        "`{name}` at {:.2} s could not be written: {error}",
-                        self.time
-                    )
-                })?,
+                value: ReflectedValue::encode(&AnimationEvent { name: *name }).map_err(
+                    |error| {
+                        format!(
+                            "`{name}` at {:.2} s could not be written: {error}",
+                            self.time
+                        )
+                    },
+                )?,
             },
             TabEventKind::Typed { type_name, value } => ClipEventData::Stored {
                 type_name: type_name.clone(),

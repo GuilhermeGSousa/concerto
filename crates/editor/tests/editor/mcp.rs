@@ -42,9 +42,7 @@ use concerto_foundation::{
         Asset, AssetId, LoadableAsset,
         asset_server::{AssetLoadContext, AssetServer},
         asset_store::AssetStore,
-        content::{
-            ContentAssetHeader, ImportProvenance, decode_content_asset, write_content_asset,
-        },
+        content::{ContentAssetHeader, ImportProvenance, decode_content_asset},
         handle::AssetHandle,
         registry::AssetRegistry,
     },
@@ -499,7 +497,7 @@ fn write_imported(
     };
     let path = root.join(address);
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-    std::fs::write(path, write_content_asset(&header, payload).unwrap()).unwrap();
+    std::fs::write(path, header.write(payload).unwrap()).unwrap();
 }
 
 struct Fixture {
@@ -2990,7 +2988,7 @@ fn added_gain(link: &SceneLinkData) -> f32 {
     let mut samples = Samples::default();
     for change in &link.changes {
         if let LinkChange::AddComponent { component, .. } = change {
-            concerto_reflect::apply_value(&mut samples, &component.value);
+            component.value.apply(&mut samples);
         }
     }
     samples.gain

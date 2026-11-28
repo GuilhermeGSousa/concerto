@@ -17,9 +17,7 @@ use concerto_editor::{
     tools::edits::PropertyCommitted,
 };
 use concerto_foundation::assets::{
-    content::{decode_content_asset, read_asset_record_without_uncooked, read_uncooked},
-    handle::AssetHandle,
-    registry::AssetEntry,
+    content::decode_content_asset, handle::AssetHandle, registry::AssetEntry,
 };
 use concerto_reflect::{Reflect, ReflectDefault};
 use concerto_render::assets::texture::{Texture, TextureRole, TextureSettings, TextureSource};
@@ -149,7 +147,8 @@ pub(crate) struct OpenedTexture {
 }
 
 pub(crate) fn read_texture_payload(root: &Path, asset: &AssetEntry) -> anyhow::Result<Texture> {
-    let bytes = read_asset_record_without_uncooked(root, asset)
+    let bytes = asset
+        .read_record_without_uncooked(root)
         .with_context(|| format!("Cannot read {}", asset.location()))?;
     let (header, texture) = decode_content_asset::<Texture>(&bytes)?;
     anyhow::ensure!(
@@ -231,7 +230,8 @@ pub(crate) fn restore_discarded_edits(
 impl OpenedTexture {
     pub(crate) fn read(root: &Path, asset: &AssetEntry) -> anyhow::Result<Self> {
         let texture = read_texture_payload(root, asset)?;
-        let source = read_uncooked::<TextureSource>(root, asset)
+        let source = asset
+            .read_uncooked::<TextureSource>(root)
             .with_context(|| format!("Cannot read the source image of {}", asset.location()))?
             .with_context(|| {
                 format!(

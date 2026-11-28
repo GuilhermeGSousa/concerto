@@ -19,9 +19,7 @@ use concerto_mcp::{
     host::HostPicture, receive_read_only_calls,
 };
 use concerto_reflect::{Reflect, TypeRegistry, to_json};
-use concerto_render::{
-    gpu::Gpu, readback::read_texture, render_asset::render_texture::RenderTexture,
-};
+use concerto_render::{gpu::Gpu, render_asset::render_texture::RenderTexture};
 use concerto_scene::{
     link::{SceneLink, SceneLinkState},
     scene::Scene,
@@ -505,6 +503,8 @@ enum Links {
     Expanded,
     Collapsed { open: Option<Entity> },
 }
+
+impl SceneView<'_> {
     fn tree(&self, arguments: &SceneTree) -> String {
         if self.starts.is_empty() {
             return "The scene has no entities.".to_owned();
@@ -555,8 +555,6 @@ enum Links {
         path.pop();
     }
 
-
-impl SceneView<'_> {
     fn line(&self, entity: Entity, label: &str) -> String {
         let id = entity.to_id_string();
         let mut line = match (self.link)(entity) {
@@ -1096,7 +1094,7 @@ fn answer_picture(
         ));
         return;
     };
-    let picture = fitted(read_texture(gpu, drawn.texture()), max_edge);
+    let picture = fitted(gpu.read_texture(drawn.texture()), max_edge);
     let mut png = std::io::Cursor::new(Vec::new());
     match picture.write_to(&mut png, ImageFormat::Png) {
         Ok(()) => reply.ok_image(png.get_ref(), text),

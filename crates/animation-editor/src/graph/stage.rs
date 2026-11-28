@@ -10,7 +10,7 @@ use concerto_editor::{
     project::ProjectState,
 };
 use concerto_foundation::assets::{AssetId, handle::AssetHandle, registry::AssetRegistry};
-use concerto_reflect::{Reflect, ReflectDefault, to_value};
+use concerto_reflect::{Reflect, ReflectDefault, ReflectedValue};
 use concerto_scene::scene::Scene;
 
 use super::{
@@ -298,7 +298,7 @@ impl GraphDocument {
                 Some(SetGraphParam {
                     name: param.name,
                     type_name: param.type_name.to_owned(),
-                    value: to_value(param.value()).ok()?,
+                    value: ReflectedValue::encode(param.value()).ok()?,
                 })
             })
             .collect()

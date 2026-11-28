@@ -17,7 +17,7 @@ use concerto_ecs::{
 };
 use concerto_foundation::assets::{
     AssetId,
-    content::{decode_content_asset, read_content_asset, save_content_asset_into},
+    content::{ContentAssetHeader, decode_content_asset, save_content_asset_into},
     registry::{AssetEntry, AssetRegistry},
 };
 use concerto_render::gpu::Gpu;
@@ -170,7 +170,7 @@ impl AssetEditor for SceneEditor {
 /// it does not decode as a [`Scene`].
 pub fn load_scene(root: PathBuf, address: String, id: AssetId) -> anyhow::Result<Scene> {
     let bytes = std::fs::read(root.join(address))?;
-    let (header, _) = read_content_asset(&bytes)?;
+    let (header, _) = ContentAssetHeader::read(&bytes)?;
     anyhow::ensure!(
         header.asset_id == id,
         "Asset identity changed; reopen the project"
@@ -820,7 +820,7 @@ mod tests {
         world_id::WorldId,
     };
     use concerto_foundation::{
-        assets::{Asset, content::read_content_asset},
+        assets::{Asset, content::ContentAssetHeader},
         transform::Transform,
     };
     use concerto_window::clipboard::{ClipboardPasted, answer_paste_requests};
@@ -949,7 +949,7 @@ mod tests {
         assert_ne!(first, second);
         let bytes =
             std::fs::read(directory.path().join("content/forest/New Scene.gasset")).unwrap();
-        let (header, payload) = read_content_asset(&bytes).unwrap();
+        let (header, payload) = ContentAssetHeader::read(&bytes).unwrap();
         assert_eq!(header.kind, Scene::name());
         assert_eq!(header.asset_id, first);
         assert!(header.provenance.is_none());

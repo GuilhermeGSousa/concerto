@@ -29,10 +29,7 @@ use concerto_editor::{
 use concerto_foundation::{
     assets::{
         Asset, AssetId,
-        content::{
-            ContentAssetHeader, decode_content_asset, read_content_asset, save_content_asset_into,
-            write_content_asset,
-        },
+        content::{ContentAssetHeader, decode_content_asset, save_content_asset_into},
         handle::AssetHandle,
         registry::AssetRegistry,
     },
@@ -171,11 +168,7 @@ fn write_broken_graph(root: &Path) {
         embedded: Vec::new(),
     };
     std::fs::create_dir(root.join("content")).unwrap();
-    std::fs::write(
-        root.join(BROKEN),
-        write_content_asset(&header, &[0xff]).unwrap(),
-    )
-    .unwrap();
+    std::fs::write(root.join(BROKEN), header.write(&[0xff]).unwrap()).unwrap();
 }
 
 fn described(graph: &AnimationGraph) -> Vec<String> {
@@ -425,7 +418,7 @@ const IDLE: &str = "content/Idle.gasset";
 const WALK: &str = "content/Walk.gasset";
 
 fn id_of(file: &[u8]) -> AssetId {
-    read_content_asset(file).unwrap().0.asset_id
+    ContentAssetHeader::read(file).unwrap().0.asset_id
 }
 
 struct Drill {

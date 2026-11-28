@@ -1464,7 +1464,7 @@ mod tests {
         query::filter::With,
         system::BoxedSystem,
     };
-    use concerto_foundation::assets::{Asset, content::read_content_asset};
+    use concerto_foundation::assets::{Asset, content::ContentAssetHeader};
     use concerto_ui::{
         focus::{FocusedWidget, UIFocusLost},
         text_input::{UITextInput, UITextInputCancelled, UITextInputSubmitted},
@@ -1691,7 +1691,7 @@ mod tests {
         );
         let hall = "content/rooms/Hall.gasset";
         let (header, _) =
-            read_content_asset(&std::fs::read(f.root.path().join(hall)).unwrap()).unwrap();
+            ContentAssetHeader::read(&std::fs::read(f.root.path().join(hall)).unwrap()).unwrap();
         assert_eq!(header.kind, Scene::name());
         let (hall, yard) = (f.asset(hall), f.asset("content/Yard.gasset"));
         assert_eq!(header.asset_id, hall);

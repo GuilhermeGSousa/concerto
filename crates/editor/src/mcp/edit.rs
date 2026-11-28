@@ -11,7 +11,7 @@ use concerto_ecs::{
 };
 use concerto_foundation::assets::asset_server::AssetServer;
 use concerto_mcp::{AppMcpExt, McpTool, Needs, PendingCall, Reply, ToolCalls, ToolError};
-use concerto_reflect::{PropertyPath, Reflect, ReflectRef, TypeRegistry, with_property};
+use concerto_reflect::{PropertyPath, Reflect, ReflectRef, TypeRegistry};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::Value;
@@ -774,7 +774,7 @@ fn list_remove(
 /// The length of the list at `path` of `value`, 0 when there is none.
 pub(super) fn list_length(value: &dyn Reflect, path: &PropertyPath) -> usize {
     let mut length = 0;
-    let _ = with_property(value, path, &mut |field| {
+    let _ = path.access(value, &mut |field| {
         if let ReflectRef::List(list) = field.reflect_ref() {
             length = list.len();
         }

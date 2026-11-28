@@ -167,9 +167,7 @@ mod tests {
     use concerto_editor::hosted::testing::SceneFixture;
     use concerto_foundation::assets::{
         Asset, AssetId,
-        content::{
-            ContentAssetHeader, ImportProvenance, read_content_asset_header, write_content_asset,
-        },
+        content::{ContentAssetHeader, ImportProvenance},
     };
 
     fn save_fixture() -> SceneFixture {
@@ -201,7 +199,7 @@ mod tests {
         let path = f.project_root.join(address);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         let payload = bincode::serialize(clip).unwrap();
-        std::fs::write(&path, write_content_asset(&header, &payload).unwrap()).unwrap();
+        std::fs::write(&path, header.write(&payload).unwrap()).unwrap();
         let entry = AssetEntry {
             embedded_in: None,
             id: header.asset_id,
@@ -243,7 +241,7 @@ mod tests {
             saved,
             vec![order[2].clone(), order[0].clone(), order[1].clone()]
         );
-        let header = read_content_asset_header(&f.project_root.join(&walk.address)).unwrap();
+        let header = ContentAssetHeader::read_file(&f.project_root.join(&walk.address)).unwrap();
         assert_eq!(header.asset_id, walk.id);
         assert_eq!(header.provenance, walk.provenance);
         assert_eq!(state(&f, document).events, order);

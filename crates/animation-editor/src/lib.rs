@@ -36,7 +36,7 @@ use concerto_editor::{
 };
 use concerto_foundation::assets::{
     Asset, AssetId,
-    content::{decode_content_asset, read_asset_record},
+    content::decode_content_asset,
     registry::{AssetEntry, AssetRegistry},
 };
 use concerto_scene::scene::Scene;
@@ -248,7 +248,7 @@ pub(crate) fn sync_clip_preview(
 /// Returns an error when the file cannot be read or decoded as a clip, or when its header
 /// names another asset.
 pub fn read_clip(root: &Path, asset: &AssetEntry) -> anyhow::Result<AnimationClip> {
-    let bytes = read_asset_record(root, asset)?;
+    let bytes = asset.read_record(root)?;
     let (header, clip) = decode_content_asset::<AnimationClip>(&bytes)?;
     anyhow::ensure!(header.asset_id == asset.id, "Asset identity mismatch");
     Ok(clip)
@@ -460,7 +460,7 @@ mod tests {
     };
     use concerto_foundation::assets::{Asset, content::save_content_asset_into};
     use concerto_name::Name;
-    use concerto_reflect::{ReflectedValue, to_value};
+    use concerto_reflect::ReflectedValue;
     use concerto_ui::theme::UITheme;
     use concerto_window::plugin::{Window, WindowPlugin};
     use glam::Vec2;
@@ -502,7 +502,7 @@ mod tests {
         stored_key(
             time,
             std::any::type_name::<AnimationEvent>(),
-            to_value(&event).unwrap(),
+            ReflectedValue::encode(&event).unwrap(),
         )
     }
 

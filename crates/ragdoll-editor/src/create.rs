@@ -17,7 +17,7 @@ use concerto_editor::{
 };
 use concerto_foundation::assets::{
     Asset, AssetId,
-    content::{decode_content_asset, read_asset_record, save_content_asset_into},
+    content::{decode_content_asset, save_content_asset_into},
     handle::AssetHandle,
     registry::AssetRegistry,
 };
@@ -111,7 +111,8 @@ pub(crate) fn read_asset<A: Asset>(
     let entry = registry
         .get(id)
         .with_context(|| format!("the {what} is not in the project"))?;
-    let bytes = read_asset_record(root, entry)
+    let bytes = entry
+        .read_record(root)
         .with_context(|| format!("cannot read {}", entry.location()))?;
     let (header, value) = decode_content_asset::<A>(&bytes)?;
     anyhow::ensure!(

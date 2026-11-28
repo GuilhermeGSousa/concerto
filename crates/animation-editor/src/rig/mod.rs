@@ -31,7 +31,7 @@ use concerto_editor::{
 };
 use concerto_foundation::assets::{
     Asset, AssetId,
-    content::{decode_content_asset, read_asset_record},
+    content::decode_content_asset,
     handle::AssetHandle,
     registry::{AssetEntry, AssetRegistry},
 };
@@ -216,7 +216,8 @@ fn read_asset<A: Asset>(from: &ReadFrom, id: AssetId, what: &str) -> anyhow::Res
         .assets
         .get(id)
         .with_context(|| format!("the {what} is not in the project"))?;
-    let bytes = read_asset_record(from.root, entry)
+    let bytes = entry
+        .read_record(from.root)
         .with_context(|| format!("cannot read {}", entry.location()))?;
     let (header, value) = decode_content_asset::<A>(&bytes)?;
     anyhow::ensure!(

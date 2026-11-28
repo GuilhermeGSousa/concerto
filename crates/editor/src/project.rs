@@ -378,9 +378,7 @@ fn process_commands(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use concerto_foundation::assets::content::{
-        ContentAssetHeader, ImportProvenance, write_content_asset,
-    };
+    use concerto_foundation::assets::content::{ContentAssetHeader, ImportProvenance};
     use concerto_foundation::assets::{Asset, registry::AssetEntry};
     #[test]
     fn an_opened_project_lists_its_assets_without_writing_a_registry_and_is_reported_once() {
@@ -440,7 +438,7 @@ mod tests {
             };
             std::fs::write(
                 root.join(format!("content/{name}.gasset")),
-                write_content_asset(&header, &[]).unwrap(),
+                header.write(&[]).unwrap(),
             )
             .unwrap();
         }
@@ -459,11 +457,7 @@ mod tests {
             derived: None,
             embedded: Vec::new(),
         };
-        std::fs::write(
-            root.join(address),
-            write_content_asset(&header, &[]).unwrap(),
-        )
-        .unwrap();
+        std::fs::write(root.join(address), header.write(&[]).unwrap()).unwrap();
         header.asset_id
     }
 

@@ -1,4 +1,4 @@
-use concerto_reflect::{PathSegment, PropertyPath, Reflect, ReflectRef, with_property};
+use concerto_reflect::{PathSegment, PropertyPath, Reflect, ReflectRef};
 
 use super::{Property, PropertyKind, write::WriteRefusal};
 
@@ -88,7 +88,7 @@ pub(crate) fn cut_note(list: &PropertyPath, total: usize) -> String {
 
 fn names_enum(value: &dyn Reflect, path: &PropertyPath) -> bool {
     let mut found = false;
-    let _ = with_property(value, path, &mut |field| {
+    let _ = path.access(value, &mut |field| {
         found = matches!(field.reflect_ref(), ReflectRef::Enum(_));
     });
     found

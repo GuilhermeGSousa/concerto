@@ -26,7 +26,7 @@ use concerto_editor::{
 };
 use concerto_foundation::assets::{
     Asset, AssetId,
-    content::{decode_content_asset, read_content_asset},
+    content::{ContentAssetHeader, decode_content_asset},
     handle::{AssetHandle, LiveLeaves},
     registry::{AssetEntry, AssetRegistry},
 };
@@ -1417,7 +1417,7 @@ pub(crate) fn finish_state_creation(
 /// another asset or another kind.
 pub fn read_graph(root: &Path, asset: &AssetEntry) -> anyhow::Result<AnimationGraph> {
     let bytes = std::fs::read(root.join(&asset.address))?;
-    let (header, _) = read_content_asset(&bytes)?;
+    let (header, _) = ContentAssetHeader::read(&bytes)?;
     anyhow::ensure!(
         header.asset_id == asset.id && header.kind == AnimationGraph::name(),
         "Asset identity or type mismatch"

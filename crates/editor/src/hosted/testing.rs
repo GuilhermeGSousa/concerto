@@ -26,7 +26,7 @@ use concerto_foundation::{
     assets::{
         Asset, AssetId,
         asset_server::AssetServer,
-        content::{ContentAssetHeader, ImportProvenance, read_content_asset, write_content_asset},
+        content::{ContentAssetHeader, ImportProvenance},
         registry::{AssetEntry, AssetRegistry},
     },
     transform::Transform,
@@ -351,7 +351,7 @@ pub fn write_scene_file(root: &std::path::Path, asset: &AssetEntry, nodes: &[&st
     };
     std::fs::write(
         root.join(&asset.address),
-        write_content_asset(&header, &bincode::serialize(&scene).unwrap()).unwrap(),
+        header.write(&bincode::serialize(&scene).unwrap()).unwrap(),
     )
     .unwrap();
 }
@@ -899,7 +899,7 @@ impl SceneFixture {
     /// Panics if the file cannot be read or does not decode as a scene.
     pub fn saved_scene(&self) -> Scene {
         let bytes = std::fs::read(self.project_root.join(&self.scene.address)).unwrap();
-        let (_, payload) = read_content_asset(&bytes).unwrap();
+        let (_, payload) = ContentAssetHeader::read(&bytes).unwrap();
         bincode::deserialize(payload).unwrap()
     }
 

@@ -9,10 +9,7 @@ use concerto_ecs::{
     signal::{On, Signal},
 };
 use concerto_foundation::assets::{asset_server::AssetServer, handle::LiveLeaves};
-use concerto_reflect::{
-    Reflect, ReflectDefault, ReflectJson, ReflectedValue, TypeRegistry, apply_value_with,
-    json_to_value_with, to_value_with, with_property, with_property_mut,
-};
+use concerto_reflect::{Reflect, ReflectDefault, ReflectJson, ReflectedValue, TypeRegistry};
 use serde_json::Value;
 
 use super::{
@@ -106,13 +103,13 @@ fn decoded(
             ));
         };
         let mut built = default.default();
-        if let Ok(current) = to_value_with(field, hook) {
-            apply_value_with(built.as_mut(), &current, hook);
+        if let Ok(current) = ReflectedValue::encode_with(field, hook) {
+            current.apply_with(built.as_mut(), hook);
         }
         built
     };
-    let stored = json_to_value_with(value, type_id, types, hook).map_err(invalid)?;
-    let warnings = apply_value_with(built.as_mut(), &stored, hook);
+    let stored = ReflectedValue::from_json_with(value, type_id, types, hook).map_err(invalid)?;
+    let warnings = stored.apply_with(built.as_mut(), hook);
     if warnings.is_empty() {
         Ok(built)
     } else {
@@ -180,7 +177,7 @@ pub(crate) fn adapter_commit(
         .map_err(|error| WriteRefusal::refused(&format!("Set {name} failed: {error}")))?;
     let mut edit = Err(WriteRefusal::unknown_path(owner, "", &[]));
     let mut hook = LiveLeaves::from_parts(source.types, source.server);
-    let _ = with_property(value, &row.address.path, &mut |field| {
+    let _ = row.address.path.access(value, &mut |field| {
         edit = value_edit(
             field,
             json,
@@ -219,7 +216,7 @@ fn value_write(
         return Ok(ValueWrite::Adapter(commit));
     }
     let mut field = TypeId::of::<()>();
-    let _ = with_property(value, &found.path, &mut |value| {
+    let _ = found.path.access(value, &mut |value| {
         field = (value as &dyn Any).type_id();
     });
     let root = (value as &dyn Any).type_id();
@@ -260,8 +257,8 @@ fn write_json(
     let found = address
         .target
         .try_edit(world, &mut |value| {
-            let _ = with_property_mut(value, &address.path, &mut |value| {
-                warnings = apply_value_with(value, stored, hook);
+            let _ = address.path.access_mut(value, &mut |value| {
+                warnings = stored.apply_with(value, hook);
             });
         })
         .map_err(PropertyRefusal::Refused)?;
