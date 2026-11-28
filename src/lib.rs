@@ -84,7 +84,7 @@ pub fn run(
     init_logging();
     concerto_winit::run(move |app| {
         build(app);
-        concerto_app::plugins::install_content_registry(app, content);
+        app.install_content_registry(content);
     });
 }
 
@@ -278,7 +278,7 @@ pub fn headless(build: impl FnOnce(&mut App)) -> Option<App> {
 mod cook_tests {
     use concerto_app::{plugins::ContentSettings, App};
     use concerto_foundation::assets::{
-        content::{read_content_asset_parts, save_content_asset_into},
+        content::{save_content_asset_into, ContentAssetParts},
         derived::{DerivedData, DerivedInputs},
         registry::AssetRegistry,
         Asset, AssetId, LoadableAsset,
@@ -385,7 +385,7 @@ mod cook_tests {
 
         assert_eq!(report.cooked, vec!["content/doubled.gasset"]);
         let bytes = std::fs::read(out.join("content/doubled.gasset")).unwrap();
-        let parts = read_content_asset_parts(&bytes).unwrap();
+        let parts = ContentAssetParts::read(&bytes).unwrap();
         assert_eq!(parts.header.derived.map(|section| section.key), Some(21));
         assert_eq!(parts.derived_blob, Some(&42u64.to_le_bytes()[..]));
 

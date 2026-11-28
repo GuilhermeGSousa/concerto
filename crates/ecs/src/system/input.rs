@@ -1,7 +1,7 @@
 mod component_reader;
 mod input_set;
 pub use component_reader::ComponentMetadata;
-pub use input_set::{InputSet, InputSetState, Inputs, register_input};
+pub use input_set::{InputSet, InputSetState, Inputs};
 
 use std::{
     borrow::Cow,

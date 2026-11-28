@@ -1,9 +1,7 @@
 use std::{any::TypeId, thread};
 
 use concerto_name::Name;
-use concerto_reflect::{
-    apply_value, json_to_value, to_json, to_value, ReflectDefault, ReflectJson, TypeRegistry,
-};
+use concerto_reflect::{to_json, ReflectDefault, ReflectJson, ReflectedValue, TypeRegistry};
 use proptest::prelude::*;
 use serde_json::json;
 
@@ -49,10 +47,13 @@ fn a_name_is_stored_as_its_text_in_bincode_reflection_and_json() {
         Name::new("Hips")
     );
 
-    let stored = to_value(&Name::new("Head")).unwrap();
-    assert_eq!(stored, to_value(&String::from("Head")).unwrap());
+    let stored = ReflectedValue::encode(&Name::new("Head")).unwrap();
+    assert_eq!(
+        stored,
+        ReflectedValue::encode(&String::from("Head")).unwrap()
+    );
     let mut read = Name::default();
-    assert!(apply_value(&mut read, &stored).is_empty());
+    assert!(stored.apply(&mut read).is_empty());
     assert_eq!(read, Name::new("Head"));
 
     let mut registry = TypeRegistry::default();
@@ -63,8 +64,8 @@ fn a_name_is_stored_as_its_text_in_bincode_reflection_and_json() {
     assert!(registration.data::<ReflectJson>().is_some());
     assert_eq!(to_json(&Name::new("Neck"), &registry), json!("Neck"));
     assert_eq!(
-        json_to_value(&json!("Neck"), id, &registry).unwrap(),
-        to_value(&Name::new("Neck")).unwrap()
+        ReflectedValue::from_json(&json!("Neck"), id, &registry).unwrap(),
+        ReflectedValue::encode(&Name::new("Neck")).unwrap()
     );
-    assert!(json_to_value(&json!(3), id, &registry).is_err());
+    assert!(ReflectedValue::from_json(&json!(3), id, &registry).is_err());
 }

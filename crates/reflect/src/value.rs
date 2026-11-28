@@ -29,6 +29,49 @@ impl Default for ReflectedValue {
 crate::impl_reflect_leaf!(ReflectedValue);
 
 impl ReflectedValue {
+    /// Stores `value` as a tree, each leaf encoding itself.
+    ///
+    /// # Errors
+    ///
+    /// Returns an [`EncodeError`] naming the first leaf that could not be encoded.
+    pub fn encode(value: &dyn Reflect) -> Result<Self, EncodeError> {
+        Self::encode_with(value, &mut NoHook)
+    }
+
+    /// Stores `value` as a tree, letting `hook` encode any leaf first.
+    ///
+    /// # Errors
+    ///
+    /// Returns an [`EncodeError`] naming the first leaf that `hook` or the leaf itself could not
+    /// encode.
+    pub fn encode_with(value: &dyn Reflect, hook: &mut dyn LeafHook) -> Result<Self, EncodeError> {
+        Encoder {
+            hook,
+            path: Path::default(),
+        }
+        .value(value)
+    }
+
+    /// Writes this stored value into `value` in place, returning every part that was not applied.
+    pub fn apply(&self, value: &mut dyn Reflect) -> Vec<ValueWarning> {
+        self.apply_with(value, &mut NoHook)
+    }
+
+    /// [`ReflectedValue::apply`], letting `hook` decode any leaf first.
+    pub fn apply_with(
+        &self,
+        value: &mut dyn Reflect,
+        hook: &mut dyn LeafHook,
+    ) -> Vec<ValueWarning> {
+        let mut applier = Applier {
+            hook,
+            path: Path::default(),
+            warnings: Vec::new(),
+        };
+        applier.value(value, self);
+        applier.warnings
+    }
+
     /// Whether `wanted` is found here: every field it names is present and contains its value, and a variant has the same name.
     pub fn contains(&self, wanted: &ReflectedValue) -> bool {
         match (self, wanted) {
@@ -112,52 +155,6 @@ impl std::fmt::Display for ValueWarning {
             write!(f, "{}: {}", self.path, self.reason)
         }
     }
-}
-
-/// Stores `value` as a tree, each leaf encoding itself.
-///
-/// # Errors
-///
-/// Returns an [`EncodeError`] naming the first leaf that could not be encoded.
-pub fn to_value(value: &dyn Reflect) -> Result<ReflectedValue, EncodeError> {
-    to_value_with(value, &mut NoHook)
-}
-
-/// Stores `value` as a tree, letting `hook` encode any leaf first.
-///
-/// # Errors
-///
-/// Returns an [`EncodeError`] naming the first leaf that `hook` or the leaf itself could not
-/// encode.
-pub fn to_value_with(
-    value: &dyn Reflect,
-    hook: &mut dyn LeafHook,
-) -> Result<ReflectedValue, EncodeError> {
-    Encoder {
-        hook,
-        path: Path::default(),
-    }
-    .value(value)
-}
-
-/// Writes `stored` into `value` in place, returning every part that was not applied.
-pub fn apply_value(value: &mut dyn Reflect, stored: &ReflectedValue) -> Vec<ValueWarning> {
-    apply_value_with(value, stored, &mut NoHook)
-}
-
-/// [`apply_value`], letting `hook` decode any leaf first.
-pub fn apply_value_with(
-    value: &mut dyn Reflect,
-    stored: &ReflectedValue,
-    hook: &mut dyn LeafHook,
-) -> Vec<ValueWarning> {
-    let mut applier = Applier {
-        hook,
-        path: Path::default(),
-        warnings: Vec::new(),
-    };
-    applier.value(value, stored);
-    applier.warnings
 }
 
 #[derive(Default)]

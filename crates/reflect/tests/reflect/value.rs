@@ -1,4 +1,4 @@
-use concerto_reflect::{Reflect, ReflectedValue, apply_value, to_value};
+use concerto_reflect::{Reflect, ReflectedValue};
 use glam::Vec3;
 
 #[derive(Reflect, Default, Debug, PartialEq, Clone)]
@@ -70,9 +70,9 @@ fn everything() -> Everything {
 }
 
 fn round_trip<T: Reflect + Default>(value: &T) -> T {
-    let stored = to_value(value).unwrap();
+    let stored = ReflectedValue::encode(value).unwrap();
     let mut loaded = T::default();
-    assert!(apply_value(&mut loaded, &stored).is_empty());
+    assert!(stored.apply(&mut loaded).is_empty());
     loaded
 }
 
@@ -84,7 +84,7 @@ fn every_kind_survives_a_round_trip() {
 
 #[test]
 fn the_tree_survives_bincode() {
-    let stored = to_value(&everything()).unwrap();
+    let stored = ReflectedValue::encode(&everything()).unwrap();
     let bytes = bincode::serialize(&stored).unwrap();
     let decoded: ReflectedValue = bincode::deserialize(&bytes).unwrap();
     assert_eq!(decoded, stored);
@@ -109,11 +109,14 @@ struct Lookup {
 
 #[test]
 fn contains_matches_a_wanted_subset_field_by_field() {
-    let stored = to_value(&everything()).unwrap();
+    let stored = ReflectedValue::encode(&everything()).unwrap();
     let cases = [
         Lookup {
             name: "a struct subset is found",
-            wanted: field("shape", to_value(&Shape::Sphere(2.0)).unwrap()),
+            wanted: field(
+                "shape",
+                ReflectedValue::encode(&Shape::Sphere(2.0)).unwrap(),
+            ),
             found: true,
         },
         Lookup {
@@ -123,12 +126,15 @@ fn contains_matches_a_wanted_subset_field_by_field() {
         },
         Lookup {
             name: "a missing field is not found",
-            wanted: field("added", to_value(&1.0_f32).unwrap()),
+            wanted: field("added", ReflectedValue::encode(&1.0_f32).unwrap()),
             found: false,
         },
         Lookup {
             name: "an unequal leaf is not found",
-            wanted: field("position", to_value(&Vec3::new(9.0, 2.0, 3.0)).unwrap()),
+            wanted: field(
+                "position",
+                ReflectedValue::encode(&Vec3::new(9.0, 2.0, 3.0)).unwrap(),
+            ),
             found: false,
         },
         Lookup {
@@ -148,24 +154,30 @@ fn contains_matches_a_wanted_subset_field_by_field() {
                 "other",
                 ReflectedValue::Variant {
                     name: "Cone".into(),
-                    fields: vec![("angle".into(), to_value(&0.25_f32).unwrap())],
+                    fields: vec![("angle".into(), ReflectedValue::encode(&0.25_f32).unwrap())],
                 },
             ),
             found: true,
         },
         Lookup {
             name: "an equal list is found",
-            wanted: field("list", to_value(&everything().list).unwrap()),
+            wanted: field("list", ReflectedValue::encode(&everything().list).unwrap()),
             found: true,
         },
         Lookup {
             name: "a list of another length is not found",
-            wanted: field("list", to_value(&everything().list[..1].to_vec()).unwrap()),
+            wanted: field(
+                "list",
+                ReflectedValue::encode(&everything().list[..1].to_vec()).unwrap(),
+            ),
             found: false,
         },
         Lookup {
             name: "a nested struct subset is found",
-            wanted: field("inner", field("weight", to_value(&0.5_f32).unwrap())),
+            wanted: field(
+                "inner",
+                field("weight", ReflectedValue::encode(&0.5_f32).unwrap()),
+            ),
             found: true,
         },
     ];
@@ -176,11 +188,11 @@ fn contains_matches_a_wanted_subset_field_by_field() {
 
 #[test]
 fn a_stored_tree_writes_what_matches_and_warns_at_the_path_of_what_does_not() {
-    let label = |text: &str| to_value(&text.to_string()).unwrap();
+    let label = |text: &str| ReflectedValue::encode(&text.to_string()).unwrap();
     let cases = [
         Mismatch {
             name: "a field the tree lacks keeps its value",
-            stored: field("pair", to_value(&Pair(9.0, false)).unwrap()),
+            stored: field("pair", ReflectedValue::encode(&Pair(9.0, false)).unwrap()),
             expected: Everything {
                 pair: Pair(9.0, false),
                 ..everything()
@@ -189,7 +201,7 @@ fn a_stored_tree_writes_what_matches_and_warns_at_the_path_of_what_does_not() {
         },
         Mismatch {
             name: "a stored field the type lacks is ignored",
-            stored: field("added", to_value(&1.0_f32).unwrap()),
+            stored: field("added", ReflectedValue::encode(&1.0_f32).unwrap()),
             expected: everything(),
             warnings: &["added"],
         },
@@ -227,7 +239,10 @@ fn a_stored_tree_writes_what_matches_and_warns_at_the_path_of_what_does_not() {
             name: "a list shrinks to the stored length and paths name its elements",
             stored: field(
                 "list",
-                ReflectedValue::List(vec![field("gone", to_value(&1.0_f32).unwrap())]),
+                ReflectedValue::List(vec![field(
+                    "gone",
+                    ReflectedValue::encode(&1.0_f32).unwrap(),
+                )]),
             ),
             expected: Everything {
                 list: everything().list[..1].to_vec(),
@@ -261,7 +276,7 @@ fn a_stored_tree_writes_what_matches_and_warns_at_the_path_of_what_does_not() {
     ];
     for case in cases {
         let mut loaded = everything();
-        let warnings = apply_value(&mut loaded, &case.stored);
+        let warnings = case.stored.apply(&mut loaded);
         assert_eq!(loaded, case.expected, "{}", case.name);
         assert_eq!(
             warnings

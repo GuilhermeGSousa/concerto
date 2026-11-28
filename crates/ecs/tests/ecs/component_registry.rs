@@ -1,7 +1,7 @@
 //! Covers finding a scene component by name: a registered type spawns from its
 //! stored value; an unregistered type name is reported rather than panicking.
 use concerto_ecs::{Component, World, reflect::ReflectSceneComponent};
-use concerto_reflect::{Reflect, ReflectedValue, to_value};
+use concerto_reflect::{Reflect, ReflectedValue};
 
 #[derive(Component, Reflect, Default, PartialEq, Debug)]
 #[reflect(SceneComponent)]
@@ -10,7 +10,7 @@ struct Registered {
 }
 
 fn stored(value: impl Reflect) -> ReflectedValue {
-    to_value(&value).unwrap()
+    ReflectedValue::encode(&value).unwrap()
 }
 
 struct ApplyCase {

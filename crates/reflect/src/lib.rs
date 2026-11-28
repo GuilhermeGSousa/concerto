@@ -27,19 +27,16 @@ use std::any::Any;
 /// struct HasOpaque { inner: Opaque }
 /// ```
 pub use concerto_reflect_macros::Reflect;
-pub use json::{JsonLeaf, ReflectJson, json_to_value, json_to_value_with, to_json};
+pub use json::{JsonLeaf, ReflectJson, to_json};
 pub use kinds::{
     Enum, Fields, Leaf, LeafError, List, ReflectMut, ReflectRef, decode_leaf, encode_leaf,
 };
-pub use property::{PathError, PathSegment, PropertyPath, with_property, with_property_mut};
+pub use property::{PathError, PathSegment, PropertyPath};
 pub use registry::{
     FromType, GetTypeRegistration, ReflectDefault, ReflectEnumInfo, ReflectList, ReflectOption,
     TypeData, TypeRegistration, TypeRegistry,
 };
-pub use value::{
-    EncodeError, LeafHook, ReflectedValue, ValueWarning, apply_value, apply_value_with, to_value,
-    to_value_with,
-};
+pub use value::{EncodeError, LeafHook, ReflectedValue, ValueWarning};
 
 /// Structural access to a value: what kind it is, and its parts.
 ///

@@ -120,54 +120,6 @@ fn fields_to_json(fields: &dyn Fields, registry: &TypeRegistry) -> Value {
     Value::Object(object)
 }
 
-/// Builds the stored value of the type `type_id` from JSON shaped as [`to_json`] writes it.
-///
-/// Fields the JSON omits or marks opaque are left out of the stored value.
-///
-/// # Errors
-///
-/// Returns a message when `type_id` is neither a JSON leaf nor a registered type with a
-/// `Default`, or when part of `value` does not have the shape its type expects.
-pub fn json_to_value(
-    value: &Value,
-    type_id: TypeId,
-    registry: &TypeRegistry,
-) -> Result<ReflectedValue, String> {
-    json_to_value_with(value, type_id, registry, &mut NoHook)
-}
-
-/// [`json_to_value`], letting `hook` encode any leaf first.
-///
-/// # Errors
-///
-/// Returns a message in the same cases as [`json_to_value`], or when `hook` rejects a leaf.
-pub fn json_to_value_with(
-    value: &Value,
-    type_id: TypeId,
-    registry: &TypeRegistry,
-    hook: &mut dyn LeafHook,
-) -> Result<ReflectedValue, String> {
-    let mut decoder = Decoder {
-        registry,
-        hook,
-        path: Path::default(),
-    };
-    if let Some(codec) = registry.get_type_data::<ReflectJson>(type_id) {
-        return decoder.leaf(codec, value);
-    }
-    let Some(registration) = registry.get(type_id) else {
-        return Err("the type is not registered, so JSON cannot build it".to_owned());
-    };
-    let Some(default) = registration.data::<ReflectDefault>() else {
-        return Err(format!(
-            "{} has no JSON form and no registered Default, so JSON cannot build it",
-            registration.type_path()
-        ));
-    };
-    let mut scratch = default.default();
-    decoder.value(value, scratch.as_mut())
-}
-
 struct Decoder<'a> {
     registry: &'a TypeRegistry,
     hook: &'a mut dyn LeafHook,
@@ -480,5 +432,55 @@ impl JsonLeaf for Color {
 
     fn from_json(value: &Value) -> Result<Self, String> {
         components_from_json::<4>(value).map(|[r, g, b, a]| Color::rgba(r, g, b, a))
+    }
+}
+
+impl ReflectedValue {
+    /// Builds the stored value of the type `type_id` from JSON shaped as [`to_json`] writes it.
+    ///
+    /// Fields the JSON omits or marks opaque are left out of the stored value.
+    ///
+    /// # Errors
+    ///
+    /// Returns a message when `type_id` is neither a JSON leaf nor a registered type with a
+    /// `Default`, or when part of `value` does not have the shape its type expects.
+    pub fn from_json(
+        value: &Value,
+        type_id: TypeId,
+        registry: &TypeRegistry,
+    ) -> Result<Self, String> {
+        Self::from_json_with(value, type_id, registry, &mut NoHook)
+    }
+
+    /// [`ReflectedValue::from_json`], letting `hook` encode any leaf first.
+    ///
+    /// # Errors
+    ///
+    /// Returns a message in the same cases as [`ReflectedValue::from_json`], or when `hook` rejects a leaf.
+    pub fn from_json_with(
+        value: &Value,
+        type_id: TypeId,
+        registry: &TypeRegistry,
+        hook: &mut dyn LeafHook,
+    ) -> Result<Self, String> {
+        let mut decoder = Decoder {
+            registry,
+            hook,
+            path: Path::default(),
+        };
+        if let Some(codec) = registry.get_type_data::<ReflectJson>(type_id) {
+            return decoder.leaf(codec, value);
+        }
+        let Some(registration) = registry.get(type_id) else {
+            return Err("the type is not registered, so JSON cannot build it".to_owned());
+        };
+        let Some(default) = registration.data::<ReflectDefault>() else {
+            return Err(format!(
+                "{} has no JSON form and no registered Default, so JSON cannot build it",
+                registration.type_path()
+            ));
+        };
+        let mut scratch = default.default();
+        decoder.value(value, scratch.as_mut())
     }
 }

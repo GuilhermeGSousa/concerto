@@ -6,10 +6,7 @@ use concerto_ecs::{
     reflect::{AppTypeRegistry, ReflectComponent},
     system::input::ComponentMetadata,
 };
-use concerto_reflect::{
-    Reflect, ReflectDefault, ReflectJson, apply_value, apply_value_with, json_to_value,
-    json_to_value_with, to_json,
-};
+use concerto_reflect::{Reflect, ReflectDefault, ReflectJson, ReflectedValue, to_json};
 use serde_json::{Value, json};
 
 #[derive(Component, Reflect, Default)]
@@ -101,9 +98,10 @@ fn an_unresolved_entity_reference_written_from_json_applies_as_its_index() {
     };
 
     let stored =
-        json_to_value(&to_json(&value, &registry), TypeId::of::<Rope>(), &registry).unwrap();
+        ReflectedValue::from_json(&to_json(&value, &registry), TypeId::of::<Rope>(), &registry)
+            .unwrap();
     let mut loaded = Rope::default();
-    assert!(apply_value(&mut loaded, &stored).is_empty());
+    assert!(stored.apply(&mut loaded).is_empty());
     assert_eq!(loaded, value);
 }
 
@@ -118,7 +116,7 @@ fn live_references_write_resolved_and_unresolved_entity_references_from_json() {
         ],
     };
 
-    let stored = json_to_value_with(
+    let stored = ReflectedValue::from_json_with(
         &to_json(&value, &registry),
         TypeId::of::<Rope>(),
         &registry,
@@ -126,7 +124,11 @@ fn live_references_write_resolved_and_unresolved_entity_references_from_json() {
     )
     .unwrap();
     let mut loaded = Rope::default();
-    assert!(apply_value_with(&mut loaded, &stored, &mut LiveEntityRefs).is_empty());
+    assert!(
+        stored
+            .apply_with(&mut loaded, &mut LiveEntityRefs)
+            .is_empty()
+    );
     assert_eq!(loaded, value);
 }
 

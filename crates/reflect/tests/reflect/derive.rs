@@ -1,8 +1,7 @@
 use std::any::{Any, TypeId};
 
 use concerto_reflect::{
-    PathError, PathSegment, PropertyPath, PropertyVisitor, Reflect, ReflectRef, apply_value,
-    to_value, with_property, with_property_mut,
+    PathError, PathSegment, PropertyPath, PropertyVisitor, Reflect, ReflectRef, ReflectedValue,
 };
 use glam::{Quat, Vec3};
 
@@ -152,11 +151,11 @@ fn a_path_reaches_exactly_the_property_it_names_for_reading_and_writing() {
             _ => Ok(()),
         };
         let mut calls = 0;
-        let read = with_property(&track(), &case.path, &mut |value| {
+        let read = case.path.access(&track(), &mut |value| {
             check(value);
             calls += 1;
         });
-        let written = with_property_mut(&mut track(), &case.path, &mut |value| {
+        let written = case.path.access_mut(&mut track(), &mut |value| {
             check(value);
             calls += 1;
         });
@@ -197,12 +196,17 @@ fn a_skipped_field_is_not_a_field_and_keeps_its_value_when_a_stored_value_is_app
     assert_eq!(fields.name_at(1), Some("last"));
     assert_eq!(fields.field_at(1).unwrap().downcast_ref(), Some(&2.0f32));
     assert_eq!(
-        with_property(&value, &PropertyPath::new(["hidden"]), &mut |_| {}),
+        PropertyPath::new(["hidden"]).access(&value, &mut |_| {}),
         Err(PathError::NotFound)
     );
 
     let mut loaded = WithSkipped::default();
-    assert!(apply_value(&mut loaded, &to_value(&value).unwrap()).is_empty());
+    assert!(
+        ReflectedValue::encode(&value)
+            .unwrap()
+            .apply(&mut loaded)
+            .is_empty()
+    );
     assert_eq!(loaded.first, 1.0);
     assert_eq!(loaded.last, 2.0);
     assert_eq!(loaded.hidden.0, 7);

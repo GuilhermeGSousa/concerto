@@ -126,20 +126,23 @@ pub struct ContentSettings<'a> {
     pub project_root: Option<&'a str>,
 }
 
-/// Parses the embedded registry into the app's [`AssetRegistry`] and publishes it, with the
-/// derived-data cache, to its [`AssetServer`], if any.
-///
-/// # Panics
-///
-/// Panics if `settings.registry` is malformed.
-pub fn install_content_registry(app: &mut App, settings: ContentSettings) {
-    let registry = AssetRegistry::parse(settings.registry)
-        .unwrap_or_else(|error| panic!("the embedded content registry is malformed: {error:#}"));
-    if let Some(server) = app.get_resource::<AssetServer>() {
-        server.publish_registry(registry.clone());
-        server.set_derived_cache(derived_cache(settings.project_root));
+impl App {
+    /// Parses the embedded registry into the app's [`AssetRegistry`] and publishes it, with the
+    /// derived-data cache, to its [`AssetServer`], if any.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `settings.registry` is malformed.
+    pub fn install_content_registry(&mut self, settings: ContentSettings) {
+        let registry = AssetRegistry::parse(settings.registry).unwrap_or_else(|error| {
+            panic!("the embedded content registry is malformed: {error:#}")
+        });
+        if let Some(server) = self.get_resource::<AssetServer>() {
+            server.publish_registry(registry.clone());
+            server.set_derived_cache(derived_cache(settings.project_root));
+        }
+        self.insert_resource(registry);
     }
-    app.insert_resource(registry);
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -199,7 +202,7 @@ mod tests {
                 .unwrap()
                 .set_derived_cache(DerivedDataCache::at("stale"));
 
-            install_content_registry(&mut app, settings("", project_root));
+            app.install_content_registry(settings("", project_root));
 
             let cache = app.get_resource::<AssetServer>().unwrap().derived_cache();
             let expected = project_root.map(|_| root.join("derived-cache"));
@@ -284,7 +287,7 @@ mod tests {
         )));
         app.register_asset::<Note>();
 
-        install_content_registry(&mut app, settings(&scanned.to_toml(), None));
+        app.install_content_registry(settings(&scanned.to_toml(), None));
         wait_for_plugins(&mut app);
         app.finish_plugin_build();
         assert!(!root.join("content/.registry.toml").exists());

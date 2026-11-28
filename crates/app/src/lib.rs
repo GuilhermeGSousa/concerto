@@ -399,7 +399,7 @@ impl App {
     >(
         &mut self,
     ) -> &mut Self {
-        concerto_ecs::system::input::register_input::<K, P>(self.main_mut().world_mut());
+        self.main_mut().world_mut().register_input::<K, P>();
         self
     }
 
