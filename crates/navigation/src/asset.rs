@@ -15,7 +15,6 @@ use concerto_scene::scene::Scene;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    bake::bake,
     navmesh::{NavMeshData, NavMeshGeometry, NavMeshSettings},
     query::NavMeshQuery,
     scene_colliders::collider_meshes,
@@ -185,7 +184,7 @@ impl DerivedData for NavMesh {
             geometry.add_scene(&inputs.decode::<Scene>(*id)?, &meshes)?;
             progress(index + 1, scenes.len() + 1);
         }
-        let data = bake(&geometry, &self.settings)?;
+        let data = geometry.bake(&self.settings)?;
         progress(scenes.len() + 1, scenes.len() + 1);
         bincode::serialize(&data).context("failed to encode a baked navmesh")
     }

@@ -2558,7 +2558,7 @@ The mesh is derived data: its file holds the scene list and the settings, and
 the polygons are baked from the box and mesh colliders of those scenes, sensor
 boxes left out, when the asset loads, cached, and cooked into the file by
 `--cook` (see [Derived data](../asset-importing.md#derived-data)). A game that
-builds its geometry in code fills a `NavMeshGeometry`, calls `bake`, and adds
+builds its geometry in code fills a `NavMeshGeometry`, calls `NavMeshGeometry::bake`, and adds
 `NavMesh::baked(settings, data)` with `AssetServer::add`.
 
 A `NavMeshComponent { handle }` on an entity of the level, a scene component,
@@ -2648,7 +2648,7 @@ fn on_post(mut arrived: EventReader<NavArrived>, mut guards: Query<&mut Guard>) 
 The character's body, collider and animation come from the same set-up as the
 player's, under [Characters](#characters). The tech demo's grid level has an
 NPC that patrols a square of four points this way, routing around a box on each
-side of the square on a navmesh the level bakes at startup with `bake` and adds
+side of the square on a navmesh the level bakes at startup with `NavMeshGeometry::bake` and adds
 with `NavMesh::baked`.
 
 ### Drawing the graph

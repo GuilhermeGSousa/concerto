@@ -9,93 +9,6 @@ const MAX_SIMPLIFICATION_ERROR: f32 = 1.3;
 const EDGE_LENGTH_FACTOR: u16 = 8;
 const MAX_VERTICES_PER_POLYGON: u16 = 6;
 
-/// Bakes the walkable polygons of `geometry` for the agent `settings` describes.
-///
-/// Geometry with nothing walkable gives an empty mesh.
-///
-/// # Errors
-///
-/// Returns [`NavMeshBakeError::InvalidSettings`] for settings that cannot be baked
-/// with, [`NavMeshBakeError::TooManyCells`] or [`NavMeshBakeError::TooManyVertices`]
-/// when the geometry is too large to index, and [`NavMeshBakeError::Generation`]
-/// when a generator stage fails.
-pub fn bake(
-    geometry: &NavMeshGeometry,
-    settings: &NavMeshSettings,
-) -> Result<NavMeshData, NavMeshBakeError> {
-    settings.validate()?;
-    if geometry.is_empty() {
-        return Ok(NavMeshData::default());
-    }
-    let mut trimesh = TriMesh {
-        vertices: geometry
-            .vertices()
-            .iter()
-            .copied()
-            .map(Vec3A::from)
-            .collect(),
-        indices: geometry
-            .triangles()
-            .iter()
-            .map(|t| UVec3::from_array(*t))
-            .collect(),
-        area_types: vec![AreaType::NOT_WALKABLE; geometry.triangles().len()],
-    };
-    trimesh.mark_walkable_triangles(settings.max_slope.to_radians());
-    let Some(aabb) = trimesh.compute_aabb() else {
-        return Ok(NavMeshData::default());
-    };
-    let width = ((aabb.max.x - aabb.min.x) / settings.cell_size + 0.5) as u64;
-    let depth = ((aabb.max.z - aabb.min.z) / settings.cell_size + 0.5) as u64;
-    if width > u16::MAX as u64 || depth > u16::MAX as u64 {
-        return Err(NavMeshBakeError::TooManyCells { width, depth });
-    }
-    let walkable_height = (settings.agent_height / settings.cell_height).ceil() as u16;
-    let walkable_climb = (settings.step_height / settings.cell_height).floor() as u16;
-    let walkable_radius = (settings.agent_radius / settings.cell_size).ceil() as u16;
-
-    let mut heightfield = HeightfieldBuilder {
-        aabb,
-        cell_size: settings.cell_size,
-        cell_height: settings.cell_height,
-    }
-    .build()
-    .map_err(|error| NavMeshBakeError::generation("building the heightfield", error))?;
-    heightfield
-        .rasterize_triangles(&trimesh, walkable_climb)
-        .map_err(|error| NavMeshBakeError::generation("rasterizing", error))?;
-    heightfield.filter_low_hanging_walkable_obstacles(walkable_climb);
-    heightfield.filter_ledge_spans(walkable_height, walkable_climb);
-    heightfield.filter_walkable_low_height_spans(walkable_height);
-
-    let mut compact = heightfield
-        .into_compact(walkable_height, walkable_climb)
-        .map_err(|error| NavMeshBakeError::generation("compacting the heightfield", error))?;
-    compact.erode_walkable_area(walkable_radius);
-    compact.build_distance_field();
-    compact
-        .build_regions(0, MIN_REGION_AREA, MERGE_REGION_AREA)
-        .map_err(|error| NavMeshBakeError::generation("building regions", error))?;
-    let contours = compact.build_contours(
-        MAX_SIMPLIFICATION_ERROR,
-        walkable_radius.saturating_mul(EDGE_LENGTH_FACTOR),
-        BuildContoursFlags::default(),
-    );
-    let count = contours
-        .contours
-        .iter()
-        .map(|contour| contour.vertices.len())
-        .filter(|count| *count >= 3)
-        .sum::<usize>();
-    if count > u16::MAX as usize {
-        return Err(NavMeshBakeError::TooManyVertices { count });
-    }
-    let mesh = contours
-        .into_polygon_mesh(MAX_VERTICES_PER_POLYGON)
-        .map_err(|error| NavMeshBakeError::generation("building polygons", error))?;
-    Ok(NavMeshData::from_polygons(&mesh))
-}
-
 impl NavMeshSettings {
     pub(crate) fn validate(&self) -> Result<(), NavMeshBakeError> {
         positive("cell_size", self.cell_size)?;
@@ -171,5 +84,86 @@ impl NavMeshData {
             }
         }
         data
+    }
+}
+
+impl NavMeshGeometry {
+    /// Bakes the walkable polygons of the geometry for the agent `settings` describes.
+    ///
+    /// Geometry with nothing walkable gives an empty mesh.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`NavMeshBakeError::InvalidSettings`] for settings that cannot be baked
+    /// with, [`NavMeshBakeError::TooManyCells`] or [`NavMeshBakeError::TooManyVertices`]
+    /// when the geometry is too large to index, and [`NavMeshBakeError::Generation`]
+    /// when a generator stage fails.
+    pub fn bake(&self, settings: &NavMeshSettings) -> Result<NavMeshData, NavMeshBakeError> {
+        settings.validate()?;
+        if self.is_empty() {
+            return Ok(NavMeshData::default());
+        }
+        let mut trimesh = TriMesh {
+            vertices: self.vertices().iter().copied().map(Vec3A::from).collect(),
+            indices: self
+                .triangles()
+                .iter()
+                .map(|t| UVec3::from_array(*t))
+                .collect(),
+            area_types: vec![AreaType::NOT_WALKABLE; self.triangles().len()],
+        };
+        trimesh.mark_walkable_triangles(settings.max_slope.to_radians());
+        let Some(aabb) = trimesh.compute_aabb() else {
+            return Ok(NavMeshData::default());
+        };
+        let width = ((aabb.max.x - aabb.min.x) / settings.cell_size + 0.5) as u64;
+        let depth = ((aabb.max.z - aabb.min.z) / settings.cell_size + 0.5) as u64;
+        if width > u16::MAX as u64 || depth > u16::MAX as u64 {
+            return Err(NavMeshBakeError::TooManyCells { width, depth });
+        }
+        let walkable_height = (settings.agent_height / settings.cell_height).ceil() as u16;
+        let walkable_climb = (settings.step_height / settings.cell_height).floor() as u16;
+        let walkable_radius = (settings.agent_radius / settings.cell_size).ceil() as u16;
+
+        let mut heightfield = HeightfieldBuilder {
+            aabb,
+            cell_size: settings.cell_size,
+            cell_height: settings.cell_height,
+        }
+        .build()
+        .map_err(|error| NavMeshBakeError::generation("building the heightfield", error))?;
+        heightfield
+            .rasterize_triangles(&trimesh, walkable_climb)
+            .map_err(|error| NavMeshBakeError::generation("rasterizing", error))?;
+        heightfield.filter_low_hanging_walkable_obstacles(walkable_climb);
+        heightfield.filter_ledge_spans(walkable_height, walkable_climb);
+        heightfield.filter_walkable_low_height_spans(walkable_height);
+
+        let mut compact = heightfield
+            .into_compact(walkable_height, walkable_climb)
+            .map_err(|error| NavMeshBakeError::generation("compacting the heightfield", error))?;
+        compact.erode_walkable_area(walkable_radius);
+        compact.build_distance_field();
+        compact
+            .build_regions(0, MIN_REGION_AREA, MERGE_REGION_AREA)
+            .map_err(|error| NavMeshBakeError::generation("building regions", error))?;
+        let contours = compact.build_contours(
+            MAX_SIMPLIFICATION_ERROR,
+            walkable_radius.saturating_mul(EDGE_LENGTH_FACTOR),
+            BuildContoursFlags::default(),
+        );
+        let count = contours
+            .contours
+            .iter()
+            .map(|contour| contour.vertices.len())
+            .filter(|count| *count >= 3)
+            .sum::<usize>();
+        if count > u16::MAX as usize {
+            return Err(NavMeshBakeError::TooManyVertices { count });
+        }
+        let mesh = contours
+            .into_polygon_mesh(MAX_VERTICES_PER_POLYGON)
+            .map_err(|error| NavMeshBakeError::generation("building polygons", error))?;
+        Ok(NavMeshData::from_polygons(&mesh))
     }
 }

@@ -1,4 +1,4 @@
-use concerto_navigation::{NavMeshData, NavMeshGeometry, NavMeshQuery, NavMeshSettings, bake};
+use concerto_navigation::{NavMeshData, NavMeshGeometry, NavMeshQuery, NavMeshSettings};
 use glam::{Affine3A, Vec3};
 
 struct Bounds {
@@ -62,7 +62,7 @@ fn outside_box(point: Vec3, half: f32) -> f32 {
 #[test]
 fn a_flat_floor_bakes_to_polygons_inset_by_the_agent_radius() {
     let settings = NavMeshSettings::new();
-    let data = bake(&floor_geometry(), &settings).unwrap();
+    let data = floor_geometry().bake(&settings).unwrap();
     assert!(!data.polygons.is_empty());
     assert!(
         data.polygons
@@ -89,7 +89,7 @@ fn a_path_goes_around_a_box_on_the_floor() {
         Affine3A::from_translation(Vec3::new(0.0, 0.5, 0.0)),
         Vec3::splat(0.5),
     );
-    let query = NavMeshQuery::new(&bake(&geometry, &settings).unwrap());
+    let query = NavMeshQuery::new(&geometry.bake(&settings).unwrap());
     let from = Vec3::new(-3.0, 0.0, 0.0);
     let to = Vec3::new(3.0, 0.0, 0.0);
     let path = query.path(from, to).unwrap();
@@ -110,15 +110,15 @@ fn a_path_goes_around_a_box_on_the_floor() {
 #[test]
 fn slopes_past_max_slope_are_not_walkable_and_ledges_past_step_height_split_the_mesh() {
     let settings = NavMeshSettings::new();
-    assert!(!bake(&ramp(30.0), &settings).unwrap().polygons.is_empty());
-    assert!(bake(&ramp(60.0), &settings).unwrap().polygons.is_empty());
+    assert!(!ramp(30.0).bake(&settings).unwrap().polygons.is_empty());
+    assert!(ramp(60.0).bake(&settings).unwrap().polygons.is_empty());
 
     let low = Vec3::new(-3.0, 0.0, 0.0);
 
-    let step = NavMeshQuery::new(&bake(&ledge(0.2), &settings).unwrap());
+    let step = NavMeshQuery::new(&ledge(0.2).bake(&settings).unwrap());
     assert!(step.path(low, Vec3::new(3.0, 0.2, 0.0)).is_some());
 
-    let cliff = NavMeshQuery::new(&bake(&ledge(1.0), &settings).unwrap());
+    let cliff = NavMeshQuery::new(&ledge(1.0).bake(&settings).unwrap());
     assert!(cliff.path(low, Vec3::new(-1.5, 0.0, 1.5)).is_some());
     assert!(
         cliff
@@ -131,7 +131,7 @@ fn slopes_past_max_slope_are_not_walkable_and_ledges_past_step_height_split_the_
 #[test]
 fn an_end_just_outside_the_eroded_edge_snaps_onto_the_mesh() {
     let settings = NavMeshSettings::new();
-    let query = NavMeshQuery::new(&bake(&floor_geometry(), &settings).unwrap());
+    let query = NavMeshQuery::new(&floor_geometry().bake(&settings).unwrap());
     let edge = 5.0 - settings.agent_radius;
     let outside = Vec3::new(edge + settings.agent_radius - 0.05, 0.0, 0.0);
 

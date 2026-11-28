@@ -21,7 +21,7 @@ use concerto_foundation::{
 use concerto_mesh::{MeshComponent, primitives::plane};
 use concerto_navigation::{
     NavAgent, NavDestination, NavMesh, NavMeshComponent, NavMeshData, NavMeshGeometry,
-    NavMeshSettings, NavMeshStatus, NavPoint, NavRoute, NavigationPlugin, bake,
+    NavMeshSettings, NavMeshStatus, NavPoint, NavRoute, NavigationPlugin,
 };
 use concerto_physics::{collider::BoxCollider, sensor::Sensor, shape::MeshCollider};
 use concerto_reflect::Reflect;
@@ -366,7 +366,7 @@ fn floor_data() -> NavMeshData {
         Affine3A::from_translation(Vec3::new(0.0, -0.5, 0.0)),
         Vec3::new(5.0, 0.5, 5.0),
     );
-    bake(&geometry, &NavMeshSettings::new()).unwrap()
+    geometry.bake(&NavMeshSettings::new()).unwrap()
 }
 
 #[test]
