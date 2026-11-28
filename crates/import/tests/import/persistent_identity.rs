@@ -2,10 +2,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use concerto_foundation::assets::content::{
-    asset_record, read_asset_record, read_content_asset, read_content_asset_header,
-    write_content_asset, ContentAssetHeader, ImportProvenance,
-};
+use concerto_foundation::assets::content::{asset_record, ContentAssetHeader, ImportProvenance};
 use concerto_foundation::assets::registry::{AssetEntry, AssetRegistry};
 use concerto_foundation::assets::AssetId;
 use concerto_import::config::content_address;
@@ -106,7 +103,7 @@ pub(crate) fn unpack_into_the_old_layout(project: &Project, source: &str, assets
     for entry in assets.iter().filter(|a| a.embedded_in.is_some()) {
         std::fs::write(
             project.path(&loose_address(source, entry)),
-            read_asset_record(&project.0, entry).unwrap(),
+            entry.read_record(&project.0).unwrap(),
         )
         .unwrap();
     }
@@ -117,10 +114,10 @@ pub(crate) fn unpack_into_the_old_layout(project: &Project, source: &str, assets
 
 fn save_from_the_editor(path: &Path) {
     let file = std::fs::read(path).unwrap();
-    let (mut header, payload) = read_content_asset(&file).unwrap();
+    let (mut header, payload) = ContentAssetHeader::read(&file).unwrap();
     header.provenance = None;
     header.embedded.clear();
-    std::fs::write(path, write_content_asset(&header, payload).unwrap()).unwrap();
+    std::fs::write(path, header.write(payload).unwrap()).unwrap();
 }
 
 #[test]
@@ -157,7 +154,7 @@ fn reimport_updates_a_moved_output_in_place_and_preserves_its_uuid() {
     let source = project.source("assets/triangle.gltf");
     let first = project.import(&source);
     let original = project.path(output(&first, "scene"));
-    let id = read_content_asset_header(&original).unwrap().asset_id;
+    let id = ContentAssetHeader::read_file(&original).unwrap().asset_id;
     let moved_address = "content/levels/renamed_scene.gasset";
     let moved = project.path(moved_address);
     std::fs::create_dir_all(moved.parent().unwrap()).unwrap();
@@ -172,7 +169,7 @@ fn reimport_updates_a_moved_output_in_place_and_preserves_its_uuid() {
         "reimport must not recreate the old location"
     );
     let raw = std::fs::read(&moved).unwrap();
-    let (header, payload) = read_content_asset(&raw).unwrap();
+    let (header, payload) = ContentAssetHeader::read(&raw).unwrap();
     assert_eq!(header.asset_id, id);
     let scene: Scene = bincode::deserialize(payload).unwrap();
     assert_eq!(scene.nodes[0].name, "Updated triangle");
@@ -204,7 +201,7 @@ fn reimport_leaves_an_output_saved_from_the_editor_and_updates_the_rest() {
     assert_eq!(std::fs::read(&mesh_path).unwrap(), saved);
     assert!(second.iter().all(|asset| asset.id != mesh.id));
     let raw = std::fs::read(&scene_path).unwrap();
-    let (_, payload) = read_content_asset(&raw).unwrap();
+    let (_, payload) = ContentAssetHeader::read(&raw).unwrap();
     assert_eq!(
         bincode::deserialize::<Scene>(payload).unwrap().nodes[0].name,
         "Changed in the source"
@@ -238,7 +235,7 @@ fn moving_a_source_with_its_sidecar_preserves_existing_outputs() {
         "output addresses and importer keys survive source moves"
     );
     let raw = std::fs::read(project.path(output(&second, "scene"))).unwrap();
-    let (header, payload) = read_content_asset(&raw).unwrap();
+    let (header, payload) = ContentAssetHeader::read(&raw).unwrap();
     assert_eq!(
         header.provenance.unwrap().source,
         "assets/enemies/renamed.gltf"
@@ -288,11 +285,7 @@ fn write_scene_header(path: &Path, id: AssetId, source: &str) {
         derived: None,
         embedded: Vec::new(),
     };
-    std::fs::write(
-        path,
-        write_content_asset(&header, b"untouched payload").unwrap(),
-    )
-    .unwrap();
+    std::fs::write(path, header.write(b"untouched payload").unwrap()).unwrap();
 }
 
 fn owned_by_another_source(project: &Project) -> PathBuf {
@@ -372,7 +365,7 @@ fn legacy_content_bootstraps_a_sidecar_and_keeps_its_uuid_and_address() {
 
     assert_eq!(output(&imported, "scene"), address);
     assert_eq!(
-        read_content_asset_header(&project.path(address))
+        ContentAssetHeader::read_file(&project.path(address))
             .unwrap()
             .asset_id,
         id

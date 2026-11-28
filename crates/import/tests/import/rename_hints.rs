@@ -1,9 +1,7 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use concerto_foundation::assets::content::{
-    read_content_asset, read_content_asset_header, write_content_asset,
-};
+use concerto_foundation::assets::content::ContentAssetHeader;
 use concerto_foundation::assets::AssetId;
 use concerto_import::config::ContentConfig;
 use concerto_import::metadata::{sidecar_path, SourceMetadata};
@@ -67,12 +65,12 @@ fn rename_outputs(project: &Path, destination: &str, renames: &[Rename]) {
         let output = metadata.outputs.remove(*from).expect("output exists");
         let path = walk(project)
             .into_iter()
-            .find(|path| read_content_asset_header(path).unwrap().asset_id == output.asset_id)
+            .find(|path| ContentAssetHeader::read_file(path).unwrap().asset_id == output.asset_id)
             .expect("file of the output");
         let file = std::fs::read(&path).unwrap();
-        let (mut header, payload) = read_content_asset(&file).unwrap();
+        let (mut header, payload) = ContentAssetHeader::read(&file).unwrap();
         header.provenance.as_mut().unwrap().sub_asset = (*to).to_string();
-        std::fs::write(&path, write_content_asset(&header, payload).unwrap()).unwrap();
+        std::fs::write(&path, header.write(payload).unwrap()).unwrap();
         metadata.outputs.insert((*to).to_string(), output);
     }
     std::fs::write(&sidecar, toml::to_string_pretty(&metadata).unwrap()).unwrap();

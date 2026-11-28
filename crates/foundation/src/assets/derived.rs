@@ -10,15 +10,12 @@ use std::{
 use anyhow::Context;
 
 #[cfg(not(target_arch = "wasm32"))]
-use super::{
-    asset_server::AssetLoadContext,
-    content::{write_cooked_content_asset, CookedSection},
-};
+use super::{asset_server::AssetLoadContext, content::CookedSection};
 use super::{
     asset_server::AssetServer,
     content::{
         asset_record, decode_content_asset, decode_content_payload, decode_uncooked,
-        read_content_asset_parts, ContentAssetHeader, DerivedSection, UncookedBytes,
+        ContentAssetHeader, ContentAssetParts, DerivedSection, UncookedBytes,
     },
     registry::{AssetEntry, AssetRegistry},
     utils::try_read_relative,
@@ -114,7 +111,7 @@ pub(crate) fn record_is_derived(kind: &str, record: &[u8]) -> anyhow::Result<boo
     let Some(check) = DERIVED_KINDS.read().unwrap().get(kind).copied() else {
         return Ok(false);
     };
-    let parts = read_content_asset_parts(record)?;
+    let parts = ContentAssetParts::read(record)?;
     check(&parts.header, parts.payload)
 }
 
@@ -245,7 +242,7 @@ impl DerivedInputs {
         let location = entry.location();
         let name = entry.embedded_in.as_ref().map(|held| held.name.as_str());
         let hosts = name.is_none()
-            && read_content_asset_parts(&file).is_ok_and(|parts| !parts.header.embedded.is_empty());
+            && ContentAssetParts::read(&file).is_ok_and(|parts| !parts.header.embedded.is_empty());
         let record =
             if name.is_none() && !hosts {
                 file
@@ -485,7 +482,7 @@ pub(crate) fn cook_hook<A: DerivedData>(
     server: AssetServer,
 ) -> CookFuture {
     Box::pin(async move {
-        let parts = read_content_asset_parts(&file)?;
+        let parts = ContentAssetParts::read(&file)?;
         if !A::file_is_derived(&parts.header, parts.payload)? {
             return Ok(None);
         }
@@ -504,15 +501,16 @@ pub(crate) fn cook_hook<A: DerivedData>(
                 A::FORMAT_VERSION
             );
         }
-        write_cooked_content_asset(
-            &parts.header,
-            parts.payload,
-            CookedSection {
-                derived_version: A::DERIVED_VERSION,
-                key: derived.key,
-                blob: &derived.blob,
-            },
-        )
-        .map(Some)
+        parts
+            .header
+            .write_cooked(
+                parts.payload,
+                CookedSection {
+                    derived_version: A::DERIVED_VERSION,
+                    key: derived.key,
+                    blob: &derived.blob,
+                },
+            )
+            .map(Some)
     })
 }

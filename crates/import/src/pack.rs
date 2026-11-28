@@ -4,8 +4,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context};
 use concerto_foundation::assets::content::{
-    asset_record, read_content_asset_header, read_content_asset_parts,
-    write_content_asset_with_embedded, ContentAssetHeader, EmbeddedPayload,
+    asset_record, ContentAssetHeader, ContentAssetParts, EmbeddedPayload,
 };
 use concerto_foundation::assets::registry::AssetRegistry;
 
@@ -147,7 +146,7 @@ fn plan(
         )));
     }
     let path = root.join(&host.address);
-    if read_content_asset_header(&path)?.derived.is_some() {
+    if ContentAssetHeader::read_file(&path)?.derived.is_some() {
         bail!(
             "'{}' carries cooked derived data, so it cannot hold embedded assets; import '{label}' again instead",
             host.address
@@ -202,7 +201,7 @@ fn pack(host: &Host, content_root: &Path) -> anyhow::Result<()> {
         std::fs::read(path).with_context(|| format!("reading '{}'", path.display()))
     };
     let file = read(&host.path)?;
-    let parts = read_content_asset_parts(&file)
+    let parts = ContentAssetParts::read(&file)
         .with_context(|| format!("malformed content asset '{}'", host.path.display()))?;
     let mut records = Vec::with_capacity(parts.header.embedded.len() + host.loose.len());
     for held in &parts.header.embedded {
@@ -213,7 +212,7 @@ fn pack(host: &Host, content_root: &Path) -> anyhow::Result<()> {
     }
     let mut embedded = Vec::with_capacity(records.len());
     for record in &records {
-        let parts = read_content_asset_parts(record)?;
+        let parts = ContentAssetParts::read(record)?;
         embedded.push(EmbeddedPayload {
             header: parts.header,
             payload: parts.payload,
@@ -225,7 +224,8 @@ fn pack(host: &Host, content_root: &Path) -> anyhow::Result<()> {
         embedded: Vec::new(),
         ..parts.header.clone()
     };
-    let bytes = write_content_asset_with_embedded(&header, parts.payload, &embedded)
+    let bytes = header
+        .write_with_embedded(parts.payload, &embedded)
         .with_context(|| format!("packing '{}'", host.path.display()))?;
     let permissions = std::fs::metadata(&host.path)
         .with_context(|| format!("reading '{}'", host.path.display()))?

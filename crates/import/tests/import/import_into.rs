@@ -3,8 +3,7 @@ use std::path::{Path, PathBuf};
 
 use concerto_bvh::bvh_importer::BvhSettings;
 use concerto_foundation::assets::content::{
-    decode_content_asset, read_asset_record, read_content_asset, read_uncooked,
-    resave_content_asset, write_content_asset,
+    decode_content_asset, resave_content_asset, ContentAssetHeader,
 };
 use concerto_foundation::assets::registry::{AssetEntry, AssetRegistry};
 use concerto_import::config::ContentConfig;
@@ -368,10 +367,11 @@ fn imported_texture(project: &Path, imported: &ImportedSource, name: &str) -> Im
         .find(|asset| asset.provenance.as_ref().unwrap().sub_asset == name)
         .unwrap_or_else(|| panic!("{name} is imported: {:?}", imported.assets))
         .clone();
-    let record = read_asset_record(project, &entry).expect("record");
+    let record = entry.read_record(project).expect("record");
     let (_, texture) = decode_content_asset::<Texture>(&record)
         .unwrap_or_else(|error| panic!("{name}: {error:#}"));
-    let source = read_uncooked::<TextureSource>(project, &entry)
+    let source = entry
+        .read_uncooked::<TextureSource>(project)
         .unwrap_or_else(|error| panic!("{name}: {error:#}"))
         .unwrap_or_else(|| panic!("{name} has a source section"));
     assert_eq!(texture.source, Some(source.summary()), "{name}");
@@ -504,14 +504,10 @@ fn typed_settings_reach_their_sidecar_and_texture_settings_survive_reimports() {
 
     let path = root.join(&normal_entry.address);
     let file = std::fs::read(&path).expect("read");
-    let (mut header, payload) = read_content_asset(&file).expect("content asset");
+    let (mut header, payload) = ContentAssetHeader::read(&file).expect("content asset");
     header.kind_version = 1;
     header.uncooked = None;
-    std::fs::write(
-        &path,
-        write_content_asset(&header, payload).expect("encode"),
-    )
-    .expect("write");
+    std::fs::write(&path, header.write(payload).expect("encode")).expect("write");
     let third = import_source_into(
         &gltf,
         "assets/materials.gltf",

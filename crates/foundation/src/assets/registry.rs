@@ -3,9 +3,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 pub use concerto_asset_format::EmbeddedIn;
-use concerto_asset_format::{
-    asset_location, parse_registry, scan_content, sub_asset_file_stem, write_registry, ScannedEntry,
-};
+use concerto_asset_format::{asset_location, sub_asset_file_stem, ScannedEntry};
 use concerto_ecs::resource::Resource;
 
 use super::content::ImportProvenance;
@@ -121,15 +119,15 @@ impl AssetRegistry {
         Self::default()
     }
 
-    /// Reads a registry from the text [`write_registry`] writes.
+    /// Reads a registry from the text [`ScannedEntry::write_registry`] writes.
     ///
     /// # Errors
     ///
-    /// Returns an error when the text is not a registry that [`parse_registry`] accepts: invalid
+    /// Returns an error when the text is not a registry that [`ScannedEntry::parse_registry`] accepts: invalid
     /// TOML, an invalid id, a line without a kind, two ids at one location, or an asset embedded at
     /// an address that holds no host.
     pub fn parse(text: &str) -> anyhow::Result<Self> {
-        Ok(Self::from_entries(parse_registry(text)?))
+        Ok(Self::from_entries(ScannedEntry::parse_registry(text)?))
     }
 
     /// Builds a registry by scanning `<project_root>/<content_root>` for
@@ -150,7 +148,7 @@ impl AssetRegistry {
         content_root: &str,
         extension: &str,
     ) -> anyhow::Result<Self> {
-        Ok(Self::from_entries(scan_content(
+        Ok(Self::from_entries(ScannedEntry::scan(
             project_root,
             &project_root.join(content_root),
             extension,
@@ -182,7 +180,7 @@ impl AssetRegistry {
                 embedded_in: entry.embedded_in.clone(),
             })
             .collect();
-        write_registry(&entries)
+        ScannedEntry::write_registry(&entries)
     }
 
     /// Returns the entry for `id`, or `None` when no content asset has it.

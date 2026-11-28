@@ -4,10 +4,7 @@ use std::time::{Duration, Instant};
 use concerto_ecs::World;
 use concerto_foundation::assets::asset_server::{handle_asset_load_events, AssetServer};
 use concerto_foundation::assets::asset_store::AssetStore;
-use concerto_foundation::assets::content::{
-    write_content_asset, write_content_asset_with_embedded, ContentAssetHeader, EmbeddedPayload,
-    ImportProvenance,
-};
+use concerto_foundation::assets::content::{ContentAssetHeader, EmbeddedPayload, ImportProvenance};
 use concerto_foundation::assets::handle::AssetHandle;
 use concerto_foundation::assets::registry::AssetRegistry;
 use concerto_foundation::assets::utils::load_content_asset;
@@ -54,7 +51,7 @@ fn write_pebble(dir: &std::path::Path, address: &str) {
     let payload = bincode::serialize(&Pebble { weight: 7 }).unwrap();
     let path = dir.join(address);
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-    std::fs::write(path, write_content_asset(&header, &payload).unwrap()).unwrap();
+    std::fs::write(path, header.write(&payload).unwrap()).unwrap();
 }
 
 struct Load {
@@ -167,25 +164,25 @@ fn embedded_assets_load_by_id() {
     let dir = temp_root("embedded");
     let address = "content/cairn/scene.gasset";
     let [cairn, pebble, boulder] = [(); 3].map(|_| AssetId::new());
-    let host = write_content_asset_with_embedded(
-        &embedded_header::<Cairn>(cairn, "scene"),
-        &bincode::serialize(&Cairn { stones: 2 }).unwrap(),
-        &[
-            EmbeddedPayload {
-                header: embedded_header::<Pebble>(pebble, "pebble/0"),
-                payload: &bincode::serialize(&Pebble { weight: 3 }).unwrap(),
-                uncooked: None,
-                derived_blob: None,
-            },
-            EmbeddedPayload {
-                header: embedded_header::<Boulder>(boulder, "boulder/0"),
-                payload: &bincode::serialize(&Boulder { weight: 900 }).unwrap(),
-                uncooked: None,
-                derived_blob: None,
-            },
-        ],
-    )
-    .unwrap();
+    let host = (embedded_header::<Cairn>(cairn, "scene"))
+        .write_with_embedded(
+            &bincode::serialize(&Cairn { stones: 2 }).unwrap(),
+            &[
+                EmbeddedPayload {
+                    header: embedded_header::<Pebble>(pebble, "pebble/0"),
+                    payload: &bincode::serialize(&Pebble { weight: 3 }).unwrap(),
+                    uncooked: None,
+                    derived_blob: None,
+                },
+                EmbeddedPayload {
+                    header: embedded_header::<Boulder>(boulder, "boulder/0"),
+                    payload: &bincode::serialize(&Boulder { weight: 900 }).unwrap(),
+                    uncooked: None,
+                    derived_blob: None,
+                },
+            ],
+        )
+        .unwrap();
     std::fs::create_dir_all(dir.join("content/cairn")).unwrap();
     std::fs::write(dir.join(address), &host).unwrap();
     let registry = AssetRegistry::from_content_tree(&dir, "content", "gasset").unwrap();

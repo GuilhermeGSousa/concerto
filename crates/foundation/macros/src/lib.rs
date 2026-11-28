@@ -84,7 +84,7 @@ fn read_asset_id(literal: &syn::LitStr) -> Result<AssetIdLookup, String> {
             file.path.display()
         ));
     }
-    let header = concerto_asset_format::read_content_asset_header(&file.canonical)
+    let header = concerto_asset_format::ContentAssetHeader::read_file(&file.canonical)
         .map_err(|error| format!("asset_id!: {error:#}"))?;
     let Some(name) = file.embedded_as else {
         return Ok(AssetIdLookup::Found(header.asset_id.to_bytes()));

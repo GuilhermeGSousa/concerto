@@ -7,7 +7,7 @@ use concerto_animation::clip::AnimationClip;
 use concerto_ecs::World;
 use concerto_foundation::assets::asset_server::{handle_asset_load_events, AssetServer};
 use concerto_foundation::assets::asset_store::AssetStore;
-use concerto_foundation::assets::content::{read_content_asset_header, save_content_asset_into};
+use concerto_foundation::assets::content::{save_content_asset_into, ContentAssetHeader};
 use concerto_foundation::assets::registry::{AssetEntry, AssetRegistry};
 use concerto_foundation::assets::{Asset, AssetId, ContentAssetRoot, LoadableAsset};
 use concerto_import::metadata::{sidecar_path, SourceMetadata};
@@ -142,7 +142,7 @@ fn ids_by_name(entries: &[AssetEntry]) -> BTreeMap<String, AssetId> {
 }
 
 fn embedded_names(project_root: &Path, address: &str) -> Vec<String> {
-    read_content_asset_header(&project_root.join(address))
+    ContentAssetHeader::read_file(&project_root.join(address))
         .unwrap()
         .embedded
         .iter()
@@ -258,7 +258,7 @@ fn a_gltf_import_is_one_scene_file_with_its_textures_and_clips_beside_it() {
         assert!(runtime.loads(entry), "{} loads", entry.location());
     }
     let ids = ids_by_name(&first);
-    assert!(read_content_asset_header(&root.join(scene))
+    assert!(ContentAssetHeader::read_file(&root.join(scene))
         .unwrap()
         .references
         .contains(&ids["mesh/0"]));

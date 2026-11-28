@@ -10,10 +10,9 @@ use concerto_foundation::assets::{
     asset_server::{handle_asset_load_events, AssetServer},
     asset_store::AssetStore,
     content::{
-        read_asset_record, read_content_asset, read_content_asset_header, read_content_asset_parts,
         save_content_asset_into, save_content_asset_with_uncooked, without_uncooked,
-        write_content_asset_with_embedded, write_cooked_content_asset, ContentAssetHeader,
-        CookedSection, DerivedSection, EmbeddedPayload, ImportProvenance,
+        ContentAssetHeader, ContentAssetParts, CookedSection, DerivedSection, EmbeddedPayload,
+        ImportProvenance,
     },
     derived::{DerivedData, DerivedDataCache, DerivedInputs},
     handle::AssetHandle,
@@ -439,17 +438,17 @@ impl Project {
         };
         let host = header(Leaf::name(), Leaf::FORMAT_VERSION, "scene");
         let embedded = header(A::name(), A::FORMAT_VERSION, embedded_as);
-        let file = write_content_asset_with_embedded(
-            &host,
-            &bincode::serialize(&Leaf { value: 0 }).unwrap(),
-            &[EmbeddedPayload {
-                header: embedded.clone(),
-                payload: &bincode::serialize(value).unwrap(),
-                uncooked: None,
-                derived_blob: None,
-            }],
-        )
-        .unwrap();
+        let file = host
+            .write_with_embedded(
+                &bincode::serialize(&Leaf { value: 0 }).unwrap(),
+                &[EmbeddedPayload {
+                    header: embedded.clone(),
+                    payload: &bincode::serialize(value).unwrap(),
+                    uncooked: None,
+                    derived_blob: None,
+                }],
+            )
+            .unwrap();
         std::fs::write(self.root.join(&address), file).unwrap();
         let id = embedded.asset_id;
         let embedded_in = EmbeddedIn {
@@ -474,17 +473,17 @@ impl Project {
     fn cook(&self, name: &str, derived_version: u32, blob: &[u8]) {
         let path = self.root.join(format!("content/{name}.gasset"));
         let bytes = std::fs::read(&path).unwrap();
-        let (header, payload) = read_content_asset(&bytes).unwrap();
-        let cooked = write_cooked_content_asset(
-            &header,
-            payload,
-            CookedSection {
-                derived_version,
-                key: 0x5eed,
-                blob,
-            },
-        )
-        .unwrap();
+        let (header, payload) = ContentAssetHeader::read(&bytes).unwrap();
+        let cooked = header
+            .write_cooked(
+                payload,
+                CookedSection {
+                    derived_version,
+                    key: 0x5eed,
+                    blob,
+                },
+            )
+            .unwrap();
         std::fs::write(&path, cooked).unwrap();
     }
 
@@ -691,7 +690,7 @@ struct CookedFile {
 
 fn read_cooked(path: &Path) -> CookedFile {
     let bytes = std::fs::read(path).unwrap();
-    let parts = read_content_asset_parts(&bytes).unwrap();
+    let parts = ContentAssetParts::read(&bytes).unwrap();
     CookedFile {
         header: ContentAssetHeader {
             uncooked: None,
@@ -804,7 +803,7 @@ fn the_cache_keys_a_blob_by_version_and_input_bytes_and_replaces_one_apply_refus
     let loose = "content/loose.gasset";
     std::fs::write(
         project.root.join(loose),
-        read_asset_record(&project.root, &entry).unwrap(),
+        entry.read_record(&project.root).unwrap(),
     )
     .unwrap();
     project.registry.insert(AssetEntry {
@@ -825,18 +824,21 @@ fn the_cache_keys_a_blob_by_version_and_input_bytes_and_replaces_one_apply_refus
         .unwrap();
     let host_key = key_of(&project, &sum_value::<1>(tag, a, host));
     let file = std::fs::read(&host_path).unwrap();
-    let parts = read_content_asset_parts(&file).unwrap();
-    let rewritten = write_content_asset_with_embedded(
-        &parts.header.record_header(None).unwrap(),
-        parts.payload,
-        &[EmbeddedPayload {
-            header: parts.header.record_header(Some("leaf/0")).unwrap(),
-            payload: &bincode::serialize(&Leaf { value: 9 }).unwrap(),
-            uncooked: None,
-            derived_blob: None,
-        }],
-    )
-    .unwrap();
+    let parts = ContentAssetParts::read(&file).unwrap();
+    let rewritten = parts
+        .header
+        .record_header(None)
+        .unwrap()
+        .write_with_embedded(
+            parts.payload,
+            &[EmbeddedPayload {
+                header: parts.header.record_header(Some("leaf/0")).unwrap(),
+                payload: &bincode::serialize(&Leaf { value: 9 }).unwrap(),
+                uncooked: None,
+                derived_blob: None,
+            }],
+        )
+        .unwrap();
     assert_ne!(rewritten, file);
     std::fs::write(&host_path, rewritten).unwrap();
     assert_eq!(
@@ -1295,7 +1297,7 @@ fn a_derive_reads_its_own_uncooked_data_on_a_miss_and_a_cook_drops_every_section
         &12u64.to_le_bytes(),
     );
     for address in ["content/noted.gasset", "content/sourced.gasset"] {
-        let header = read_content_asset_header(&out.join(address)).unwrap();
+        let header = ContentAssetHeader::read_file(&out.join(address)).unwrap();
         assert!(!header.has_uncooked(), "{address}");
     }
     assert_eq!(

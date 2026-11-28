@@ -439,20 +439,20 @@ mod tests {
         assert_eq!((json_codec().to_json)(&handle), json);
         assert_eq!(concerto_reflect::to_json(&handle, &registry), json);
         assert_eq!(handle_from_json(&json), Ok(id));
-        let stored = concerto_reflect::json_to_value(
+        let stored = concerto_reflect::ReflectedValue::from_json(
             &json,
             std::any::TypeId::of::<AssetHandle<Note>>(),
             &registry,
         )
         .unwrap();
         let mut loaded = AssetHandle::<Note>::default();
-        assert!(concerto_reflect::apply_value(&mut loaded, &stored).is_empty());
+        assert!(stored.apply(&mut loaded).is_empty());
         assert_eq!(loaded.id(), id);
 
         for value in [serde_json::json!("not an id"), serde_json::json!(7)] {
             assert!(handle_from_json(&value).is_err(), "{value} must not decode");
             assert!(
-                concerto_reflect::json_to_value(
+                concerto_reflect::ReflectedValue::from_json(
                     &value,
                     std::any::TypeId::of::<AssetHandle<Note>>(),
                     &registry,

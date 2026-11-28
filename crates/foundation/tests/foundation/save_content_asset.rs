@@ -1,11 +1,8 @@
 //! save_content_asset_into writes a content asset into a project tree, minting
 //! its id on first save and reusing it on re-save.
 use concerto_foundation::assets::content::{
-    read_asset_record, read_asset_record_without_uncooked, read_content_asset,
-    read_content_asset_header, read_content_asset_parts, read_uncooked, read_uncooked_section,
     resave_content_asset, save_content_asset_into, save_content_asset_with_uncooked,
-    write_content_asset_with_embedded, write_content_asset_with_uncooked, ContentAssetHeader,
-    EmbeddedPayload, ImportProvenance,
+    ContentAssetHeader, ContentAssetParts, EmbeddedPayload, ImportProvenance, UncookedBytes,
 };
 use concerto_foundation::assets::registry::{AssetEntry, AssetRegistry};
 use concerto_foundation::assets::{Asset, AssetId, UncookedData};
@@ -78,7 +75,7 @@ fn a_save_writes_a_readable_asset_under_a_minted_id_and_a_re_save_keeps_it() {
     .expect("save");
 
     let written = std::fs::read(project_root.join(address)).expect("file exists at the address");
-    let (header, payload) = read_content_asset(&written).expect("readable");
+    let (header, payload) = ContentAssetHeader::read(&written).expect("readable");
     assert_eq!(header.asset_id, id);
     assert_ne!(
         id,
@@ -102,15 +99,15 @@ fn a_save_writes_a_readable_asset_under_a_minted_id_and_a_re_save_keeps_it() {
     );
     let entry = registry.get(id).unwrap().clone();
     assert_eq!(
-        read_uncooked::<Blueprint>(&project_root, &entry).unwrap(),
+        entry.read_uncooked::<Blueprint>(&project_root).unwrap(),
         Some(Blueprint {
             drawing: vec![7, 8, 9]
         }),
         "a save writes the uncooked section it is given"
     );
-    let whole = read_asset_record(&project_root, &entry).unwrap();
+    let whole = entry.read_record(&project_root).unwrap();
     assert_eq!(
-        read_content_asset_parts(&whole)
+        ContentAssetParts::read(&whole)
             .unwrap()
             .header
             .uncooked
@@ -118,8 +115,8 @@ fn a_save_writes_a_readable_asset_under_a_minted_id_and_a_re_save_keeps_it() {
         Some(3),
         "the section is written at its own type's version"
     );
-    let stripped = read_asset_record_without_uncooked(&project_root, &entry).unwrap();
-    let parts = read_content_asset_parts(&stripped).unwrap();
+    let stripped = entry.read_record_without_uncooked(&project_root).unwrap();
+    let parts = ContentAssetParts::read(&stripped).unwrap();
     assert_eq!(parts.uncooked, None);
     assert_eq!(parts.header.uncooked, None);
     assert_eq!(
@@ -133,13 +130,13 @@ fn a_save_writes_a_readable_asset_under_a_minted_id_and_a_re_save_keeps_it() {
         "a re-save keeps the identity"
     );
     assert_eq!(
-        read_content_asset_header(&project_root.join(address))
+        ContentAssetHeader::read_file(&project_root.join(address))
             .unwrap()
             .asset_id,
         id
     );
     assert_eq!(
-        read_uncooked::<Blueprint>(&project_root, &entry).unwrap(),
+        entry.read_uncooked::<Blueprint>(&project_root).unwrap(),
         Some(Blueprint {
             drawing: vec![7, 8, 9]
         }),
@@ -150,7 +147,7 @@ fn a_save_writes_a_readable_asset_under_a_minted_id_and_a_re_save_keeps_it() {
     let id = save_content_asset_into(&Axle { length: 2 }, &project_root, axle, &mut registry)
         .expect("save");
     assert_eq!(
-        read_content_asset_header(&project_root.join(axle))
+        ContentAssetHeader::read_file(&project_root.join(axle))
             .unwrap()
             .kind_version,
         4,
@@ -163,7 +160,7 @@ fn a_save_writes_a_readable_asset_under_a_minted_id_and_a_re_save_keeps_it() {
     save_content_asset_into(&Axle { length: 3 }, &project_root, address, &mut registry)
         .expect("save over another kind");
     assert_eq!(
-        read_content_asset_header(&project_root.join(address))
+        ContentAssetHeader::read_file(&project_root.join(address))
             .unwrap()
             .uncooked,
         None,
@@ -197,7 +194,7 @@ fn write_imported_widget(path: &std::path::Path, spokes: u32) -> ContentAssetHea
         drawing: vec![1, 2],
     })
     .unwrap();
-    let file = write_content_asset_with_uncooked(&header, &payload, 2, &blueprint).unwrap();
+    let file = header.write_with_uncooked(&payload, 2, &blueprint).unwrap();
     std::fs::write(path, file).unwrap();
     header
 }
@@ -214,7 +211,7 @@ fn a_resave_keeps_the_id_and_the_import_provenance() {
 
     assert_eq!(id, original.asset_id);
     let written = std::fs::read(project_root.join(address)).unwrap();
-    let (header, payload) = read_content_asset(&written).unwrap();
+    let (header, payload) = ContentAssetHeader::read(&written).unwrap();
     assert_eq!(header.asset_id, original.asset_id);
     assert_eq!(header.provenance, original.provenance);
     assert_eq!(
@@ -232,7 +229,7 @@ fn a_resave_keeps_the_id_and_the_import_provenance() {
     assert_eq!(entry.kind, "Widget");
     assert_eq!(entry.provenance, original.provenance);
     let entry = entry.clone();
-    let kept = read_uncooked_section(&project_root.join(address), None)
+    let kept = UncookedBytes::read(&project_root.join(address), None)
         .unwrap()
         .expect("a resave keeps the file's section");
     assert_eq!(kept.version, 2, "at the version it was written with");
@@ -242,7 +239,8 @@ fn a_resave_keeps_the_id_and_the_import_provenance() {
             drawing: vec![1, 2]
         }
     );
-    read_uncooked::<Blueprint>(&project_root, &entry)
+    entry
+        .read_uncooked::<Blueprint>(&project_root)
         .expect_err("a section older than its type's version, with no migration, is refused");
     let redrawn = Blueprint {
         drawing: vec![3, 4, 5],
@@ -256,7 +254,7 @@ fn a_resave_keeps_the_id_and_the_import_provenance() {
     )
     .expect("save");
     assert_eq!(
-        read_uncooked::<Blueprint>(&project_root, &entry).unwrap(),
+        entry.read_uncooked::<Blueprint>(&project_root).unwrap(),
         Some(redrawn),
         "a save given a section replaces the file's"
     );
@@ -270,17 +268,17 @@ fn a_file_with_embedded_assets_is_not_overwritten() {
         std::env::temp_dir().join(format!("save-content-host-{}", std::process::id()));
     let address = "content/wheel/scene.gasset";
     let payload = bincode::serialize(&Widget { spokes: 32 }).unwrap();
-    let host = write_content_asset_with_embedded(
-        &imported_widget_header("scene"),
-        &payload,
-        &[EmbeddedPayload {
-            header: imported_widget_header("widget/0"),
-            payload: &payload,
-            uncooked: None,
-            derived_blob: None,
-        }],
-    )
-    .unwrap();
+    let host = imported_widget_header("scene")
+        .write_with_embedded(
+            &payload,
+            &[EmbeddedPayload {
+                header: imported_widget_header("widget/0"),
+                payload: &payload,
+                uncooked: None,
+                derived_blob: None,
+            }],
+        )
+        .unwrap();
     let path = project_root.join(address);
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(&path, &host).unwrap();

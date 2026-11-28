@@ -11,9 +11,7 @@ use concerto_asset_import::{
     ImportOutputs, PreviousOutputResolver, SubAssetIdResolver,
 };
 use concerto_foundation::assets::content::{
-    read_asset_record_without_uncooked, read_content_asset_header, write_content_asset,
-    write_content_asset_with_embedded, write_content_asset_with_uncooked, ContentAssetHeader,
-    EmbeddedPayload, ImportProvenance, UncookedSection,
+    ContentAssetHeader, EmbeddedPayload, ImportProvenance, UncookedSection,
 };
 use concerto_foundation::assets::registry::{AssetEntry, AssetRegistry, EmbeddedIn};
 use concerto_foundation::assets::AssetId;
@@ -396,7 +394,7 @@ impl Existing {
         for entry in registry.iter() {
             let file = match files.entry(entry.file()) {
                 Entry::Occupied(file) => file.into_mut(),
-                Entry::Vacant(file) => file.insert(read_content_asset_header(
+                Entry::Vacant(file) => file.insert(ContentAssetHeader::read_file(
                     &project_root.join(&entry.address),
                 )?),
             };
@@ -427,7 +425,11 @@ fn previous_outputs(
         .filter_map(|(key, output)| Some((key.clone(), registry.get(output.asset_id)?.clone())))
         .collect();
     let root = project_root.to_path_buf();
-    Box::new(move |name| read_asset_record_without_uncooked(&root, located.get(name)?).ok())
+    Box::new(move |name| {
+        (located.get(name)?)
+            .read_record_without_uncooked(&root)
+            .ok()
+    })
 }
 
 fn sidecar_settings(
@@ -555,13 +557,12 @@ impl ImportSite<'_> {
             plan.files.push(PlannedFile {
                 path: self.project_root.join(target.address),
                 bytes: match uncooked {
-                    Some(uncooked) => write_content_asset_with_uncooked(
-                        header,
+                    Some(uncooked) => header.write_with_uncooked(
                         &sub_asset.bytes,
                         uncooked.version,
                         &uncooked.bytes,
                     )?,
-                    None => write_content_asset(header, &sub_asset.bytes)?,
+                    None => header.write(&sub_asset.bytes)?,
                 },
             });
         }
@@ -771,7 +772,7 @@ impl OutputPlan<'_> {
                 })
                 .collect();
             self.files.push(PlannedFile {
-                bytes: write_content_asset_with_embedded(&host.header, host.payload, &payloads)?,
+                bytes: host.header.write_with_embedded(host.payload, &payloads)?,
                 path: host.path,
             });
         }
@@ -1455,9 +1456,9 @@ mod tests {
             let path = self.root().join(&entry.address);
             let file = std::fs::read(&path).unwrap();
             let (mut header, bytes) =
-                concerto_foundation::assets::content::read_content_asset(&file).unwrap();
+                concerto_foundation::assets::content::ContentAssetHeader::read(&file).unwrap();
             header.provenance = None;
-            std::fs::write(&path, write_content_asset(&header, bytes).unwrap()).unwrap();
+            std::fs::write(&path, header.write(bytes).unwrap()).unwrap();
         }
     }
 
@@ -1492,21 +1493,17 @@ mod tests {
         let renamed = entry(&second, "animation/clip");
         assert_eq!(renamed.id, old.id);
         assert_eq!(renamed.address, old.address);
-        let header = read_content_asset_header(&fixture.root().join(&old.address)).unwrap();
+        let header = ContentAssetHeader::read_file(&fixture.root().join(&old.address)).unwrap();
         assert_eq!(header.provenance.unwrap().sub_asset, "animation/clip");
         assert_eq!(
-            concerto_foundation::assets::content::read_uncooked::<Drawing>(
-                &fixture.root(),
-                renamed
-            )
-            .unwrap(),
+            renamed.read_uncooked::<Drawing>(&fixture.root()).unwrap(),
             Some(Drawing { strokes: 7 })
         );
         let outputs = fixture.outputs();
         assert_eq!(outputs.get("animation/clip"), Some(&old.id));
         assert!(!outputs.contains_key("animation/0"));
         let scene = entry(&second, "scene");
-        let header = read_content_asset_header(&fixture.root().join(&scene.address)).unwrap();
+        let header = ContentAssetHeader::read_file(&fixture.root().join(&scene.address)).unwrap();
         assert_eq!(header.references, vec![old.id]);
     }
 

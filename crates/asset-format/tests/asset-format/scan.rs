@@ -1,9 +1,8 @@
 use std::path::{Path, PathBuf};
 
 use concerto_asset_format::{
-    parse_registry, scan_content, write_content_asset, write_content_asset_with_embedded,
-    write_registry, AssetId, ContentAssetHeader, ContentConfig, EmbeddedIn, EmbeddedPayload,
-    ImportProvenance, ScannedEntry,
+    AssetId, ContentAssetHeader, ContentConfig, EmbeddedIn, EmbeddedPayload, ImportProvenance,
+    ScannedEntry,
 };
 
 fn temp_root(tag: &str) -> PathBuf {
@@ -25,7 +24,7 @@ fn write_asset(path: &Path, id: AssetId, kind: &str, provenance: Option<ImportPr
         embedded: Vec::new(),
     };
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-    std::fs::write(path, write_content_asset(&header, b"payload").unwrap()).unwrap();
+    std::fs::write(path, header.write(b"payload").unwrap()).unwrap();
 }
 
 fn sorted(mut entries: Vec<ScannedEntry>) -> Vec<ScannedEntry> {
@@ -56,7 +55,7 @@ fn scanning_a_tree_lists_every_file_of_the_extension_relative_to_the_base() {
     );
     std::fs::write(base.join("content/hero/notes.txt"), "not an asset").unwrap();
 
-    let entries = scan_content(&base, &base.join("content"), "gasset").expect("scan");
+    let entries = ScannedEntry::scan(&base, &base.join("content"), "gasset").expect("scan");
 
     assert_eq!(
         sorted(entries),
@@ -127,8 +126,8 @@ fn the_registry_text_round_trips_without_the_kind_version() {
         },
     ];
 
-    let text = write_registry(&entries);
-    let mut parsed = parse_registry(&text).expect("parses");
+    let text = ScannedEntry::write_registry(&entries);
+    let mut parsed = ScannedEntry::parse_registry(&text).expect("parses");
     parsed.sort_by_key(|entry| entry.id);
     let mut expected = entries;
     expected[1].kind_version = None;
@@ -163,7 +162,7 @@ fn writing_the_registry_drops_provenance_and_orders_by_id() {
     ];
 
     assert_eq!(
-        write_registry(&entries),
+        ScannedEntry::write_registry(&entries),
         format!(
             "[assets]\n{} = {{ address = \"content/a.gasset\", kind = \"Mesh\" }}\n{} = {{ address = \"content/b.gasset\", kind = \"Mesh\" }}\n",
             ids[0].simple_hex(),
@@ -185,7 +184,7 @@ fn parsing_refuses_the_legacy_address_only_form_and_two_ids_at_one_address() {
             AssetId::new().simple_hex(),
         ),
     ] {
-        assert!(parse_registry(&text).is_err(), "{text}");
+        assert!(ScannedEntry::parse_registry(&text).is_err(), "{text}");
     }
 }
 
@@ -299,17 +298,17 @@ fn host(path: &Path, id: AssetId, embedded: AssetId) -> Vec<u8> {
         derived: None,
         embedded: Vec::new(),
     };
-    let bytes = write_content_asset_with_embedded(
-        &header(id, "Scene", "scene"),
-        b"scene",
-        &[EmbeddedPayload {
-            header: header(embedded, "Mesh", "mesh/0"),
-            payload: b"mesh payload",
-            uncooked: None,
-            derived_blob: None,
-        }],
-    )
-    .unwrap();
+    let bytes = header(id, "Scene", "scene")
+        .write_with_embedded(
+            b"scene",
+            &[EmbeddedPayload {
+                header: header(embedded, "Mesh", "mesh/0"),
+                payload: b"mesh payload",
+                uncooked: None,
+                derived_blob: None,
+            }],
+        )
+        .unwrap();
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(path, &bytes).unwrap();
     bytes
@@ -407,7 +406,7 @@ fn a_scan_lists_each_file_of_the_extension_once_under_the_first_path_it_walks() 
     for case in cases {
         let root = temp_root("layout");
         let scan = (case.build)(&root);
-        let result = scan_content(&scan.base, &scan.dir, scan.extension);
+        let result = ScannedEntry::scan(&scan.base, &scan.dir, scan.extension);
         let root_text = root.to_string_lossy().replace('\\', "/");
         std::fs::remove_dir_all(&root).ok();
         match case.expected {

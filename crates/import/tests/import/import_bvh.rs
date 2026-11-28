@@ -2,9 +2,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use concerto_animation::clip::AnimationClip;
-use concerto_foundation::assets::content::{
-    decode_content_asset, read_asset_record, resave_content_asset,
-};
+use concerto_foundation::assets::content::{decode_content_asset, resave_content_asset};
 use concerto_foundation::assets::registry::AssetRegistry;
 use concerto_import::config::ContentConfig;
 use concerto_import::import_source_into;
@@ -79,7 +77,7 @@ fn a_bvh_imports_its_outputs_and_a_sidecar_whose_settings_a_re_import_applies_un
         .find(|asset| asset.embedded_in.is_some())
         .unwrap();
     let clip = "content/walk/animation_walk.gasset";
-    let skeleton_before = read_asset_record(project.path(), skeleton).unwrap();
+    let skeleton_before = skeleton.read_record(project.path()).unwrap();
     let clip_before = read(project.path(), clip);
     metadata
         .settings
@@ -88,7 +86,7 @@ fn a_bvh_imports_its_outputs_and_a_sidecar_whose_settings_a_re_import_applies_un
 
     let second = import(&source(scratch.path()), project.path()).expect("re-import");
     assert_ne!(
-        read_asset_record(project.path(), skeleton).unwrap(),
+        skeleton.read_record(project.path()).unwrap(),
         skeleton_before
     );
     assert_ne!(read(project.path(), clip), clip_before);

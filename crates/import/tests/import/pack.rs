@@ -2,8 +2,7 @@
 use std::collections::BTreeMap;
 
 use concerto_foundation::assets::content::{
-    asset_record, read_asset_record, read_content_asset, read_uncooked_section,
-    write_content_asset, write_content_asset_with_uncooked, ContentAssetHeader, ImportProvenance,
+    asset_record, ContentAssetHeader, ImportProvenance, UncookedBytes,
 };
 use concerto_foundation::assets::registry::{AssetEntry, AssetRegistry};
 use concerto_foundation::assets::AssetId;
@@ -18,7 +17,7 @@ const WALK_CLIP: &str = "content/walk/animation_walk.gasset";
 
 fn clip_only_source(project: &Project, clip: &AssetEntry) -> AssetEntry {
     let file = std::fs::read(project.path(&clip.address)).unwrap();
-    let (header, payload) = read_content_asset(&file).unwrap();
+    let (header, payload) = ContentAssetHeader::read(&file).unwrap();
     let provenance = ImportProvenance {
         source: "assets/walk.bvh".into(),
         sub_asset: "animation/walk".into(),
@@ -30,7 +29,7 @@ fn clip_only_source(project: &Project, clip: &AssetEntry) -> AssetEntry {
     };
     let path = project.path(WALK_CLIP);
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-    std::fs::write(&path, write_content_asset(&header, payload).unwrap()).unwrap();
+    std::fs::write(&path, header.write(payload).unwrap()).unwrap();
     let metadata = SourceMetadata {
         version: 1,
         source_id: AssetId::new(),
@@ -77,10 +76,10 @@ fn packing_keeps_ids_and_bytes_and_is_idempotent() {
     let drawing = [7u8, 8, 9];
     let loose = project.path(&loose_address(HERO, drawn));
     let file = std::fs::read(&loose).unwrap();
-    let (header, payload) = read_content_asset(&file).unwrap();
+    let (header, payload) = ContentAssetHeader::read(&file).unwrap();
     std::fs::write(
         &loose,
-        write_content_asset_with_uncooked(&header, payload, 2, &drawing).unwrap(),
+        header.write_with_uncooked(payload, 2, &drawing).unwrap(),
     )
     .unwrap();
     let old = project.snapshot();
@@ -107,13 +106,13 @@ fn packing_keeps_ids_and_bytes_and_is_idempotent() {
     assert_eq!(sorted(&registry), expected);
     for entry in &embedded {
         assert_eq!(
-            &read_asset_record(&project.0, entry).unwrap(),
+            &entry.read_record(&project.0).unwrap(),
             old_record(entry),
             "{}",
             entry.location()
         );
     }
-    let section = read_uncooked_section(
+    let section = UncookedBytes::read(
         &project.path("content/hero/scene.gasset"),
         Some(&drawn.embedded_in.as_ref().unwrap().name),
     )
