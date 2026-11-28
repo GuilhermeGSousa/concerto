@@ -20,8 +20,8 @@ use super::{
 use crate::{
     asset_editor::ActiveEditor,
     inspector::{
-        InspectedValues, ListEdit, PropertyTarget, apply_value_commit, gone, listed_paths, reading,
-        refusal_error, set_value,
+        InspectedValues, ListEdit, PropertyTarget, WriteRefusal, apply_value_commit, listed_paths,
+        reading, set_value,
     },
 };
 
@@ -272,8 +272,8 @@ fn edit_list(
         let target = target.clone();
         list_commit_at(&name, path, &listed, false, edit, target, source.changed)
     })
-    .unwrap_or_else(|| Err(gone(&attempt).into()))?;
-    apply_value_commit(world, &commit).map_err(|refusal| refusal_error(&refusal))?;
+    .unwrap_or_else(|| Err(WriteRefusal::gone(&attempt).into()))?;
+    apply_value_commit(world, &commit).map_err(|refusal| WriteRefusal::from_property(&refusal))?;
     let path = &commit.row.address.path;
     let length = reading(world, target.as_ref(), |value, _| list_length(value, path)).unwrap_or(0);
     Ok(format!("{done}; its length is {length}."))

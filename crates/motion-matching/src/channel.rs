@@ -367,3 +367,44 @@ fn from_value<T: FeatureChannel + Default>(
 fn store(channel: &dyn FeatureChannel) -> Result<ReflectedValue, EncodeError> {
     to_value(channel)
 }
+
+impl FrameContext<'_> {
+    /// Runs every channel into its span of `out`, in list order.
+    ///
+    /// `out` holds exactly the sum of their [`dims`](FeatureChannel::dims).
+    ///
+    /// # Panics
+    ///
+    /// Panics if `out` is shorter than the sum of the channels' dims.
+    pub fn extract_features(&self, channels: &[&dyn FeatureChannel], out: &mut [f32]) {
+        let mut offset = 0;
+        for channel in channels {
+            let dims = channel.dims();
+            channel.extract(self, &mut out[offset..offset + dims]);
+            offset += dims;
+        }
+    }
+
+    /// The shapes of every channel for one raw feature vector, one list per channel in order.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `features` is shorter than the sum of the channels' dims.
+    pub fn preview_features(
+        &self,
+        channels: &[Box<dyn FeatureChannel>],
+        features: &[f32],
+    ) -> Vec<Vec<FeatureShape>> {
+        let mut offset = 0;
+        channels
+            .iter()
+            .map(|channel| {
+                let dims = channel.dims();
+                let mut shapes = Vec::new();
+                channel.preview(self, &features[offset..offset + dims], &mut shapes);
+                offset += dims;
+                shapes
+            })
+            .collect()
+    }
+}
