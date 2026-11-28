@@ -1876,26 +1876,38 @@ answers the report of a drop or a poke.
 takes `entity` (the character's id as `scene_tree` shows it), `bone` (the part
 that is hit), `impulse` in N·s (`[0, 0, -30]`) and `point` in world space (the
 part's current position), and sends the `BodyHit` signal a bullet would send,
-through `EditWorldSignals`; no physics is called directly. A character with a
-`HitReaction` that follows its animation answers once its flinch is over, from
-its `FlinchRecord`: the bone, the peak displacement in metres and the seconds
-until the body was back on its animation. A character without a
-`HitReaction`, or whose ragdoll is limp or powered by something else, answers
-at once that it only took the impulse. `shot: true` marks the hit as a gunshot:
-a character with a `ShotReaction` that is not limp answers at once that its
-shot reaction started, and `body_report` follows it; any other character
-flinches as for a blow. An unknown entity, one with no
-`CharacterRagdoll`, a ragdoll not built yet and an unknown bone (the reply lists
-the part bones) are errors that say what to do next.
+through `EditWorldSignals`; no physics is called directly. `shot: true` marks
+the hit as a gunshot, which reaches the graph as a `Shot` message instead of a
+`Hit`. The character's animation graph decides what the hit does, so the tool
+watches the body and answers when the graph draws no bone from physics again:
+the bone, how far the hit part got from its animated place at most, in metres,
+and the seconds until the body was back on its animation. The waits are
+measured in the played game's time, with a 30 s wall-clock guard against a game
+that never steps. When no bone is drawn from physics within one second it
+answers that the graph did not react, and says to add a flinch or shot entry
+to a slot of its graph. When the body never returns, as one that is down or
+dead does, it answers after eight seconds of game time with the graph's states.
+An unknown entity, one with no `CharacterRagdoll`, one whose ragdoll is not in
+`RagdollMode::Graph`, one with no `AnimationPlayer`, a ragdoll not built yet and
+an unknown bone (the reply lists the part bones) are errors that say what to do
+next.
 
 `body_report` is read-only, works on the game that is playing and needs `play`
 first. It takes `entity` (the character's id as `scene_tree` shows it) and
-answers at once with one line for the `CharacterRagdoll` (its mode, profile and
-weight), then the body's state, the behaviours it runs with their priority and
-the part bones they claim, and what it senses, from `describe_body`. Errors are
-the same as `hit_character`'s. There is no tool to start or stop a behaviour: a
-behaviour is a reflected component on the character, and the component tools
-add, edit and remove it.
+answers at once with one line per limb, `bone · physics amount · cover`, the
+amount its animation graph draws from physics and how much of the bone the
+graph's nodes hold, then the states of the graph, a `node:` line for each
+playing node that describes itself, and what the body senses: the text of
+`RagdollBody::report`, which a game can print too. Errors are the same as
+`hit_character`'s. There is no tool to start or stop a behaviour: a behaviour
+is a node of the character's animation graph, which the animation graph tools
+(`graph_add_node`, `graph_connect`, `graph_add_state`, `send_animation_message`)
+add, edit and drive.
+
+The tab's limp preview, after a drop or a poke, gives its character a graph
+built in code, a `LimpNode` that draws every part from physics; otherwise the
+character has a player with no graph, so its body follows the bones and the
+clip it plays writes them alone.
 
 ### The texture tab
 
