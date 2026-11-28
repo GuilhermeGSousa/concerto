@@ -8,9 +8,15 @@ pub mod flinch;
 pub mod hold;
 /// The limp node, which lets the whole body go.
 pub mod limp;
+/// The shot node, which answers a gunshot with the whole body.
+pub mod shot;
+/// The stagger node, which makes a balancing body stumble.
+pub mod stagger;
 
 pub use balance::{BalanceNode, BalanceSettings, BalanceState, Hindrance};
 pub use dying::{DyingNode, DyingState};
 pub use flinch::{FlinchNode, FlinchState};
 pub use hold::{HoldNode, HoldState};
 pub use limp::LimpNode;
+pub use shot::{ShotNode, ShotState};
+pub use stagger::{StaggerNode, StaggerState};

@@ -1,6 +1,7 @@
 use concerto_animation::{
     clip::{AnimationChanelOutput, AnimationChannel, AnimationClip},
     graph::AnimationGraph,
+    message::AnimationMessage,
     node::{
         AnimationClipNode, AnimationNode,
         state_machine::{AnimationFSMTrigger, AnimationStateMachine, AnimationStateMachineState},
@@ -33,7 +34,7 @@ use concerto_ragdoll::testing::{
 use concerto_ragdoll::{
     Balance, BalanceNode, BalanceSettings, BalanceState, BehaviourEnded, BodyDrive, BodySense,
     BodySettled, BodyState, CharacterRagdoll, Dead, LimpNode, Outcome, PhysicalState, RagdollBody,
-    RagdollMode, RagdollPlugin,
+    RagdollMode, RagdollPlugin, StaggerNode, StaggerState,
     messages::{Steadied, Toppled},
 };
 use glam::{Quat, Vec3};
@@ -78,16 +79,14 @@ impl Stage {
         Self::build(placement, None)
     }
 
-    /// A body in the graph mode whose animation graph is `build`'s.
+    /// A body in the graph mode, with a `BodySense`, whose animation graph is `build`'s.
     pub fn graphed(build: impl FnOnce(&AssetServer) -> AnimationGraph + 'static) -> Self {
         Self::build(Transform::default(), Some(Box::new(build)))
     }
 
-    /// A body in the graph mode, with a `BodySense`, whose animation graph balances it with `node` over the standing pose, moving to the state `steady` when it succeeds and `fallen`, where it goes limp, when it gives up.
+    /// A body in the graph mode whose animation graph balances it with `node` over the standing pose, moving to the state `steady` when it succeeds and `fallen`, where it goes limp, when it gives up.
     pub fn balancing(node: BalanceNode) -> Self {
-        let mut stage = Self::graphed(move |server| balance_graph(server, node));
-        stage.insert(BodySense::default());
-        stage
+        Self::graphed(move |server| balance_graph(server, node))
     }
 
     fn build(placement: Transform, graph: Option<GraphBuilder>) -> Self {
@@ -127,6 +126,7 @@ impl Stage {
                 (
                     CharacterRagdoll::new(asset).with_mode(RagdollMode::Graph),
                     AnimationHandleComponent::new(graph),
+                    BodySense::default(),
                 ),
                 character,
             ),
@@ -213,7 +213,8 @@ impl Stage {
         &self.entries
     }
 
-    fn node_stepping(&self) -> bool {
+    /// Whether a balance or stagger node of the graph has a foot in the air.
+    pub fn node_stepping(&self) -> bool {
         let world = self.app.main().world();
         let (Some(graphs), Some(player)) = (
             self.app.get_resource::<AssetStore<AnimationGraph>>(),
@@ -225,7 +226,19 @@ impl Stage {
         player.for_each_state::<BalanceNode>(graphs, |_, state: &BalanceState, _| {
             stepping |= state.stepping();
         });
+        player.for_each_state::<StaggerNode>(graphs, |_, state: &StaggerState, _| {
+            stepping |= state.stepping();
+        });
         stepping
+    }
+
+    pub fn send(&mut self, message: impl AnimationMessage) {
+        self.app
+            .main_mut()
+            .world_mut()
+            .get_component_for_entity_mut::<AnimationPlayer>(self.character)
+            .unwrap()
+            .send(message);
     }
 
     pub fn in_state(&self, state: Name) -> bool {

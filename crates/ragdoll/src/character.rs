@@ -38,8 +38,9 @@ use crate::{
     behaviour::{BodyDrive, Claim},
     dying::{Dying, Settled, mark_dead},
     hit::Flinch,
-    messages::{BodyDead, PendingImpulses},
+    messages::{BodyDead, PendingImpulses, Wounded, keep_wounds},
     resolve::ResolvedRagdoll,
+    shot::Wounds,
 };
 
 /// What a character's ragdoll does.
@@ -95,7 +96,7 @@ pub struct PartWeight {
 /// have loaded.
 #[derive(Component, Reflect, Clone, Debug, PartialEq)]
 #[reflect(Component, Default, SceneComponent)]
-#[require(PendingImpulses, Listener<BodyDead> = mark_dead())]
+#[require(PendingImpulses, Wounds, Listener<Wounded> = keep_wounds(), Listener<BodyDead> = mark_dead())]
 pub struct CharacterRagdoll {
     /// The ragdoll asset of the skeleton.
     pub ragdoll: AssetHandle<Ragdoll>,

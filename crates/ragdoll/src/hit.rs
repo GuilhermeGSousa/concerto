@@ -64,7 +64,7 @@ pub enum HitKind {
     /// A punch, a shove, a thrown thing: the upper body flinches over legs that follow the animation.
     #[default]
     Blow,
-    /// A bullet: a character with a `ShotReaction` answers with its whole body, by where it struck. Without one it flinches.
+    /// A bullet: a character with a `ShotReaction` answers with its whole body, by where it struck. Without one it flinches. A character in the graph mode receives it as a [`Shot`](crate::messages::Shot) message.
     Shot,
 }
 

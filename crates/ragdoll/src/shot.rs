@@ -1,28 +1,29 @@
 use concerto_ecs::{
     CommandQueue, Component, Entity, Query, ResMut,
-    query::change_detection::Mut,
     reflect::{ReflectComponent, ReflectSceneComponent},
     signal::On,
 };
 use concerto_foundation::time::Time;
 use concerto_name::Name;
 use concerto_physics::{
-    body::BodyId,
     physics_state::PhysicsState,
     ragdoll::{BodyPose, RagdollId},
 };
 use concerto_reflect::{Reflect, ReflectDefault};
 use glam::{Quat, Vec3};
+use serde::{Deserialize, Serialize};
 
 use crate::{
     asset::{PartStrength, Segment, Side},
-    balance::{BALANCE, Balance, Hindrance},
+    balance::{BALANCE, Balance},
     behaviour::{BehaviourEnded, BodyDrive, BodyState, Outcome, PartCommand, PhysicalState},
     character::{CharacterRagdoll, RagdollBody, RagdollMode},
     hit::{BodyHit, HitKind},
     ik::{Chain, bent_spine, reach_hinged},
+    node::balance::{ClaimsOut, Hindrance},
     resolve::{Limbs, ResolvedRagdoll},
     sensing::BodySense,
+    view::BodyView,
 };
 
 /// The name the shot behaviour claims parts and reports under.
@@ -30,14 +31,10 @@ pub const SHOT: &str = "shot";
 /// The priority of the shot behaviour's claims.
 pub const SHOT_PRIORITY: i32 = 30;
 
-/// Makes a character answer a `BodyHit` of `HitKind::Shot` with its whole body, by where it struck, instead of flinching.
-///
-/// The muscles at the wound snap tight and then give, a hand goes to the
-/// wound, the head turns to it and then to where the shot came from, and
-/// balance keeps the body up or loses it.
-#[derive(Component, Reflect, Clone, Debug, PartialEq)]
-#[reflect(Component, Default, SceneComponent)]
-pub struct ShotReaction {
+/// How a gunshot reaction plays out: how hard the muscles at a wound snap and how far they give, what a wounded part keeps, how the spine folds, and when a hand goes to the wound and the head turns to it.
+#[derive(Clone, Debug, PartialEq, Reflect, Serialize, Deserialize)]
+#[reflect(Default)]
+pub struct ShotSettings {
     /// The stiffness of the muscles the reaction drives, in N·m/rad.
     pub stiffness: f32,
     /// The most torque one of them applies, in N·m.
@@ -68,7 +65,7 @@ pub struct ShotReaction {
     pub max_look: f32,
 }
 
-impl Default for ShotReaction {
+impl Default for ShotSettings {
     fn default() -> Self {
         Self {
             stiffness: 400.0,
@@ -89,7 +86,7 @@ impl Default for ShotReaction {
     }
 }
 
-impl ShotReaction {
+impl ShotSettings {
     /// Sets the snap: how many times stronger the muscles at the wound get, for how long, and the share of strength left right after.
     pub fn with_snap(mut self, spike: f32, snap_seconds: f32, slack: f32) -> Self {
         self.spike = spike;
@@ -98,6 +95,7 @@ impl ShotReaction {
         self
     }
 
+    /// Sets the shares of strength a wounded part, a shot arm and a shot leg keep.
     /// Sets the shares of strength a wounded part, a shot arm and a shot leg keep.
     pub fn with_wounds(mut self, wounded: f32, hanging_arm: f32, lame_leg: f32) -> Self {
         self.wounded = wounded;
@@ -111,6 +109,37 @@ impl ShotReaction {
     pub fn with_fold(mut self, fold: f32, fold_seconds: f32) -> Self {
         self.fold = fold;
         self.fold_seconds = fold_seconds;
+        self
+    }
+}
+
+impl ShotSettings {
+    pub(crate) fn lasting_share(&self, segment: Segment) -> Option<f32> {
+        match segment {
+            Segment::Head => None,
+            _ if is_arm(segment) => Some(self.hanging_arm),
+            _ if is_leg(segment) => Some(self.lame_leg),
+            _ => Some(self.wounded),
+        }
+    }
+}
+
+/// Makes a character answer a `BodyHit` of `HitKind::Shot` with its whole body, by where it struck, instead of flinching.
+///
+/// The muscles at the wound snap tight and then give, a hand goes to the
+/// wound, the head turns to it and then to where the shot came from, and
+/// balance keeps the body up or loses it, as its [`ShotSettings`] say.
+#[derive(Component, Reflect, Clone, Debug, Default, PartialEq)]
+#[reflect(Component, Default, SceneComponent)]
+pub struct ShotReaction {
+    /// How the reaction plays out.
+    pub settings: ShotSettings,
+}
+
+impl ShotReaction {
+    /// Sets `settings`.
+    pub fn with_settings(mut self, settings: ShotSettings) -> Self {
+        self.settings = settings;
         self
     }
 }
@@ -129,10 +158,24 @@ pub struct Wound {
     waiting: Option<u32>,
 }
 
+impl Wound {
+    pub(crate) fn struck(part: usize, point: Vec3, impulse: Vec3) -> Self {
+        Self {
+            part,
+            point,
+            impulse,
+            age: 0.0,
+            waiting: None,
+        }
+    }
+}
+
 /// The share of its strength each wounded part of a character keeps.
 ///
-/// The shot behaviour leaves it on the character when it ends, for the game
-/// to read: a limp, a guarded arm.
+/// Every character ragdoll carries it. The shot behaviour, and a
+/// [`ShotNode`](crate::node::ShotNode) through its
+/// [`Wounded`](crate::messages::Wounded) signals, leave it on the character
+/// for the game to read: a limp, a guarded arm.
 #[derive(Component, Clone, Debug, Default, PartialEq)]
 pub struct Wounds {
     strength: Vec<f32>,
@@ -151,7 +194,7 @@ impl Wounds {
         self.strength.get(part).copied().unwrap_or(1.0)
     }
 
-    fn weaken(&mut self, part: usize, share: f32, parts: usize) {
+    pub(crate) fn weaken(&mut self, part: usize, share: f32, parts: usize) {
         self.strength.resize(parts, 1.0);
         if let Some(strength) = self.strength.get_mut(part) {
             *strength = strength.min(share.clamp(0.0, 1.0));
@@ -232,11 +275,12 @@ pub fn react_when_shot(
         return;
     };
     let wound = Wound {
-        part: hit.part,
-        point: struck.inverse().transform_point(hit.point),
-        impulse: hit.impulse,
-        age: 0.0,
         waiting: Some(0),
+        ..Wound::struck(
+            hit.part,
+            struck.inverse().transform_point(hit.point),
+            hit.impulse,
+        )
     };
     match shot {
         Some(mut shot) => shot.wounds.push(wound),
@@ -302,6 +346,7 @@ impl Arm {
 /// it and then to where the shot came from.
 pub fn shot_bodies(
     mut characters: Query<(
+        Entity,
         &ShotReaction,
         &mut Shot,
         &mut Wounds,
@@ -313,29 +358,75 @@ pub fn shot_bodies(
     mut state: ResMut<PhysicsState>,
 ) {
     let dt = Time::fixed_delta_time().as_secs_f32();
-    let mut pose = Vec::new();
-    for (reaction, mut shot, mut wounds, mut balance, id, body, mut drive) in characters.iter_mut()
+    let mut claims = ClaimsOut::default();
+    for (entity, reaction, mut shot, mut wounds, mut balance, id, body, mut drive) in
+        characters.iter_mut()
     {
         let shot = &mut *shot;
+        shot.strike_wounds(*id, body, &mut state);
         let resolved = body.resolved();
+        let count = resolved.part_count();
+        for wound in &shot.wounds {
+            if let Some(share) = reaction
+                .settings
+                .lasting_share(resolved.segment(wound.part))
+            {
+                wounds.weaken(wound.part, share, count);
+            }
+        }
+        let view = BodyView::new(entity, *id, body, None, None);
+        let Some(legs) = (ShotController {
+            settings: &reaction.settings,
+            wounds: &mut shot.wounds,
+        })
+        .step(view, &state, dt, &mut claims) else {
+            continue;
+        };
+        balance.hinder(legs);
+        for part in 0..count {
+            if let Some(claim) = claims.get(part) {
+                drive.claim(SHOT, part, SHOT_PRIORITY, claim.weight, claim.command);
+            }
+        }
+    }
+}
+
+pub(crate) struct ShotController<'a> {
+    pub(crate) settings: &'a ShotSettings,
+    pub(crate) wounds: &'a mut [Wound],
+}
+
+impl ShotController<'_> {
+    pub(crate) fn step(
+        &mut self,
+        view: BodyView<'_>,
+        physics: &PhysicsState,
+        dt: f32,
+        claims: &mut ClaimsOut,
+    ) -> Option<Hindrance> {
+        let resolved = view.resolved();
         let landmarks = resolved.landmarks();
         let settings = &resolved.settings().parts;
         let count = settings.len();
-        let animated = body.animated_pose();
-        state.ragdoll_pose(*id, &mut pose);
+        claims.reset(count);
+        let animated = view.animated();
+        let mut pose = Vec::new();
+        physics.ragdoll_pose(view.ragdoll_id(), &mut pose);
         if pose.len() != count || animated.len() != count {
-            continue;
+            return None;
         }
-        let bodies = state.ragdoll_bodies(*id).to_vec();
-        strike_wounds(&mut shot.wounds, body, &bodies, &pose, &mut state, dt);
+        let reaction = self.settings;
+        for wound in self.wounds.iter_mut() {
+            wound.age += dt;
+        }
+        let wounds = &*self.wounds;
 
         let mut muscles = Muscles {
             scale: vec![1.0_f32; count],
             touched: vec![false; count],
             targets: vec![None; count],
         };
-        let legs = weaken_wounded(reaction, &shot.wounds, resolved, &mut wounds, &mut muscles);
-        balance.hinder(legs);
+        let legs = weaken_wounded(reaction, wounds, resolved, &mut muscles);
 
         let pelvis = landmarks.pelvis.unwrap_or(0);
         let turned = pose[pelvis].rotation * animated[pelvis].rotation.inverse();
@@ -345,7 +436,7 @@ pub fn shot_bodies(
             .collect();
         let rest: Vec<BodyPose> = settings.iter().map(|part| part.pose).collect();
 
-        let fold = fold_over_wounds(reaction, &shot.wounds, resolved, dt);
+        let fold = fold_over_wounds(reaction, wounds, resolved, dt);
         for aimed in bent_spine(
             &landmarks.spine,
             settings,
@@ -368,9 +459,10 @@ pub fn shot_bodies(
             across,
             forward,
         };
-        hand_to_wound(reaction, &shot.wounds, &posed, &mut muscles);
-        look_at_wound(reaction, &shot.wounds, &posed, &mut muscles);
-        claim_muscles(reaction, &muscles, &mut drive);
+        hand_to_wound(reaction, wounds, &posed, &mut muscles);
+        look_at_wound(reaction, wounds, &posed, &mut muscles);
+        claim_muscles(reaction, &muscles, claims);
+        Some(legs)
     }
 }
 
@@ -389,22 +481,21 @@ struct Posed<'a> {
     forward: Vec3,
 }
 
-fn strike_wounds(
-    wounds: &mut [Wound],
-    body: &RagdollBody,
-    bodies: &[BodyId],
-    pose: &[BodyPose],
-    state: &mut ResMut<PhysicsState>,
-    dt: f32,
-) {
-    for wound in wounds {
-        if let Some(waited) = wound.waiting {
+impl Shot {
+    fn strike_wounds(&mut self, id: RagdollId, body: &RagdollBody, state: &mut PhysicsState) {
+        let mut pose = Vec::new();
+        state.ragdoll_pose(id, &mut pose);
+        for wound in &mut self.wounds {
+            let Some(waited) = wound.waiting else {
+                continue;
+            };
             if !body.is_kinematic(wound.part) {
-                state.add_impulse_at(
-                    bodies[wound.part],
-                    wound.impulse,
-                    pose[wound.part].transform_point(wound.point),
-                );
+                if let (Some(part), Some(struck)) = (
+                    state.ragdoll_bodies(id).get(wound.part).copied(),
+                    pose.get(wound.part),
+                ) {
+                    state.add_impulse_at(part, wound.impulse, struck.transform_point(wound.point));
+                }
                 wound.waiting = None;
             } else if waited >= PATIENCE {
                 wound.waiting = None;
@@ -412,37 +503,26 @@ fn strike_wounds(
                 wound.waiting = Some(waited + 1);
             }
         }
-        wound.age += dt;
     }
 }
 
 fn weaken_wounded(
-    reaction: &ShotReaction,
+    reaction: &ShotSettings,
     struck: &[Wound],
     resolved: &ResolvedRagdoll,
-    wounds: &mut Mut<Wounds>,
     muscles: &mut Muscles,
 ) -> Hindrance {
-    let count = muscles.scale.len();
     let mut legs = Hindrance::default();
     for wound in struck {
         let segment = resolved.segment(wound.part);
-        if segment == Segment::Head {
+        let Some(lasting) = reaction.lasting_share(segment) else {
             continue;
-        }
+        };
         let healed = if reaction.recover > 0.0 {
             ((wound.age - reaction.snap_seconds) / reaction.recover).clamp(0.0, 1.0)
         } else {
             1.0
         };
-        let lasting = if is_arm(segment) {
-            reaction.hanging_arm
-        } else if is_leg(segment) {
-            reaction.lame_leg
-        } else {
-            reaction.wounded
-        };
-        wounds.weaken(wound.part, lasting, count);
         let now = if wound.age < reaction.snap_seconds {
             reaction.spike
         } else {
@@ -463,7 +543,7 @@ fn weaken_wounded(
 }
 
 fn spread_wound(
-    reaction: &ShotReaction,
+    reaction: &ShotSettings,
     wound: &Wound,
     resolved: &ResolvedRagdoll,
     now: f32,
@@ -498,7 +578,7 @@ fn spread_wound(
 }
 
 fn fold_over_wounds(
-    reaction: &ShotReaction,
+    reaction: &ShotSettings,
     struck: &[Wound],
     resolved: &ResolvedRagdoll,
     dt: f32,
@@ -519,7 +599,7 @@ fn fold_over_wounds(
     fold.clamp_length_max(reaction.fold)
 }
 
-fn hand_to_wound(reaction: &ShotReaction, struck: &[Wound], posed: &Posed, muscles: &mut Muscles) {
+fn hand_to_wound(reaction: &ShotSettings, struck: &[Wound], posed: &Posed, muscles: &mut Muscles) {
     let resolved = posed.resolved;
     let landmarks = resolved.landmarks();
     let settings = &resolved.settings().parts;
@@ -578,7 +658,7 @@ fn hand_to_wound(reaction: &ShotReaction, struck: &[Wound], posed: &Posed, muscl
     }
 }
 
-fn look_at_wound(reaction: &ShotReaction, struck: &[Wound], posed: &Posed, muscles: &mut Muscles) {
+fn look_at_wound(reaction: &ShotSettings, struck: &[Wound], posed: &Posed, muscles: &mut Muscles) {
     let resolved = posed.resolved;
     let settings = &resolved.settings().parts;
     let pose = posed.pose;
@@ -608,7 +688,7 @@ fn look_at_wound(reaction: &ShotReaction, struck: &[Wound], posed: &Posed, muscl
     }
 }
 
-fn claim_muscles(reaction: &ShotReaction, muscles: &Muscles, drive: &mut Mut<BodyDrive>) {
+fn claim_muscles(reaction: &ShotSettings, muscles: &Muscles, claims: &mut ClaimsOut) {
     for part in 0..muscles.scale.len() {
         if !muscles.touched[part] {
             continue;
@@ -622,7 +702,7 @@ fn claim_muscles(reaction: &ShotReaction, muscles: &Muscles, drive: &mut Mut<Bod
         if let Some(target) = muscles.targets[part] {
             command = command.with_target(target);
         }
-        drive.claim(SHOT, part, SHOT_PRIORITY, 1.0, command);
+        claims.claim(part, 1.0, command);
     }
 }
 

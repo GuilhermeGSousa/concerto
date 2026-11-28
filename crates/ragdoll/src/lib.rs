@@ -3,7 +3,7 @@
 //! A [`CharacterRagdoll`] follows its animation, is powered towards it, or falls limp, as its
 //! [`RagdollMode`] says. In [`RagdollMode::Graph`] the character's animation graph drives the
 //! body bone by bone instead: nodes such as [`HoldNode`], [`LimpNode`], [`FlinchNode`],
-//! [`DyingNode`] and [`BalanceNode`] write a [`PhysicsAmount`] and a [`MotorCommand`] for each
+//! [`DyingNode`], [`BalanceNode`], [`StaggerNode`] and [`ShotNode`] write a [`PhysicsAmount`] and a [`MotorCommand`] for each
 //! bone in the graph's drive pass, and [`drive::drive_from_graph`] applies them each physics step. The graph hears
 //! what happens to the body through the [`messages`] the crate registers.
 
@@ -69,16 +69,16 @@ pub use generate::{
     BRACED, FLINCH, GenerateError, HumanoidChains, HumanoidSettings, LIMP, generate_humanoid,
 };
 pub use hit::{BodyHit, Flinch, FlinchRecord, HitKind, HitReaction};
-pub use messages::{BodyDead, Death, Hit, PendingImpulses};
+pub use messages::{BodyDead, Death, Hit, PendingImpulses, Wounded};
 pub use node::{
     BalanceNode, BalanceSettings, BalanceState, DyingNode, DyingState, FlinchNode, FlinchState,
-    HoldNode, HoldState, LimpNode,
+    HoldNode, HoldState, LimpNode, ShotNode, ShotState, StaggerNode, StaggerState,
 };
 pub use overlap::PartOverlap;
 pub use plugin::RagdollPlugin;
 pub use resolve::{Landmarks, Limbs, RagdollError, ResolvedRagdoll};
 pub use sandbox::{Trial, TrialReport, run_trial};
 pub use sensing::{BodySense, Impact, MassPoint};
-pub use shot::{SHOT, SHOT_PRIORITY, Shot, ShotReaction, Wound, Wounds};
-pub use stagger::{STAGGER, STAGGER_PRIORITY, Stagger};
+pub use shot::{SHOT, SHOT_PRIORITY, Shot, ShotReaction, ShotSettings, Wound, Wounds};
+pub use stagger::{STAGGER, STAGGER_PRIORITY, Stagger, StaggerSettings};
 pub use view::{BodyInput, BodyView};

@@ -31,8 +31,10 @@ use crate::{
     },
     fall::{Fall, FallReaction, fall_bodies, fall_when_falling},
     hit::{HitReaction, flinch_when_hit, update_flinches},
-    messages::{BodyDead, Death, Hit, Recovered, Steadied, Toppled, apply_impulses, route_hits},
-    node::{BalanceNode, DyingNode, FlinchNode, HoldNode, LimpNode},
+    messages::{
+        self, BodyDead, Death, Hit, Recovered, Steadied, Toppled, apply_impulses, route_hits,
+    },
+    node::{BalanceNode, DyingNode, FlinchNode, HoldNode, LimpNode, ShotNode, StaggerNode},
     sensing::sense_bodies,
     shot::{ShotReaction, end_shots, note_shot_balance_ended, react_when_shot, shot_bodies},
     stagger::{Stagger, end_staggers, note_balance_ended, stagger_bodies},
@@ -43,10 +45,11 @@ use crate::{
 /// The body follows its animation, is powered towards it or falls limp, and
 /// is drawn on its skeleton by weight; or, in the graph mode, does and is
 /// drawn as its animation graph's physics attributes say. It registers the
-/// [`HoldNode`], [`LimpNode`], [`FlinchNode`], [`DyingNode`] and [`BalanceNode`]
-/// graph nodes and the [`Hit`], [`Recovered`], [`Death`], [`BodyDead`],
-/// [`Steadied`] and [`Toppled`] messages, and sends a
-/// graph-mode character's hits and death to its graph. Register the plugin
+/// [`HoldNode`], [`LimpNode`], [`FlinchNode`], [`DyingNode`], [`BalanceNode`],
+/// [`StaggerNode`] and [`ShotNode`] graph nodes and the [`Hit`],
+/// [`messages::Shot`], [`messages::Stagger`], [`Recovered`], [`Death`],
+/// [`BodyDead`], [`Steadied`] and [`Toppled`] messages, and sends a
+/// graph-mode character's hits, gunshots and death to its graph. Register the plugin
 /// after `PhysicsPlugin` and `AnimationPlugin`.
 ///
 /// Its systems also run in a preview `App`, where they do nothing until the
@@ -63,8 +66,12 @@ impl Plugin for RagdollPlugin {
             .register_animation_node::<LimpNode>()
             .register_animation_node::<FlinchNode>()
             .register_animation_node::<DyingNode>()
-            .register_animation_node::<BalanceNode>();
+            .register_animation_node::<BalanceNode>()
+            .register_animation_node::<StaggerNode>()
+            .register_animation_node::<ShotNode>();
         app.register_animation_message::<Hit>()
+            .register_animation_message::<messages::Shot>()
+            .register_animation_message::<messages::Stagger>()
             .register_animation_message::<Recovered>()
             .register_animation_message::<Death>()
             .register_animation_message::<BodyDead>()

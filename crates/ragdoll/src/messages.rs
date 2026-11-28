@@ -1,7 +1,10 @@
 use concerto_animation::{message::AnimationMessage, player::AnimationPlayer};
 use concerto_ecs::{
     Component, Query, ResMut, Without,
-    signal::{EntitySignal, On, Signal},
+    signal::{
+        EntitySignal, On, Signal,
+        listener::{IntoListener, Listener},
+    },
 };
 use concerto_physics::{physics_state::PhysicsState, ragdoll::RagdollId};
 use concerto_reflect::{Reflect, ReflectDefault};
@@ -11,6 +14,7 @@ use crate::{
     character::{CharacterRagdoll, RagdollBody, RagdollMode},
     dying::Settled,
     hit::{BodyHit, HitKind},
+    shot::Wounds,
 };
 
 /// A blow on `part` of a character's ragdoll at the world `point`, with `impulse` in N·s, sent to its animation graph.
@@ -27,6 +31,32 @@ pub struct Hit {
 
 impl AnimationMessage for Hit {}
 
+/// A gunshot on `part` of a character's ragdoll at the world `point`, with `impulse` in N·s, sent to its animation graph.
+#[derive(Clone, Debug, Default, PartialEq, Reflect)]
+#[reflect(Default)]
+pub struct Shot {
+    /// The index of the struck part in the character's ragdoll.
+    pub part: usize,
+    /// The world-space point the bullet struck.
+    pub point: Vec3,
+    /// The bullet's impulse, in N·s in world space.
+    pub impulse: Vec3,
+}
+
+impl AnimationMessage for Shot {}
+
+/// Tells a graph to stagger towards `direction`, with `severity` from 0 to 1.
+#[derive(Clone, Debug, Default, PartialEq, Reflect)]
+#[reflect(Default)]
+pub struct Stagger {
+    /// The way the body was sent, in world space; its horizontal part is used.
+    pub direction: Vec3,
+    /// How bad the stumble is, from 0, which is balance alone, to 1, which cannot be recovered.
+    pub severity: f32,
+}
+
+impl AnimationMessage for Stagger {}
+
 /// Tells a graph its character is dying, its strength draining over `seconds`.
 #[derive(Clone, Debug, Default, PartialEq, Reflect)]
 #[reflect(Default)]
@@ -37,7 +67,7 @@ pub struct Death {
 
 impl AnimationMessage for Death {}
 
-/// Raised by a [`BalanceNode`](crate::node::BalanceNode) once the body has stood still on its feet, and triggered on the character.
+/// Raised by a [`BalanceNode`](crate::node::BalanceNode), a [`StaggerNode`](crate::node::StaggerNode) or a [`ShotNode`](crate::node::ShotNode) once the body has stood still on its feet, and triggered on the character.
 #[derive(Clone, Debug, Default, PartialEq, Reflect)]
 #[reflect(Default)]
 pub struct Steadied;
@@ -48,7 +78,7 @@ impl EntitySignal for Steadied {}
 
 impl AnimationMessage for Steadied {}
 
-/// Raised by a [`BalanceNode`](crate::node::BalanceNode) once it has given up keeping the body on its feet, and triggered on the character.
+/// Raised by a [`BalanceNode`](crate::node::BalanceNode), a [`StaggerNode`](crate::node::StaggerNode) or a [`ShotNode`](crate::node::ShotNode) once it has given up keeping the body on its feet, and triggered on the character.
 #[derive(Clone, Debug, Default, PartialEq, Reflect)]
 #[reflect(Default)]
 pub struct Toppled;
@@ -69,6 +99,21 @@ impl Signal for Recovered {}
 impl EntitySignal for Recovered {}
 
 impl AnimationMessage for Recovered {}
+
+/// Raised by a [`ShotNode`](crate::node::ShotNode) for each part a shot weakens for good, and triggered on the character, whose [`Wounds`] keep it.
+#[derive(Clone, Copy, Debug, PartialEq, Reflect)]
+pub struct Wounded {
+    /// The index of the wounded part in the character's ragdoll.
+    pub part: usize,
+    /// The share of its strength the part keeps, from 0 to 1.
+    pub share: f32,
+}
+
+impl Signal for Wounded {}
+
+impl EntitySignal for Wounded {}
+
+impl AnimationMessage for Wounded {}
 
 /// Raised by a [`DyingNode`](crate::node::DyingNode) once it has drained the body's last strength, and triggered on the character.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Reflect)]
@@ -97,9 +142,7 @@ pub struct PendingImpulses {
     waiting: Vec<PendingImpulse>,
 }
 
-/// Forwards a blow's [`BodyHit`] on a character in [`RagdollMode::Graph`] to its animation graph as a [`Hit`], and takes its impulse, pending until the part is dynamic.
-///
-/// A gunshot takes its impulse the same way but sends no message.
+/// Forwards a [`BodyHit`] on a character in [`RagdollMode::Graph`] to its animation graph, a blow as a [`Hit`] and a gunshot as a [`Shot`], and takes its impulse, pending until the part is dynamic.
 pub fn route_hits(
     on: On<BodyHit>,
     mut characters: Query<
@@ -126,12 +169,20 @@ pub fn route_hits(
         impulse: hit.impulse,
         waited: 0,
     });
-    if let (HitKind::Blow, Some(mut player)) = (hit.kind, player) {
-        player.send(Hit {
+    let Some(mut player) = player else {
+        return;
+    };
+    match hit.kind {
+        HitKind::Blow => player.send(Hit {
             part: hit.part,
             point: hit.point,
             impulse: hit.impulse,
-        });
+        }),
+        HitKind::Shot => player.send(Shot {
+            part: hit.part,
+            point: hit.point,
+            impulse: hit.impulse,
+        }),
     }
 }
 
@@ -155,4 +206,16 @@ pub fn apply_impulses(
             false
         });
     }
+}
+
+/// The listener every character ragdoll carries: keeps what a [`Wounded`] signal says on its [`Wounds`].
+pub fn keep_wounds() -> Listener<Wounded> {
+    (|on: On<Wounded>, mut characters: Query<(&RagdollBody, &mut Wounds)>| {
+        let wounded = *on.signal();
+        let Some((body, mut wounds)) = characters.get_entity_mut(on.entity()) else {
+            return;
+        };
+        wounds.weaken(wounded.part, wounded.share, body.resolved().part_count());
+    })
+    .into_listener()
 }
