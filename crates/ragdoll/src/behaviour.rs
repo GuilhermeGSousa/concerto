@@ -12,6 +12,7 @@ use glam::{Quat, Vec3};
 use crate::{
     asset::PartStrength,
     character::{CharacterRagdoll, RagdollBody, RagdollMode},
+    fall::LYING,
     sensing::BodySense,
 };
 
@@ -239,8 +240,6 @@ pub struct BehaviourEnded {
 }
 
 impl Signal for BehaviourEnded {}
-
-pub(crate) const LYING: f32 = 1.0;
 
 /// Moves every character's [`PhysicalState`] to where its body is, each fixed step after the body is sensed.
 ///

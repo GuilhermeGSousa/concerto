@@ -115,6 +115,17 @@ impl EntitySignal for Wounded {}
 
 impl AnimationMessage for Wounded {}
 
+/// Raised by a [`FallNode`](crate::node::FallNode) once the body has landed and relaxed, and triggered on the character.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Reflect)]
+#[reflect(Default)]
+pub struct BodyDown;
+
+impl Signal for BodyDown {}
+
+impl EntitySignal for BodyDown {}
+
+impl AnimationMessage for BodyDown {}
+
 /// Raised by a [`DyingNode`](crate::node::DyingNode) once it has drained the body's last strength, and triggered on the character.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Reflect)]
 #[reflect(Default)]

@@ -105,6 +105,17 @@ impl MotorCommand {
         }
         command
     }
+
+    pub(crate) fn limp(base: Option<Self>, target: Quat) -> Self {
+        let held = base.unwrap_or(Self::neutral());
+        Self {
+            cover: 1.0,
+            target,
+            stiffness: held.stiffness,
+            damping: held.damping,
+            ..Self::neutral()
+        }
+    }
 }
 
 #[cfg(test)]

@@ -32,9 +32,12 @@ use crate::{
     fall::{Fall, FallReaction, fall_bodies, fall_when_falling},
     hit::{HitReaction, flinch_when_hit, update_flinches},
     messages::{
-        self, BodyDead, Death, Hit, Recovered, Steadied, Toppled, apply_impulses, route_hits,
+        self, BodyDead, BodyDown, Death, Hit, Recovered, Steadied, Toppled, apply_impulses,
+        route_hits,
     },
-    node::{BalanceNode, DyingNode, FlinchNode, HoldNode, LimpNode, ShotNode, StaggerNode},
+    node::{
+        BalanceNode, DyingNode, FallNode, FlinchNode, HoldNode, LimpNode, ShotNode, StaggerNode,
+    },
     sensing::sense_bodies,
     shot::{ShotReaction, end_shots, note_shot_balance_ended, react_when_shot, shot_bodies},
     stagger::{Stagger, end_staggers, note_balance_ended, stagger_bodies},
@@ -46,9 +49,9 @@ use crate::{
 /// is drawn on its skeleton by weight; or, in the graph mode, does and is
 /// drawn as its animation graph's physics attributes say. It registers the
 /// [`HoldNode`], [`LimpNode`], [`FlinchNode`], [`DyingNode`], [`BalanceNode`],
-/// [`StaggerNode`] and [`ShotNode`] graph nodes and the [`Hit`],
+/// [`StaggerNode`], [`ShotNode`] and [`FallNode`] graph nodes and the [`Hit`],
 /// [`messages::Shot`], [`messages::Stagger`], [`Recovered`], [`Death`],
-/// [`BodyDead`], [`Steadied`] and [`Toppled`] messages, and sends a
+/// [`BodyDead`], [`Steadied`], [`Toppled`] and [`BodyDown`] messages, and sends a
 /// graph-mode character's hits, gunshots and death to its graph. Register the plugin
 /// after `PhysicsPlugin` and `AnimationPlugin`.
 ///
@@ -68,7 +71,8 @@ impl Plugin for RagdollPlugin {
             .register_animation_node::<DyingNode>()
             .register_animation_node::<BalanceNode>()
             .register_animation_node::<StaggerNode>()
-            .register_animation_node::<ShotNode>();
+            .register_animation_node::<ShotNode>()
+            .register_animation_node::<FallNode>();
         app.register_animation_message::<Hit>()
             .register_animation_message::<messages::Shot>()
             .register_animation_message::<messages::Stagger>()
@@ -76,7 +80,8 @@ impl Plugin for RagdollPlugin {
             .register_animation_message::<Death>()
             .register_animation_message::<BodyDead>()
             .register_animation_message::<Steadied>()
-            .register_animation_message::<Toppled>();
+            .register_animation_message::<Toppled>()
+            .register_animation_message::<BodyDown>();
         app.add_listener(route_hits.at_preview_time()).add_system(
             LateFixedUpdate,
             apply_impulses

@@ -657,7 +657,7 @@ interrupted mid-fade holds a command's target and muscle but drops its force
 and torque, which `MotorCommand::frozen` returns, so a held fade does not keep
 pushing.
 
-`RagdollPlugin` registers seven nodes that write them. Each takes the pose to act
+`RagdollPlugin` registers eight nodes that write them. Each takes the pose to act
 on as its input, passes it through, and reads the character's body through a
 `BodyInput` query, its typed drive input, as a `BodyView`. A character without
 a ragdoll has no view, and the node only passes its pose through.
@@ -778,6 +778,20 @@ let machine = AnimationStateMachine::from_initial_state(name!("walk"), walk, |to
     to.to(name!("steady"), AnimationFSMTrigger::on_message::<Steadied>(), 0.2)
         .to(name!("fallen"), AnimationFSMTrigger::on_message::<Toppled>(), 0.2);
 });
+```
+
+`FallNode` brings the body down as the `Fall` behaviour below does, from the
+moment its state is entered, so a graph moves into it on `OnMessage` of
+`Toppled`. Its `strength`, a blackboard `Param` that reads 1 with no such
+value, is how conscious the fall is, and its `settings` are a `FallSettings`.
+Once the body has landed and relaxed it goes limp and the node raises
+`BodyDown`, from `concerto::ragdoll::messages`, so the graph moves on into a
+state with a `LimpNode`. It needs a `BodySense`.
+
+```rust
+.state(name!("fall"), assets.add(fall), |to| {
+    to.to(name!("down"), AnimationFSMTrigger::on_message::<BodyDown>(), 0.0);
+})
 ```
 
 #### A hit
@@ -1075,7 +1089,8 @@ cmd.entity(character).insert(FallReaction { strength: 1.0 });
 `strength` is how conscious the fall is: 1 is fully braced, 0 is the limp
 fall, and everything between is a weaker version of the same motion, so the
 game sets it from the wound. Inserting a `Fall` directly starts one on a
-standing character too. While it runs:
+standing character too. While it runs, as its `settings`, a `FallSettings`,
+say:
 
 - **Arms.** Each hand goes towards where the chest will land, from
   `BodySense::chest_impact`, `spread` to its own side, by two-bone IK that
@@ -1099,9 +1114,10 @@ standing character too. While it runs:
 
 It claims at `FALL_PRIORITY`. Hands are held to the ground by friction, not by
 a constraint. A fall from a height, where a roll is the right answer, is not
-handled. On the reference humanoid pushed over with 300 N·s, forward or
-backward, the braced fall's peak contact impulse on the head is under half the
-limp fall's, and falling forward both hands land before the chest.
+handled. On the reference humanoid pushed over with 270 N·s, forward or
+backward, by the behaviour or by a `FallNode`, the braced fall's peak contact
+impulse on the head is under half the limp fall's, and falling forward both
+hands land before the chest.
 
 #### Dying
 
