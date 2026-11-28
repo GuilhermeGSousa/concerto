@@ -8,7 +8,7 @@ fn main() -> ExitCode {
     let default_engine = std::env::var_os("CONCERTO_ENGINE")
         .filter(|path| !path.is_empty())
         .map(PathBuf::from);
-    let command = match concerto_project::parse(std::env::args().skip(1), default_engine) {
+    let command = match concerto_project::Command::parse(std::env::args().skip(1), default_engine) {
         Ok(command) => command,
         Err(error) => {
             eprintln!("error: {error:#}");
@@ -16,7 +16,7 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    match concerto_project::run(command) {
+    match command.run() {
         Ok(report) => {
             print!("{report}");
             ExitCode::SUCCESS
