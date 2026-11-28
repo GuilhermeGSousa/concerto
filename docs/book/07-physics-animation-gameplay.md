@@ -794,6 +794,15 @@ state with a `LimpNode`. It needs a `BodySense`.
 })
 ```
 
+`RagdollBody::report(player, graphs, sense)` says what a graph-mode body is
+doing, as text: a `bone · physics amount · cover` line per limb, the current
+states of the graph's playing state machines, which `active_states(player,
+graphs)` also returns, a `node:` line for each playing node that describes
+itself, and what its `BodySense` says, which `BodySense::describe` gives alone.
+It is what the editor's `body_report` tool replies with. `RagdollBody::is_animated(player)`
+says whether the graph draws no bone from physics. The `ragdoll-behaviours`
+and `ragdoll-test` examples build such a graph in code.
+
 #### A hit
 
 `BodyHit { character, part, point, impulse, kind }` says a character's body was hit:
@@ -948,8 +957,7 @@ triggers `BodyStateChanged { character, from, to }` for every listener; react
 to that instead of polling.
 
 `describe_body` gives the state, the running behaviours with their priorities
-and parts, and the sensing values as text, which is what the editor's
-`body_report` tool replies with.
+and parts, and the sensing values as text.
 
 #### Balance
 

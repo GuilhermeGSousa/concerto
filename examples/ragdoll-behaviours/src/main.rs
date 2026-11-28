@@ -3,6 +3,15 @@
 
 use concerto::{
     DefaultPlugins,
+    animation::{
+        clip::{AnimationChanelOutput, AnimationChannel, AnimationClip},
+        graph::AnimationGraph,
+        node::{
+            AnimationClipNode, AnimationNode,
+            state_machine::{AnimationFSMTrigger, AnimationStateMachine},
+        },
+        player::{AnimationHandleComponent, AnimationPlayer},
+    },
     app::{
         App,
         plugins::ContentSettings,
@@ -13,8 +22,12 @@ use concerto::{
         CommandQueue, Component, Entity, Query, Res, ResMut, Resource, With,
         component::scene::SceneEntityRef, entity::hierarchy::ChildOf,
     },
-    foundation::{assets::asset_server::AssetServer, transform::Transform},
-    mesh::{JointPose, MeshComponent, SkeletonComponent, primitives},
+    foundation::{
+        assets::{asset_server::AssetServer, asset_store::AssetStore, handle::AssetHandle},
+        transform::Transform,
+    },
+    mesh::{JointPose, MeshComponent, Skeleton, SkeletonComponent, primitives},
+    name::name,
     physics::{collider::Collider, physics_state::PhysicsState, ragdoll::RagdollId},
     render::{
         MaterialComponent,
@@ -31,8 +44,9 @@ use concerto::{
 };
 use concerto_physics_gizmos::{PhysicsGizmos, PhysicsGizmosPlugin};
 use concerto_ragdoll::{
-    Balance, BodyDrive, BodyHit, BodySense, CharacterRagdoll, Die, Fall, FallReaction,
-    PhysicalState, RagdollBody, Settled, ShotReaction, Stagger, describe_body,
+    BalanceNode, BalanceSettings, BodyHit, BodySense, CharacterRagdoll, Death, Die, DyingNode,
+    FallNode, LimpNode, RagdollBody, RagdollMode, Settled, ShotNode, StaggerNode, active_states,
+    messages::{BodyDead, BodyDown, Shot, Stagger, Steadied, Toppled},
     testing::reference_humanoid,
 };
 use glam::{Quat, Vec3};
@@ -108,6 +122,196 @@ enum Struck {
     LeftArm,
 }
 
+struct Standing {
+    clip: AssetHandle<AnimationClip>,
+}
+
+impl Standing {
+    fn new(assets: &AssetServer, skeleton: &Skeleton) -> Self {
+        let pelvis = skeleton
+            .bone_index(name!("pelvis"))
+            .expect("the reference humanoid has a pelvis");
+        let mut clip = AnimationClip::default();
+        clip.add_channel(
+            skeleton.bone_ids[pelvis],
+            AnimationChannel::new(
+                vec![0.0, 1.0],
+                AnimationChanelOutput::from_rotation(
+                    [Quat::IDENTITY.to_array(), Quat::IDENTITY.to_array()].into_iter(),
+                ),
+            ),
+        );
+        Self {
+            clip: assets.add(clip),
+        }
+    }
+
+    fn alone(&self, assets: &AssetServer) -> AssetHandle<AnimationGraph> {
+        assets.add(AnimationGraph::from_node(AnimationClipNode::new(
+            self.clip.clone(),
+        )))
+    }
+
+    fn under(&self, assets: &AssetServer, node: impl AnimationNode) -> AssetHandle<AnimationGraph> {
+        let mut graph = AnimationGraph::new();
+        graph
+            .result_node()
+            .input(node)
+            .input(AnimationClipNode::new(self.clip.clone()));
+        assets.add(graph)
+    }
+
+    fn reactions(&self, assets: &AssetServer) -> AnimationGraph {
+        let balance = self.under(
+            assets,
+            BalanceNode::default()
+                .with_settings(BalanceSettings::default().with_settle_seconds(f32::MAX)),
+        );
+        AnimationGraph::from_node(
+            AnimationStateMachine::from_initial_state(name!("stand"), self.alone(assets), |to| {
+                to.to(
+                    name!("shot"),
+                    AnimationFSMTrigger::on_message::<Shot>(),
+                    0.0,
+                )
+                .to(
+                    name!("stagger"),
+                    AnimationFSMTrigger::on_message::<Stagger>(),
+                    0.0,
+                )
+                .to(
+                    name!("dying"),
+                    AnimationFSMTrigger::on_message::<Death>(),
+                    0.0,
+                )
+                .to(
+                    name!("balance"),
+                    AnimationFSMTrigger::on_bool(name!("balance"), true),
+                    0.0,
+                )
+                .to(
+                    name!("fall"),
+                    AnimationFSMTrigger::on_bool(name!("falling"), true),
+                    0.0,
+                );
+            })
+            .state(name!("balance"), balance, |to| {
+                to.to(
+                    name!("shot"),
+                    AnimationFSMTrigger::on_message::<Shot>(),
+                    0.0,
+                )
+                .to(
+                    name!("stagger"),
+                    AnimationFSMTrigger::on_message::<Stagger>(),
+                    0.0,
+                )
+                .to(
+                    name!("dying"),
+                    AnimationFSMTrigger::on_message::<Death>(),
+                    0.0,
+                )
+                .to(
+                    name!("fall"),
+                    AnimationFSMTrigger::on_message::<Toppled>(),
+                    0.0,
+                );
+            })
+            .state(
+                name!("stagger"),
+                self.under(assets, StaggerNode::default()),
+                |to| {
+                    to.to(
+                        name!("shot"),
+                        AnimationFSMTrigger::on_message::<Shot>(),
+                        0.0,
+                    )
+                    .to(
+                        name!("dying"),
+                        AnimationFSMTrigger::on_message::<Death>(),
+                        0.0,
+                    )
+                    .to(
+                        name!("stand"),
+                        AnimationFSMTrigger::on_message::<Steadied>(),
+                        0.0,
+                    )
+                    .to(
+                        name!("fall"),
+                        AnimationFSMTrigger::on_message::<Toppled>(),
+                        0.0,
+                    );
+                },
+            )
+            .state(
+                name!("shot"),
+                self.under(assets, ShotNode::default()),
+                |to| {
+                    to.to(
+                        name!("dying"),
+                        AnimationFSMTrigger::on_message::<Death>(),
+                        0.0,
+                    )
+                    .to(
+                        name!("stand"),
+                        AnimationFSMTrigger::on_message::<Steadied>(),
+                        0.0,
+                    )
+                    .to(
+                        name!("fall"),
+                        AnimationFSMTrigger::on_message::<Toppled>(),
+                        0.0,
+                    );
+                },
+            )
+            .state(
+                name!("fall"),
+                self.under(assets, FallNode::default()),
+                |to| {
+                    to.to(
+                        name!("dying"),
+                        AnimationFSMTrigger::on_message::<Death>(),
+                        0.0,
+                    )
+                    .to(
+                        name!("down"),
+                        AnimationFSMTrigger::on_message::<BodyDown>(),
+                        0.0,
+                    );
+                },
+            )
+            .state(
+                name!("down"),
+                self.under(assets, LimpNode::default()),
+                |to| {
+                    to.to(
+                        name!("dying"),
+                        AnimationFSMTrigger::on_message::<Death>(),
+                        0.0,
+                    );
+                },
+            )
+            .state(
+                name!("dying"),
+                self.under(assets, DyingNode::default()),
+                |to| {
+                    to.to(
+                        name!("dead"),
+                        AnimationFSMTrigger::on_message::<BodyDead>(),
+                        0.0,
+                    );
+                },
+            )
+            .state(
+                name!("dead"),
+                self.under(assets, LimpNode::default()),
+                |_| {},
+            )
+            .build(),
+        )
+    }
+}
+
 fn spawn_scene(mut cmd: CommandQueue, assets: Res<AssetServer>) {
     cmd.spawn((
         concerto::director::MainCamera,
@@ -165,6 +369,7 @@ fn spawn_humanoid(cmd: &mut CommandQueue, assets: &AssetServer, towards: Towards
     let reference = reference_humanoid();
     let parents = reference.skeleton.parents.to_vec();
     let rest = reference.skeleton.rest_pose.to_vec();
+    let graph = assets.add(Standing::new(assets, &reference.skeleton).reactions(assets));
     let skeleton = assets.add(reference.skeleton);
     let mut ragdoll = reference.ragdoll;
     ragdoll.skeleton = skeleton.clone();
@@ -188,12 +393,9 @@ fn spawn_humanoid(cmd: &mut CommandQueue, assets: &AssetServer, towards: Towards
             bones.iter().copied().map(SceneEntityRef::Entity).collect(),
             bones.first().copied().map(SceneEntityRef::Entity),
         ),
-        CharacterRagdoll::new(ragdoll),
-        BodyDrive::default(),
+        CharacterRagdoll::new(ragdoll).with_mode(RagdollMode::Graph),
         BodySense::default(),
-        PhysicalState::default(),
-        ShotReaction::default(),
-        FallReaction::default(),
+        AnimationHandleComponent::new(graph),
     ));
     Stage {
         character,
@@ -234,12 +436,16 @@ fn start_again(
 fn act(
     stage: Res<Stage>,
     bodies: Query<(&RagdollBody, &RagdollId)>,
+    mut players: Query<&mut AnimationPlayer>,
     mut physics: ResMut<PhysicsState>,
     input: Res<Input>,
     mut cmd: CommandQueue,
 ) {
     let character = stage.character;
     let Some((body, &ragdoll)) = bodies.get_entity(character) else {
+        return;
+    };
+    let Some(mut player) = players.get_entity_mut(character) else {
         return;
     };
     let landmarks = body.resolved().landmarks();
@@ -271,8 +477,7 @@ fn act(
     };
 
     if pressed(&input, KeyCode::Digit1) {
-        cmd.entity(character)
-            .insert(Balance::default().with_settle_seconds(f32::MAX));
+        player.set_bool_param(name!("balance"), true);
     }
     let push = pressed(&input, KeyCode::Digit2);
     let stagger = pressed(&input, KeyCode::Digit3);
@@ -284,8 +489,10 @@ fn act(
         let chest = physics.ragdoll_bodies(ragdoll)[chest];
         physics.add_impulse(chest, along * strength);
         if stagger {
-            cmd.entity(character)
-                .insert(Stagger::new(along, STAGGER_SEVERITY));
+            player.send(Stagger {
+                direction: along,
+                severity: STAGGER_SEVERITY,
+            });
         }
     }
     if pressed(&input, KeyCode::Digit4) {
@@ -315,7 +522,7 @@ fn act(
         });
     }
     if pressed(&input, KeyCode::KeyF) {
-        cmd.entity(character).insert(Fall::default());
+        player.set_bool_param(name!("falling"), true);
     }
     if pressed(&input, KeyCode::KeyH)
         && let Some(hit) = hit(Struck::Pelvis, (Vec3::Y + along * 0.3) * WAKING_HIT)
@@ -328,22 +535,21 @@ fn report(
     stage: Res<Stage>,
     bodies: Query<(
         &RagdollBody,
-        &CharacterRagdoll,
-        Option<&PhysicalState>,
-        Option<&BodyDrive>,
+        &AnimationPlayer,
         Option<&BodySense>,
         Option<&Settled>,
     )>,
+    graphs: Res<AssetStore<AnimationGraph>>,
     mut texts: Query<&mut UIText, With<Report>>,
 ) {
     let described = bodies.get_entity(stage.character).map_or_else(
         || "the body is being built".to_string(),
-        |(body, character, physical, drive, sense, settled)| {
+        |(body, player, sense, settled)| {
             format!(
-                "mode: {:?}{}\n{}",
-                character.mode,
+                "graph: {}{}\n{}",
+                active_states(player, &graphs).join(", "),
                 if settled.is_some() { ", settled" } else { "" },
-                describe_body(physical, drive, sense, body)
+                sense.map_or_else(String::new, |sense| sense.describe(body))
             )
         },
     );
