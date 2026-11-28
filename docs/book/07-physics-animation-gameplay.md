@@ -657,7 +657,7 @@ interrupted mid-fade holds a command's target and muscle but drops its force
 and torque, which `MotorCommand::frozen` returns, so a held fade does not keep
 pushing.
 
-`RagdollPlugin` registers five nodes that write them. Each takes the pose to act
+`RagdollPlugin` registers seven nodes that write them. Each takes the pose to act
 on as its input, passes it through, and reads the character's body through a
 `BodyInput` query, its typed drive input, as a `BodyView`. A character without
 a ragdoll has no view, and the node only passes its pose through.
@@ -667,8 +667,8 @@ a ragdoll has no view, and the node only passes its pose through.
 leave kinematic; with no mask it holds all of them. Its `weight` is both how
 much of the parts is drawn from physics and how much of them its muscles hold,
 the rest being held by the character's `profile`; its `strength` multiplies the
-profile's stiffness, damping and torque limit, and the character's `Wounds`, if
-it has them, scale each part's further. Both are `f32` blackboard params that
+profile's stiffness, damping and torque limit, and the character's `Wounds`
+scale each part's further. Both are `f32` blackboard params that
 read 1 while the blackboard has no such value, and both move towards a new
 value over `fade` seconds, so a game that sets a hurt leg's weight from a wound
 in one frame does not snap it. A bone of the mask with no part, a toe, keeps
@@ -756,6 +756,28 @@ let machine =
         to.to(name!("steady"), AnimationFSMTrigger::on_message::<Steadied>(), 0.2)
             .to(name!("fallen"), AnimationFSMTrigger::on_message::<Toppled>(), 0.2);
     });
+```
+
+`StaggerNode` and `ShotNode` do the same with a stumble and a gunshot, as the
+`Stagger` and `ShotReaction` behaviours below do. A `Stagger { direction,
+severity }` message starts the stumble: the node balances the body with its
+legs hindered, its trunk bent and its arms windmilling, as its
+`StaggerSettings` say. A `BodyHit` of `HitKind::Shot` on a graph-mode
+character reaches its graph as a `Shot` message, its impulse taken as a blow's
+is; the node answers each shot by where it struck, as its `ShotSettings` say,
+and raises `Wounded` for each part a shot weakens for good, which every
+character ragdoll keeps on its `Wounds`. Both raise `Steadied` or `Toppled` as
+`BalanceNode` does and need a `BodySense`. `Stagger`, `Shot` and `Wounded`
+live in `concerto::ragdoll::messages`.
+
+```rust
+let machine = AnimationStateMachine::from_initial_state(name!("walk"), walk, |to| {
+    to.to(name!("shot"), AnimationFSMTrigger::on_message::<messages::Shot>(), 0.0);
+})
+.state(name!("shot"), assets.add(shot), |to| {
+    to.to(name!("steady"), AnimationFSMTrigger::on_message::<Steadied>(), 0.2)
+        .to(name!("fallen"), AnimationFSMTrigger::on_message::<Toppled>(), 0.2);
+});
 ```
 
 #### A hit
