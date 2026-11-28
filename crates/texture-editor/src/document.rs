@@ -9,7 +9,7 @@ use concerto_ecs::{
     signal::{On, lifecycle::Add},
 };
 use concerto_editor::{
-    asset_editor::{AssetEditor, EditorDocument, Unsaved, finish_asset_request},
+    asset_editor::{AssetEditor, EditorDocument, Unsaved},
     guard::DiscardEdits,
     hosted::Hosted,
     inspector::{InspectedValues, PropertyTarget, RefreshInspector, TargetWorld},
@@ -178,10 +178,10 @@ pub(crate) fn load_textures(
                 tab.derive_wanted = true;
                 cmd.remove::<Unsaved>(entity);
                 cmd.trigger(RefreshInspector);
-                finish_asset_request(&mut document, &asset, Ok(()));
+                document.finish_request(&asset, Ok(()));
             }
             Err(error) => {
-                finish_asset_request(&mut document, &asset, Err(error));
+                document.finish_request(&asset, Err(error));
             }
         }
     }

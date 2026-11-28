@@ -8,7 +8,7 @@ use concerto_ecs::{
     signal::{On, lifecycle::Add},
 };
 use concerto_editor::{
-    asset_editor::{AssetEditor, EditorDocument, PreviewSpec, Unsaved, finish_asset_request},
+    asset_editor::{AssetEditor, EditorDocument, PreviewSpec, Unsaved},
     guard::DiscardEdits,
     hosted::{Hosted, HostedApp},
     inspector::{DocumentValue, InspectedValues, PropertyTarget, RefreshInspector, ShownValue},
@@ -366,7 +366,7 @@ pub(crate) fn load_definition(
         let (definition, channels) = match read {
             Ok(read) => read,
             Err(error) => {
-                finish_asset_request(&mut document, &asset, Err(error));
+                document.finish_request(&asset, Err(error));
                 continue;
             }
         };
@@ -379,7 +379,7 @@ pub(crate) fn load_definition(
         if let Some(types) = types {
             publish_values(entity, &state, &types.read(), None, &mut cmd);
         }
-        finish_asset_request(&mut document, &asset, Ok(()));
+        document.finish_request(&asset, Ok(()));
     }
 }
 

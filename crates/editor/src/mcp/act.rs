@@ -978,14 +978,16 @@ fn shown(value: f32) -> f32 {
     (value * 1000.0).round() / 1000.0 + 0.0
 }
 
-pub(super) fn describe_pose(fly: &FlyCamera) -> String {
-    let [x, y, z] = fly.position.to_array().map(shown);
-    let [fx, fy, fz] = fly.forward().to_array().map(shown);
-    format!(
-        "Camera at ({x:.3}, {y:.3}, {z:.3}), yaw {:.3}, pitch {:.3}, looking along ({fx:.3}, {fy:.3}, {fz:.3}).",
-        shown(fly.yaw),
-        shown(fly.pitch)
-    )
+impl FlyCamera {
+    pub(super) fn describe_pose(&self) -> String {
+        let [x, y, z] = self.position.to_array().map(shown);
+        let [fx, fy, fz] = self.forward().to_array().map(shown);
+        format!(
+            "Camera at ({x:.3}, {y:.3}, {z:.3}), yaw {:.3}, pitch {:.3}, looking along ({fx:.3}, {fy:.3}, {fz:.3}).",
+            shown(self.yaw),
+            shown(self.pitch)
+        )
+    }
 }
 
 fn answer_posed(
@@ -1006,7 +1008,7 @@ fn answer_posed(
         return;
     }
     for (entity, pending, awaiting) in waiting.iter() {
-        let pose = describe_pose(fly);
+        let pose = fly.describe_pose();
         match &awaiting.framed {
             Some(framed) => pending.reply.ok(format!("Framed {framed}. {pose}")),
             None => pending.reply.ok(pose),

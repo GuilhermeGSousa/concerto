@@ -116,6 +116,14 @@ pub struct ContentState {
 }
 
 impl ContentState {
+    fn finish_pending(&mut self, focused: &mut FocusedWidget, field: Option<Entity>) {
+        self.pending = None;
+        self.pending_error = None;
+        if field.is_some() && **focused == field {
+            **focused = None;
+        }
+    }
+
     /// The asset selected in the catalogue, independent of the open editor's entity selection.
     pub fn selected(&self) -> Option<AssetId> {
         self.selected
@@ -689,14 +697,6 @@ fn focus_pending_field(on: On<Add<PendingField>>, mut focused: ResMut<FocusedWid
     **focused = Some(on.signal().entity);
 }
 
-fn finish_pending(state: &mut ContentState, focused: &mut FocusedWidget, field: Option<Entity>) {
-    state.pending = None;
-    state.pending_error = None;
-    if field.is_some() && **focused == field {
-        **focused = None;
-    }
-}
-
 fn commit_pending_asset(
     (mut changed, mut submitted, mut cancelled, mut lost, mut opened): (
         EventReader<UITextInputChanged>,
@@ -727,7 +727,7 @@ fn commit_pending_asset(
         .fold(false, |hit, event| hit | on_field(event.0));
     if opened.read().count() > 0 {
         if state.pending.is_some() || state.pending_error.is_some() {
-            finish_pending(&mut state, &mut focused, field.map(|(field, _)| field));
+            state.finish_pending(&mut focused, field.map(|(field, _)| field));
         }
         if state.selected_folder.is_some() {
             state.selected_folder = None;
@@ -744,7 +744,7 @@ fn commit_pending_asset(
     };
     let (kind, folder) = (pending.kind, pending.folder.clone());
     if cancel {
-        finish_pending(&mut state, &mut focused, Some(field));
+        state.finish_pending(&mut focused, Some(field));
         return;
     }
     if typed && state.pending_error.is_some() {
@@ -840,7 +840,7 @@ fn create_asset(
     let result = match created {
         Ok(id) => {
             if named {
-                finish_pending(&mut state, &mut focused, field);
+                state.finish_pending(&mut focused, field);
             }
             state.selected = Some(id);
             state.selected_folder = None;
@@ -856,7 +856,7 @@ fn create_asset(
             if keeps_focus {
                 state.pending_error = Some(refusal.message().into());
             } else if named {
-                finish_pending(&mut state, &mut focused, field);
+                state.finish_pending(&mut focused, field);
                 if let CreateRefusal::Write(message) = &refusal {
                     project.status = message.clone();
                 }

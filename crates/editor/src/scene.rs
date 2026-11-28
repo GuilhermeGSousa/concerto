@@ -27,7 +27,6 @@ use concerto_window::{clipboard::WindowClipboard, input::actions::ActionFired, p
 use crate::{
     asset_editor::{
         ActiveEditor, AssetEditor, AssetEditorAppExt, EditorDocument, SaveRequested, Unsaved,
-        asset_request_is_current, finish_asset_request,
     },
     guard::DiscardEdits,
     hierarchy::HierarchyState,
@@ -596,7 +595,7 @@ fn finish_scene_request(
     result: Result<(), String>,
 ) {
     let outcome = result.clone();
-    if !finish_asset_request(doc, request, result.map_err(anyhow::Error::msg)) {
+    if !doc.finish_request(request, result.map_err(anyhow::Error::msg)) {
         return;
     }
     let asset = request.clone();
@@ -630,7 +629,7 @@ pub(crate) fn refuse_edited_replacements(
             continue;
         };
         let edited = unsaved.get_entity(editor).is_some() || (queued && active.0 == Some(editor));
-        if !edited || !asset_request_is_current(&doc, &request) {
+        if !edited || !doc.is_request_current(&request) {
             continue;
         }
         pending.cancel();
@@ -673,14 +672,16 @@ pub(crate) fn update_scenes(
         }
 
         let root = project.project.as_ref().map(|project| &project.root);
-        if state.job.as_ref().is_some_and(|job| {
-            root != Some(&job.root) || !asset_request_is_current(&doc, &job.asset)
-        }) {
+        if state
+            .job
+            .as_ref()
+            .is_some_and(|job| root != Some(&job.root) || !doc.is_request_current(&job.asset))
+        {
             state.job = None;
         }
 
         if let Some(request) = state.building.clone() {
-            let current = asset_request_is_current(&doc, &request);
+            let current = doc.is_request_current(&request);
             let building = pending.get_entity(editor);
             let still_building = building.is_some();
             let failure = building.and_then(|pending| pending.failure().map(str::to_owned));
@@ -739,7 +740,7 @@ pub(crate) fn update_scenes(
                 .worker
                 .join()
                 .unwrap_or_else(|_| Err("Scene worker failed".into()));
-            if asset_request_is_current(&doc, &job.asset) {
+            if doc.is_request_current(&job.asset) {
                 let loaded = if unsaved.get_entity(editor).is_some() {
                     Err("unsaved changes were made while it loaded".into())
                 } else {

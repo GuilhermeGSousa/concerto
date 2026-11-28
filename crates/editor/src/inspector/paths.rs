@@ -98,32 +98,6 @@ fn shown_path(path: &PropertyPath) -> String {
     path.to_string()
 }
 
-pub(crate) fn unknown_path(component: &str, path: &str, listed: &[ListedPath]) -> WriteRefusal {
-    if listed.is_empty() {
-        return WriteRefusal::new(
-            "unknown_path",
-            format!(
-                "{component} has no reflection data the editor can write, so it has no paths; inspect shows it unavailable."
-            ),
-        );
-    }
-    let paths: Vec<String> = shown_paths(listed)
-        .iter()
-        .map(|shown| match shown {
-            ShownPath::Listed(listed) if listed.path.depth() == 0 => "\"\"".to_owned(),
-            ShownPath::Listed(listed) => shown_path(&listed.path),
-            ShownPath::Cut { list, total } => cut_note(list, *total),
-        })
-        .collect();
-    WriteRefusal::new(
-        "unknown_path",
-        format!(
-            "{component} has no path `{path}`; its paths are {}.",
-            paths.join(", ")
-        ),
-    )
-}
-
 pub(crate) fn find_path<'a>(
     component: &str,
     path: &str,
@@ -132,5 +106,33 @@ pub(crate) fn find_path<'a>(
     listed
         .iter()
         .find(|listed| shown_path(&listed.path) == path)
-        .ok_or_else(|| unknown_path(component, path, listed))
+        .ok_or_else(|| WriteRefusal::unknown_path(component, path, listed))
+}
+
+impl WriteRefusal {
+    pub(crate) fn unknown_path(component: &str, path: &str, listed: &[ListedPath]) -> Self {
+        if listed.is_empty() {
+            return Self::new(
+                "unknown_path",
+                format!(
+                    "{component} has no reflection data the editor can write, so it has no paths; inspect shows it unavailable."
+                ),
+            );
+        }
+        let paths: Vec<String> = shown_paths(listed)
+            .iter()
+            .map(|shown| match shown {
+                ShownPath::Listed(listed) if listed.path.depth() == 0 => "\"\"".to_owned(),
+                ShownPath::Listed(listed) => shown_path(&listed.path),
+                ShownPath::Cut { list, total } => cut_note(list, *total),
+            })
+            .collect();
+        Self::new(
+            "unknown_path",
+            format!(
+                "{component} has no path `{path}`; its paths are {}.",
+                paths.join(", ")
+            ),
+        )
+    }
 }

@@ -15,7 +15,7 @@ use concerto_ecs::{
     signal::{On, Signal, lifecycle::Add},
 };
 use concerto_editor::{
-    asset_editor::{AssetEditor, EditorDocument, PreviewSpec, Unsaved, finish_asset_request},
+    asset_editor::{AssetEditor, EditorDocument, PreviewSpec, Unsaved},
     content::{AssetCreation, CreateAsset},
     guard::DiscardEdits,
     hosted::{Hosted, HostedApp},
@@ -1477,10 +1477,10 @@ pub(crate) fn load_graph(
         match read_copy(&root, &asset, types.as_ref()) {
             Ok(copy) => {
                 hold(entity, &mut state, &asset, copy, &mut cmd);
-                finish_asset_request(&mut document, &asset, Ok(()));
+                document.finish_request(&asset, Ok(()));
             }
             Err(error) => {
-                finish_asset_request(&mut document, &asset, Err(error));
+                document.finish_request(&asset, Err(error));
             }
         }
     }

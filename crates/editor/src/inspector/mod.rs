@@ -80,7 +80,7 @@ pub use crate::property::{
 use crate::tools::edits::EditComponent;
 pub(crate) use list::{ListEdit, ListEditor};
 pub(crate) use paths::{
-    LIST_LIMIT, ListedPath, ShownPath, cut_note, find_path, listed_paths, shown_paths, unknown_path,
+    LIST_LIMIT, ListedPath, ShownPath, cut_note, find_path, listed_paths, shown_paths,
 };
 pub use reflect_rows::{ReflectRows, ReflectRowsPlugin};
 use registry::send_property_commits;
@@ -98,10 +98,7 @@ use values::{
 };
 pub use write::WriteValue;
 use write::write_value_at;
-pub(crate) use write::{
-    EditSource, WriteRefusal, adapter_commit, gone, not_editable, reading, refusal_error, refused,
-    set_value,
-};
+pub(crate) use write::{EditSource, WriteRefusal, adapter_commit, reading, set_value};
 
 /// The id the inspector panel is registered under in the [`PanelRegistry`].
 pub const PANEL_ID: &str = "concerto.ecs";

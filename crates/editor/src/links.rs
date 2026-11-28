@@ -55,7 +55,7 @@ use crate::{
         ParkedEditApp, PendingApp,
     },
     import::ImportFinished,
-    inspector::{InspectedComponent, InspectorHeader, ReadOnlyCard, refused},
+    inspector::{InspectedComponent, InspectorHeader, ReadOnlyCard, WriteRefusal},
     scene::SceneSaved,
     tools::{
         entity_ops::scene_member_by,
@@ -157,7 +157,7 @@ fn answer_link_change_removals(
                         event.request.index
                     ));
                 }
-                Err(reason) => pending.reply.err(refused(reason).into()),
+                Err(reason) => pending.reply.err(WriteRefusal::refused(reason).into()),
             }
             cmd.despawn(call);
         }

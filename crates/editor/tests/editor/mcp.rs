@@ -24,10 +24,7 @@ use concerto_ecs::{
     world::FromWorld,
 };
 use concerto_editor::{
-    asset_editor::{
-        AssetEditor, AssetEditorAppExt, AssetEditorRegistry, EditorDocument, Unsaved,
-        finish_asset_request,
-    },
+    asset_editor::{AssetEditor, AssetEditorAppExt, AssetEditorRegistry, EditorDocument, Unsaved},
     guard::UnsavedGuard,
     hosted::{EditTarget, EditWorld, EditWorldSignals, Hosted, WarmUpLimit},
     import::ImportFinished,
@@ -4599,7 +4596,7 @@ fn load_tunes(
         } else {
             Ok(())
         };
-        finish_asset_request(&mut document, &asset, result);
+        document.finish_request(&asset, result);
     }
     seen.assets = loading;
 }

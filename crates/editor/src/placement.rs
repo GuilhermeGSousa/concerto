@@ -25,7 +25,7 @@ use crate::{
     entity_ids::{SceneEntities, resolve},
     hosted::{EditTarget, EditWorld, EditWorldSignals, HostRole, Hosted, HostedApp, PlayState},
     import_fold::shown_name,
-    inspector::refused,
+    inspector::WriteRefusal,
     scene::SceneOpened,
     tools::placement::{AssetPlaced, PlaceAsset, PlaceAt},
     viewport::ViewportRegion,
@@ -245,7 +245,7 @@ fn answer_placements(
                     names.get_entity(*entity).map_or("it", Name::as_str),
                     entity.to_id_string()
                 )),
-                Err(reason) => pending.reply.err(refused(reason).into()),
+                Err(reason) => pending.reply.err(WriteRefusal::refused(reason).into()),
             }
             cmd.despawn(call);
         }

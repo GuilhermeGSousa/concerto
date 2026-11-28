@@ -206,7 +206,7 @@ a project.
 `open_asset` opens `asset`, an address or an id from `list_assets`, in its
 editor: it answers once the asset has loaded, and at once if it is already
 shown. A scene that fails to load answers `open_failed`; another kind answers
-once its editor calls `finish_asset_request`, or `open_failed` with the
+once its editor calls `EditorDocument::finish_request`, or `open_failed` with the
 document's status if the load failed. A kind with no editor answers
 `open_failed`. `create_asset` creates an empty asset of `kind`, one of the kinds
 the Asset Browser's New lists, ignoring case, named `name` in `folder`, or in
@@ -1619,8 +1619,8 @@ decode the file.
 
 A custom editor may load in a synchronous ECS system, as the generic tab does.
 Asynchronous systems capture the `AssetEntry` in `EditorDocument.pending` when they start;
-before mutating domain state, use `asset_request_is_current` with it to reject
-cancelled or superseded results. Call `finish_asset_request` with a mutable
+before mutating domain state, use `EditorDocument::is_request_current` with it to reject
+cancelled or superseded results. Call `EditorDocument::finish_request` with a mutable
 document borrow, the captured `AssetEntry`, and success or an error to update
 the tab's current asset and status. A request still pending in its tab needs
 that call: MCP's `open_asset` waits for it, and times out without it. A call

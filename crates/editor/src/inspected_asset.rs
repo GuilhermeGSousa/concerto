@@ -22,8 +22,7 @@ use concerto_reflect::Reflect;
 
 use crate::{
     asset_editor::{
-        AssetEditor, AssetEditorRegistry, EditorDocument, SaveRequested, Unsaved,
-        finish_asset_request, report_save,
+        AssetEditor, AssetEditorRegistry, EditorDocument, SaveRequested, Unsaved, report_save,
     },
     guard::DiscardEdits,
     hosted::{HostRole, Hosted, HostedApp},
@@ -216,10 +215,10 @@ pub(crate) fn load_inspected_assets(
                 state.loaded = read.bytes;
                 cmd.remove::<Unsaved>(entity);
                 cmd.trigger(RefreshInspector);
-                finish_asset_request(&mut document, &asset, Ok(()));
+                document.finish_request(&asset, Ok(()));
             }
             Err(error) => {
-                finish_asset_request(&mut document, &asset, Err(error));
+                document.finish_request(&asset, Err(error));
             }
         }
     }

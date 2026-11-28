@@ -28,6 +28,21 @@ pub struct ShadingChoice {
     pub unlit: bool,
 }
 
+impl ShadingChoice {
+    fn apply_to(&self, app: &mut HostedApp) {
+        if app.role() != HostRole::Edit {
+            return;
+        }
+        let shown = app
+            .world()
+            .get_resource::<ViewportShading>()
+            .map(|shading| shading.unlit);
+        if shown.is_some_and(|unlit| unlit != self.unlit) {
+            app.trigger(SetViewportUnlit(self.unlit));
+        }
+    }
+}
+
 /// Keeps every edit `App` drawing as [`ShadingChoice`] says, and brings the viewport's Lit/Unlit button and the `viewport_shading` tool.
 pub struct ViewportShadingPlugin;
 
@@ -64,19 +79,6 @@ fn label(unlit: bool) -> &'static str {
     if unlit { "Unlit" } else { "Lit" }
 }
 
-fn apply_to(app: &mut HostedApp, choice: &ShadingChoice) {
-    if app.role() != HostRole::Edit {
-        return;
-    }
-    let shown = app
-        .world()
-        .get_resource::<ViewportShading>()
-        .map(|shading| shading.unlit);
-    if shown.is_some_and(|unlit| unlit != choice.unlit) {
-        app.trigger(SetViewportUnlit(choice.unlit));
-    }
-}
-
 fn apply_shading_choice(
     _: NonSendMarker,
     choice: Res<ShadingChoice>,
@@ -85,14 +87,14 @@ fn apply_shading_choice(
     mut pending: Query<&mut PendingApp>,
 ) {
     for mut app in hosted.iter_mut() {
-        apply_to(&mut app, &choice);
+        choice.apply_to(&mut app);
     }
     for mut app in parked.iter_mut() {
-        apply_to(&mut app.0, &choice);
+        choice.apply_to(&mut app.0);
     }
     for mut app in pending.iter_mut() {
         if let Some(held) = app.held_mut() {
-            apply_to(held, &choice);
+            choice.apply_to(held);
         }
     }
 }

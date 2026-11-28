@@ -26,9 +26,7 @@ use concerto_ecs::{
 };
 use concerto_editor::{
     actions::EditorContextSet,
-    asset_editor::{
-        AssetEditor, AssetEditorAppExt, EditorDocument, PreviewSpec, Unsaved, finish_asset_request,
-    },
+    asset_editor::{AssetEditor, AssetEditorAppExt, EditorDocument, PreviewSpec, Unsaved},
     fonts::{AssetIconsAppExt, glyph},
     hosted::{Hosted, HostedEventsAppExt},
     preview::PreviewSignals,
@@ -352,14 +350,14 @@ pub(crate) fn load_clip(
         let clip = match read_clip(&root, &asset) {
             Ok(clip) => Arc::new(clip),
             Err(error) => {
-                finish_asset_request(&mut document, &asset, Err(error));
+                document.finish_request(&asset, Err(error));
                 continue;
             }
         };
         let events = match read_events(&clip) {
             Ok(events) => events,
             Err(error) => {
-                finish_asset_request(&mut document, &asset, Err(anyhow::anyhow!(error)));
+                document.finish_request(&asset, Err(anyhow::anyhow!(error)));
                 continue;
             }
         };
@@ -385,7 +383,7 @@ pub(crate) fn load_clip(
             },
         );
         previews.trigger(entity, state.scene_signal(&root, Some(&asset), &assets));
-        finish_asset_request(&mut document, &asset, Ok(()));
+        document.finish_request(&asset, Ok(()));
     }
 }
 

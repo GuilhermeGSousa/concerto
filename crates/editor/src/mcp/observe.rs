@@ -33,7 +33,7 @@ use serde_json::{Map, Value};
 
 use super::{
     BusyInputs,
-    act::{describe_pose, find_asset},
+    act::find_asset,
     is_busy,
     layout::{LayoutInputs, layout_line, viewport_line},
     value::value_names,
@@ -505,6 +505,56 @@ enum Links {
     Expanded,
     Collapsed { open: Option<Entity> },
 }
+    fn tree(&self, arguments: &SceneTree) -> String {
+        if self.starts.is_empty() {
+            return "The scene has no entities.".to_owned();
+        }
+        let depth = arguments.depth.max(1);
+        let mut lines = TreeLines {
+            view: self,
+            depth,
+            limit: arguments.limit.max(1),
+            shown: 0,
+            lines: Vec::new(),
+        };
+        for &start in &self.starts {
+            lines.walk(start, 0);
+        }
+        let total: usize = self
+            .starts
+            .iter()
+            .map(|&start| self.within(start, 0, depth))
+            .sum();
+        let shown = lines.shown;
+        let mut lines = lines.lines;
+        if shown < total {
+            lines.push(format!(
+                "… {} more within depth {depth}: scene_tree {}",
+                total - shown,
+                tree_call(
+                    arguments.root.as_ref().and(self.starts.first().copied()),
+                    depth,
+                    total
+                )
+            ));
+        }
+        lines.join("\n")
+    }
+
+    fn search(
+        &self,
+        entity: Entity,
+        path: &mut Vec<String>,
+        visit: &mut dyn FnMut(Entity, &[String]),
+    ) {
+        path.push((self.label)(entity));
+        visit(entity, path);
+        for child in self.children_of(entity) {
+            self.search(child, path, visit);
+        }
+        path.pop();
+    }
+
 
 impl SceneView<'_> {
     fn line(&self, entity: Entity, label: &str) -> String {
@@ -647,7 +697,7 @@ fn scene_tree(
             linked: &linked,
             links,
         };
-        reply.ok(tree(&view, &arguments));
+        reply.ok(view.tree(&arguments));
     }
 }
 
@@ -754,42 +804,6 @@ impl TreeLines<'_, '_> {
     }
 }
 
-fn tree(view: &SceneView, arguments: &SceneTree) -> String {
-    if view.starts.is_empty() {
-        return "The scene has no entities.".to_owned();
-    }
-    let depth = arguments.depth.max(1);
-    let mut lines = TreeLines {
-        view,
-        depth,
-        limit: arguments.limit.max(1),
-        shown: 0,
-        lines: Vec::new(),
-    };
-    for &start in &view.starts {
-        lines.walk(start, 0);
-    }
-    let total: usize = view
-        .starts
-        .iter()
-        .map(|&start| view.within(start, 0, depth))
-        .sum();
-    let shown = lines.shown;
-    let mut lines = lines.lines;
-    if shown < total {
-        lines.push(format!(
-            "… {} more within depth {depth}: scene_tree {}",
-            total - shown,
-            tree_call(
-                arguments.root.as_ref().and(view.starts.first().copied()),
-                depth,
-                total
-            )
-        ));
-    }
-    lines.join("\n")
-}
-
 fn tree_call(root: Option<Entity>, depth: usize, limit: usize) -> Value {
     let mut call = Map::new();
     call.insert("depth".into(), depth.into());
@@ -807,7 +821,7 @@ impl SceneView<'_> {
         let mut found = Vec::new();
         let mut path = Vec::new();
         for &start in &self.starts {
-            search(self, start, &mut path, &mut |entity, path| {
+            self.search(start, &mut path, &mut |entity, path| {
                 let named = name.as_deref().is_none_or(|name| {
                     (self.name)(entity)
                         .is_some_and(|candidate| candidate.to_lowercase().contains(name))
@@ -849,20 +863,6 @@ impl SceneView<'_> {
         }
         lines.join("\n")
     }
-}
-
-fn search(
-    view: &SceneView,
-    entity: Entity,
-    path: &mut Vec<String>,
-    visit: &mut dyn FnMut(Entity, &[String]),
-) {
-    path.push((view.label)(entity));
-    visit(entity, path);
-    for child in view.children_of(entity) {
-        search(view, child, path, visit);
-    }
-    path.pop();
 }
 
 fn inspect(
@@ -1063,7 +1063,10 @@ fn screenshot_viewport(
     let Some(target) = targets.iter().next() else {
         return;
     };
-    let pose = fly.as_deref().map(describe_pose).unwrap_or_default();
+    let pose = fly
+        .as_deref()
+        .map(FlyCamera::describe_pose)
+        .unwrap_or_default();
     for (arguments, reply) in calls.read() {
         if arguments.target == ScreenshotTarget::Viewport {
             let drawn = target.picture().get();

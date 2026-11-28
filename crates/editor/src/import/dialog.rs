@@ -133,35 +133,35 @@ impl Plugin for DialogPlugin {
     }
 }
 
-/// Whether confirming would queue anything: a row is importable and no two rows share a destination.
-pub fn can_confirm(staging: &ImportStaging) -> bool {
-    staging.rows.iter().any(StagedImport::importable) && !destinations_clash(&staging.rows)
-}
-
-/// Queues every importable row and closes the dialog; does nothing while [`can_confirm`] is false.
-pub fn confirm(staging: &mut ImportStaging, queue: &mut ImportQueue) {
-    if !can_confirm(staging) {
-        return;
-    }
-    queue.enqueue(std::mem::take(&mut staging.rows));
-    staging.visible = false;
-    staging.scan = None;
-}
-
-/// Discards the staged rows and closes the dialog.
-pub fn cancel(staging: &mut ImportStaging) {
-    staging.rows.clear();
-    staging.visible = false;
-    staging.scan = None;
-}
-
 impl ImportStaging {
+    /// Whether confirming would queue anything: a row is importable and no two rows share a destination.
+    pub fn can_confirm(&self) -> bool {
+        self.rows.iter().any(StagedImport::importable) && !destinations_clash(&self.rows)
+    }
+
+    /// Queues every importable row and closes the dialog; does nothing while [`can_confirm`](Self::can_confirm) is false.
+    pub fn confirm(&mut self, queue: &mut ImportQueue) {
+        if !self.can_confirm() {
+            return;
+        }
+        queue.enqueue(std::mem::take(&mut self.rows));
+        self.visible = false;
+        self.scan = None;
+    }
+
+    /// Discards the staged rows and closes the dialog.
+    pub fn cancel(&mut self) {
+        self.rows.clear();
+        self.visible = false;
+        self.scan = None;
+    }
+
     fn confirm_checked(&mut self, queue: &mut ImportQueue, project: &ProjectState) {
         let root = project.project.as_ref().map(|project| &project.root);
         if let Some(root) = root {
             validate_rows(&mut self.rows, root);
         }
-        confirm(self, queue);
+        self.confirm(queue);
         if let Some(root) = root {
             queue.bind(root);
         }
@@ -264,7 +264,7 @@ fn press_confirm(on: On<UIClick>, mut requested: ResMut<ConfirmRequested>) {
 
 fn press_cancel(on: On<UIClick>, mut staging: ResMut<ImportStaging>) {
     if on.signal().button == MouseButton::Left {
-        cancel(&mut staging);
+        staging.cancel();
     }
 }
 
@@ -441,7 +441,7 @@ fn press_keys(
             continue;
         }
         if action.is(CancelImport) {
-            cancel(&mut staging);
+            staging.cancel();
         } else if action.is(ConfirmImport) {
             requested.0 = true;
         }
@@ -573,7 +573,7 @@ fn spawn_row(
             DialogField(index),
         ))
         .entity();
-    let (status, color) = status_of(&staged.state, theme);
+    let (status, color) = staged.state.status(theme);
     row.add_child((
         theme
             .label(status)
@@ -585,14 +585,6 @@ fn spawn_row(
         DialogStatus(index),
     ));
     field
-}
-
-fn status_of<'a>(state: &'a RowState, theme: &UITheme) -> (&'a str, Color) {
-    match state {
-        RowState::Replaces => ("replaces existing", theme.warning),
-        RowState::Rejected(reason) => (reason.as_str(), theme.error),
-        RowState::New => ("", theme.text_muted),
-    }
 }
 
 fn render_dialog(
@@ -618,7 +610,7 @@ fn render_dialog(
         let (value, color) = staging
             .rows
             .get(status.0)
-            .map_or(("", theme.text_muted), |row| status_of(&row.state, &theme));
+            .map_or(("", theme.text_muted), |row| row.state.status(&theme));
         if label.text != value {
             label.text = value.to_owned();
         }
@@ -627,7 +619,7 @@ fn render_dialog(
         }
     }
 
-    let blocked = !can_confirm(&staging);
+    let blocked = !staging.can_confirm();
     for (entity, _, mut label, disabled) in buttons.iter_mut() {
         let color = if blocked {
             theme.text_muted
@@ -641,6 +633,16 @@ fn render_dialog(
             cmd.insert(UIDisabled, entity);
         } else if !blocked && disabled.is_some() {
             cmd.remove::<UIDisabled>(entity);
+        }
+    }
+}
+
+impl RowState {
+    fn status<'a>(&'a self, theme: &UITheme) -> (&'a str, Color) {
+        match self {
+            RowState::Replaces => ("replaces existing", theme.warning),
+            RowState::Rejected(reason) => (reason.as_str(), theme.error),
+            RowState::New => ("", theme.text_muted),
         }
     }
 }

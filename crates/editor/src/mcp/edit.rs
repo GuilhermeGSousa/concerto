@@ -22,9 +22,8 @@ use crate::{
     hosted::{EditTarget, EditWorld, EditWorldSignals, Hosted},
     inspector::{
         ComponentTarget, EditSource, InspectionSource, InspectorRegistry, ListEdit, ListEditor,
-        ListedPath, PropertyAddress, PropertyCommit, PropertyCommits, PropertyTarget,
-        adapter_commit, find_path, listed_paths, not_editable, refusal_error,
-        refused as inspector_refused, unknown_path,
+        ListedPath, PropertyAddress, PropertyCommit, PropertyCommits, PropertyTarget, WriteRefusal,
+        adapter_commit, find_path, listed_paths,
     },
     tools::{
         edits::{
@@ -191,7 +190,7 @@ pub(super) fn build(app: &mut App) {
 }
 
 pub(super) fn refused(reason: &str) -> ToolError {
-    inspector_refused(reason).into()
+    WriteRefusal::refused(reason).into()
 }
 
 fn root_refused(edit: &str) -> ToolError {
@@ -525,7 +524,7 @@ fn property_write(
         }));
     };
     let target = Arc::new(ComponentTarget { entity, component });
-    let current = current.ok_or_else(|| unknown_path(short, path, &[]))?;
+    let current = current.ok_or_else(|| WriteRefusal::unknown_path(short, path, &[]))?;
     let commit = adapter_commit(
         property,
         target,
@@ -671,7 +670,7 @@ pub(super) fn list_commit_at(
     }
     let row = list
         .row(target, changed)
-        .ok_or_else(|| not_editable(&name))?;
+        .ok_or_else(|| WriteRefusal::not_editable(&name))?;
     let commit = PropertyCommit::erased::<ListEditor>(&row, edit)
         .map_err(|error| refused(&format!("{attempt} failed: {error}")))?;
     Ok((commit, done))
@@ -811,7 +810,9 @@ fn answer_property_commits(
                     ),
                     None => source.component_answer(&registry, target.entity, target.component),
                 }),
-                Err(refusal) => pending.reply.err(refusal_error(refusal).into()),
+                Err(refusal) => pending
+                    .reply
+                    .err(WriteRefusal::from_property(refusal).into()),
             }
             cmd.despawn(call);
         }
