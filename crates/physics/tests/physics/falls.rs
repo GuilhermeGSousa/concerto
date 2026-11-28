@@ -4,7 +4,7 @@ use crate::common::{physics_world, register_bodies};
 use concerto_ecs::entity::Entity;
 use concerto_ecs::world::World;
 use concerto_foundation::transform::Transform;
-use concerto_mesh::primitives::plane;
+use concerto_mesh::Mesh;
 use glam::{Quat, Vec2, Vec3};
 
 use concerto_physics::body::BodyId;
@@ -76,7 +76,7 @@ fn a_body_dropped_onto_a_collider_comes_to_rest_on_top_of_it() {
         Landing {
             name: "a sphere on a mesh",
             floor: |world| {
-                let shape = PhysicsShape::from_mesh(&plane(Vec2::splat(40.0))).unwrap();
+                let shape = PhysicsShape::from_mesh(&Mesh::plane(Vec2::splat(40.0))).unwrap();
                 world.spawn((Collider::from_shape(Arc::new(shape)), Transform::default()));
             },
             body: |world| dropped(world, Collider::sphere(0.5), 4.0),

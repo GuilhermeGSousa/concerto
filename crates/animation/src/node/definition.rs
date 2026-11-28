@@ -2,13 +2,12 @@ use std::any::Any;
 
 use concerto_ecs::{
     World,
-    system::input::{Inputs, ReadOnlySystemInput, SystemInputData, register_input},
+    system::input::{Inputs, ReadOnlySystemInput, SystemInputData},
 };
 use concerto_foundation::assets::handle::{AssetHandle, LiveLeaves};
 use concerto_name::{Name, name};
 use concerto_reflect::{
     EncodeError, FromType, Reflect, ReflectedValue, TypeData, TypeRegistry, ValueWarning,
-    apply_value_with, to_value,
 };
 use log::warn;
 use uuid::Uuid;
@@ -217,10 +216,10 @@ pub struct DriveNodeInputs;
 
 /// Registers `N`'s four inputs with the graph walks of `world`, before its schedules compile.
 pub fn register_node_inputs<N: AnimationNode>(world: &mut World) {
-    register_input::<CreateNodeInputs, N::CreateInput>(world);
-    register_input::<UpdateNodeInputs, N::UpdateInput>(world);
-    register_input::<EvaluateNodeInputs, N::EvaluateInput>(world);
-    register_input::<DriveNodeInputs, N::DriveInput>(world);
+    world.register_input::<CreateNodeInputs, N::CreateInput>();
+    world.register_input::<UpdateNodeInputs, N::UpdateInput>();
+    world.register_input::<EvaluateNodeInputs, N::EvaluateInput>();
+    world.register_input::<DriveNodeInputs, N::DriveInput>();
 }
 
 /// An [`EditorAnimationNode`] with its state type erased; implemented for every one.
@@ -508,7 +507,7 @@ fn from_value<T: EditorAnimationNode + Default>(
     leaves: &mut LiveLeaves,
 ) -> (Box<dyn ErasedAnimationNode>, Vec<ValueWarning>) {
     let mut node = T::default();
-    let warnings = apply_value_with(&mut node, stored, leaves);
+    let warnings = stored.apply_with(&mut node, leaves);
     (Box::new(node), warnings)
 }
 
@@ -516,7 +515,7 @@ fn to_value_of<T: AnimationNode>(
     node: &dyn ErasedAnimationNode,
 ) -> Option<Result<ReflectedValue, EncodeError>> {
     let node = node.as_reflect().downcast_ref::<T>()?;
-    Some(to_value(node))
+    Some(ReflectedValue::encode(node))
 }
 
 /// Stands in for a stored node whose type is not registered: passes its first input through.

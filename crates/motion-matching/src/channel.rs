@@ -2,9 +2,7 @@ use std::{borrow::Cow, fmt};
 
 use concerto_foundation::transform::Transform;
 use concerto_mesh::{JointPose, Skeleton};
-use concerto_reflect::{
-    apply_value, to_value, EncodeError, FromType, Reflect, ReflectedValue, TypeData, TypeRegistry,
-};
+use concerto_reflect::{EncodeError, FromType, Reflect, ReflectedValue, TypeData, TypeRegistry};
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
 
@@ -111,7 +109,7 @@ impl FeatureChannelData {
     pub fn value(&self) -> Result<Cow<'_, ReflectedValue>, EncodeError> {
         match self {
             Self::Stored { value, .. } => Ok(Cow::Borrowed(value)),
-            Self::Live { channel, .. } => to_value(channel.as_ref()).map(Cow::Owned),
+            Self::Live { channel, .. } => ReflectedValue::encode(channel.as_ref()).map(Cow::Owned),
         }
     }
 
@@ -257,6 +255,7 @@ pub enum FeatureShape {
         end: Vec3,
     },
 }
+
 impl FeatureShape {
     /// The shape, in the simulation bone's space, moved into the space `bone` lives in.
     pub fn placed(self, bone: &Transform) -> Self {
@@ -276,7 +275,6 @@ impl FeatureShape {
         }
     }
 }
-
 
 /// What a channel reads.
 ///
@@ -352,7 +350,7 @@ fn from_value<T: FeatureChannel + Default>(
     stored: &ReflectedValue,
 ) -> Result<Box<dyn FeatureChannel>, String> {
     let mut channel = T::default();
-    let warnings = apply_value(&mut channel, stored);
+    let warnings = stored.apply(&mut channel);
     if warnings.is_empty() {
         Ok(Box::new(channel))
     } else {
@@ -365,7 +363,7 @@ fn from_value<T: FeatureChannel + Default>(
 }
 
 fn store(channel: &dyn FeatureChannel) -> Result<ReflectedValue, EncodeError> {
-    to_value(channel)
+    ReflectedValue::encode(channel)
 }
 
 impl FrameContext<'_> {

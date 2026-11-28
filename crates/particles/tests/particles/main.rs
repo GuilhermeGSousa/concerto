@@ -14,7 +14,6 @@ use concerto_render::{
     draw_target::{DrawTarget, SharedTexture},
     gpu::Gpu,
     plugin::RenderPlugin,
-    readback::read_texture,
     shader::compose_shader,
     wgpu, Tonemapping,
 };
@@ -175,7 +174,7 @@ fn particles_are_drawn_in_front_of_the_camera_that_sees_them() {
     app.update();
     app.update();
 
-    let image = read_texture(&gpu, shared.get().unwrap().texture());
+    let image = gpu.read_texture(shared.get().unwrap().texture());
     let centre = image.get_pixel(32, 32).0;
     let corner = image.get_pixel(2, 2).0;
     assert!(

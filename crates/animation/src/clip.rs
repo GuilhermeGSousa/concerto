@@ -14,7 +14,7 @@ use concerto_foundation::math::spring_damper::angular_velocity;
 use concerto_mesh::Skeleton;
 use concerto_name::Name;
 use concerto_reflect::{
-    EncodeError, FromType, Reflect, ReflectedValue, TypeRegistry, ValueWarning, to_value,
+    EncodeError, FromType, Reflect, ReflectedValue, TypeRegistry, ValueWarning,
 };
 use glam::{Quat, Vec3};
 use log::warn;
@@ -335,7 +335,7 @@ impl ClipEventData {
     pub fn value(&self) -> Result<Cow<'_, ReflectedValue>, EncodeError> {
         match self {
             Self::Stored { value, .. } => Ok(Cow::Borrowed(value)),
-            Self::Live { value, .. } => to_value(value.as_ref()).map(Cow::Owned),
+            Self::Live { value, .. } => ReflectedValue::encode(value.as_ref()).map(Cow::Owned),
         }
     }
 }

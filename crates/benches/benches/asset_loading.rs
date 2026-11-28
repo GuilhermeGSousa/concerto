@@ -10,9 +10,7 @@ use concerto_ecs::World;
 use concerto_foundation::assets::{
     asset_server::{handle_asset_load_events, AssetServer},
     asset_store::AssetStore,
-    content::{
-        write_content_asset_with_embedded, ContentAssetHeader, EmbeddedPayload, ImportProvenance,
-    },
+    content::{ContentAssetHeader, EmbeddedPayload, ImportProvenance},
     handle::AssetHandle,
     registry::AssetRegistry,
     Asset, AssetId, ContentAssetRoot, LoadableAsset,
@@ -80,7 +78,8 @@ impl Project {
             })
             .collect();
         let parts = embedded.iter().map(|part| part.header.asset_id).collect();
-        let file = write_content_asset_with_embedded(&header::<Host>("scene"), &host, &embedded)
+        let file = (header::<Host>("scene"))
+            .write_with_embedded(&host, &embedded)
             .expect("the host file is written");
         std::fs::write(dir.join("content/host/scene.gasset"), file).unwrap();
         let registry = AssetRegistry::from_content_tree(&dir, "content", "gasset").unwrap();

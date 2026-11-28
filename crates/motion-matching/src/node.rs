@@ -260,7 +260,7 @@ mod tests {
     };
     use concerto_foundation::assets::handle::{AssetHandle, LiveLeaves};
     use concerto_name::name;
-    use concerto_reflect::{to_value, ReflectedValue, TypeRegistry};
+    use concerto_reflect::{ReflectedValue, TypeRegistry};
 
     use super::{MotionMatchingNode, MotionMatchingTrajectory};
     use crate::database::MotionDatabase;
@@ -323,7 +323,7 @@ mod tests {
             .with_search_period(0.25)
             .with_play_rate(1.5)
             .with_play_rate_param(name!("speed"));
-        let ReflectedValue::Struct(mut fields) = to_value(&node).unwrap() else {
+        let ReflectedValue::Struct(mut fields) = ReflectedValue::encode(&node).unwrap() else {
             panic!("a motion matching node is stored as a struct");
         };
         fields.retain(|(name, _)| name != "play_rate" && name != "play_rate_param");

@@ -10,7 +10,7 @@ use concerto_foundation::{
     hash::Fnv1a,
 };
 use concerto_mesh::Mesh;
-use concerto_reflect::{Reflect, ReflectDefault, to_value};
+use concerto_reflect::{Reflect, ReflectDefault, ReflectedValue};
 use concerto_scene::scene::Scene;
 use serde::{Deserialize, Serialize};
 
@@ -155,7 +155,10 @@ impl DerivedData for NavMesh {
 
     fn derived_key(&self, inputs: &DerivedInputs) -> anyhow::Result<u64> {
         let mut hash = Fnv1a::new();
-        hash.value(&to_value(&self.settings).context("failed to encode the navmesh settings")?);
+        hash.value(
+            &ReflectedValue::encode(&self.settings)
+                .context("failed to encode the navmesh settings")?,
+        );
         let scenes = self.scene_ids()?;
         let meshes = self.collider_meshes(inputs)?;
         hash.count(scenes.len());

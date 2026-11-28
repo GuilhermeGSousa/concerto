@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::common::{physics_world, register_bodies};
 use concerto_foundation::transform::Transform;
-use concerto_mesh::primitives::plane;
+use concerto_mesh::Mesh;
 use glam::{Vec2, Vec3};
 
 use concerto_physics::body::BodyId;
@@ -45,7 +45,7 @@ fn a_sphere_sweep_stops_a_radius_short_of_the_first_body_it_reaches_unless_ignor
         Collider::cuboid(1.0, 1.0, 1.0),
         Transform::from_translation(Vec3::new(0.5, 10.0, 0.0)),
     ));
-    let shape = PhysicsShape::from_mesh(&plane(Vec2::splat(20.0))).unwrap();
+    let shape = PhysicsShape::from_mesh(&Mesh::plane(Vec2::splat(20.0))).unwrap();
     let floor = world.spawn((
         Collider::from_shape(Arc::new(shape)),
         Transform::from_translation(Vec3::new(0.0, -20.0, 0.0)),

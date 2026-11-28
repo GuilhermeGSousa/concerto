@@ -340,7 +340,7 @@ mod tests {
     use concerto_ecs::system::schedule::Schedule;
     use concerto_ecs::world::World;
     use concerto_foundation::{time::Time, transform::Transform};
-    use concerto_reflect::{apply_value, to_value};
+    use concerto_reflect::ReflectedValue;
     use concerto_render::{DepthOfField, components::camera::Camera};
     use glam::Vec3;
 
@@ -413,7 +413,7 @@ mod tests {
         }
 
         fn edit_vcam(&mut self, vcam: concerto_ecs::Entity, replacement: &VirtualCamera) {
-            let stored = to_value(replacement).unwrap();
+            let stored = ReflectedValue::encode(replacement).unwrap();
             let reflect = self
                 .world
                 .get_resource::<AppTypeRegistry>()
@@ -421,7 +421,7 @@ mod tests {
                 .get_type_data::<ReflectComponent>(TypeId::of::<VirtualCamera>())
                 .expect("a virtual camera is an editable component");
             assert!((reflect.edit)(&mut self.world, vcam, &mut |value| {
-                apply_value(value, &stored);
+                stored.apply(value);
             }));
         }
 

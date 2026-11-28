@@ -13,7 +13,7 @@ use concerto_foundation::assets::{
     Asset, AssetId, ContentAssetRoot,
     asset_server::AssetServer,
     asset_store::AssetStore,
-    content::{ContentAssetHeader, check_encoding, write_content_asset},
+    content::{ContentAssetHeader, check_encoding},
     registry::AssetRegistry,
 };
 
@@ -66,7 +66,7 @@ pub(crate) fn write_content(project: &Path, name: &str, clip: &EmittedSubAsset) 
         embedded: Vec::new(),
     };
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-    std::fs::write(path, write_content_asset(&header, &clip.bytes).unwrap()).unwrap();
+    std::fs::write(path, header.write(&clip.bytes).unwrap()).unwrap();
 }
 
 #[derive(Debug, PartialEq)]

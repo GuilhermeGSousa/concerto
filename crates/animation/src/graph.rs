@@ -9,7 +9,7 @@ use concerto_foundation::assets::{
 use concerto_name::Name;
 use concerto_reflect::{
     EncodeError, JsonLeaf, Reflect, ReflectJson, ReflectedValue, TypeRegistration, TypeRegistry,
-    ValueWarning, json_to_value, to_json, to_value,
+    ValueWarning, to_json,
 };
 use glam::Vec2;
 use log::warn;
@@ -81,7 +81,8 @@ impl AnimationNodeData {
     pub fn of<T: AnimationNode>(node: &T) -> Self {
         Self::Stored {
             type_name: std::any::type_name::<T>().to_owned(),
-            value: to_value(node).expect("an animation node encodes through reflection"),
+            value: ReflectedValue::encode(node)
+                .expect("an animation node encodes through reflection"),
         }
     }
 
@@ -112,7 +113,7 @@ impl AnimationNodeData {
             Self::Stored { value, .. } | Self::Placeholder { value, .. } => {
                 Ok(Cow::Borrowed(value))
             }
-            Self::Live { node, .. } => to_value(node.as_reflect()).map(Cow::Owned),
+            Self::Live { node, .. } => ReflectedValue::encode(node.as_reflect()).map(Cow::Owned),
         }
     }
 
@@ -228,7 +229,8 @@ impl JsonLeaf for AnimationNodeData {
             .filter(|registration| registration.data::<ReflectAnimationNode>().is_some())
             .ok_or_else(|| format!("{type_name} is not registered as an animation node"))?;
         let fields = value.get("value").cloned().unwrap_or_default();
-        let value = json_to_value(&fields, TypeRegistration::type_id(&registration), registry)?;
+        let value =
+            ReflectedValue::from_json(&fields, TypeRegistration::type_id(&registration), registry)?;
         Ok(Self::Stored {
             type_name: registration.type_path().to_owned(),
             value,

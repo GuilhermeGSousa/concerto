@@ -2,7 +2,7 @@ use std::path::Path;
 
 use concerto_animation::clip::{AnimationChanelOutput, AnimationChannel, AnimationClip};
 use concerto_foundation::assets::content::{
-    check_encoding, decode_content_asset, write_content_asset, ContentAssetHeader,
+    check_encoding, decode_content_asset, ContentAssetHeader,
 };
 use concerto_foundation::assets::{handle::AssetHandle, Asset, AssetId};
 use concerto_mesh::{JointPose, Skeleton};
@@ -157,7 +157,7 @@ fn content_asset(kind: &str, version: u32, fixture: &str) -> Vec<u8> {
         derived: None,
         embedded: Vec::new(),
     };
-    write_content_asset(&header, &payload).unwrap()
+    header.write(&payload).unwrap()
 }
 
 #[test]

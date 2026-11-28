@@ -3,7 +3,7 @@ use concerto_physics::{
     collider::BoxCollider, physics_pipeline::PhysicsPipeline, physics_state::PhysicsState,
     plugin::PhysicsPlugin, sensor::Sensor, shape::MeshCollider,
 };
-use concerto_scene::capture::capture_subtree;
+use concerto_scene::scene::Scene;
 use glam::Vec3;
 
 #[test]
@@ -30,12 +30,12 @@ fn an_edit_app_opens_and_saves_each_collider_component() {
     let components = [
         Authored {
             name: "MeshCollider",
-            stored: concerto_reflect::to_value(&MeshCollider).unwrap(),
+            stored: concerto_reflect::ReflectedValue::encode(&MeshCollider).unwrap(),
             type_name: "concerto_physics::shape::MeshCollider",
         },
         Authored {
             name: "BoxCollider",
-            stored: concerto_reflect::to_value(&BoxCollider {
+            stored: concerto_reflect::ReflectedValue::encode(&BoxCollider {
                 half_extents: Vec3::new(2.0, 0.5, 3.0),
             })
             .unwrap(),
@@ -43,7 +43,7 @@ fn an_edit_app_opens_and_saves_each_collider_component() {
         },
         Authored {
             name: "Sensor",
-            stored: concerto_reflect::to_value(&Sensor).unwrap(),
+            stored: concerto_reflect::ReflectedValue::encode(&Sensor).unwrap(),
             type_name: "concerto_physics::sensor::Sensor",
         },
     ];
@@ -59,7 +59,7 @@ fn an_edit_app_opens_and_saves_each_collider_component() {
             authored.name
         );
 
-        let scene = capture_subtree(world, entity).unwrap();
+        let scene = Scene::capture_subtree(world, entity).unwrap();
         assert_eq!(scene.nodes[0].components.len(), 1, "{}", authored.name);
         assert_eq!(scene.nodes[0].components[0].type_name, authored.type_name);
         assert_eq!(scene.nodes[0].components[0].value, authored.stored);

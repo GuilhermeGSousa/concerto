@@ -1,5 +1,5 @@
 use concerto_foundation::hash::Fnv1a;
-use concerto_reflect::{to_value, Reflect, ReflectedValue};
+use concerto_reflect::{Reflect, ReflectedValue};
 
 use crate::{
     channel::FeatureChannelData,
@@ -26,7 +26,7 @@ fn channel(hash: &mut Fnv1a, channel: &FeatureChannelData) {
 }
 
 fn stored(value: &dyn Reflect) -> ReflectedValue {
-    to_value(value).expect("a definition's settings encode")
+    ReflectedValue::encode(value).expect("a definition's settings encode")
 }
 
 impl MotionDatabase {

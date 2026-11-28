@@ -7,7 +7,7 @@ use concerto_foundation::{
 };
 use concerto_mesh::{Mesh, MeshComponent};
 use concerto_physics::{collider::BoxCollider, sensor::Sensor, shape::MeshCollider};
-use concerto_reflect::{LeafError, LeafHook, Reflect, apply_value, apply_value_with, decode_leaf};
+use concerto_reflect::{LeafError, LeafHook, Reflect, decode_leaf};
 use concerto_scene::scene::{Scene, SceneNode, SerializedComponent};
 use glam::{Affine3A, Vec3};
 
@@ -58,14 +58,14 @@ fn find<T>(node: &SceneNode) -> Option<&SerializedComponent> {
 fn decoded<T: Reflect + Default>(node: &SceneNode) -> Option<T> {
     let component = find::<T>(node)?;
     let mut value = T::default();
-    apply_value(&mut value, &component.value);
+    component.value.apply(&mut value);
     Some(value)
 }
 
 fn mesh_id(node: &SceneNode) -> Option<AssetId> {
     let component = find::<MeshComponent>(node)?;
     let mut mesh = MeshComponent::default();
-    apply_value_with(&mut mesh, &component.value, &mut MeshHandleAsId);
+    component.value.apply_with(&mut mesh, &mut MeshHandleAsId);
     Some(mesh.handle.id()).filter(|id| !id.is_nil())
 }
 
