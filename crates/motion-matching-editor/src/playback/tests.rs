@@ -17,7 +17,7 @@ use concerto_foundation::{
 };
 use concerto_mesh::{Skeleton, SkeletonComponent};
 use concerto_motion_matching::{
-    BonePositions, FeatureChannelData, JointAxis, MotionDatabase, MotionEntry, TimeRange, bake,
+    BonePositions, FeatureChannelData, JointAxis, MotionDatabase, MotionEntry, TimeRange,
 };
 use glam::{Quat, Vec3};
 
@@ -93,7 +93,7 @@ fn baked_with(
     definition.entries = entries;
     let skeleton = skeleton();
     let sampled: Vec<&AnimationClip> = clips.iter().collect();
-    let baked = bake(&definition, &skeleton, &sampled).unwrap();
+    let baked = definition.bake(&skeleton, &sampled).unwrap();
     let database = definition.with_baked(baked);
     let channels: Vec<Box<dyn FeatureChannel>> = database
         .live_channels()

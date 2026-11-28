@@ -257,6 +257,26 @@ pub enum FeatureShape {
         end: Vec3,
     },
 }
+impl FeatureShape {
+    /// The shape, in the simulation bone's space, moved into the space `bone` lives in.
+    pub fn placed(self, bone: &Transform) -> Self {
+        match self {
+            Self::Ring { center, radius } => Self::Ring {
+                center: bone.transform_point(center),
+                radius,
+            },
+            Self::Line { start, end } => Self::Line {
+                start: bone.transform_point(start),
+                end: bone.transform_point(end),
+            },
+            Self::Arrow { start, end } => Self::Arrow {
+                start: bone.transform_point(start),
+                end: bone.transform_point(end),
+            },
+        }
+    }
+}
+
 
 /// What a channel reads.
 ///
@@ -298,45 +318,6 @@ pub struct BodyMotion {
     pub velocity: Vec3,
     /// The angular velocity, as a scaled axis in radians per second.
     pub angular_velocity: Vec3,
-}
-
-/// Runs every channel into its span of `out`, in list order.
-///
-/// `out` holds exactly the sum of their [`dims`](FeatureChannel::dims).
-///
-/// # Panics
-///
-/// Panics if `out` is shorter than the sum of the channels' dims.
-pub fn extract_features(channels: &[&dyn FeatureChannel], frame: &FrameContext, out: &mut [f32]) {
-    let mut offset = 0;
-    for channel in channels {
-        let dims = channel.dims();
-        channel.extract(frame, &mut out[offset..offset + dims]);
-        offset += dims;
-    }
-}
-
-/// The shapes of every channel for one raw feature vector, one list per channel in order.
-///
-/// # Panics
-///
-/// Panics if `features` is shorter than the sum of the channels' dims.
-pub fn preview_features(
-    channels: &[Box<dyn FeatureChannel>],
-    frame: &FrameContext,
-    features: &[f32],
-) -> Vec<Vec<FeatureShape>> {
-    let mut offset = 0;
-    channels
-        .iter()
-        .map(|channel| {
-            let dims = channel.dims();
-            let mut shapes = Vec::new();
-            channel.preview(frame, &features[offset..offset + dims], &mut shapes);
-            offset += dims;
-            shapes
-        })
-        .collect()
 }
 
 /// Builds a live [`FeatureChannel`] from a stored value and stores one back.

@@ -6,7 +6,6 @@ use glam::{Mat4, Quat, Vec3};
 use uuid::Uuid;
 
 use crate::{
-    bake::bake,
     channel::{
         ChannelSource, FeatureChannel, FeatureChannelData, FrameContext, ReflectFeatureChannel,
     },
@@ -173,7 +172,7 @@ pub(crate) fn baked(
     skeleton: &Skeleton,
     clips: &[&AnimationClip],
 ) -> MotionDatabase {
-    let baked = bake(&definition, skeleton, clips).unwrap();
+    let baked = definition.bake(skeleton, clips).unwrap();
     definition.with_baked(baked)
 }
 

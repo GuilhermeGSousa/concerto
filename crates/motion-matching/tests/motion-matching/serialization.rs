@@ -6,7 +6,6 @@ use concerto_foundation::assets::content::{
 };
 use concerto_foundation::assets::{handle::AssetHandle, Asset, AssetId};
 use concerto_mesh::{JointPose, Skeleton};
-use concerto_motion_matching::bake::bake;
 use concerto_motion_matching::{
     FeatureChannel, FeatureChannelData, FrameContext, JointAxis, MirrorAxis, MotionDatabase,
     MotionEntry, ReflectFeatureChannel, SimulationBoneSettings, TimeRange, TrajectorySettings,
@@ -84,7 +83,7 @@ impl FeatureChannel for HeightChannel {
 }
 
 fn baked(definition: MotionDatabase, clips: &[&AnimationClip]) -> MotionDatabase {
-    let baked = bake(&definition, &skeleton(), clips).unwrap();
+    let baked = definition.bake(&skeleton(), clips).unwrap();
     definition.with_baked(baked)
 }
 

@@ -33,10 +33,9 @@ use concerto_foundation::{
     transform::{GlobalTransform, Transform, systems::propagate_global_transforms},
 };
 use concerto_mesh::{JointPose, Skeleton, SkeletonComponent};
-use concerto_motion_matching::{FeatureChannel, FeatureShape, MotionDatabase, preview_features};
+use concerto_motion_matching::{FeatureChannel, FeatureShape, MotionDatabase};
 use concerto_motion_matching_gizmos::{
-    BakedFrame, SIMULATION_WIDTH, channel_color, draw_shape, draw_simulation, local_pose,
-    placed_pose,
+    BakedFrame, MotionMatchingDraw, SIMULATION_WIDTH, channel_color,
 };
 
 use crate::{document::DefinitionDocument, panels::shown_index};
@@ -136,11 +135,11 @@ impl BakedPlayback {
     fn frame_shapes(&self, frame: usize) -> Option<Vec<Vec<FeatureShape>>> {
         let clips = self.sampled_clips();
         let baked = BakedFrame::new(&self.database, &self.skeleton, &clips, frame)?;
-        Some(preview_features(
-            &self.channels,
-            &baked.context(&self.skeleton),
-            self.database.features(frame)?,
-        ))
+        Some(
+            baked
+                .context(&self.skeleton)
+                .preview_features(&self.channels, self.database.features(frame)?),
+        )
     }
 }
 
@@ -187,8 +186,8 @@ fn play_database(
     let Some(simulation) = shown.database.simulation_bone(frame) else {
         return;
     };
-    let Some(pose) = local_pose(&shown.database, &shown.skeleton, &clips, frame)
-        .map(|pose| placed_pose(&shown.skeleton, &simulation, pose))
+    let Some(pose) = BakedFrame::sample_local(&shown.database, &shown.skeleton, &clips, frame)
+        .map(|pose| BakedFrame::place_pose(&shown.skeleton, &simulation, pose))
     else {
         return;
     };
@@ -239,7 +238,7 @@ fn draw_simulation_bone(
     let stage = stage_of(&skeletons, &parents, &globals);
     let bone = stage.mul_transform(simulation);
     gizmos.set_line_width(SIMULATION_WIDTH);
-    draw_simulation(&mut gizmos, &bone);
+    gizmos.draw_simulation(&bone);
 }
 
 fn draw_feature_channels(
@@ -269,7 +268,7 @@ fn draw_feature_channels(
     for (channel, shapes) in channels.iter().enumerate() {
         let color = channel_color(channel, playback.picked);
         for shape in shapes {
-            draw_shape(&mut gizmos, &bone, *shape, color);
+            gizmos.draw_shape(&bone, *shape, color);
         }
     }
 }

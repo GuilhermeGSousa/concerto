@@ -35,10 +35,9 @@ pub mod systems;
 #[cfg(test)]
 mod test_support;
 
-pub use bake::{bake, bake_with_progress};
 pub use channel::{
-    extract_features, preview_features, BodyMotion, ChannelSource, DynCloneChannel, FeatureChannel,
-    FeatureChannelData, FeatureShape, FrameContext, ReflectFeatureChannel,
+    BodyMotion, ChannelSource, DynCloneChannel, FeatureChannel, FeatureChannelData, FeatureShape,
+    FrameContext, ReflectFeatureChannel,
 };
 pub use database::{BakeError, BakedDatabase, MotionDatabase};
 pub use definition::{

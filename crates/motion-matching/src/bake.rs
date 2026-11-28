@@ -7,7 +7,7 @@ use concerto_mesh::{JointName, JointPose, Skeleton};
 use glam::{Quat, Vec3};
 
 use crate::{
-    channel::{extract_features, BodyMotion, FrameContext},
+    channel::{BodyMotion, FrameContext},
     database::{BakeError, BakedDatabase, MotionDatabase, Span},
     definition::{SimulationBoneSettings, TrajectorySettings},
     filter::savitzky_golay,
@@ -99,6 +99,135 @@ impl MotionDatabase {
         }
         Ok(plans)
     }
+
+    /// [`bake`](Self::bake), calling `on_entry(finished, total)` after each entry, with `finished` counting from 1.
+    ///
+    /// # Errors
+    ///
+    /// Fails as [`bake`](Self::bake) does.
+    pub fn bake_with_progress(
+        &self,
+        skeleton: &Skeleton,
+        clips: &[&AnimationClip],
+        mut on_entry: impl FnMut(usize, usize),
+    ) -> Result<BakedDatabase, BakeError> {
+        let plans = self.plan_entries(skeleton, clips)?;
+        let mirror = self.mirror(skeleton)?;
+        check_window("position_window", self.simulation.position_window)?;
+        check_window("facing_window", self.simulation.facing_window)?;
+        find_joint(skeleton, self.simulation.position_joint)?;
+        find_joint(skeleton, self.simulation.facing_joint)?;
+        let channels = self.live_channels()?;
+        for (stored, channel) in self.channels.iter().zip(&channels) {
+            channel
+                .validate(skeleton, &self.trajectory)
+                .map_err(|reason| BakeError::ChannelValue {
+                    type_name: stored.type_name().to_owned(),
+                    reason,
+                })?;
+        }
+        let rate = self.rate;
+
+        let bone_count = skeleton.bone_count();
+        let frame_count: usize = plans.iter().map(|plan| plan.frames).sum();
+
+        let mut spans = Vec::with_capacity(channels.len());
+        let mut feature_dims = 0;
+        for channel in &channels {
+            let span = Span::new(feature_dims, channel.dims());
+            feature_dims += span.dims();
+            spans.push(span);
+        }
+
+        let mut features = vec![0.0; frame_count * feature_dims];
+        let mut range_starts = Vec::with_capacity(plans.len());
+        let mut range_stops = Vec::with_capacity(plans.len());
+        let mut clip_starts = Vec::with_capacity(plans.len());
+        let mut simulation_frames = Vec::with_capacity(frame_count);
+
+        for (index, (plan, clip)) in plans.iter().zip(clips).enumerate() {
+            let mut locals: Vec<Vec<JointPose>> = (0..plan.frames)
+                .map(|index| sample_pose(skeleton, clip, plan.frame_time(index, rate, self.speed)))
+                .collect();
+            if let Some(mirror) = mirror.as_ref().filter(|_| self.entries[index].mirrored) {
+                for local in &mut locals {
+                    let sampled = local.clone();
+                    mirror
+                        .mirror_into(&sampled, local)
+                        .map_err(BakeError::Mirror)?;
+                }
+            }
+            let models: Vec<Vec<Transform>> = locals
+                .iter()
+                .map(|local| model_pose(skeleton, local))
+                .collect();
+            let simulation = self.simulation.transforms(skeleton, &models)?;
+
+            let mut stored_locals = locals.clone();
+            for ((local, model), simulation) in
+                stored_locals.iter_mut().zip(&models).zip(&simulation)
+            {
+                reexpress_roots(skeleton, local, model, simulation.clone());
+            }
+
+            let motion = body_motion(&simulation, rate);
+            let model_speeds = model_velocities(&models, rate);
+
+            for frame in 0..plan.frames {
+                simulation_frames.push((simulation[frame].translation, simulation[frame].rotation));
+
+                let trajectory = self.trajectory.samples(&simulation, &motion, rate, frame);
+                let context = FrameContext {
+                    skeleton,
+                    local_pose: &stored_locals[frame],
+                    model_pose: &models[frame],
+                    model_velocities: &model_speeds[frame],
+                    simulation: simulation[frame].clone(),
+                    body: motion[frame],
+                    trajectory: &trajectory,
+                };
+                let row = (plan.first_frame + frame) * feature_dims;
+                context.extract_features(&channels, &mut features[row..row + feature_dims]);
+            }
+            range_starts.push(plan.first_frame);
+            range_stops.push(plan.first_frame + plan.frames);
+            clip_starts.push(plan.start);
+            on_entry(index + 1, plans.len());
+        }
+
+        let (offset, deviations) = feature_statistics(&features, frame_count, feature_dims, &spans);
+
+        Ok(BakedDatabase::new(
+            bone_count,
+            frame_count,
+            range_starts,
+            range_stops,
+            clip_starts,
+            simulation_frames,
+            features,
+            feature_dims,
+            spans,
+            offset,
+            deviations,
+        ))
+    }
+
+    /// Bakes the computed part of a motion database whose channels are loaded, from the skeleton and one resolved clip per entry.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first [`BakeError`] found: an invalid setting or entry as
+    /// [`MotionDatabase::plan_entries`] reports it, an invalid smoothing window, a joint the
+    /// skeleton lacks, a channel that is not loaded or fails its
+    /// [`validate`](crate::channel::FeatureChannel::validate), or a pose that
+    /// cannot be mirrored.
+    pub fn bake(
+        &self,
+        skeleton: &Skeleton,
+        clips: &[&AnimationClip],
+    ) -> Result<BakedDatabase, BakeError> {
+        self.bake_with_progress(skeleton, clips, |_, _| {})
+    }
 }
 
 /// The skeleton's rest pose with every bone's channels in `clip` sampled at `time`.
@@ -151,77 +280,6 @@ fn smooth(values: &[f32], window: usize) -> Result<Vec<f32>, BakeError> {
         return Ok(values.to_vec());
     }
     savitzky_golay(values, window, 3)
-}
-
-/// The simulation bone's model-space transform for every frame of one range, given each frame's model-space bone transforms.
-///
-/// # Errors
-///
-/// Returns [`BakeError::InvalidWindow`] for a smoothing window that is even
-/// or not greater than 3, and [`BakeError::MissingJoint`] when the skeleton
-/// lacks the position or facing joint.
-///
-/// # Panics
-///
-/// Panics if a pose in `model_poses` has fewer bones than `skeleton`.
-pub fn simulation_bone(
-    settings: &SimulationBoneSettings,
-    skeleton: &Skeleton,
-    model_poses: &[Vec<Transform>],
-) -> Result<Vec<Transform>, BakeError> {
-    check_window("position_window", settings.position_window)?;
-    check_window("facing_window", settings.facing_window)?;
-    let position_joint = find_joint(skeleton, settings.position_joint)?;
-    let facing_joint = find_joint(skeleton, settings.facing_joint)?;
-    if model_poses.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let xs: Vec<f32> = model_poses
-        .iter()
-        .map(|pose| pose[position_joint].translation.x)
-        .collect();
-    let zs: Vec<f32> = model_poses
-        .iter()
-        .map(|pose| pose[position_joint].translation.z)
-        .collect();
-    let xs = smooth(&xs, settings.position_window)?;
-    let zs = smooth(&zs, settings.position_window)?;
-
-    let mut yaws: Vec<f32> = Vec::with_capacity(model_poses.len());
-    for pose in model_poses {
-        let direction = pose[facing_joint].rotation * settings.facing_axis.vector();
-        let flat = Vec3::new(direction.x, 0.0, direction.z);
-        let previous = yaws.last().copied();
-        let yaw = if flat.length() > 1e-6 {
-            let mut yaw = flat.x.atan2(flat.z);
-            if let Some(previous) = previous {
-                while yaw - previous > PI {
-                    yaw -= TAU;
-                }
-                while yaw - previous < -PI {
-                    yaw += TAU;
-                }
-            }
-            yaw
-        } else {
-            previous.unwrap_or(0.0)
-        };
-        yaws.push(yaw);
-    }
-    let yaws = smooth(&yaws, settings.facing_window)?;
-
-    Ok(xs
-        .iter()
-        .zip(&zs)
-        .zip(&yaws)
-        .map(|((x, z), yaw)| {
-            Transform::from_translation_rotation(
-                Vec3::new(*x, 0.0, *z),
-                Quat::from_rotation_y(*yaw),
-            )
-        })
-        .collect())
 }
 
 /// Rewrites each parentless bone's local pose as `inverse(simulation) * model`.
@@ -298,170 +356,6 @@ pub fn body_motion(simulation: &[Transform], rate: f32) -> Vec<BodyMotion> {
         .collect()
 }
 
-/// The trajectory samples ahead of `frame` of one range, clamped to the range's last frame.
-///
-/// # Panics
-///
-/// Panics if `simulation` is empty or `motion` is shorter than it.
-pub fn trajectory_samples(
-    settings: &TrajectorySettings,
-    simulation: &[Transform],
-    motion: &[BodyMotion],
-    rate: f32,
-    frame: usize,
-) -> Vec<TrajectorySample> {
-    let last = simulation.len() - 1;
-    (0..settings.sample_count)
-        .map(|k| {
-            let target = frame
-                .saturating_add(settings.frame_offset(k, rate))
-                .min(last);
-            TrajectorySample {
-                position: simulation[target].translation,
-                velocity: motion[target].velocity,
-                rotation: simulation[target].rotation,
-            }
-        })
-        .collect()
-}
-
-/// Bakes the computed part of a motion database whose channels are loaded, from the skeleton and one resolved clip per entry.
-///
-/// # Errors
-///
-/// Returns the first [`BakeError`] found: an invalid setting or entry as
-/// [`MotionDatabase::plan_entries`] reports it, an invalid smoothing window, a joint the
-/// skeleton lacks, a channel that is not loaded or fails its
-/// [`validate`](crate::channel::FeatureChannel::validate), or a pose that
-/// cannot be mirrored.
-pub fn bake(
-    definition: &MotionDatabase,
-    skeleton: &Skeleton,
-    clips: &[&AnimationClip],
-) -> Result<BakedDatabase, BakeError> {
-    bake_with_progress(definition, skeleton, clips, |_, _| {})
-}
-
-/// [`bake`], calling `on_entry(finished, total)` after each entry, with `finished` counting from 1.
-///
-/// # Errors
-///
-/// Fails as [`bake`] does.
-pub fn bake_with_progress(
-    definition: &MotionDatabase,
-    skeleton: &Skeleton,
-    clips: &[&AnimationClip],
-    mut on_entry: impl FnMut(usize, usize),
-) -> Result<BakedDatabase, BakeError> {
-    let plans = definition.plan_entries(skeleton, clips)?;
-    let mirror = definition.mirror(skeleton)?;
-    check_window("position_window", definition.simulation.position_window)?;
-    check_window("facing_window", definition.simulation.facing_window)?;
-    find_joint(skeleton, definition.simulation.position_joint)?;
-    find_joint(skeleton, definition.simulation.facing_joint)?;
-    let channels = definition.live_channels()?;
-    for (stored, channel) in definition.channels.iter().zip(&channels) {
-        channel
-            .validate(skeleton, &definition.trajectory)
-            .map_err(|reason| BakeError::ChannelValue {
-                type_name: stored.type_name().to_owned(),
-                reason,
-            })?;
-    }
-    let rate = definition.rate;
-
-    let bone_count = skeleton.bone_count();
-    let frame_count: usize = plans.iter().map(|plan| plan.frames).sum();
-
-    let mut spans = Vec::with_capacity(channels.len());
-    let mut feature_dims = 0;
-    for channel in &channels {
-        let span = Span::new(feature_dims, channel.dims());
-        feature_dims += span.dims();
-        spans.push(span);
-    }
-
-    let mut features = vec![0.0; frame_count * feature_dims];
-    let mut range_starts = Vec::with_capacity(plans.len());
-    let mut range_stops = Vec::with_capacity(plans.len());
-    let mut clip_starts = Vec::with_capacity(plans.len());
-    let mut simulation_frames = Vec::with_capacity(frame_count);
-
-    for (index, (plan, clip)) in plans.iter().zip(clips).enumerate() {
-        let mut locals: Vec<Vec<JointPose>> = (0..plan.frames)
-            .map(|index| {
-                sample_pose(
-                    skeleton,
-                    clip,
-                    plan.frame_time(index, rate, definition.speed),
-                )
-            })
-            .collect();
-        if let Some(mirror) = mirror
-            .as_ref()
-            .filter(|_| definition.entries[index].mirrored)
-        {
-            for local in &mut locals {
-                let sampled = local.clone();
-                mirror
-                    .mirror_into(&sampled, local)
-                    .map_err(BakeError::Mirror)?;
-            }
-        }
-        let models: Vec<Vec<Transform>> = locals
-            .iter()
-            .map(|local| model_pose(skeleton, local))
-            .collect();
-        let simulation = simulation_bone(&definition.simulation, skeleton, &models)?;
-
-        let mut stored_locals = locals.clone();
-        for ((local, model), simulation) in stored_locals.iter_mut().zip(&models).zip(&simulation) {
-            reexpress_roots(skeleton, local, model, simulation.clone());
-        }
-
-        let motion = body_motion(&simulation, rate);
-        let model_speeds = model_velocities(&models, rate);
-
-        for frame in 0..plan.frames {
-            simulation_frames.push((simulation[frame].translation, simulation[frame].rotation));
-
-            let trajectory =
-                trajectory_samples(&definition.trajectory, &simulation, &motion, rate, frame);
-            let context = FrameContext {
-                skeleton,
-                local_pose: &stored_locals[frame],
-                model_pose: &models[frame],
-                model_velocities: &model_speeds[frame],
-                simulation: simulation[frame].clone(),
-                body: motion[frame],
-                trajectory: &trajectory,
-            };
-            let row = (plan.first_frame + frame) * feature_dims;
-            extract_features(&channels, &context, &mut features[row..row + feature_dims]);
-        }
-        range_starts.push(plan.first_frame);
-        range_stops.push(plan.first_frame + plan.frames);
-        clip_starts.push(plan.start);
-        on_entry(index + 1, plans.len());
-    }
-
-    let (offset, deviations) = feature_statistics(&features, frame_count, feature_dims, &spans);
-
-    Ok(BakedDatabase::new(
-        bone_count,
-        frame_count,
-        range_starts,
-        range_stops,
-        clip_starts,
-        simulation_frames,
-        features,
-        feature_dims,
-        spans,
-        offset,
-        deviations,
-    ))
-}
-
 impl MotionDatabase {
     fn mirror(&self, skeleton: &Skeleton) -> Result<Option<PoseMirror>, BakeError> {
         if !self.entries.iter().any(|entry| entry.mirrored) {
@@ -517,4 +411,104 @@ fn feature_statistics(
         means.into_iter().map(|mean| mean as f32).collect(),
         deviations,
     )
+}
+
+impl SimulationBoneSettings {
+    /// The simulation bone's model-space transform for every frame of one range, given each frame's model-space bone transforms.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BakeError::InvalidWindow`] for a smoothing window that is even
+    /// or not greater than 3, and [`BakeError::MissingJoint`] when the skeleton
+    /// lacks the position or facing joint.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a pose in `model_poses` has fewer bones than `skeleton`.
+    pub fn transforms(
+        &self,
+        skeleton: &Skeleton,
+        model_poses: &[Vec<Transform>],
+    ) -> Result<Vec<Transform>, BakeError> {
+        check_window("position_window", self.position_window)?;
+        check_window("facing_window", self.facing_window)?;
+        let position_joint = find_joint(skeleton, self.position_joint)?;
+        let facing_joint = find_joint(skeleton, self.facing_joint)?;
+        if model_poses.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let xs: Vec<f32> = model_poses
+            .iter()
+            .map(|pose| pose[position_joint].translation.x)
+            .collect();
+        let zs: Vec<f32> = model_poses
+            .iter()
+            .map(|pose| pose[position_joint].translation.z)
+            .collect();
+        let xs = smooth(&xs, self.position_window)?;
+        let zs = smooth(&zs, self.position_window)?;
+
+        let mut yaws: Vec<f32> = Vec::with_capacity(model_poses.len());
+        for pose in model_poses {
+            let direction = pose[facing_joint].rotation * self.facing_axis.vector();
+            let flat = Vec3::new(direction.x, 0.0, direction.z);
+            let previous = yaws.last().copied();
+            let yaw = if flat.length() > 1e-6 {
+                let mut yaw = flat.x.atan2(flat.z);
+                if let Some(previous) = previous {
+                    while yaw - previous > PI {
+                        yaw -= TAU;
+                    }
+                    while yaw - previous < -PI {
+                        yaw += TAU;
+                    }
+                }
+                yaw
+            } else {
+                previous.unwrap_or(0.0)
+            };
+            yaws.push(yaw);
+        }
+        let yaws = smooth(&yaws, self.facing_window)?;
+
+        Ok(xs
+            .iter()
+            .zip(&zs)
+            .zip(&yaws)
+            .map(|((x, z), yaw)| {
+                Transform::from_translation_rotation(
+                    Vec3::new(*x, 0.0, *z),
+                    Quat::from_rotation_y(*yaw),
+                )
+            })
+            .collect())
+    }
+}
+
+impl TrajectorySettings {
+    /// The trajectory samples ahead of `frame` of one range, clamped to the range's last frame.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `simulation` is empty or `motion` is shorter than it.
+    pub fn samples(
+        &self,
+        simulation: &[Transform],
+        motion: &[BodyMotion],
+        rate: f32,
+        frame: usize,
+    ) -> Vec<TrajectorySample> {
+        let last = simulation.len() - 1;
+        (0..self.sample_count)
+            .map(|k| {
+                let target = frame.saturating_add(self.frame_offset(k, rate)).min(last);
+                TrajectorySample {
+                    position: simulation[target].translation,
+                    velocity: motion[target].velocity,
+                    rotation: simulation[target].rotation,
+                }
+            })
+            .collect()
+    }
 }

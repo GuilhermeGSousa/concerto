@@ -15,16 +15,13 @@ use concerto_foundation::{
 use concerto_mesh::Skeleton;
 use concerto_motion_matching::{
     CharacterLink, CharacterSimulation, FeatureShape, MotionDatabase, MotionMatchingNode,
-    MotionMatchingState, preview_features,
+    MotionMatchingState,
 };
 use concerto_reflect::{Reflect, ReflectDefault};
 use concerto_render::plugin::RenderPlugin;
 use glam::Vec3;
 
-use crate::{
-    BakedFrame, SIMULATION_COLOR, SIMULATION_WIDTH, channel_color, draw_placed, draw_simulation,
-    local_pose, placed_shape,
-};
+use crate::{BakedFrame, MotionMatchingDraw, SIMULATION_COLOR, SIMULATION_WIDTH, channel_color};
 
 const HISTORY_SECONDS: f32 = 1.0;
 
@@ -112,16 +109,11 @@ fn placed_channels(
     if features.len() != database.feature_dims()? || features.len() != dims {
         return None;
     }
-    let shapes = preview_features(channels, &frame.context(skeleton), features);
+    let shapes = frame.context(skeleton).preview_features(channels, features);
     Some(
         shapes
             .into_iter()
-            .map(|shapes| {
-                shapes
-                    .into_iter()
-                    .map(|shape| placed_shape(bone, shape))
-                    .collect()
-            })
+            .map(|shapes| shapes.into_iter().map(|shape| shape.placed(bone)).collect())
             .collect(),
     )
 }
@@ -167,7 +159,7 @@ pub fn query_shapes(
     database.range_of(query.frame)?;
     let baked = BakedFrame::placed(
         skeleton,
-        local_pose(database, skeleton, clips, query.frame)?,
+        BakedFrame::sample_local(database, skeleton, clips, query.frame)?,
         query.simulation.clone(),
         query.trajectory.clone(),
     );
@@ -182,7 +174,7 @@ fn draw_channels(
 ) {
     for (channel, shapes) in channels.iter().enumerate() {
         for shape in shapes {
-            draw_placed(gizmos, bone.local_y(), *shape, color(channel));
+            gizmos.draw_placed(bone.local_y(), *shape, color(channel));
         }
     }
 }
@@ -218,7 +210,7 @@ pub fn draw_motion_matching(
             simulation.interpolated_facing(time.fixed_alpha()),
         );
         if shown.simulation {
-            draw_simulation(&mut gizmos, &bone);
+            gizmos.draw_simulation(&bone);
             gizmos.line(bone.translation, character.translation(), SIMULATION_COLOR);
         }
         shown.remember(time.delta().as_secs_f32(), bone.translation);

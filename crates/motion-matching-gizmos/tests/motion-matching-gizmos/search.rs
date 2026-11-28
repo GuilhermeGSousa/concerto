@@ -31,7 +31,7 @@ use concerto_motion_matching::{
     BonePositions, BoneVelocities, CharacterLink, CharacterSimulation, DesiredMotion,
     FeatureChannelData, FeatureShape, JointAxis, LastQuery, MirrorAxis, MotionDatabase,
     MotionEntry, MotionMatchingNode, MotionMatchingPlugin, SimulationBoneSettings,
-    TrajectoryDirections, TrajectoryPositions, TrajectorySettings, bake,
+    TrajectoryDirections, TrajectoryPositions, TrajectorySettings,
 };
 use concerto_motion_matching_gizmos::{
     MotionMatchingGizmos, MotionMatchingGizmosPlugin, matched_shapes, query_shapes,
@@ -166,7 +166,7 @@ fn baked(
         mirror_axis: MirrorAxis::X,
         baked: None,
     };
-    let baked = bake(&definition, &skeleton(), &[&walk(), &turn()]).unwrap();
+    let baked = definition.bake(&skeleton(), &[&walk(), &turn()]).unwrap();
     definition.with_baked(baked)
 }
 

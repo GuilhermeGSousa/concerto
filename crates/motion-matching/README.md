@@ -69,7 +69,7 @@ cached under the same key, before the handle reads as loaded:
 
 `is_baked()` says whether the part is there. Code that bakes inline, such as a
 test or an `AssetServer::add` caller, attaches it with
-`database.with_baked(bake(&database, &skeleton, &clips)?)`; `add` derives
+`database.with_baked(database.bake(&skeleton, &clips)?)`; `add` derives
 nothing.
 
 A database loaded through the `AssetServer`, or added with
@@ -113,7 +113,7 @@ end of an entry's range is clamped to the range's last frame.
 ### Bake
 
 ```rust
-let baked: BakedDatabase = bake(&database, &skeleton, &clips)?;
+let baked: BakedDatabase = database.bake(&skeleton, &clips)?;
 ```
 
 `bake` reads the persisted fields of a `MotionDatabase` and returns only the
@@ -183,7 +183,7 @@ it in the editor as a `MotionDatabase`.
 
 A `FeatureChannel` writes `dims()` values per frame from a `FrameContext`. The
 channels of a definition are concatenated in order into one feature vector per
-frame. `extract_features(&channels, &frame, &mut out)` runs them; `out` must
+frame. `frame.extract_features(&channels, &mut out)` runs them; `out` must
 hold exactly the sum of their `dims()`.
 
 `FrameContext` fields:
@@ -275,7 +275,7 @@ A channel may also override four methods:
 
 `preview` says how a channel looks for a given feature vector, so the same code
 can draw a baked frame or a runtime query beside the frame it selected.
-`preview_features(&channels, &frame, &features)` gives each channel its span of a
+`frame.preview_features(&channels, &features)` gives each channel its span of a
 raw vector and returns one list of shapes per channel, in order.
 
 `FeatureShape` is a `Ring { center, radius }`, a `Line { start, end }` or an
@@ -495,8 +495,8 @@ graph.result_node().add_input(
 );
 ```
 
-The node plays at `r = effective_play_rate(play_rate, play_rate_param,
-blackboard)` from `concerto_animation::node`: the product, or 0 when it is
+The node plays at `r = blackboard.effective_play_rate(play_rate,
+play_rate_param)` from `concerto_animation::blackboard::AnimationBlackboard`: the product, or 0 when it is
 negative, NaN or infinite. With `dt` the frame's delta, the playhead and the
 root motion advance by `dt * r`. The search timer, the forced-search timer and
 the change per second that forces a search run on `dt`, in real time, as do the

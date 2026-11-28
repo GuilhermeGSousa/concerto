@@ -17,7 +17,7 @@ use concerto_reflect::TypeRegistry;
 use glam::{Quat, Vec3};
 use serde::{Deserialize, Serialize};
 
-use crate::bake::{bake_with_progress, model_pose, reexpress_roots, sample_pose};
+use crate::bake::{model_pose, reexpress_roots, sample_pose};
 use crate::channel::{BodyMotion, FeatureChannel, FeatureChannelData};
 use crate::definition::{MirrorAxis, MotionEntry, SimulationBoneSettings, TrajectorySettings};
 use crate::features::reference_channels;
@@ -556,7 +556,7 @@ impl DerivedData for MotionDatabase {
             .map(|clip| inputs.decode::<AnimationClip>(clip.id()))
             .collect::<anyhow::Result<Vec<_>>>()?;
         let clips: Vec<&AnimationClip> = clips.iter().collect();
-        let baked = bake_with_progress(self, &skeleton, &clips, progress)?;
+        let baked = self.bake_with_progress(&skeleton, &clips, progress)?;
         bincode::serialize(&baked).context("failed to encode a baked motion database")
     }
 

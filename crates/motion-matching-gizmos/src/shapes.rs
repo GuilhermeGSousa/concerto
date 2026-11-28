@@ -22,38 +22,6 @@ pub const CHANNEL_COLORS: [Color; 4] = [
 /// What a channel's colour is multiplied by while it isn't the picked one.
 pub const DIMMED: f32 = 0.4;
 
-/// A shape in the simulation bone's space, moved into the space `bone` lives in.
-pub fn placed_shape(bone: &Transform, shape: FeatureShape) -> FeatureShape {
-    match shape {
-        FeatureShape::Ring { center, radius } => FeatureShape::Ring {
-            center: bone.transform_point(center),
-            radius,
-        },
-        FeatureShape::Line { start, end } => FeatureShape::Line {
-            start: bone.transform_point(start),
-            end: bone.transform_point(end),
-        },
-        FeatureShape::Arrow { start, end } => FeatureShape::Arrow {
-            start: bone.transform_point(start),
-            end: bone.transform_point(end),
-        },
-    }
-}
-
-/// Draws a shape that is already placed; a `Ring` lies flat against `up`.
-pub fn draw_placed(gizmos: &mut DebugGizmos, up: Vec3, shape: FeatureShape, color: Color) {
-    match shape {
-        FeatureShape::Ring { center, radius } => gizmos.circle(center, up, radius, color),
-        FeatureShape::Line { start, end } => gizmos.line(start, end, color),
-        FeatureShape::Arrow { start, end } => gizmos.arrow(start, end, color),
-    }
-}
-
-/// Draws a shape in the simulation bone's space, placed at `bone`.
-pub fn draw_shape(gizmos: &mut DebugGizmos, bone: &Transform, shape: FeatureShape, color: Color) {
-    draw_placed(gizmos, bone.local_y(), placed_shape(bone, shape), color);
-}
-
 /// The colour of `channel`: full when it's the `picked` one, dimmed otherwise.
 pub fn channel_color(channel: usize, picked: Option<usize>) -> Color {
     let color = CHANNEL_COLORS[channel % CHANNEL_COLORS.len()];
@@ -64,14 +32,39 @@ pub fn channel_color(channel: usize, picked: Option<usize>) -> Color {
     Color::rgba(red * DIMMED, green * DIMMED, blue * DIMMED, alpha)
 }
 
-/// Draws the simulation bone's ring and the arrow of its facing at `bone`.
-pub fn draw_simulation(gizmos: &mut DebugGizmos, bone: &Transform) {
-    let tip = bone.translation + bone.local_z() * SIMULATION_ARROW;
-    gizmos.circle(
-        bone.translation,
-        bone.local_y(),
-        SIMULATION_RADIUS,
-        SIMULATION_COLOR,
-    );
-    gizmos.arrow(bone.translation, tip, SIMULATION_COLOR);
+/// Draws motion matching's shapes and simulation bone into a [`DebugGizmos`].
+pub trait MotionMatchingDraw {
+    /// Draws a shape that is already placed; a `Ring` lies flat against `up`.
+    fn draw_placed(&mut self, up: Vec3, shape: FeatureShape, color: Color);
+
+    /// Draws a shape in the simulation bone's space, placed at `bone`.
+    fn draw_shape(&mut self, bone: &Transform, shape: FeatureShape, color: Color);
+
+    /// Draws the simulation bone's ring and the arrow of its facing at `bone`.
+    fn draw_simulation(&mut self, bone: &Transform);
+}
+
+impl MotionMatchingDraw for DebugGizmos<'_> {
+    fn draw_placed(&mut self, up: Vec3, shape: FeatureShape, color: Color) {
+        match shape {
+            FeatureShape::Ring { center, radius } => self.circle(center, up, radius, color),
+            FeatureShape::Line { start, end } => self.line(start, end, color),
+            FeatureShape::Arrow { start, end } => self.arrow(start, end, color),
+        }
+    }
+
+    fn draw_shape(&mut self, bone: &Transform, shape: FeatureShape, color: Color) {
+        self.draw_placed(bone.local_y(), shape.placed(bone), color);
+    }
+
+    fn draw_simulation(&mut self, bone: &Transform) {
+        let tip = bone.translation + bone.local_z() * SIMULATION_ARROW;
+        self.circle(
+            bone.translation,
+            bone.local_y(),
+            SIMULATION_RADIUS,
+            SIMULATION_COLOR,
+        );
+        self.arrow(bone.translation, tip, SIMULATION_COLOR);
+    }
 }

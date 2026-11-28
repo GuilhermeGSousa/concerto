@@ -2,9 +2,7 @@ use concerto_animation::clip::{AnimationChanelOutput, AnimationChannel, Animatio
 use concerto_animation::mirror::{MirrorError, PoseMirror};
 use concerto_foundation::transform::Transform;
 use concerto_mesh::{JointPose, Skeleton};
-use concerto_motion_matching::bake::{
-    bake, model_pose, model_velocities, reexpress_roots, sample_pose, simulation_bone,
-};
+use concerto_motion_matching::bake::{model_pose, model_velocities, reexpress_roots, sample_pose};
 use concerto_motion_matching::{
     BakeError, BodyMotion, ChannelSource, FeatureChannel, FeatureChannelData, FrameContext,
     JointAxis, MotionDatabase, MotionEntry, ReflectFeatureChannel, SimulationBoneSettings,
@@ -36,7 +34,7 @@ fn baked(
     skeleton: &Skeleton,
     clips: &[&AnimationClip],
 ) -> MotionDatabase {
-    let baked = bake(definition, skeleton, clips).unwrap();
+    let baked = definition.bake(skeleton, clips).unwrap();
     definition.clone().with_baked(baked)
 }
 
@@ -104,7 +102,7 @@ fn a_straight_walk_faces_its_travel_and_moves_at_walk_speed() {
         ..Default::default()
     };
 
-    let simulation = simulation_bone(&settings, &skeleton, &poses).unwrap();
+    let simulation = settings.transforms(&skeleton, &poses).unwrap();
 
     assert_eq!(simulation.len(), poses.len());
     for (frame, transform) in simulation.iter().enumerate() {
@@ -598,7 +596,7 @@ fn a_weight_leaves_the_bake_alone() {
     let clip = walk_clip(1.0);
     let weighed = |weight| {
         let definition = baking_definition(vec![entry(None)], vec![weighted(weight, 0.0)]);
-        bake(&definition, &skeleton, &[&clip]).unwrap()
+        definition.bake(&skeleton, &[&clip]).unwrap()
     };
 
     assert_eq!(weighed(2.0), weighed(1.0));
@@ -787,7 +785,7 @@ fn a_definition_the_bake_cannot_honour_is_refused() {
     for row in rows {
         let clips = vec![&clip; row.definition.entries.len()];
 
-        let error = bake(&row.definition, &skeleton, &clips).err();
+        let error = row.definition.bake(&skeleton, &clips).err();
 
         assert!(
             error.as_ref().is_some_and(row.refusal),
