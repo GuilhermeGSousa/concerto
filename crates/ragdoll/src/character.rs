@@ -36,7 +36,6 @@ use log::warn;
 use crate::{
     asset::{PartStrength, Ragdoll, StrengthProfile},
     dying::{Settled, mark_dead},
-    generate::BRACED,
     messages::{BodyDead, PendingImpulses, Wounded, keep_wounds},
     resolve::ResolvedRagdoll,
     sensing::BodySense,
@@ -72,8 +71,8 @@ pub struct CharacterRagdoll {
     pub lost_distance: f32,
     /// How long the root part must stay that far for `PoseLost` to be triggered.
     pub lost_seconds: f32,
-    /// The strength profile of the ragdoll asset that holds each part to its animation for the share of it no node of the graph holds.
-    pub follow: Name,
+    /// The strength profile of the ragdoll asset that holds each part to its animation for the share of it no node of the graph holds; none by default.
+    pub profile: Name,
 }
 
 impl Default for CharacterRagdoll {
@@ -83,7 +82,7 @@ impl Default for CharacterRagdoll {
             capsule: SceneEntityRef::default(),
             lost_distance: 0.5,
             lost_seconds: 0.3,
-            follow: Name::from(BRACED),
+            profile: Name::default(),
         }
     }
 }
@@ -104,8 +103,8 @@ impl CharacterRagdoll {
     }
 
     /// Sets the strength profile that holds each part to its animation for the share of it no node of the graph holds.
-    pub fn with_follow(mut self, follow: impl Into<Name>) -> Self {
-        self.follow = follow.into();
+    pub fn with_profile(mut self, profile: impl Into<Name>) -> Self {
+        self.profile = profile.into();
         self
     }
 }

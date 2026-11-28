@@ -592,7 +592,7 @@ from what the graph gave its bone:
   cover, whatever its amount;
 - any other part is dynamic, and its joint's motor is aimed by the behaviours'
   command and, for the share of the bone they do not cover, by the animation
-  at the strength of the character's `follow` profile, `braced` by default.
+  at the strength of the character's `profile`, none by default.
   The pelvis gets no such share, nor does a part the profile leaves kinematic
   or limp; its command is the behaviours' alone. A command's force and torque
   are scaled by its cover.
@@ -722,7 +722,7 @@ trigger.
 `profile`, `braced` by default, and acts on every part that profile does not
 leave kinematic; with no mask it holds all of them. Its `weight` is both how
 much of the parts is drawn from physics and how much of them its muscles hold,
-the rest being held by the character's `follow` profile; its `strength`
+the rest being held by the character's `profile`; its `strength`
 multiplies the profile's stiffness, damping and torque limit, and the
 character's `Wounds` scale each part's further. Both are `f32` blackboard params that read 1 while the
 blackboard has no such value, and both move towards a new value over `fade`

@@ -117,7 +117,7 @@ impl PartDrive {
 ///   while it has no cover, whatever its amount.
 /// - Any other part is dynamic. Its motor is aimed by the command and, for the
 ///   share of the bone the command does not cover, by the animation at the
-///   strength of the character's `follow` profile, leading the target by the
+///   strength of the character's `profile`, leading the target by the
 ///   animation's speed. The root part gets no such share, nor does a part the
 ///   profile leaves kinematic or limp; its command is the graph's alone.
 /// - The command's force and torque are scaled by its cover.
@@ -147,7 +147,7 @@ pub fn drive_from_graph(
     for (entity, character, id, mut body, player) in characters.iter_mut() {
         let profile = ragdolls
             .get(&character.ragdoll)
-            .and_then(|ragdoll| ragdoll.profile(&character.follow));
+            .and_then(|ragdoll| ragdoll.profile(&character.profile));
         let targets = body.animated_targets();
         let drives: Vec<PartDrive> = body
             .resolved()
