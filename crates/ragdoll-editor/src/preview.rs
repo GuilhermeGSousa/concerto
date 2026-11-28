@@ -37,8 +37,8 @@ use concerto_physics::{
 };
 use concerto_physics_gizmos::{PhysicsGizmos, draw_ragdolls};
 use concerto_ragdoll::{
-    CharacterRagdoll, LimpNode, Ragdoll, RagdollBody, RagdollMode,
-    character::create_character_ragdolls, drive::drive_from_graph,
+    CharacterRagdoll, LimpNode, Ragdoll, RagdollBody, character::create_character_ragdolls,
+    drive::drive_from_graph,
 };
 use concerto_render::plugin::RenderPlugin;
 use concerto_scene::{
@@ -127,7 +127,7 @@ struct RagdollStage {
 
 impl RagdollStage {
     fn character_ragdoll(&self) -> Option<CharacterRagdoll> {
-        Some(CharacterRagdoll::new(AssetHandle::weak(self.ragdoll?)).with_mode(RagdollMode::Graph))
+        Some(CharacterRagdoll::new(AssetHandle::weak(self.ragdoll?)))
     }
 
     fn insert_character(&self, cmd: &mut CommandQueue, character: Entity) {

@@ -13,8 +13,8 @@ use concerto_name::{Name, name};
 use concerto_physics::ragdoll::RagdollId;
 use concerto_physics::{collider::Collider, physics_state::PhysicsState};
 use concerto_ragdoll::{
-    Balance, BalanceNode, BalanceSettings, BodyDown, BodySense, BodyState, CharacterRagdoll, Fall,
-    FallNode, FallReaction, LimpNode, PhysicalState, RagdollBody, RagdollMode, messages::Toppled,
+    BalanceNode, BalanceSettings, BodySense, FallNode, LimpNode, RagdollBody,
+    messages::{BodyDown, Toppled},
     testing::humanoid_skeleton,
 };
 use glam::{Quat, Vec3};
@@ -26,22 +26,10 @@ struct Fallen {
     hands_down: [Option<usize>; 2],
     chest_down: Option<usize>,
     head_peak: f32,
-    state: Option<BodyState>,
-    mode: RagdollMode,
-    resting: bool,
     entries: Vec<Name>,
     limp: bool,
+    resting: bool,
     downs: usize,
-}
-
-impl Fallen {
-    fn down_by_behaviour(&self) -> bool {
-        self.state == Some(BodyState::Down) && self.mode == RagdollMode::Limp
-    }
-
-    fn down_in_graph(&self, entered: Name) -> bool {
-        self.entries == [entered, name!("fall"), name!("down")] && self.limp && self.downs == 1
-    }
 }
 
 fn impulse(stage: &Stage, bone: &str) -> Option<f32> {
@@ -163,40 +151,15 @@ fn already_falling_graph(server: &AssetServer) -> AnimationGraph {
     )
 }
 
-fn fallen(strength: f32, push: Vec3, in_graph: bool) -> Fallen {
-    let mut stage = if in_graph {
-        let mut stage = Stage::graphed(falling_graph);
-        stage.set_param(name!("strength"), strength);
-        stage
-    } else {
-        let mut stage = Stage::new();
-        stage.insert(FallReaction { strength });
-        stage.insert(Balance::default());
-        stage
-    };
+fn fallen(strength: f32, push: Vec3) -> Fallen {
+    let mut stage = Stage::graphed(falling_graph);
+    stage.set_param(name!("strength"), strength);
     stage.run(15);
     stage.push("spine_03", push);
     watch(stage)
 }
 
 fn fallen_on_its_limbs() -> Fallen {
-    let mut stage = Stage::placed(Transform::from_translation_rotation(
-        Vec3::new(0.0, 1.3, 0.0),
-        Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
-    ));
-    stage.spread_limbs();
-    let world = stage.app.main_mut().world_mut();
-    for side in [1.0, -1.0] {
-        world.spawn((
-            Collider::cuboid(0.9, 0.5, 1.5),
-            Transform::from_translation(Vec3::new(side * 1.08, 0.5, 1.0)),
-        ));
-    }
-    stage.insert(Fall::default());
-    watch(stage)
-}
-
-fn fallen_on_its_limbs_in_graph() -> Fallen {
     let mut stage = Stage::placed_graphed(
         Transform::from_translation_rotation(
             Vec3::new(0.0, 1.3, 0.0),
@@ -236,25 +199,14 @@ fn watch(mut stage: Stage) -> Fallen {
         hands_down,
         chest_down,
         head_peak,
-        state: world
-            .get_component_for_entity::<PhysicalState>(stage.character)
-            .map(|physical| physical.state),
-        mode: world
-            .get_component_for_entity::<CharacterRagdoll>(stage.character)
-            .unwrap()
-            .mode,
+        entries: stage.entries().to_vec(),
+        limp: ["spine_03", "upperarm_l", "thigh_r"]
+            .into_iter()
+            .all(|bone| stage.motor(bone).torque_limit == 0.0),
         resting: world
             .get_component_for_entity::<BodySense>(stage.character)
             .unwrap()
             .at_rest,
-        entries: stage.entries().to_vec(),
-        limp: ["spine_03", "upperarm_l", "thigh_r"]
-            .into_iter()
-            .all(|bone| {
-                stage
-                    .motor(bone)
-                    .is_some_and(|motor| motor.torque_limit == 0.0)
-            }),
         downs: stage.downs(),
     }
 }
@@ -262,46 +214,37 @@ fn watch(mut stage: Stage) -> Fallen {
 #[test]
 fn a_falling_body_lands_on_its_hands_spares_its_head_and_ends_down_and_limp() {
     for direction in [Vec3::Z, Vec3::NEG_Z] {
-        for in_graph in [false, true] {
-            let limp = fallen(0.0, direction * 270.0, in_graph);
-            let braced = fallen(1.0, direction * 270.0, in_graph);
+        let limp = fallen(0.0, direction * 270.0);
+        let braced = fallen(1.0, direction * 270.0);
+        assert!(
+            braced.head_peak < limp.head_peak * 0.5,
+            "falling towards {direction} the head lands softer braced than limp: {braced:?} against {limp:?}"
+        );
+        for fall in [&limp, &braced] {
             assert!(
-                braced.head_peak < limp.head_peak * 0.5,
-                "falling towards {direction}, in the graph {in_graph}, the head lands softer braced than limp: {braced:?} against {limp:?}"
+                fall.entries == [name!("stand"), name!("fall"), name!("down")]
+                    && fall.limp
+                    && fall.resting
+                    && fall.downs == 1,
+                "a fall towards {direction} says it is down once, then enters the down state once and stays there, limp and at rest: {fall:?}"
             );
-            for fall in [&limp, &braced] {
-                if in_graph {
-                    assert!(
-                        fall.down_in_graph(name!("stand")) && fall.resting,
-                        "in the graph a fall towards {direction} raises BodyDown once, then enters the down state and stays there, limp and at rest: {fall:?}"
-                    );
-                } else {
-                    assert!(
-                        fall.down_by_behaviour() && fall.resting,
-                        "a fall towards {direction} ends down, limp and at rest: {fall:?}"
-                    );
-                }
-            }
-            if direction == Vec3::Z {
-                let chest = braced.chest_down.unwrap_or(usize::MAX);
-                assert!(
-                    braced
-                        .hands_down
-                        .iter()
-                        .all(|hand| hand.is_some_and(|hand| hand < chest)),
-                    "falling forward, in the graph {in_graph}, both hands touch the ground before the chest: {braced:?}"
-                );
-            }
+        }
+        if direction == Vec3::Z {
+            let chest = braced.chest_down.unwrap_or(usize::MAX);
+            assert!(
+                braced
+                    .hands_down
+                    .iter()
+                    .all(|hand| hand.is_some_and(|hand| hand < chest)),
+                "falling forward both hands touch the ground before the chest: {braced:?}"
+            );
         }
     }
     let propped = fallen_on_its_limbs();
     assert!(
-        propped.down_by_behaviour(),
-        "a fall that comes to rest on the hands and thighs across a trench, the trunk held off the ground, ends down and limp: {propped:?}"
-    );
-    let propped = fallen_on_its_limbs_in_graph();
-    assert!(
-        propped.down_in_graph(name!("waiting")),
-        "in the graph, a fall that comes to rest on the hands and thighs across a trench ends in the down state and limp: {propped:?}"
+        propped.entries == [name!("waiting"), name!("fall"), name!("down")]
+            && propped.limp
+            && propped.downs == 1,
+        "a fall that comes to rest on the hands and thighs across a trench, the trunk held off the ground, ends in the down state and limp: {propped:?}"
     );
 }

@@ -15,7 +15,6 @@ use uuid::Uuid;
 use crate::{
     asset::{PartStrength, Side, StrengthProfile},
     attributes::{MotorCommand, PhysicsAmount},
-    behaviour::PartCommand,
     generate::BRACED,
     ik::{Chain, reach},
     messages::{Steadied, Toppled},
@@ -324,7 +323,39 @@ impl BalanceRun {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct PartCommand {
+    pub(crate) target: Option<Quat>,
+    pub(crate) strength: PartStrength,
+    pub(crate) force: Vec3,
+    pub(crate) torque: Vec3,
+}
+
 impl PartCommand {
+    pub(crate) fn held(strength: PartStrength) -> Self {
+        Self {
+            target: None,
+            strength,
+            force: Vec3::ZERO,
+            torque: Vec3::ZERO,
+        }
+    }
+
+    pub(crate) fn with_target(mut self, target: Quat) -> Self {
+        self.target = Some(target);
+        self
+    }
+
+    pub(crate) fn with_force(mut self, force: Vec3) -> Self {
+        self.force = force;
+        self
+    }
+
+    pub(crate) fn with_torque(mut self, torque: Vec3) -> Self {
+        self.torque = torque;
+        self
+    }
+
     pub(crate) fn motor(self, animated: Quat) -> MotorCommand {
         MotorCommand {
             target: self.target.unwrap_or(animated),

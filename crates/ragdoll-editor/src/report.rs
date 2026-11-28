@@ -3,11 +3,11 @@ use concerto_ecs::{Entity, Query, Res};
 use concerto_editor::hosted::EditWorld;
 use concerto_foundation::assets::asset_store::AssetStore;
 use concerto_mcp::{McpTool, Needs, ToolCalls, ToolError};
-use concerto_ragdoll::{BodySense, CharacterRagdoll, RagdollBody, RagdollMode};
+use concerto_ragdoll::{BodySense, CharacterRagdoll, RagdollBody};
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-/// Reports the body of a character of the game that is playing, whose animation graph drives its ragdoll: for each limb the physics amount its graph gives it and how much of it the behaviours cover, the states of the graph and what its behaviour nodes say, then what the body senses. Read-only; behaviours are nodes of the character's animation graph, which the animation graph tools edit.
+/// Reports the body of a character of the game that is playing: for each limb the physics amount its animation graph gives it and how much of it the behaviours cover, the states of the graph and what its behaviour nodes say, then what the body senses. Read-only; behaviours are nodes of the character's animation graph, which the animation graph tools edit.
 #[derive(Deserialize, JsonSchema)]
 pub struct BodyReport {
     /// The character, by id as scene_tree shows it while the game plays, such as 42v3; it carries a `CharacterRagdoll`.
@@ -42,15 +42,6 @@ pub(crate) fn states_text(states: &[String]) -> String {
     }
 }
 
-pub(crate) fn not_graph_driven(entity: &str, mode: RagdollMode) -> ToolError {
-    ToolError::new(
-        "not_graph_driven",
-        format!(
-            "The ragdoll of {entity} is in mode {mode:?}, so no animation graph drives it; set its CharacterRagdoll's mode to Graph and give it a graph with behaviour nodes."
-        ),
-    )
-}
-
 pub(crate) fn no_player(entity: &str) -> ToolError {
     ToolError::new(
         "no_player",
@@ -83,7 +74,7 @@ pub(crate) fn body_report(mut calls: ToolCalls<BodyReport>, scene: EditWorld<Cha
             ));
             continue;
         };
-        let Some(character) = character else {
+        if character.is_none() {
             reply.err(ToolError::new(
                 "no_ragdoll",
                 format!(
@@ -92,7 +83,7 @@ pub(crate) fn body_report(mut calls: ToolCalls<BodyReport>, scene: EditWorld<Cha
                 ),
             ));
             continue;
-        };
+        }
         let Some(body) = body else {
             reply.err(ToolError::new(
                 "ragdoll_not_built",
@@ -103,10 +94,6 @@ pub(crate) fn body_report(mut calls: ToolCalls<BodyReport>, scene: EditWorld<Cha
             ));
             continue;
         };
-        if character.mode != RagdollMode::Graph {
-            reply.err(not_graph_driven(&arguments.entity, character.mode));
-            continue;
-        }
         let Some(player) = player else {
             reply.err(no_player(&arguments.entity));
             continue;

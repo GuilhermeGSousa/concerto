@@ -36,27 +36,18 @@ use concerto_ragdoll::testing::{
     SpawnedHumanoid, humanoid_skeleton, reference_humanoid, spawn_humanoid,
 };
 use concerto_ragdoll::{
-    Balance, BalanceNode, BalanceSettings, BalanceState, BehaviourEnded, BodyDrive, BodySense,
-    BodySettled, BodyState, CharacterRagdoll, Dead, LimpNode, MotorCommand, Outcome, PhysicalState,
-    RagdollBody, RagdollMode, RagdollPlugin, StaggerNode, StaggerState,
-    messages::{BodyDown, Steadied, Toppled},
+    BalanceNode, BalanceSettings, BalanceState, BodyDown, BodySettled, CharacterRagdoll, Dead,
+    LimpNode, MotorCommand, RagdollBody, RagdollPlugin, StaggerNode, StaggerState,
+    messages::{Steadied, Toppled},
 };
 use concerto_reflect::Reflect;
 use glam::{Quat, Vec3};
 
 #[derive(Resource, Default)]
-struct Ended(Vec<BehaviourEnded>);
-
-fn record(on: On<BehaviourEnded>, mut ended: ResMut<Ended>) {
-    ended.0.push(*on.signal());
-}
-
-#[derive(Resource, Default)]
 struct Settles(usize);
 
-fn count_settles(_: On<BodySettled>, mut settles: ResMut<Settles>) {
-    settles.0 += 1;
-}
+#[derive(Resource, Default)]
+struct Downs(usize);
 
 #[derive(Resource, Default)]
 struct Deaths(usize);
@@ -65,14 +56,15 @@ fn count_marked_dead(_: On<Add<Dead>>, mut deaths: ResMut<Deaths>) {
     deaths.0 += 1;
 }
 
-#[derive(Resource, Default)]
-struct Downs(usize);
-
 fn count_downs() -> Listener<BodyDown> {
     (|_: On<BodyDown>, mut downs: ResMut<Downs>| {
         downs.0 += 1;
     })
     .into_listener()
+}
+
+fn count_settles(_: On<BodySettled>, mut settles: ResMut<Settles>) {
+    settles.0 += 1;
 }
 
 type GraphBuilder = Box<dyn FnOnce(&AssetServer) -> AnimationGraph>;
@@ -85,21 +77,14 @@ pub struct Stage {
     entries: Vec<Name>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Ended {
+    Steady,
+    Fallen,
+}
+
 impl Stage {
-    pub fn new() -> Self {
-        Self::placed(Transform::default())
-    }
-
-    pub fn placed(placement: Transform) -> Self {
-        Self::build(placement, None)
-    }
-
-    /// A body in the graph mode, with a `BodySense`, whose animation graph is `build`'s.
-    pub fn graphed(build: impl FnOnce(&AssetServer) -> AnimationGraph + 'static) -> Self {
-        Self::placed_graphed(Transform::default(), build)
-    }
-
-    /// A body in the graph mode at `placement`, with a `BodySense`, whose animation graph is `build`'s.
+    /// A body placed at `placement` whose animation graph is `build`'s.
     pub fn placed_graphed(
         placement: Transform,
         build: impl FnOnce(&AssetServer) -> AnimationGraph + 'static,
@@ -107,9 +92,14 @@ impl Stage {
         Self::build(placement, Some(Box::new(build)))
     }
 
-    /// A body in the graph mode whose animation graph balances it with `node` over the standing pose, moving to the state `steady` when it succeeds and `fallen`, where it goes limp, when it gives up.
+    /// A body whose animation graph balances it with `node` over the standing pose, moving to the state `steady` when it succeeds and `fallen`, where it goes limp, when it gives up.
     pub fn balancing(node: BalanceNode) -> Self {
         Self::graphed(move |server| balance_graph(server, node))
+    }
+
+    /// A body whose animation graph is `build`'s.
+    pub fn graphed(build: impl FnOnce(&AssetServer) -> AnimationGraph + 'static) -> Self {
+        Self::build(Transform::default(), Some(Box::new(build)))
     }
 
     fn build(placement: Transform, graph: Option<GraphBuilder>) -> Self {
@@ -123,12 +113,11 @@ impl Stage {
             app.register_plugin(AnimationPlugin);
         }
         app.register_plugin(RagdollPlugin);
-        app.add_listener(record).insert_resource(Ended::default());
         app.add_listener(count_settles)
-            .insert_resource(Settles::default());
-        app.add_listener(count_marked_dead)
-            .insert_resource(Deaths::default());
-        app.insert_resource(Downs::default());
+            .add_listener(count_marked_dead)
+            .insert_resource(Deaths::default())
+            .insert_resource(Settles::default())
+            .insert_resource(Downs::default());
         app.finish_plugin_build();
         let server = app.get_resource::<AssetServer>().unwrap().clone();
         let reference = reference_humanoid();
@@ -146,25 +135,9 @@ impl Stage {
         ));
         let humanoid = spawn_humanoid(world, skeleton, placement);
         let character = humanoid.skeleton;
-        match graph {
-            Some(graph) => world.insert(
-                (
-                    CharacterRagdoll::new(asset).with_mode(RagdollMode::Graph),
-                    AnimationHandleComponent::new(graph),
-                    BodySense::default(),
-                    count_downs(),
-                ),
-                character,
-            ),
-            None => world.insert(
-                (
-                    CharacterRagdoll::new(asset),
-                    BodyDrive::default(),
-                    BodySense::default(),
-                    PhysicalState::default(),
-                ),
-                character,
-            ),
+        world.insert((CharacterRagdoll::new(asset), count_downs()), character);
+        if let Some(graph) = graph {
+            world.insert(AnimationHandleComponent::new(graph), character);
         }
         let mut stage = Self {
             app,
@@ -175,24 +148,6 @@ impl Stage {
         };
         stage.run(5);
         stage
-    }
-
-    /// Holds the arms half down and the legs apart.
-    pub fn spread_limbs(&mut self) {
-        self.turn(&[
-            ("upperarm_l", -0.9),
-            ("upperarm_r", 0.9),
-            ("thigh_l", 0.35),
-            ("thigh_r", -0.35),
-        ]);
-    }
-
-    fn turn(&mut self, bones: &[(&str, f32)]) {
-        let skeleton = humanoid_skeleton();
-        for &(bone, angle) in bones {
-            let index = skeleton.bone_index(bone.into()).unwrap();
-            self.pose[index].rotation = Quat::from_rotation_z(angle);
-        }
     }
 
     pub fn run(&mut self, frames: usize) {
@@ -239,66 +194,6 @@ impl Stage {
         &self.entries
     }
 
-    /// Whether a balance or stagger node of the graph has a foot in the air.
-    pub fn node_stepping(&self) -> bool {
-        let world = self.app.main().world();
-        let (Some(graphs), Some(player)) = (
-            self.app.get_resource::<AssetStore<AnimationGraph>>(),
-            world.get_component_for_entity::<AnimationPlayer>(self.character),
-        ) else {
-            return false;
-        };
-        let mut stepping = false;
-        player.for_each_state::<BalanceNode>(graphs, |_, state: &BalanceState, _| {
-            stepping |= state.stepping();
-        });
-        player.for_each_state::<StaggerNode>(graphs, |_, state: &StaggerState, _| {
-            stepping |= state.stepping();
-        });
-        stepping
-    }
-
-    pub fn set_param<T: Reflect>(&mut self, key: Name, value: T) {
-        self.app
-            .main_mut()
-            .world_mut()
-            .get_component_for_entity_mut::<AnimationPlayer>(self.character)
-            .unwrap()
-            .set_param(key, value);
-    }
-
-    /// What the graph's drive pass last asked of the motor on `bone`, when the body has a graph.
-    pub fn motor(&self, bone: &str) -> Option<MotorCommand> {
-        let index = humanoid_skeleton().bone_index(bone.into()).unwrap();
-        let player = self
-            .app
-            .main()
-            .world()
-            .get_component_for_entity::<AnimationPlayer>(self.character)?;
-        Some(player.drive_attributes().get::<MotorCommand>(index))
-    }
-
-    pub fn send(&mut self, message: impl AnimationMessage) {
-        self.app
-            .main_mut()
-            .world_mut()
-            .get_component_for_entity_mut::<AnimationPlayer>(self.character)
-            .unwrap()
-            .send(message);
-    }
-
-    pub fn in_state(&self, state: Name) -> bool {
-        let world = self.app.main().world();
-        let graphs = self
-            .app
-            .get_resource::<AssetStore<AnimationGraph>>()
-            .unwrap();
-        world
-            .get_component_for_entity::<AnimationPlayer>(self.character)
-            .unwrap()
-            .in_state(graphs, &state)
-    }
-
     pub fn push(&mut self, bone: &str, impulse: Vec3) {
         let world = self.app.main().world();
         let ragdoll = *world
@@ -334,13 +229,13 @@ impl Stage {
         pose[part].translation
     }
 
-    pub fn state(&self) -> BodyState {
+    pub fn animated(&self) -> bool {
         self.app
             .main()
             .world()
-            .get_component_for_entity::<PhysicalState>(self.character)
+            .get_component_for_entity::<RagdollBody>(self.character)
             .unwrap()
-            .state
+            .is_animated(self.player())
     }
 
     pub fn settles(&self) -> usize {
@@ -355,23 +250,71 @@ impl Stage {
         self.app.get_resource::<Downs>().unwrap().0
     }
 
-    pub fn ended(&self) -> Vec<BehaviourEnded> {
-        self.app.get_resource::<Ended>().unwrap().0.clone()
+    /// What the graph last asked of the motor on `bone`.
+    pub fn motor(&self, bone: &str) -> MotorCommand {
+        let index = humanoid_skeleton().bone_index(bone.into()).unwrap();
+        self.player().drive_attributes().get::<MotorCommand>(index)
     }
 
-    pub fn balance(&self) -> Option<Balance> {
-        self.app
-            .main()
-            .world()
-            .get_component_for_entity::<Balance>(self.character)
-            .cloned()
-    }
-
-    pub fn insert<C: concerto_ecs::Component>(&mut self, component: C) {
+    pub fn set_param<T: Reflect>(&mut self, key: Name, value: T) {
         self.app
             .main_mut()
             .world_mut()
-            .insert(component, self.character);
+            .get_component_for_entity_mut::<AnimationPlayer>(self.character)
+            .unwrap()
+            .set_param(key, value);
+    }
+
+    fn player(&self) -> &AnimationPlayer {
+        self.app
+            .main()
+            .world()
+            .get_component_for_entity::<AnimationPlayer>(self.character)
+            .unwrap()
+    }
+
+    pub fn in_state(&self, state: Name) -> bool {
+        let graphs = self
+            .app
+            .get_resource::<AssetStore<AnimationGraph>>()
+            .unwrap();
+        self.player().in_state(graphs, &state)
+    }
+
+    pub fn send(&mut self, message: impl AnimationMessage) {
+        self.app
+            .main_mut()
+            .world_mut()
+            .get_component_for_entity_mut::<AnimationPlayer>(self.character)
+            .unwrap()
+            .send(message);
+    }
+
+    pub fn outcome(&self) -> Option<Ended> {
+        if self.in_state(name!("steady")) {
+            Some(Ended::Steady)
+        } else if self.in_state(name!("fallen")) {
+            Some(Ended::Fallen)
+        } else {
+            None
+        }
+    }
+
+    pub fn stepping(&self) -> bool {
+        let graphs = self
+            .app
+            .get_resource::<AssetStore<AnimationGraph>>()
+            .unwrap();
+        let mut stepping = false;
+        self.player()
+            .for_each_state::<BalanceNode>(graphs, |_, state: &BalanceState, _| {
+                stepping |= state.stepping();
+            });
+        self.player()
+            .for_each_state::<StaggerNode>(graphs, |_, state: &StaggerState, _| {
+                stepping |= state.stepping();
+            });
+        stepping
     }
 }
 
@@ -426,165 +369,80 @@ fn balance_graph(server: &AssetServer, node: BalanceNode) -> AnimationGraph {
 }
 
 #[derive(Debug)]
-struct Watched {
+struct Pushed {
+    entries: Vec<Name>,
     steps: u32,
     travelled: Vec3,
     pelvis_height: f32,
 }
 
-fn watch(
-    stage: &mut Stage,
-    impulse: Vec3,
-    seconds: f32,
-    ended: impl Fn(&Stage) -> bool,
-    stepping: impl Fn(&Stage) -> bool,
-) -> Watched {
+fn pushed(balance: BalanceNode, impulse: Vec3, seconds: f32) -> Pushed {
+    let mut stage = Stage::balancing(balance);
     stage.run(15);
     let start = stage.part("pelvis");
     stage.push("spine_03", impulse);
     let mut steps = 0;
-    let mut was_stepping = false;
+    let mut stepping = false;
     let mut pelvis = start;
     for _ in 0..(seconds / 0.033) as usize {
-        if ended(stage) {
+        if stage.outcome().is_some() {
             break;
         }
         pelvis = stage.part("pelvis");
-        let now_stepping = stepping(stage);
-        if now_stepping && !was_stepping {
+        if stage.stepping() && !stepping {
             steps += 1;
         }
-        was_stepping = now_stepping;
+        stepping = stage.stepping();
         stage.run(1);
     }
-    Watched {
+    stage.run(30);
+    Pushed {
+        entries: stage.entries().to_vec(),
         steps,
         travelled: pelvis - start,
         pelvis_height: pelvis.y,
     }
 }
 
-#[derive(Debug)]
-struct Pushed {
-    outcome: Option<Outcome>,
-    steps: u32,
-    travelled: Vec3,
-    pelvis_height: f32,
-    state: BodyState,
-}
-
-fn pushed(balance: Balance, impulse: Vec3, seconds: f32) -> Pushed {
-    let mut stage = Stage::new();
-    stage.insert(balance);
-    let watched = watch(
-        &mut stage,
-        impulse,
-        seconds,
-        |stage| !stage.ended().is_empty(),
-        |stage| stage.balance().is_some_and(|balance| balance.stepping()),
-    );
-    Pushed {
-        outcome: stage.ended().first().map(|ended| ended.outcome),
-        steps: watched.steps,
-        travelled: watched.travelled,
-        pelvis_height: watched.pelvis_height,
-        state: stage.state(),
-    }
-}
-
-#[derive(Debug)]
-struct Graphed {
-    entries: Vec<Name>,
-    watched: Watched,
-}
-
-fn balanced_in_graph(node: BalanceNode, impulse: Vec3, seconds: f32) -> Graphed {
-    let mut stage = Stage::balancing(node);
-    let watched = watch(
-        &mut stage,
-        impulse,
-        seconds,
-        |stage| stage.entries().len() > 1,
-        Stage::node_stepping,
-    );
-    stage.run(30);
-    Graphed {
-        entries: stage.entries().to_vec(),
-        watched,
-    }
-}
-
 #[test]
 fn a_balancing_body_stands_absorbs_a_push_steps_to_catch_itself_or_gives_up() {
-    let patient = Balance::default().with_settle_seconds(f32::MAX);
+    let patient = BalanceNode::default()
+        .with_settings(BalanceSettings::default().with_settle_seconds(f32::MAX));
     let standing = pushed(patient, Vec3::ZERO, 10.0);
-    assert_eq!(standing.outcome, None, "an unpushed body keeps balancing");
+    assert_eq!(
+        standing.entries,
+        [name!("balance")],
+        "an unpushed body keeps balancing"
+    );
     assert_eq!(standing.steps, 0);
     assert!(
         standing.travelled.length() < 0.05,
         "an unpushed body stands where it is for ten seconds, it drifted {}",
         standing.travelled
     );
-    assert_eq!(standing.state, BodyState::Reacting);
 
     for direction in [Vec3::Z, Vec3::NEG_Z, Vec3::X, Vec3::NEG_X] {
-        let light = pushed(Balance::default(), direction * 12.0, 10.0);
+        let light = pushed(BalanceNode::default(), direction * 12.0, 10.0);
         assert_eq!(
-            (light.outcome, light.steps),
-            (Some(Outcome::Succeeded), 0),
+            light.entries,
+            [name!("balance"), name!("steady")],
+            "a light push towards {direction} is absorbed and the graph moves on to its steady state once and stays: {light:?}"
+        );
+        assert_eq!(
+            light.steps, 0,
             "a light push towards {direction} is absorbed without a step: {light:?}"
         );
-        assert_eq!(light.state, BodyState::Animated);
 
-        let medium = pushed(Balance::default(), direction * 70.0, 10.0);
+        let medium = pushed(BalanceNode::default(), direction * 70.0, 10.0);
         assert!(
-            medium.outcome == Some(Outcome::Succeeded)
+            medium.entries == [name!("balance"), name!("steady")]
                 && (1..=2).contains(&medium.steps)
                 && medium.pelvis_height > 0.9
                 && medium.travelled.dot(direction) > 0.0,
             "a medium push towards {direction} takes a step or two that way and the body ends standing: {medium:?}"
         );
 
-        let hard = pushed(Balance::default(), direction * 300.0, 10.0);
-        assert_eq!(
-            (hard.outcome, hard.state),
-            (Some(Outcome::GaveUp), BodyState::Falling),
-            "a hard push towards {direction} ends in giving up: {hard:?}"
-        );
-    }
-
-    let patient = BalanceNode::default()
-        .with_settings(BalanceSettings::default().with_settle_seconds(f32::MAX));
-    let standing = balanced_in_graph(patient, Vec3::ZERO, 10.0);
-    assert_eq!(
-        standing.entries,
-        [name!("balance")],
-        "an unpushed body keeps balancing in its graph"
-    );
-    assert_eq!(standing.watched.steps, 0);
-    assert!(
-        standing.watched.travelled.length() < 0.05,
-        "an unpushed body balanced by its graph stands where it is, it drifted {}",
-        standing.watched.travelled
-    );
-
-    for direction in [Vec3::Z, Vec3::NEG_Z, Vec3::X, Vec3::NEG_X] {
-        let light = balanced_in_graph(BalanceNode::default(), direction * 12.0, 10.0);
-        assert!(
-            light.entries == [name!("balance"), name!("steady")] && light.watched.steps == 0,
-            "a light push towards {direction} is absorbed without a step and the graph moves on to its steady state once and stays: {light:?}"
-        );
-
-        let medium = balanced_in_graph(BalanceNode::default(), direction * 70.0, 10.0);
-        assert!(
-            medium.entries == [name!("balance"), name!("steady")]
-                && (1..=2).contains(&medium.watched.steps)
-                && medium.watched.pelvis_height > 0.9
-                && medium.watched.travelled.dot(direction) > 0.0,
-            "a medium push towards {direction} takes a step or two that way, the body ends standing and the graph steady: {medium:?}"
-        );
-
-        let hard = balanced_in_graph(BalanceNode::default(), direction * 300.0, 10.0);
+        let hard = pushed(BalanceNode::default(), direction * 300.0, 10.0);
         assert_eq!(
             hard.entries,
             [name!("balance"), name!("fallen")],

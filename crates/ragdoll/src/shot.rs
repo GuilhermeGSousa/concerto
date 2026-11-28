@@ -1,35 +1,16 @@
-use concerto_ecs::{
-    CommandQueue, Component, Entity, Query, ResMut,
-    reflect::{ReflectComponent, ReflectSceneComponent},
-    signal::On,
-};
-use concerto_foundation::time::Time;
-use concerto_name::Name;
-use concerto_physics::{
-    physics_state::PhysicsState,
-    ragdoll::{BodyPose, RagdollId},
-};
+use concerto_ecs::Component;
+use concerto_physics::{physics_state::PhysicsState, ragdoll::BodyPose};
 use concerto_reflect::{Reflect, ReflectDefault};
 use glam::{Quat, Vec3};
 use serde::{Deserialize, Serialize};
 
 use crate::{
     asset::{PartStrength, Segment, Side},
-    balance::{BALANCE, Balance},
-    behaviour::{BehaviourEnded, BodyDrive, BodyState, Outcome, PartCommand, PhysicalState},
-    character::{CharacterRagdoll, RagdollBody, RagdollMode},
-    hit::{BodyHit, HitKind},
     ik::{Chain, bent_spine, reach_hinged},
-    node::balance::{ClaimsOut, Hindrance},
+    node::balance::{ClaimsOut, Hindrance, PartCommand},
     resolve::{Limbs, ResolvedRagdoll},
-    sensing::BodySense,
     view::BodyView,
 };
-
-/// The name the shot behaviour claims parts and reports under.
-pub const SHOT: &str = "shot";
-/// The priority of the shot behaviour's claims.
-pub const SHOT_PRIORITY: i32 = 30;
 
 /// How a gunshot reaction plays out: how hard the muscles at a wound snap and how far they give, what a wounded part keeps, how the spine folds, and when a hand goes to the wound and the head turns to it.
 #[derive(Clone, Debug, PartialEq, Reflect, Serialize, Deserialize)]
@@ -124,26 +105,6 @@ impl ShotSettings {
     }
 }
 
-/// Makes a character answer a `BodyHit` of `HitKind::Shot` with its whole body, by where it struck, instead of flinching.
-///
-/// The muscles at the wound snap tight and then give, a hand goes to the
-/// wound, the head turns to it and then to where the shot came from, and
-/// balance keeps the body up or loses it, as its [`ShotSettings`] say.
-#[derive(Component, Reflect, Clone, Debug, Default, PartialEq)]
-#[reflect(Component, Default, SceneComponent)]
-pub struct ShotReaction {
-    /// How the reaction plays out.
-    pub settings: ShotSettings,
-}
-
-impl ShotReaction {
-    /// Sets `settings`.
-    pub fn with_settings(mut self, settings: ShotSettings) -> Self {
-        self.settings = settings;
-        self
-    }
-}
-
 /// One wound of a shot in progress.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Wound {
@@ -155,7 +116,6 @@ pub struct Wound {
     pub impulse: Vec3,
     /// The seconds since it struck.
     pub age: f32,
-    waiting: Option<u32>,
 }
 
 impl Wound {
@@ -165,17 +125,16 @@ impl Wound {
             point,
             impulse,
             age: 0.0,
-            waiting: None,
         }
     }
 }
 
 /// The share of its strength each wounded part of a character keeps.
 ///
-/// Every character ragdoll carries it. The shot behaviour, and a
-/// [`ShotNode`](crate::node::ShotNode) through its
-/// [`Wounded`](crate::messages::Wounded) signals, leave it on the character
-/// for the game to read: a limp, a guarded arm.
+/// Every character ragdoll carries it. A [`ShotNode`](crate::node::ShotNode)
+/// leaves it on the character through its
+/// [`Wounded`](crate::messages::Wounded) signals, for the game to read: a
+/// limp, a guarded arm.
 #[derive(Component, Clone, Debug, Default, PartialEq)]
 pub struct Wounds {
     strength: Vec<f32>,
@@ -202,25 +161,6 @@ impl Wounds {
     }
 }
 
-/// A shot reaction in progress, beside the [`ShotReaction`] that started it.
-///
-/// It runs on a `Balance` and ends when that ends, with the same outcome.
-#[derive(Component, Clone, Debug, Default, PartialEq)]
-#[require(Balance, BodyDrive, BodySense, PhysicalState, Wounds)]
-pub struct Shot {
-    wounds: Vec<Wound>,
-    ended: Option<Outcome>,
-}
-
-impl Shot {
-    /// The wounds so far, oldest first.
-    pub fn wounds(&self) -> &[Wound] {
-        &self.wounds
-    }
-}
-
-const PATIENCE: u32 = 10;
-
 fn joined(resolved: &ResolvedRagdoll, a: usize, b: usize) -> bool {
     let parts = &resolved.settings().parts;
     parts[a].parent == Some(b) || parts[b].parent == Some(a)
@@ -241,84 +181,6 @@ fn is_trunk(segment: Segment) -> bool {
     matches!(segment, Segment::Pelvis | Segment::Spine)
 }
 
-/// Starts a character's shot reaction, or adds a wound to the one in progress, when it is hit by a shot while it is on its feet.
-///
-/// A character with no [`ShotReaction`], or one that is limp, falling, down
-/// or dead, is left to `flinch_when_hit`.
-pub fn react_when_shot(
-    on: On<BodyHit>,
-    mut characters: Query<(
-        &CharacterRagdoll,
-        &RagdollId,
-        &RagdollBody,
-        Option<&ShotReaction>,
-        Option<&PhysicalState>,
-        Option<&mut Shot>,
-    )>,
-    state: ResMut<PhysicsState>,
-    mut cmd: CommandQueue,
-) {
-    let hit = *on.signal();
-    let Some((character, id, body, reaction, physical, shot)) =
-        characters.get_entity_mut(hit.character)
-    else {
-        return;
-    };
-    if !takes_shot(&hit, character, reaction.is_some(), physical)
-        || hit.part >= body.resolved().part_count()
-    {
-        return;
-    }
-    let mut pose = Vec::new();
-    state.ragdoll_pose(*id, &mut pose);
-    let Some(struck) = pose.get(hit.part) else {
-        return;
-    };
-    let wound = Wound {
-        waiting: Some(0),
-        ..Wound::struck(
-            hit.part,
-            struck.inverse().transform_point(hit.point),
-            hit.impulse,
-        )
-    };
-    match shot {
-        Some(mut shot) => shot.wounds.push(wound),
-        None => cmd.insert(
-            Shot {
-                wounds: vec![wound],
-                ended: None,
-            },
-            hit.character,
-        ),
-    }
-}
-
-/// Whether a hit is answered by the shot behaviour and not by the flinch.
-pub(crate) fn takes_shot(
-    hit: &BodyHit,
-    character: &CharacterRagdoll,
-    reacts: bool,
-    physical: Option<&PhysicalState>,
-) -> bool {
-    hit.kind == HitKind::Shot
-        && reacts
-        && character.mode != RagdollMode::Limp
-        && physical.is_none_or(|physical| {
-            matches!(physical.state, BodyState::Animated | BodyState::Reacting)
-        })
-}
-
-/// When a shot character's balance ends, notes its outcome on the shot.
-pub fn note_shot_balance_ended(on: On<BehaviourEnded>, mut shots: Query<&mut Shot>) {
-    let ended = on.signal();
-    if ended.behaviour == Name::from(BALANCE)
-        && let Some(mut shot) = shots.get_entity_mut(ended.character)
-    {
-        shot.ended = Some(ended.outcome);
-    }
-}
-
 struct Arm {
     side: Side,
     upper: usize,
@@ -334,60 +196,6 @@ impl Arm {
             lower: limbs.lower_arm?,
             hand: limbs.hand?,
         })
-    }
-}
-
-/// Drives every shot body, each fixed step in `BehaviourSet` before `balance_bodies`.
-///
-/// It gives the struck parts their impulses once they are simulated, snaps
-/// and slackens the muscles at each wound, folds the spine over a wound in
-/// the trunk, lets a shot arm hang and weakens a shot leg through balance.
-/// It sends the nearer free hand to the newest wound and turns the head to
-/// it and then to where the shot came from.
-pub fn shot_bodies(
-    mut characters: Query<(
-        Entity,
-        &ShotReaction,
-        &mut Shot,
-        &mut Wounds,
-        &mut Balance,
-        &RagdollId,
-        &RagdollBody,
-        &mut BodyDrive,
-    )>,
-    mut state: ResMut<PhysicsState>,
-) {
-    let dt = Time::fixed_delta_time().as_secs_f32();
-    let mut claims = ClaimsOut::default();
-    for (entity, reaction, mut shot, mut wounds, mut balance, id, body, mut drive) in
-        characters.iter_mut()
-    {
-        let shot = &mut *shot;
-        shot.strike_wounds(*id, body, &mut state);
-        let resolved = body.resolved();
-        let count = resolved.part_count();
-        for wound in &shot.wounds {
-            if let Some(share) = reaction
-                .settings
-                .lasting_share(resolved.segment(wound.part))
-            {
-                wounds.weaken(wound.part, share, count);
-            }
-        }
-        let view = BodyView::new(entity, *id, body, None, None);
-        let Some(legs) = (ShotController {
-            settings: &reaction.settings,
-            wounds: &mut shot.wounds,
-        })
-        .step(view, &state, dt, &mut claims) else {
-            continue;
-        };
-        balance.hinder(legs);
-        for part in 0..count {
-            if let Some(claim) = claims.get(part) {
-                drive.claim(SHOT, part, SHOT_PRIORITY, claim.weight, claim.command);
-            }
-        }
     }
 }
 
@@ -479,31 +287,6 @@ struct Posed<'a> {
     carried: &'a [Quat],
     across: Vec3,
     forward: Vec3,
-}
-
-impl Shot {
-    fn strike_wounds(&mut self, id: RagdollId, body: &RagdollBody, state: &mut PhysicsState) {
-        let mut pose = Vec::new();
-        state.ragdoll_pose(id, &mut pose);
-        for wound in &mut self.wounds {
-            let Some(waited) = wound.waiting else {
-                continue;
-            };
-            if !body.is_kinematic(wound.part) {
-                if let (Some(part), Some(struck)) = (
-                    state.ragdoll_bodies(id).get(wound.part).copied(),
-                    pose.get(wound.part),
-                ) {
-                    state.add_impulse_at(part, wound.impulse, struck.transform_point(wound.point));
-                }
-                wound.waiting = None;
-            } else if waited >= PATIENCE {
-                wound.waiting = None;
-            } else {
-                wound.waiting = Some(waited + 1);
-            }
-        }
-    }
 }
 
 fn weaken_wounded(
@@ -703,20 +486,5 @@ fn claim_muscles(reaction: &ShotSettings, muscles: &Muscles, claims: &mut Claims
             command = command.with_target(target);
         }
         claims.claim(part, 1.0, command);
-    }
-}
-
-/// Each fixed step, in `BehaviourSet`: ends every shot reaction whose balance has ended, with the same outcome.
-pub fn end_shots(shots: Query<(Entity, &Shot)>, mut cmd: CommandQueue) {
-    for (character, shot) in shots.iter() {
-        let Some(outcome) = shot.ended else {
-            continue;
-        };
-        cmd.remove::<Shot>(character);
-        cmd.trigger(BehaviourEnded {
-            character,
-            behaviour: SHOT.into(),
-            outcome,
-        });
     }
 }

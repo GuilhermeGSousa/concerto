@@ -45,7 +45,7 @@ use concerto::{
 use concerto_physics_gizmos::{PhysicsGizmos, PhysicsGizmosPlugin};
 use concerto_ragdoll::{
     BalanceNode, BalanceSettings, BodyHit, BodySense, CharacterRagdoll, Death, Die, DyingNode,
-    FallNode, LimpNode, RagdollBody, RagdollMode, Settled, ShotNode, StaggerNode, active_states,
+    FallNode, LimpNode, RagdollBody, Settled, ShotNode, StaggerNode, active_states,
     messages::{BodyDead, BodyDown, Shot, Stagger, Steadied, Toppled},
     testing::reference_humanoid,
 };
@@ -393,8 +393,7 @@ fn spawn_humanoid(cmd: &mut CommandQueue, assets: &AssetServer, towards: Towards
             bones.iter().copied().map(SceneEntityRef::Entity).collect(),
             bones.first().copied().map(SceneEntityRef::Entity),
         ),
-        CharacterRagdoll::new(ragdoll).with_mode(RagdollMode::Graph),
-        BodySense::default(),
+        CharacterRagdoll::new(ragdoll),
         AnimationHandleComponent::new(graph),
     ));
     Stage {

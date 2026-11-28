@@ -7,9 +7,7 @@ use glam::{Quat, Vec3};
 use crate::{
     asset::{PartStrength, Ragdoll, StrengthProfile},
     attributes::{MotorCommand, PhysicsAmount},
-    character::{
-        Asked, CharacterRagdoll, Driven, Held, PoseLost, RagdollBody, RagdollMode, drive_part,
-    },
+    character::{Asked, CharacterRagdoll, Driven, Held, PoseLost, RagdollBody, drive_part},
     dying::Settled,
 };
 
@@ -109,7 +107,7 @@ impl PartDrive {
     }
 }
 
-/// Drives every ragdoll in [`RagdollMode::Graph`] from its graph's physics attributes, each fixed step after the drive pass and before physics steps.
+/// Drives every ragdoll from its graph's physics attributes, each fixed step after the drive pass and before physics steps.
 ///
 /// It reads [`AnimationPlayer::drive_attributes`] only, so every part of one
 /// step is decided by one walk of the graph.
@@ -125,8 +123,10 @@ impl PartDrive {
 /// - The command's force and torque are scaled by its cover.
 ///
 /// A character with no `AnimationPlayer`, or whose player is paused, asks for
-/// nothing, so its body follows its bones. Triggers [`PoseLost`] as
-/// [`drive_character_ragdolls`](crate::character::drive_character_ragdolls) does.
+/// nothing, so its body follows its bones.
+///
+/// Triggers [`PoseLost`] when the root part has been too far from its
+/// animated place for too long.
 pub fn drive_from_graph(
     mut characters: Query<
         (
@@ -145,9 +145,6 @@ pub fn drive_from_graph(
     let dt = Time::fixed_delta_time().as_secs_f32();
     let mut simulated = Vec::new();
     for (entity, character, id, mut body, player) in characters.iter_mut() {
-        if character.mode != RagdollMode::Graph {
-            continue;
-        }
         let profile = ragdolls
             .get(&character.ragdoll)
             .and_then(|ragdoll| ragdoll.profile(&character.profile));
@@ -172,7 +169,6 @@ pub fn drive_from_graph(
             targets: drives.iter().map(|drive| drive.target).collect(),
             forces: drives.iter().map(|drive| drive.force).collect(),
             torques: drives.iter().map(|drive| drive.torque).collect(),
-            claimed: vec![true; drives.len()],
         };
         let animated = body.animated_pose().to_vec();
         let body = &mut *body;
@@ -181,7 +177,6 @@ pub fn drive_from_graph(
             animated: &animated,
             wanted: &wanted,
             asked: &asked,
-            step: 1.0,
             dt,
         };
         for part in 0..drives.len() {

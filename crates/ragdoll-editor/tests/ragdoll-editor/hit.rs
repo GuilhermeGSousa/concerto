@@ -29,7 +29,7 @@ use concerto_physics::{
     rigid_body::{AllowedDofs, RigidBody},
 };
 use concerto_ragdoll::{
-    CharacterRagdoll, FlinchNode, RagdollMode,
+    CharacterRagdoll, FlinchNode,
     messages::{Hit, Recovered},
     testing::{humanoid_skeleton, reference_humanoid},
 };
@@ -127,9 +127,7 @@ fn spawn_character(
                 bones.iter().copied().map(SceneEntityRef::Entity).collect(),
                 bones.first().copied().map(SceneEntityRef::Entity),
             ),
-            CharacterRagdoll::new(ragdoll)
-                .with_capsule(capsule)
-                .with_mode(RagdollMode::Graph),
+            CharacterRagdoll::new(ragdoll).with_capsule(capsule),
             AnimationHandleComponent::new(graph),
         ),
         character,

@@ -17,7 +17,7 @@ use concerto_foundation::{
     time::Time,
     transform::{GlobalTransform, Transform, parent_world_of},
 };
-use concerto_mesh::{JointName, Skeleton, SkeletonComponent};
+use concerto_mesh::{Skeleton, SkeletonComponent};
 use concerto_name::Name;
 use concerto_physics::{
     body::BodyId,
@@ -35,40 +35,12 @@ use log::warn;
 
 use crate::{
     asset::{PartStrength, Ragdoll, StrengthProfile},
-    behaviour::{BodyDrive, Claim},
-    dying::{Dying, Settled, mark_dead},
-    hit::Flinch,
+    dying::{Settled, mark_dead},
     messages::{BodyDead, PendingImpulses, Wounded, keep_wounds},
     resolve::ResolvedRagdoll,
+    sensing::BodySense,
     shot::Wounds,
 };
-
-/// What a character's ragdoll does.
-#[derive(Reflect, Clone, Copy, Debug, Default, PartialEq, Eq)]
-#[reflect(Default)]
-pub enum RagdollMode {
-    /// Every part is kinematic and is driven to its bone each fixed step.
-    ///
-    /// The body pushes props and can be hit, and the animation is untouched.
-    #[default]
-    FollowsAnimation,
-    /// Every part is dynamic with its motors off, and keeps the velocity it had: the body falls as a body.
-    Limp,
-    /// Each part is held to the animated pose as the character's strength profile says: kinematic, powered by its joint's motor, or limp.
-    ///
-    /// The body tries to do what the animation says and physics decides how
-    /// well it manages.
-    Powered,
-    /// Each part is driven by the physics attributes of the character's animation graph,
-    /// [`PhysicsAmount`](crate::PhysicsAmount) and [`MotorCommand`](crate::MotorCommand), and is
-    /// drawn by its bone's amount; see [`drive_from_graph`](crate::drive::drive_from_graph).
-    ///
-    /// The character's `weight`, `part_weights` and `blend` are unused, and its `profile`
-    /// holds each part to the animation where no node of the graph holds it. The behaviour
-    /// components, such as [`Balance`](crate::Balance) or [`HitReaction`](crate::HitReaction),
-    /// do not drive a character in this mode.
-    Graph,
-}
 
 /// Triggered on a character that can no longer hold its pose.
 ///
@@ -79,16 +51,6 @@ pub struct PoseLost;
 impl Signal for PoseLost {}
 impl EntitySignal for PoseLost {}
 
-/// How much of one part's simulated pose is drawn, overriding the character's `weight` for the part on `bone`.
-#[derive(Reflect, Clone, Copy, Debug, Default, PartialEq)]
-#[reflect(Default)]
-pub struct PartWeight {
-    /// The bone whose part this sets.
-    pub bone: JointName,
-    /// How much of the part's simulated pose is drawn: 0 is the animated pose, 1 the ragdoll's.
-    pub weight: f32,
-}
-
 /// Gives a character a physical body.
 ///
 /// It goes on the entity with the `SkeletonComponent` and names the ragdoll
@@ -96,7 +58,7 @@ pub struct PartWeight {
 /// have loaded.
 #[derive(Component, Reflect, Clone, Debug, PartialEq)]
 #[reflect(Component, Default, SceneComponent)]
-#[require(PendingImpulses, Wounds, Listener<Wounded> = keep_wounds(), Listener<BodyDead> = mark_dead())]
+#[require(PendingImpulses, Wounds, BodySense, Listener<Wounded> = keep_wounds(), Listener<BodyDead> = mark_dead())]
 pub struct CharacterRagdoll {
     /// The ragdoll asset of the skeleton.
     pub ragdoll: AssetHandle<Ragdoll>,
@@ -105,20 +67,12 @@ pub struct CharacterRagdoll {
     /// It should have `CollisionLayers::character()` so the parts pass
     /// through it.
     pub capsule: SceneEntityRef,
-    /// How the parts are driven.
-    pub mode: RagdollMode,
-    /// How much of the simulated pose is drawn on the skeleton: 0 is the animated pose, 1 the ragdoll's.
-    pub weight: f32,
-    /// Weights of single parts, each replacing `weight` for its part.
-    pub part_weights: Vec<PartWeight>,
-    /// The strength profile of the ragdoll asset used in the powered mode, and in the graph mode for the share of each part no node holds.
-    pub profile: Name,
-    /// The seconds over which a change of profile takes hold.
-    pub blend: f32,
     /// How far the root part may be from its animated place, in metres, before the pose counts as lost.
     pub lost_distance: f32,
     /// How long the root part must stay that far for `PoseLost` to be triggered.
     pub lost_seconds: f32,
+    /// The strength profile of the ragdoll asset that holds each part to its animation for the share of it no node of the graph holds; none by default.
+    pub profile: Name,
 }
 
 impl Default for CharacterRagdoll {
@@ -126,19 +80,15 @@ impl Default for CharacterRagdoll {
         Self {
             ragdoll: AssetHandle::default(),
             capsule: SceneEntityRef::default(),
-            mode: RagdollMode::default(),
-            weight: 0.0,
-            part_weights: Vec::new(),
-            profile: Name::default(),
-            blend: 0.2,
             lost_distance: 0.5,
             lost_seconds: 0.3,
+            profile: Name::default(),
         }
     }
 }
 
 impl CharacterRagdoll {
-    /// A ragdoll that follows the animation.
+    /// A ragdoll of `ragdoll`, which follows the animation until its graph draws it from physics.
     pub fn new(ragdoll: AssetHandle<Ragdoll>) -> Self {
         Self {
             ragdoll,
@@ -152,61 +102,10 @@ impl CharacterRagdoll {
         self
     }
 
-    /// Sets how the parts are driven.
-    pub fn with_mode(mut self, mode: RagdollMode) -> Self {
-        self.mode = mode;
-        self
-    }
-
-    /// Sets how much of the simulated pose is drawn: 0 is the animated pose, 1 the ragdoll's.
-    pub fn with_weight(mut self, weight: f32) -> Self {
-        self.weight = weight;
-        self
-    }
-
-    /// Draws `weight` of the simulated pose on the part on `bone`, whatever the character's `weight` is.
-    pub fn with_part_weight(mut self, bone: impl Into<JointName>, weight: f32) -> Self {
-        self.part_weights.push(PartWeight {
-            bone: bone.into(),
-            weight,
-        });
-        self
-    }
-
-    /// Sets the strength profile used in the powered mode, and in the graph mode for the share of each part no node holds.
+    /// Sets the strength profile that holds each part to its animation for the share of it no node of the graph holds.
     pub fn with_profile(mut self, profile: impl Into<Name>) -> Self {
         self.profile = profile.into();
         self
-    }
-
-    /// Holds the body to the animation with the strength profile `profile`, and draws the simulated pose.
-    pub fn power(&mut self, profile: impl Into<Name>) {
-        self.mode = RagdollMode::Powered;
-        self.profile = profile.into();
-        self.weight = 1.0;
-    }
-
-    /// Lets the body go: every part dynamic, and the whole simulated pose drawn.
-    pub fn go_limp(&mut self) {
-        self.mode = RagdollMode::Limp;
-        self.weight = 1.0;
-    }
-
-    /// The weight of the part on `bone`, from 0 to 1.
-    pub fn weight_of(&self, bone: &str) -> f32 {
-        self.part_weights
-            .iter()
-            .find(|part| &*part.bone == bone)
-            .map_or(self.weight, |part| part.weight)
-            .clamp(0.0, 1.0)
-    }
-
-    fn drawn(&self, player: Option<&AnimationPlayer>, body: &RagdollBody, part: usize) -> f32 {
-        if self.mode == RagdollMode::Graph {
-            return body.drawn_amount(player, part);
-        }
-        body.bone_name(part)
-            .map_or(0.0, |bone| self.weight_of(&bone))
     }
 }
 
@@ -252,36 +151,6 @@ impl Held {
     fn slack(&self) -> bool {
         self.torque_limit <= SLACK_TORQUE || self.stiffness <= 0.0
     }
-
-    fn towards(self, wanted: Self, step: f32) -> Self {
-        if self.kinematic || wanted.kinematic || step >= 1.0 {
-            return wanted;
-        }
-        let from = if self.slack() {
-            Self {
-                stiffness: wanted.stiffness,
-                damping: wanted.damping,
-                ..self
-            }
-        } else {
-            self
-        };
-        let to = if wanted.slack() {
-            Self {
-                stiffness: from.stiffness,
-                damping: from.damping,
-                ..wanted
-            }
-        } else {
-            wanted
-        };
-        Self {
-            kinematic: false,
-            stiffness: from.stiffness + (to.stiffness - from.stiffness) * step,
-            damping: from.damping + (to.damping - from.damping) * step,
-            torque_limit: from.torque_limit + (to.torque_limit - from.torque_limit) * step,
-        }
-    }
 }
 
 /// A character's built ragdoll, beside its `RagdollId`: which bone each part follows.
@@ -294,7 +163,6 @@ pub struct RagdollBody {
     held: Vec<Held>,
     aimed: Vec<Quat>,
     slack: Vec<bool>,
-    changing: Vec<bool>,
     lost_for: f32,
     lost: bool,
     animated: Vec<BodyPose>,
@@ -335,10 +203,6 @@ impl RagdollBody {
     /// Whether the part is kinematic right now.
     pub fn is_kinematic(&self, part: usize) -> bool {
         self.held.get(part).is_some_and(|held| held.kinematic)
-    }
-
-    pub(crate) fn is_changing(&self, part: usize) -> bool {
-        self.changing.get(part).copied().unwrap_or(false)
     }
 
     pub(crate) fn shared_resolved(&self) -> &Arc<ResolvedRagdoll> {
@@ -487,7 +351,6 @@ pub fn create_character_ragdolls(
                     held: vec![Held::KINEMATIC; pose.len()],
                     aimed: vec![Quat::IDENTITY; pose.len()],
                     slack: vec![false; pose.len()],
-                    changing: vec![false; pose.len()],
                     lost_for: 0.0,
                     lost: false,
                     animated: pose.clone(),
@@ -500,110 +363,6 @@ pub fn create_character_ragdolls(
             ),
             entity,
         );
-    }
-}
-
-fn wanted_strengths(
-    character: &CharacterRagdoll,
-    body: &RagdollBody,
-    ragdoll: Option<&Ragdoll>,
-) -> Vec<Held> {
-    let parts = body.resolved.part_count();
-    match character.mode {
-        RagdollMode::FollowsAnimation | RagdollMode::Graph => vec![Held::KINEMATIC; parts],
-        RagdollMode::Limp => vec![Held::of(PartStrength::Limp); parts],
-        RagdollMode::Powered => {
-            let profile = ragdoll.and_then(|ragdoll| ragdoll.profile(&character.profile));
-            (0..parts)
-                .map(|part| {
-                    let strength = match (profile, body.bone_name(part)) {
-                        (Some(profile), Some(bone)) => profile.strength_of(&bone),
-                        _ => PartStrength::Kinematic,
-                    };
-                    Held::of(strength)
-                })
-                .collect()
-        }
-    }
-}
-
-/// Holds every ragdoll's parts to the animated pose as its mode and strength profile ask, each fixed step before physics steps.
-///
-/// A character in [`RagdollMode::Graph`] is left to
-/// [`drive_from_graph`](crate::drive::drive_from_graph). A kinematic part is driven to its bone. A powered part's motor is aimed at
-/// its bone's rotation under its parent's, leading it by the animation's own
-/// speed. A limp part's motor is off. A change of strength takes hold over
-/// the character's `blend`.
-///
-/// Triggers [`PoseLost`] when the root part has been too far from its
-/// animated place for too long.
-pub fn drive_character_ragdolls(
-    mut characters: Query<
-        (
-            Entity,
-            &CharacterRagdoll,
-            &RagdollId,
-            &mut RagdollBody,
-            Option<&Flinch>,
-            Option<&mut BodyDrive>,
-            Option<&Dying>,
-        ),
-        Without<Settled>,
-    >,
-    ragdolls: Res<AssetStore<Ragdoll>>,
-    mut state: ResMut<PhysicsState>,
-    mut cmd: CommandQueue,
-) {
-    let dt = Time::fixed_delta_time().as_secs_f32();
-    let mut simulated = Vec::new();
-    for (entity, character, id, mut body, flinch, drive, dying) in characters.iter_mut() {
-        let claims = drive.map(|mut drive| drive.take()).unwrap_or_default();
-        if character.mode == RagdollMode::Graph {
-            continue;
-        }
-        let animated = body.animated.clone();
-        let mut wanted = wanted_strengths(character, &body, ragdolls.get(&character.ragdoll));
-        if let Some(flinch) = flinch {
-            for (held, scale) in wanted.iter_mut().zip(flinch.scales()) {
-                held.stiffness *= scale;
-                held.damping *= scale;
-                held.torque_limit *= scale;
-            }
-        }
-        let step = if character.blend > 0.0 && flinch.is_none() && dying.is_none() {
-            dt / character.blend
-        } else {
-            1.0
-        };
-        let count = body.resolved.part_count();
-        let mut asked = Asked {
-            targets: body.animated_targets(),
-            forces: vec![Vec3::ZERO; count],
-            torques: vec![Vec3::ZERO; count],
-            claimed: vec![false; count],
-        };
-        apply_claims(&claims, &mut wanted, &mut asked);
-        if let Some(dying) = dying {
-            drain_strengths(dying, &body.resolved, &mut wanted, &mut asked);
-        }
-        for (part, held) in wanted.iter().enumerate() {
-            body.changing[part] = held.kinematic != body.held[part].kinematic;
-        }
-        let body = &mut *body;
-        let driven = Driven {
-            id: *id,
-            animated: &animated,
-            wanted: &wanted,
-            asked: &asked,
-            step,
-            dt,
-        };
-        for part in 0..body.resolved.settings().parts.len() {
-            drive_part(&driven, part, body, &mut state);
-        }
-        if body.track_lost(character, *id, &state, &mut simulated, dt) {
-            cmd.entity(entity).trigger(PoseLost);
-        }
     }
 }
 
@@ -659,7 +418,6 @@ pub(crate) struct Asked {
     pub(crate) targets: Vec<Quat>,
     pub(crate) forces: Vec<Vec3>,
     pub(crate) torques: Vec<Vec3>,
-    pub(crate) claimed: Vec<bool>,
 }
 
 pub(crate) struct Driven<'a> {
@@ -667,50 +425,7 @@ pub(crate) struct Driven<'a> {
     pub(crate) animated: &'a [BodyPose],
     pub(crate) wanted: &'a [Held],
     pub(crate) asked: &'a Asked,
-    pub(crate) step: f32,
     pub(crate) dt: f32,
-}
-
-fn apply_claims(claims: &[Claim], wanted: &mut [Held], asked: &mut Asked) {
-    let count = wanted.len();
-    for claim in claims {
-        if claim.part >= count || claim.weight <= 0.0 {
-            continue;
-        }
-        let strength = Held::of(claim.command.strength);
-        wanted[claim.part] = if strength.kinematic || wanted[claim.part].kinematic {
-            if claim.weight >= 0.5 {
-                strength
-            } else {
-                wanted[claim.part]
-            }
-        } else {
-            wanted[claim.part].towards(strength, claim.weight)
-        };
-        if let Some(target) = claim.command.target {
-            asked.targets[claim.part] = asked.targets[claim.part]
-                .slerp(target, claim.weight)
-                .normalize();
-        }
-        asked.forces[claim.part] += claim.command.force * claim.weight;
-        asked.torques[claim.part] += claim.command.torque * claim.weight;
-        asked.claimed[claim.part] = true;
-    }
-}
-
-fn drain_strengths(
-    dying: &Dying,
-    resolved: &ResolvedRagdoll,
-    wanted: &mut [Held],
-    asked: &mut Asked,
-) {
-    for (part, held) in wanted.iter_mut().enumerate() {
-        let segment = resolved.segment(part);
-        let left = dying.left(segment);
-        *held = dying.drain(segment, *held);
-        asked.forces[part] *= left;
-        asked.torques[part] *= left;
-    }
 }
 
 pub(crate) fn drive_part(
@@ -722,12 +437,7 @@ pub(crate) fn drive_part(
     let id = driven.id;
     let asked = driven.asked;
     let before = body.held[part];
-    let blend = if asked.claimed[part] {
-        1.0
-    } else {
-        driven.step
-    };
-    let held = before.towards(driven.wanted[part], blend);
+    let held = driven.wanted[part];
     body.held[part] = held;
     if before.kinematic != held.kinematic {
         let motion = if held.kinematic {
@@ -809,10 +519,10 @@ fn heading(rotation: Quat) -> Quat {
 
 /// Carries each character's capsule under its ragdoll, each fixed step before physics steps.
 ///
-/// While the character's root part has any weight, or in the graph mode any
-/// physics amount, its capsule is `Carried`, is in no collision layer, and is
-/// put on the ground under the ragdoll's root part. When it is back at 0 the
-/// capsule is let go where it stands.
+/// While the character's root part is drawn from physics by any amount, its
+/// capsule is `Carried`, is in no collision layer, and is put on the ground
+/// under the ragdoll's root part. When the amount is back at 0 the capsule is
+/// let go where it stands.
 pub fn carry_capsules(
     mut characters: Query<
         (
@@ -830,7 +540,7 @@ pub fn carry_capsules(
 ) {
     let mut pose = Vec::new();
     for (character, id, mut body, player) in characters.iter_mut() {
-        let physical = character.drawn(player, &body, 0) > 0.0;
+        let physical = body.drawn_amount(player, 0) > 0.0;
         let capsule = character.capsule.entity().and_then(|capsule| {
             bodies.get_entity(capsule).map(|(body, layers)| Carrying {
                 capsule,
@@ -920,13 +630,12 @@ fn blend(animated: Mat4, simulated: BodyPose, weight: f32) -> Mat4 {
 /// Writes each ragdoll's pose onto its bones, each frame after the animation has written the bones and before transforms propagate.
 ///
 /// It notes the animated pose of every part, then writes the ragdoll's pose,
-/// interpolated between the last two fixed steps, by each part's weight, or in
-/// the graph mode by its bone's physics amount. A bone with no part keeps its
-/// animated pose under its parent, so fingers and a face still animate on a
-/// limp body.
+/// interpolated between the last two fixed steps, by its bone's
+/// [`PhysicsAmount`](crate::PhysicsAmount) in the graph's drive pass. A bone
+/// with no part keeps its animated pose under its parent, so fingers and a
+/// face still animate on a limp body.
 pub fn write_ragdoll_poses(
     mut characters: Query<(
-        &CharacterRagdoll,
         &mut RagdollBody,
         &SkeletonComponent,
         Option<&AnimationPlayer>,
@@ -938,12 +647,12 @@ pub fn write_ragdoll_poses(
     time: Res<Time>,
 ) {
     let alpha = time.fixed_alpha();
-    for (character, mut body, skeleton_component, player) in characters.iter_mut() {
+    for (mut body, skeleton_component, player) in characters.iter_mut() {
         let Some(skeleton) = skeletons.get(skeleton_component.skeleton()) else {
             continue;
         };
         let weights: Vec<f32> = (0..body.resolved.part_count())
-            .map(|part| character.drawn(player, &body, part))
+            .map(|part| body.drawn_amount(player, part))
             .collect();
         let simulated = body.interpolated_pose(alpha);
         let mut part_of_bone: Vec<Option<usize>> = vec![None; body.skeleton_bones.len()];
