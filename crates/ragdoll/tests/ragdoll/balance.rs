@@ -17,7 +17,11 @@ use concerto_app::{
 };
 use concerto_ecs::entity::Entity;
 use concerto_ecs::resource::{ResMut, Resource};
-use concerto_ecs::signal::{On, lifecycle::Add};
+use concerto_ecs::signal::{
+    On,
+    lifecycle::Add,
+    listener::{IntoListener, Listener},
+};
 use concerto_foundation::assets::{
     asset_server::AssetServer, asset_store::AssetStore, handle::AssetHandle,
 };
@@ -33,10 +37,11 @@ use concerto_ragdoll::testing::{
 };
 use concerto_ragdoll::{
     Balance, BalanceNode, BalanceSettings, BalanceState, BehaviourEnded, BodyDrive, BodySense,
-    BodySettled, BodyState, CharacterRagdoll, Dead, LimpNode, Outcome, PhysicalState, RagdollBody,
-    RagdollMode, RagdollPlugin, StaggerNode, StaggerState,
-    messages::{Steadied, Toppled},
+    BodySettled, BodyState, CharacterRagdoll, Dead, LimpNode, MotorCommand, Outcome, PhysicalState,
+    RagdollBody, RagdollMode, RagdollPlugin, StaggerNode, StaggerState,
+    messages::{BodyDown, Steadied, Toppled},
 };
+use concerto_reflect::Reflect;
 use glam::{Quat, Vec3};
 
 #[derive(Resource, Default)]
@@ -60,6 +65,16 @@ fn count_marked_dead(_: On<Add<Dead>>, mut deaths: ResMut<Deaths>) {
     deaths.0 += 1;
 }
 
+#[derive(Resource, Default)]
+struct Downs(usize);
+
+fn count_downs() -> Listener<BodyDown> {
+    (|_: On<BodyDown>, mut downs: ResMut<Downs>| {
+        downs.0 += 1;
+    })
+    .into_listener()
+}
+
 type GraphBuilder = Box<dyn FnOnce(&AssetServer) -> AnimationGraph>;
 
 pub struct Stage {
@@ -81,7 +96,15 @@ impl Stage {
 
     /// A body in the graph mode, with a `BodySense`, whose animation graph is `build`'s.
     pub fn graphed(build: impl FnOnce(&AssetServer) -> AnimationGraph + 'static) -> Self {
-        Self::build(Transform::default(), Some(Box::new(build)))
+        Self::placed_graphed(Transform::default(), build)
+    }
+
+    /// A body in the graph mode at `placement`, with a `BodySense`, whose animation graph is `build`'s.
+    pub fn placed_graphed(
+        placement: Transform,
+        build: impl FnOnce(&AssetServer) -> AnimationGraph + 'static,
+    ) -> Self {
+        Self::build(placement, Some(Box::new(build)))
     }
 
     /// A body in the graph mode whose animation graph balances it with `node` over the standing pose, moving to the state `steady` when it succeeds and `fallen`, where it goes limp, when it gives up.
@@ -105,6 +128,7 @@ impl Stage {
             .insert_resource(Settles::default());
         app.add_listener(count_marked_dead)
             .insert_resource(Deaths::default());
+        app.insert_resource(Downs::default());
         app.finish_plugin_build();
         let server = app.get_resource::<AssetServer>().unwrap().clone();
         let reference = reference_humanoid();
@@ -115,6 +139,7 @@ impl Stage {
         let graph = graph.map(|build| server.add(build(&server)));
         app.update();
         let world = app.main_mut().world_mut();
+        world.register_component::<Listener<BodyDown>>();
         world.spawn((
             Collider::cuboid(50.0, 0.5, 50.0),
             Transform::from_translation(Vec3::new(0.0, -0.5, 0.0)),
@@ -127,6 +152,7 @@ impl Stage {
                     CharacterRagdoll::new(asset).with_mode(RagdollMode::Graph),
                     AnimationHandleComponent::new(graph),
                     BodySense::default(),
+                    count_downs(),
                 ),
                 character,
             ),
@@ -232,6 +258,26 @@ impl Stage {
         stepping
     }
 
+    pub fn set_param<T: Reflect>(&mut self, key: Name, value: T) {
+        self.app
+            .main_mut()
+            .world_mut()
+            .get_component_for_entity_mut::<AnimationPlayer>(self.character)
+            .unwrap()
+            .set_param(key, value);
+    }
+
+    /// What the graph's drive pass last asked of the motor on `bone`, when the body has a graph.
+    pub fn motor(&self, bone: &str) -> Option<MotorCommand> {
+        let index = humanoid_skeleton().bone_index(bone.into()).unwrap();
+        let player = self
+            .app
+            .main()
+            .world()
+            .get_component_for_entity::<AnimationPlayer>(self.character)?;
+        Some(player.drive_attributes().get::<MotorCommand>(index))
+    }
+
     pub fn send(&mut self, message: impl AnimationMessage) {
         self.app
             .main_mut()
@@ -303,6 +349,10 @@ impl Stage {
 
     pub fn deaths(&self) -> usize {
         self.app.get_resource::<Deaths>().unwrap().0
+    }
+
+    pub fn downs(&self) -> usize {
+        self.app.get_resource::<Downs>().unwrap().0
     }
 
     pub fn ended(&self) -> Vec<BehaviourEnded> {
