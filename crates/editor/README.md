@@ -1887,10 +1887,9 @@ that never steps. When no bone is drawn from physics within one second it
 answers that the graph did not react, and says to add a flinch or shot entry
 to a slot of its graph. When the body never returns, as one that is down or
 dead does, it answers after eight seconds of game time with the graph's states.
-An unknown entity, one with no `CharacterRagdoll`, one whose ragdoll is not in
-`RagdollMode::Graph`, one with no `AnimationPlayer`, a ragdoll not built yet and
-an unknown bone (the reply lists the part bones) are errors that say what to do
-next.
+An unknown entity, one with no `CharacterRagdoll`, one with no
+`AnimationPlayer`, a ragdoll not built yet and an unknown bone (the reply lists
+the part bones) are errors that say what to do next.
 
 `body_report` is read-only, works on the game that is playing and needs `play`
 first. It takes `entity` (the character's id as `scene_tree` shows it) and

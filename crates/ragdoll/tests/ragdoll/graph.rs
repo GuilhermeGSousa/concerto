@@ -39,7 +39,7 @@ use concerto_ragdoll::testing::{
 };
 use concerto_ragdoll::{
     BRACED, BodyHit, CharacterRagdoll, FlinchNode, HoldNode, LimpNode, MotorCommand, PartStrength,
-    PhysicsAmount, RagdollBody, RagdollMode, RagdollPlugin,
+    PhysicsAmount, RagdollBody, RagdollPlugin,
 };
 use glam::{Quat, Vec3};
 
@@ -214,10 +214,7 @@ impl Stage {
         let humanoid = spawn_humanoid(world, skeleton_handle, Transform::from_translation(root));
         world.insert(
             (
-                CharacterRagdoll::new(ragdoll)
-                    .with_capsule(capsule)
-                    .with_mode(RagdollMode::Graph)
-                    .with_profile(BRACED),
+                CharacterRagdoll::new(ragdoll).with_capsule(capsule),
                 AnimationHandleComponent::new(graph),
             ),
             humanoid.skeleton,
@@ -270,15 +267,6 @@ impl Stage {
             .world_mut()
             .get_component_for_entity_mut::<AnimationPlayer>(self.humanoid.skeleton)
             .unwrap()
-    }
-
-    fn set_mode(&mut self, mode: RagdollMode) {
-        self.app
-            .main_mut()
-            .world_mut()
-            .get_component_for_entity_mut::<CharacterRagdoll>(self.humanoid.skeleton)
-            .unwrap()
-            .mode = mode;
     }
 
     fn body(&self) -> &RagdollBody {
@@ -582,15 +570,6 @@ fn a_graph_holds_and_lets_go_of_the_body_per_limb_and_never_cuts() {
     assert!(
         !stage.body().is_kinematic(stage.part("foot_l")),
         "the left foot is held again"
-    );
-    stage.set_mode(RagdollMode::FollowsAnimation);
-    stage.walk(3);
-    stage.assert_animated("out of the graph mode, while the graph still holds the leg");
-    stage.set_mode(RagdollMode::Graph);
-    stage.walk(3);
-    assert!(
-        !stage.body().is_kinematic(stage.part("foot_l")),
-        "the left foot is held again back in the graph mode"
     );
     let walk = AnimationHandleComponent::new(stage.walk.clone());
     let skeleton = stage.humanoid.skeleton;

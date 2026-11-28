@@ -11,7 +11,7 @@ use concerto_reflect::{Reflect, ReflectDefault};
 use glam::Vec3;
 
 use crate::{
-    character::{CharacterRagdoll, RagdollBody, RagdollMode},
+    character::RagdollBody,
     dying::Settled,
     hit::{BodyHit, HitKind},
     shot::Wounds,
@@ -153,12 +153,11 @@ pub struct PendingImpulses {
     waiting: Vec<PendingImpulse>,
 }
 
-/// Forwards a [`BodyHit`] on a character in [`RagdollMode::Graph`] to its animation graph, a blow as a [`Hit`] and a gunshot as a [`Shot`], and takes its impulse, pending until the part is dynamic.
+/// Forwards a [`BodyHit`] to the character's animation graph, a blow as a [`Hit`] and a gunshot as a [`Shot`], and takes its impulse, pending until the part is dynamic.
 pub fn route_hits(
     on: On<BodyHit>,
     mut characters: Query<
         (
-            &CharacterRagdoll,
             &RagdollBody,
             &mut PendingImpulses,
             Option<&mut AnimationPlayer>,
@@ -167,11 +166,10 @@ pub fn route_hits(
     >,
 ) {
     let hit = *on.signal();
-    let Some((character, body, mut pending, player)) = characters.get_entity_mut(hit.character)
-    else {
+    let Some((body, mut pending, player)) = characters.get_entity_mut(hit.character) else {
         return;
     };
-    if character.mode != RagdollMode::Graph || hit.part >= body.resolved().part_count() {
+    if hit.part >= body.resolved().part_count() {
         return;
     }
     pending.waiting.push(PendingImpulse {

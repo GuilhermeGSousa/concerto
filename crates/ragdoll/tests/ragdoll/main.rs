@@ -1,8 +1,7 @@
-//! Tests of ragdoll assets, generation, characters and their behaviours, on the reference humanoid.
+//! Tests of ragdoll assets, generation, characters and their animation graph nodes, on the reference humanoid.
 
 mod asset;
 mod balance;
-mod behaviour;
 mod character;
 mod common;
 mod dying;

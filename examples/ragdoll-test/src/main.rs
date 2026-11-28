@@ -51,9 +51,8 @@ use concerto::{
 use concerto_debug_gizmos::DebugGizmos;
 use concerto_physics_gizmos::{PhysicsGizmos, PhysicsGizmosPlugin};
 use concerto_ragdoll::{
-    BRACED, BalanceNode, BalanceSettings, BodyHit, BodySense, CharacterRagdoll, Death, Die,
-    DyingNode, FLINCH, FallNode, HoldNode, LimpNode, RagdollBody, RagdollMode, ShotNode,
-    StaggerNode,
+    BRACED, BalanceNode, BalanceSettings, BodyHit, CharacterRagdoll, Death, Die, DyingNode, FLINCH,
+    FallNode, HoldNode, LimpNode, RagdollBody, ShotNode, StaggerNode,
     messages::{BodyDead, BodyDown, Shot, Stagger, Steadied, Toppled},
     testing::reference_humanoid,
 };
@@ -475,8 +474,7 @@ fn spawn_humanoid(cmd: &mut CommandQueue, assets: &AssetServer) {
             bones.iter().copied().map(SceneEntityRef::Entity).collect(),
             bones.first().copied().map(SceneEntityRef::Entity),
         ),
-        CharacterRagdoll::new(ragdoll).with_mode(RagdollMode::Graph),
-        BodySense::default(),
+        CharacterRagdoll::new(ragdoll),
         AnimationHandleComponent::new(graph),
     ));
     let limp_after = std::env::var("RAGDOLL_TEST_LIMP_AFTER")

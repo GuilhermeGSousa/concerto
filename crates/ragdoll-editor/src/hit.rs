@@ -8,22 +8,22 @@ use concerto_editor::hosted::{EditWorld, EditWorldSignals};
 use concerto_foundation::time::Time;
 use concerto_mcp::{McpTool, Needs, PendingCall, ToolCalls, ToolError};
 use concerto_physics::{physics_state::PhysicsState, ragdoll::RagdollId};
-use concerto_ragdoll::{BodyHit, CharacterRagdoll, RagdollBody, RagdollMode, active_states};
+use concerto_ragdoll::{BodyHit, CharacterRagdoll, RagdollBody, active_states};
 use glam::Vec3;
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-use crate::report::{Graphs, no_player, not_graph_driven, states_text};
+use crate::report::{Graphs, no_player, states_text};
 
 const DEFAULT_IMPULSE: Vec3 = Vec3::new(0.0, 0.0, -30.0);
 const PATIENCE: f32 = 8.0;
 const REACTION: f32 = 1.0;
 const WALL_LIMIT: Duration = Duration::from_secs(30);
 
-/// Hits a character of the game that is playing, whose animation graph drives its ragdoll, the way a bullet does, by sending `BodyHit` for the part on `bone`, and answers once the body is back on its animation: the bone hit, how far it got from its animated place at most, in metres, and the seconds it took. It answers at once that the graph did not react when no bone of the body is drawn from physics within a second, which is what a character with no reaction in its animation graph does, and with the graph's states after 8 seconds when the body never comes back, as a body that is down or dead does.
+/// Hits a character of the game that is playing the way a bullet does, by sending `BodyHit` for the part on `bone`, and answers once the body is back on its animation: the bone hit, how far it got from its animated place at most, in metres, and the seconds it took. It answers at once that the graph did not react when no bone of the body is drawn from physics within a second, which is what a character with no reaction in its animation graph does, and with the graph's states after 8 seconds when the body never comes back, as a body that is down or dead does.
 #[derive(Deserialize, JsonSchema)]
 pub struct HitCharacter {
-    /// The character, by id as scene_tree shows it while the game plays, such as 42v3; it carries a `CharacterRagdoll` in the `Graph` mode and an `AnimationPlayer`.
+    /// The character, by id as scene_tree shows it while the game plays, such as 42v3; it carries a `CharacterRagdoll` and an `AnimationPlayer`.
     pub entity: String,
     /// The bone of the part that is hit, by name as ragdoll_parts shows it.
     pub bone: String,
@@ -114,7 +114,7 @@ pub(crate) fn hit_character(
             ));
             continue;
         };
-        let Some(character) = character else {
+        if character.is_none() {
             reply.err(ToolError::new(
                 "no_ragdoll",
                 format!(
@@ -122,10 +122,6 @@ pub(crate) fn hit_character(
                     arguments.entity
                 ),
             ));
-            continue;
-        };
-        if character.mode != RagdollMode::Graph {
-            reply.err(not_graph_driven(&arguments.entity, character.mode));
             continue;
         }
         let (Some(id), Some(body)) = (id, body) else {

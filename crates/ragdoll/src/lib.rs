@@ -1,8 +1,6 @@
 //! A character's physical body: the ragdoll asset and what is built from it.
 //!
-//! A [`CharacterRagdoll`] follows its animation, is powered towards it, or falls limp, as its
-//! [`RagdollMode`] says. In [`RagdollMode::Graph`] the character's animation graph drives the
-//! body bone by bone instead: nodes such as [`HoldNode`], [`LimpNode`], [`FlinchNode`],
+//! A [`CharacterRagdoll`] is driven bone by bone by the character's animation graph: nodes such as [`HoldNode`], [`LimpNode`], [`FlinchNode`],
 //! [`DyingNode`], [`BalanceNode`], [`StaggerNode`], [`ShotNode`] and [`FallNode`] write a [`PhysicsAmount`] and a [`MotorCommand`] for each
 //! bone in the graph's drive pass, and [`drive::drive_from_graph`] applies them each physics step. The graph hears
 //! what happens to the body through the [`messages`] the crate registers.
@@ -11,21 +9,17 @@
 pub mod asset;
 /// The pose attributes a graph drives a ragdoll with: how much of each bone physics draws, and what its motor is asked.
 pub mod attributes;
-/// The balance behaviour, which keeps a body on its feet.
-pub mod balance;
-/// How behaviours claim a body's parts, and the state a physical character is in.
-pub mod behaviour;
 /// The component that gives a character a ragdoll, and how the ragdoll follows its animation.
 pub mod character;
 /// Driving a ragdoll from its animation graph's physics attributes.
 pub mod drive;
-/// Draining a character's strength until it is dead and its body settles.
+/// A character's death, and the settling and waking of its dead body.
 pub mod dying;
-/// The fall behaviour, which brings a falling body down with its hands out and its head held up.
+/// How a fall plays out, for the [`FallNode`].
 pub mod fall;
 /// Generating a first-draft humanoid ragdoll from a retarget rig.
 pub mod generate;
-/// Blows on a character's body and the flinch they cause.
+/// Blows and gunshots on a character's body.
 pub mod hit;
 mod ik;
 /// The animation messages that tell a character's graph what happens to its body, and that its nodes raise, and how hits reach the graph.
@@ -43,9 +37,9 @@ pub mod resolve;
 pub mod sandbox;
 /// What a character's body senses about itself: its support, centre of mass and coming impacts.
 pub mod sensing;
-/// The shot behaviour, which answers a bullet with the whole body.
+/// How a gunshot reaction plays out, for the [`ShotNode`], and the wounds it leaves.
 pub mod shot;
-/// The stagger behaviour, which makes a balancing body stumble.
+/// How a stumble plays out, for the [`StaggerNode`].
 pub mod stagger;
 #[cfg(feature = "test-support")]
 pub mod testing;
@@ -57,25 +51,18 @@ pub use asset::{
     Segment, Side, StrengthProfile,
 };
 pub use attributes::{MotorCommand, PhysicsAmount};
-pub use balance::{BALANCE, BALANCE_PRIORITY, Balance, Hindrance};
-pub use behaviour::{
-    BehaviourEnded, BehaviourSet, BodyDrive, BodyState, BodyStateChanged, Claim, Outcome,
-    PartCommand, PhysicalState, RunningBehaviour, describe_body,
-};
-pub use character::{
-    CharacterRagdoll, PartWeight, PoseLost, RagdollBody, RagdollMode, RagdollRefused,
-};
-pub use dying::{BodySettled, Dead, Die, Dying, Settled};
-pub use fall::{FALL, FALL_PRIORITY, Fall, FallReaction, FallSettings};
+pub use character::{CharacterRagdoll, PoseLost, RagdollBody, RagdollRefused};
+pub use dying::{BodySettled, Dead, Die, Settled};
+pub use fall::FallSettings;
 pub use generate::{
     BRACED, FLINCH, GenerateError, HumanoidChains, HumanoidSettings, LIMP, generate_humanoid,
 };
-pub use hit::{BodyHit, Flinch, FlinchRecord, HitKind, HitReaction};
+pub use hit::{BodyHit, HitKind};
 pub use messages::{BodyDead, BodyDown, Death, Hit, PendingImpulses, Wounded};
 pub use node::{
     BalanceNode, BalanceSettings, BalanceState, DyingNode, DyingState, FallNode, FallState,
-    FlinchNode, FlinchState, HoldNode, HoldState, LimpNode, ShotNode, ShotState, StaggerNode,
-    StaggerState,
+    FlinchNode, FlinchState, Hindrance, HoldNode, HoldState, LimpNode, ShotNode, ShotState,
+    StaggerNode, StaggerState,
 };
 pub use overlap::PartOverlap;
 pub use plugin::RagdollPlugin;
@@ -83,6 +70,6 @@ pub use report::active_states;
 pub use resolve::{Landmarks, Limbs, RagdollError, ResolvedRagdoll};
 pub use sandbox::{Trial, TrialReport, run_trial};
 pub use sensing::{BodySense, Impact, MassPoint};
-pub use shot::{SHOT, SHOT_PRIORITY, Shot, ShotReaction, ShotSettings, Wound, Wounds};
-pub use stagger::{STAGGER, STAGGER_PRIORITY, Stagger, StaggerSettings};
+pub use shot::{ShotSettings, Wound, Wounds};
+pub use stagger::StaggerSettings;
 pub use view::{BodyInput, BodyView};

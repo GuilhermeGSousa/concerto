@@ -11,14 +11,60 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{
-    asset::PartStrength,
+    asset::{PartStrength, Segment},
     attributes::{MotorCommand, PhysicsAmount},
     character::Held,
-    dying::Dying,
     generate::BRACED,
     messages::{BodyDead, Death},
     view::{BodyInput, BodyView},
 };
+
+const DYING_STIFFNESS: f32 = 400.0;
+const DYING_TORQUE: f32 = 120.0;
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Dying {
+    seconds: f32,
+    elapsed: f32,
+}
+
+impl Dying {
+    fn new(seconds: f32) -> Self {
+        Self {
+            seconds,
+            elapsed: 0.0,
+        }
+    }
+
+    fn advance(&mut self, dt: f32) -> bool {
+        self.elapsed += dt;
+        self.elapsed >= self.seconds
+    }
+
+    fn drain(&self, segment: Segment, mut held: Held) -> Held {
+        let left = self.left(segment);
+        if held.kinematic {
+            held = Held::of(PartStrength::powered(DYING_STIFFNESS, DYING_TORQUE));
+        }
+        held.stiffness *= left;
+        held.damping *= left;
+        held.torque_limit *= left;
+        held
+    }
+
+    fn left(&self, segment: Segment) -> f32 {
+        if self.seconds <= 0.0 {
+            return 0.0;
+        }
+        let spent_at = match segment {
+            Segment::Hand | Segment::Foot => 0.4,
+            Segment::LowerArm | Segment::Shin => 0.6,
+            Segment::UpperArm | Segment::Thigh | Segment::Head => 0.8,
+            Segment::Pelvis | Segment::Spine | Segment::Other => 1.0,
+        };
+        (1.0 - self.elapsed / self.seconds / spent_at).clamp(0.0, 1.0)
+    }
+}
 
 /// Drains a body's strength from the moment it receives a [`Death`] message, over its seconds, from the hands and feet inwards.
 ///
