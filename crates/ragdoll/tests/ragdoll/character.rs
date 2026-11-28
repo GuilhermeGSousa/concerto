@@ -1,3 +1,10 @@
+use concerto_animation::{
+    clip::AnimationClip,
+    graph::AnimationGraph,
+    node::{AnimationClipNode, AnimationNode},
+    player::AnimationHandleComponent,
+    plugin::AnimationPlugin,
+};
 use concerto_app::{
     App,
     main_schedule::MainSchedulePlugin,
@@ -6,7 +13,7 @@ use concerto_app::{
 };
 use concerto_ecs::entity::Entity;
 use concerto_ecs::resource::Resource;
-use concerto_foundation::assets::asset_server::AssetServer;
+use concerto_foundation::assets::{asset_server::AssetServer, handle::AssetHandle};
 use concerto_foundation::transform::{GlobalTransform, Transform};
 use concerto_physics::body::BodyId;
 use concerto_physics::collider::Collider;
@@ -19,7 +26,7 @@ use concerto_physics::rigid_body::{AllowedDofs, RigidBody};
 use concerto_ragdoll::testing::{
     SpawnedHumanoid, humanoid_skeleton, reference_humanoid, spawn_humanoid,
 };
-use concerto_ragdoll::{CharacterRagdoll, RagdollBody, RagdollPlugin};
+use concerto_ragdoll::{CharacterRagdoll, HoldNode, LimpNode, RagdollBody, RagdollPlugin};
 use glam::{Quat, Vec3};
 
 fn frame(app: &mut App) {
@@ -201,31 +208,37 @@ fn pose_at_rest(app: &mut App, humanoid: &SpawnedHumanoid, root: Vec3) {
         .translation = root;
 }
 
-fn character(app: &mut App, humanoid: &SpawnedHumanoid) -> CharacterRagdoll {
-    app.main()
-        .world()
-        .get_component_for_entity::<CharacterRagdoll>(humanoid.skeleton)
-        .unwrap()
-        .clone()
+fn at_rest(server: &AssetServer) -> AssetHandle<AnimationGraph> {
+    let clip = server.add(AnimationClip::default());
+    server.add(AnimationGraph::from_node(AnimationClipNode::new(clip)))
 }
 
-fn edit(app: &mut App, humanoid: &SpawnedHumanoid, change: impl FnOnce(&mut CharacterRagdoll)) {
-    change(
-        app.main_mut()
-            .world_mut()
-            .get_component_for_entity_mut::<CharacterRagdoll>(humanoid.skeleton)
-            .unwrap(),
+fn at_rest_over(server: &AssetServer, node: impl AnimationNode) -> AssetHandle<AnimationGraph> {
+    let clip = server.add(AnimationClip::default());
+    let mut graph = AnimationGraph::new();
+    graph
+        .result_node()
+        .input(node)
+        .input(AnimationClipNode::new(clip));
+    server.add(graph)
+}
+
+fn play(app: &mut App, humanoid: &SpawnedHumanoid, graph: &AssetHandle<AnimationGraph>) {
+    app.main_mut().world_mut().insert(
+        AnimationHandleComponent::new(graph.clone()),
+        humanoid.skeleton,
     );
 }
 
 #[test]
-fn a_walking_character_gone_limp_keeps_its_speed_falls_to_rest_and_is_drawn_by_weight() {
+fn a_walking_character_gone_limp_keeps_its_speed_falls_to_rest_and_is_drawn_by_its_graphs_amount() {
     let mut app = App::new();
     app.register_plugin(MainSchedulePlugin)
         .register_plugin(TimePlugin)
         .register_plugin(AssetManagerPlugin)
         .register_plugin(TransformPlugin)
         .register_plugin(PhysicsPlugin)
+        .register_plugin(AnimationPlugin)
         .register_plugin(RagdollPlugin);
     app.finish_plugin_build();
     let server = app.get_resource::<AssetServer>().unwrap().clone();
@@ -234,6 +247,8 @@ fn a_walking_character_gone_limp_keeps_its_speed_falls_to_rest_and_is_drawn_by_w
     let mut asset = reference.ragdoll;
     asset.skeleton = skeleton.clone();
     let asset = server.add(asset);
+    let plain = at_rest(&server);
+    let limp = at_rest_over(&server, LimpNode::default());
     app.update();
     let world = app.main_mut().world_mut();
     world.spawn((
@@ -241,7 +256,13 @@ fn a_walking_character_gone_limp_keeps_its_speed_falls_to_rest_and_is_drawn_by_w
         Transform::from_translation(Vec3::new(0.0, -0.5, 0.0)),
     ));
     let humanoid = spawn_humanoid(world, skeleton, Transform::default());
-    world.insert(CharacterRagdoll::new(asset), humanoid.skeleton);
+    world.insert(
+        (
+            CharacterRagdoll::new(asset),
+            AnimationHandleComponent::new(plain.clone()),
+        ),
+        humanoid.skeleton,
+    );
 
     let mut root = Vec3::new(0.0, 0.02, 0.0);
     for _ in 0..20 {
@@ -263,7 +284,7 @@ fn a_walking_character_gone_limp_keeps_its_speed_falls_to_rest_and_is_drawn_by_w
     state.ragdoll_pose(ragdoll, &mut pose);
     let let_go_at = pose[pelvis].translation.x;
 
-    edit(&mut app, &humanoid, CharacterRagdoll::go_limp);
+    play(&mut app, &humanoid, &limp);
     for _ in 0..10 {
         pose_at_rest(&mut app, &humanoid, root);
         frame(&mut app);
@@ -342,37 +363,16 @@ fn a_walking_character_gone_limp_keeps_its_speed_falls_to_rest_and_is_drawn_by_w
         );
     }
 
-    let fallen = pose[pelvis].translation;
-    let animated = root + Vec3::new(0.0, 1.0, 0.0);
-    edit(&mut app, &humanoid, |character| character.weight = 0.0);
-    pose_at_rest(&mut app, &humanoid, root);
-    frame(&mut app);
+    play(&mut app, &humanoid, &plain);
+    for _ in 0..3 {
+        pose_at_rest(&mut app, &humanoid, root);
+        frame(&mut app);
+    }
     let shown = position(&app, humanoid.bone("pelvis"));
     assert!(
-        shown.distance(animated) < 1e-4,
-        "at weight 0 the bones show the animation, the pelvis was at {shown}"
+        shown.distance(root + Vec3::new(0.0, 1.0, 0.0)) < 1e-4,
+        "with no amount in the graph the bones show the animation, the pelvis was at {shown}"
     );
-
-    edit(&mut app, &humanoid, |character| {
-        character.weight = 0.5;
-        character.part_weights = CharacterRagdoll::default()
-            .with_part_weight("Head", 1.0)
-            .part_weights;
-    });
-    pose_at_rest(&mut app, &humanoid, root);
-    frame(&mut app);
-    let shown = position(&app, humanoid.bone("pelvis"));
-    assert!(
-        shown.distance((animated + fallen) / 2.0) < 1e-3,
-        "at weight 0.5 the pelvis is halfway between {animated} and {fallen}, it was at {shown}"
-    );
-    let head = body.resolved().part_of("Head").unwrap();
-    let shown = position(&app, humanoid.bone("Head"));
-    assert!(
-        shown.distance(pose[head].translation) < 1e-3,
-        "a part with its own weight of 1 is drawn on its body"
-    );
-    assert_eq!(character(&mut app, &humanoid).weight_of("Head"), 1.0);
 }
 
 #[test]
@@ -382,7 +382,6 @@ fn a_limp_characters_capsule_is_carried_under_its_body_and_moves_again_when_let_
     use concerto_motion_matching::simulation::{CharacterSimulation, DesiredMotion};
     use concerto_physics::carried::Carried;
     use concerto_physics::collider::ColliderOffset;
-    use concerto_ragdoll::RagdollMode;
 
     let mut app = App::new();
     app.register_plugin(MainSchedulePlugin)
@@ -400,6 +399,8 @@ fn a_limp_characters_capsule_is_carried_under_its_body_and_moves_again_when_let_
     let mut asset = reference.ragdoll;
     asset.skeleton = skeleton.clone();
     let asset = server.add(asset);
+    let plain = at_rest(&server);
+    let limp = at_rest_over(&server, LimpNode::default());
     app.update();
     let world = app.main_mut().world_mut();
     world.spawn((
@@ -425,7 +426,10 @@ fn a_limp_characters_capsule_is_carried_under_its_body_and_moves_again_when_let_
     ));
     let humanoid = spawn_humanoid(world, skeleton, Transform::default());
     world.insert(
-        CharacterRagdoll::new(asset).with_capsule(capsule),
+        (
+            CharacterRagdoll::new(asset).with_capsule(capsule),
+            AnimationHandleComponent::new(plain.clone()),
+        ),
         humanoid.skeleton,
     );
     let stands = |app: &App| {
@@ -458,7 +462,7 @@ fn a_limp_characters_capsule_is_carried_under_its_body_and_moves_again_when_let_
     );
     assert!(!carried(&app));
 
-    edit(&mut app, &humanoid, CharacterRagdoll::go_limp);
+    play(&mut app, &humanoid, &limp);
     walk(&mut app, 300);
     let ragdoll = *app
         .main()
@@ -484,15 +488,12 @@ fn a_limp_characters_capsule_is_carried_under_its_body_and_moves_again_when_let_
         "held input does not move a carried capsule, it went from {fallen} to {held}"
     );
 
-    edit(&mut app, &humanoid, |character| {
-        character.mode = RagdollMode::FollowsAnimation;
-        character.weight = 0.0;
-    });
+    play(&mut app, &humanoid, &plain);
     walk(&mut app, 60);
     let resumed = stands(&app);
     assert!(
         !carried(&app),
-        "a capsule is let go when no part has weight"
+        "a capsule is let go when no part has an amount"
     );
     assert!(
         resumed.x - held.x > 1.0 && (resumed.z - held.z).abs() < 0.2,
@@ -572,6 +573,7 @@ fn a_powered_body_tracks_its_animation_gives_to_a_push_hangs_when_weak_and_says_
         .register_plugin(AssetManagerPlugin)
         .register_plugin(TransformPlugin)
         .register_plugin(PhysicsPlugin)
+        .register_plugin(AnimationPlugin)
         .register_plugin(RagdollPlugin);
     app.finish_plugin_build();
     app.insert_resource(Lost::default());
@@ -601,6 +603,9 @@ fn a_powered_body_tracks_its_animation_gives_to_a_push_hangs_when_weak_and_says_
         ..weak
     };
     let asset = server.add(asset.with_profile(weak));
+    let flinch = at_rest_over(&server, HoldNode::new(FLINCH));
+    let weak = at_rest_over(&server, HoldNode::new("weak"));
+    let braced = at_rest_over(&server, HoldNode::new(BRACED));
     app.update();
     let world = app.main_mut().world_mut();
     world.spawn((
@@ -608,9 +613,14 @@ fn a_powered_body_tracks_its_animation_gives_to_a_push_hangs_when_weak_and_says_
         Transform::from_translation(Vec3::new(0.0, -0.5, 0.0)),
     ));
     let humanoid = spawn_humanoid(world, skeleton, Transform::default());
-    let mut character = CharacterRagdoll::new(asset);
-    character.power(FLINCH);
-    world.insert((character, count_lost()), humanoid.skeleton);
+    world.insert(
+        (
+            CharacterRagdoll::new(asset),
+            AnimationHandleComponent::new(flinch),
+            count_lost(),
+        ),
+        humanoid.skeleton,
+    );
 
     let step = 0.033;
     let mut root = Vec3::new(0.0, 0.02, 0.0);
@@ -678,9 +688,7 @@ fn a_powered_body_tracks_its_animation_gives_to_a_push_hangs_when_weak_and_says_
     );
     assert_eq!(app.get_resource::<Lost>().unwrap().0, 0);
 
-    edit(&mut app, &humanoid, |character| {
-        character.profile = "weak".into()
-    });
+    play(&mut app, &humanoid, &weak);
     for _ in 0..90 {
         pose_at_rest(&mut app, &humanoid, root);
         frame(&mut app);
@@ -696,9 +704,7 @@ fn a_powered_body_tracks_its_animation_gives_to_a_push_hangs_when_weak_and_says_
         "arms with half a newton metre of muscle hang, the hand was at {hand} under a shoulder at {shoulder}"
     );
 
-    edit(&mut app, &humanoid, |character| {
-        character.profile = BRACED.into()
-    });
+    play(&mut app, &humanoid, &braced);
     for _ in 0..15 {
         pose_at_rest(&mut app, &humanoid, root);
         frame(&mut app);
@@ -718,162 +724,6 @@ fn a_powered_body_tracks_its_animation_gives_to_a_push_hangs_when_weak_and_says_
 }
 
 #[test]
-fn a_hit_on_a_walking_character_throws_the_part_back_and_the_body_returns_to_its_animation() {
-    use concerto_ragdoll::{BodyHit, Flinch, FlinchRecord, HitReaction, RagdollMode};
-
-    let mut app = App::new();
-    app.register_plugin(MainSchedulePlugin)
-        .register_plugin(TimePlugin)
-        .register_plugin(AssetManagerPlugin)
-        .register_plugin(TransformPlugin)
-        .register_plugin(PhysicsPlugin)
-        .register_plugin(RagdollPlugin);
-    app.finish_plugin_build();
-    let server = app.get_resource::<AssetServer>().unwrap().clone();
-    let reference = reference_humanoid();
-    let skeleton = server.add(reference.skeleton);
-    let mut asset = reference.ragdoll;
-    asset.skeleton = skeleton.clone();
-    let asset = server.add(asset);
-    app.update();
-    let world = app.main_mut().world_mut();
-    world.spawn((
-        Collider::cuboid(50.0, 0.5, 50.0),
-        Transform::from_translation(Vec3::new(0.0, -0.5, 0.0)),
-    ));
-    let humanoid = spawn_humanoid(world, skeleton, Transform::default());
-    world.insert(
-        (CharacterRagdoll::new(asset), HitReaction::default()),
-        humanoid.skeleton,
-    );
-
-    let step = 0.033;
-    let mut root = Vec3::new(0.0, 0.02, 0.0);
-    let mut time = 0.0;
-    let mut walk = |app: &mut App, frames: usize| {
-        for _ in 0..frames {
-            time += step;
-            root.x += step;
-            pose_walking(app, &humanoid, root, time);
-            frame(app);
-        }
-    };
-    walk(&mut app, 20);
-    let body = app
-        .main()
-        .world()
-        .get_component_for_entity::<RagdollBody>(humanoid.skeleton)
-        .unwrap()
-        .clone();
-    let ragdoll = *app
-        .main()
-        .world()
-        .get_component_for_entity::<RagdollId>(humanoid.skeleton)
-        .unwrap();
-    let shoulder = body.resolved().part_of("upperarm_l").unwrap();
-    let feet = [
-        body.resolved().part_of("foot_l").unwrap(),
-        body.resolved().part_of("foot_r").unwrap(),
-    ];
-    let offsets = |app: &App| {
-        let mut pose = Vec::new();
-        app.get_resource::<PhysicsState>()
-            .unwrap()
-            .ragdoll_pose(ragdoll, &mut pose);
-        let animated = app
-            .main()
-            .world()
-            .get_component_for_entity::<RagdollBody>(humanoid.skeleton)
-            .unwrap()
-            .animated_pose()
-            .to_vec();
-        pose.iter()
-            .zip(&animated)
-            .map(|(simulated, animated)| simulated.translation - animated.translation)
-            .collect::<Vec<Vec3>>()
-    };
-    let hit = |app: &mut App| {
-        let mut pose = Vec::new();
-        app.get_resource::<PhysicsState>()
-            .unwrap()
-            .ragdoll_pose(ragdoll, &mut pose);
-        app.main_mut().world_mut().trigger(BodyHit::new(
-            humanoid.skeleton,
-            shoulder,
-            pose[shoulder].translation,
-            Vec3::new(0.0, 0.0, -30.0),
-        ));
-    };
-    let character = |app: &App| {
-        app.main()
-            .world()
-            .get_component_for_entity::<CharacterRagdoll>(humanoid.skeleton)
-            .unwrap()
-            .clone()
-    };
-
-    hit(&mut app);
-    assert_eq!(character(&app).mode, RagdollMode::Powered);
-    let mut thrown = 0.0f32;
-    for index in 0..10 {
-        walk(&mut app, 1);
-        let offsets = offsets(&app);
-        thrown = thrown.max(-offsets[shoulder].z);
-        if index > 1 {
-            for foot in feet {
-                assert!(
-                    offsets[foot].length() < step + 2e-3,
-                    "a foot is more than a frame of walking from its animated place during a flinch: {} m",
-                    offsets[foot].length()
-                );
-            }
-        }
-    }
-    assert!(
-        thrown > 0.03,
-        "the hit shoulder is thrown back along the impulse, it went {thrown} m"
-    );
-
-    hit(&mut app);
-    walk(&mut app, 20);
-    assert!(
-        app.main()
-            .world()
-            .get_component_for_entity::<Flinch>(humanoid.skeleton)
-            .is_some(),
-        "a second hit restarts the recovery"
-    );
-    walk(&mut app, 25);
-    let settled = character(&app);
-    assert_eq!(settled.mode, RagdollMode::FollowsAnimation);
-    assert_eq!(settled.weight, 0.0);
-    let world = app.main().world();
-    assert!(
-        world
-            .get_component_for_entity::<Flinch>(humanoid.skeleton)
-            .is_none()
-    );
-    let record = *world
-        .get_component_for_entity::<FlinchRecord>(humanoid.skeleton)
-        .unwrap();
-    assert_eq!(record.part, shoulder);
-    assert!(record.peak_displacement >= thrown);
-    let lasted = record.recovered_after.expect("the flinch is over");
-    assert!(
-        lasted > 10.0 * step + 0.9 && lasted < 10.0 * step + 1.1,
-        "a flinch lasts its hold and settle from the last hit, it lasted {lasted} s"
-    );
-    walk(&mut app, 2);
-    for (part, offset) in offsets(&app).into_iter().enumerate() {
-        assert!(
-            offset.length() < 2.0 * step + 2e-3,
-            "part {part} is back on the animation, it was {} m off",
-            offset.length()
-        );
-    }
-}
-
-#[test]
 fn a_body_senses_its_support_its_balance_its_fall_and_its_rest() {
     use concerto_ragdoll::{BRACED, BodySense, FLINCH};
 
@@ -883,6 +733,7 @@ fn a_body_senses_its_support_its_balance_its_fall_and_its_rest() {
         .register_plugin(AssetManagerPlugin)
         .register_plugin(TransformPlugin)
         .register_plugin(PhysicsPlugin)
+        .register_plugin(AnimationPlugin)
         .register_plugin(RagdollPlugin);
     app.finish_plugin_build();
     let server = app.get_resource::<AssetServer>().unwrap().clone();
@@ -891,6 +742,9 @@ fn a_body_senses_its_support_its_balance_its_fall_and_its_rest() {
     let mut asset = reference.ragdoll;
     asset.skeleton = skeleton.clone();
     let asset = server.add(asset);
+    let flinch = at_rest_over(&server, HoldNode::new(FLINCH));
+    let braced = at_rest_over(&server, HoldNode::new(BRACED));
+    let limp = at_rest_over(&server, LimpNode::default());
     app.update();
     let world = app.main_mut().world_mut();
     world.spawn((
@@ -898,9 +752,13 @@ fn a_body_senses_its_support_its_balance_its_fall_and_its_rest() {
         Transform::from_translation(Vec3::new(0.0, -0.5, 0.0)),
     ));
     let humanoid = spawn_humanoid(world, skeleton, Transform::default());
-    let mut character = CharacterRagdoll::new(asset);
-    character.power(FLINCH);
-    world.insert((character, BodySense::default()), humanoid.skeleton);
+    world.insert(
+        (
+            CharacterRagdoll::new(asset),
+            AnimationHandleComponent::new(flinch),
+        ),
+        humanoid.skeleton,
+    );
     let root = Vec3::new(0.0, 0.05, 0.0);
     let stand = |app: &mut App, frames: usize| {
         for _ in 0..frames {
@@ -972,11 +830,8 @@ fn a_body_senses_its_support_its_balance_its_fall_and_its_rest() {
     assert!(!shoved.at_rest);
 
     stand(&mut app, 60);
-    edit(&mut app, &humanoid, |character| {
-        character.profile = BRACED.into();
-        character.blend = 0.0;
-    });
-    stand(&mut app, 3);
+    play(&mut app, &humanoid, &braced);
+    stand(&mut app, 6);
     assert_eq!(
         sense(&app).supporting.len(),
         2,
@@ -993,7 +848,7 @@ fn a_body_senses_its_support_its_balance_its_fall_and_its_rest() {
         .world()
         .get_component_for_entity::<RagdollId>(humanoid.skeleton)
         .unwrap();
-    edit(&mut app, &humanoid, CharacterRagdoll::go_limp);
+    play(&mut app, &humanoid, &limp);
     stand(&mut app, 1);
     let state = app.get_resource_mut::<PhysicsState>().unwrap();
     let mut pose = Vec::new();

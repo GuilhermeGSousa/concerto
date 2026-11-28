@@ -77,7 +77,7 @@ struct Corners {
 impl BlendSpace2DInstanceNode {
     fn corners(&self) -> Option<Corners> {
         let point = self.current_triangulated_point?;
-        let triangle = &self.triangulation.triangles()[point.triangle];
+        let triangle = &self.triangulation.triangles().get(point.triangle)?;
         let ab_sum = point.lambda_a + point.lambda_b;
         Some(Corners {
             a: triangle.a,

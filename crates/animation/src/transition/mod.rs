@@ -33,6 +33,17 @@ pub enum TransitionBlender {
     Inertialization,
 }
 
+impl TransitionBlender {
+    pub(crate) fn starting_in(self, initial: GraphId) -> Box<dyn AnimationTransitionBlender> {
+        match self {
+            Self::CrossFade => Box::new(blend_stack::BlendStack::new(initial)),
+            Self::Inertialization => Box::new(
+                inertialization_blender::InertializationBlender::new(initial),
+            ),
+        }
+    }
+}
+
 pub(crate) struct BlendInFlight {
     pub(crate) from: GraphId,
     pub(crate) to: GraphId,

@@ -1,7 +1,11 @@
 //! Everything that runs in a ragdoll tab's preview `App`: the skeleton's character with its ragdoll on a floor, dropped, poked, or following a clip.
 use std::sync::Arc;
 
-use concerto_animation::clip::AnimationClip;
+use concerto_animation::{
+    clip::AnimationClip,
+    graph::AnimationGraph,
+    player::{AnimationHandleComponent, AnimationPlayer},
+};
 use concerto_animation_editor::preview::{
     ClearClip, SetClipTransport, SetSkeletonGizmo, ShowClip, clip_preview,
 };
@@ -12,14 +16,14 @@ use concerto_app::{
 };
 use concerto_debug_gizmos::DebugGizmosPlugin;
 use concerto_ecs::{
-    Added, Entity, IntoSystemConfig, Query, ResMut, Resource,
+    Added, Entity, IntoSystemConfig, Query, Res, ResMut, Resource,
     command::CommandQueue,
     component::{name::Name as EntityName, scene::SceneEntityRef},
     signal::{On, Signal},
 };
 use concerto_editor::preview::OrbitCamera;
 use concerto_foundation::{
-    assets::{AssetId, asset_store::AssetStore, handle::AssetHandle},
+    assets::{AssetId, asset_server::AssetServer, asset_store::AssetStore, handle::AssetHandle},
     transform::{GlobalTransform, Transform, systems::propagate_global_transforms},
 };
 use concerto_mesh::{JointPose, Skeleton, SkeletonComponent};
@@ -33,8 +37,8 @@ use concerto_physics::{
 };
 use concerto_physics_gizmos::{PhysicsGizmos, draw_ragdolls};
 use concerto_ragdoll::{
-    CharacterRagdoll, Ragdoll, RagdollBody, RagdollMode,
-    character::{create_character_ragdolls, drive_character_ragdolls},
+    CharacterRagdoll, LimpNode, Ragdoll, RagdollBody, character::create_character_ragdolls,
+    drive::drive_from_graph,
 };
 use concerto_render::plugin::RenderPlugin;
 use concerto_scene::{
@@ -117,16 +121,27 @@ struct RagdollStage {
     lift: Lift,
     poke: Option<Poke>,
     framed: bool,
+    limp: bool,
+    limp_graph: Option<AssetHandle<AnimationGraph>>,
 }
 
 impl RagdollStage {
-    fn character_ragdoll(&self, mode: RagdollMode) -> Option<CharacterRagdoll> {
-        let id = self.ragdoll?;
-        let character = CharacterRagdoll::new(AssetHandle::weak(id));
-        Some(match mode {
-            RagdollMode::FollowsAnimation => character,
-            RagdollMode::Limp | RagdollMode::Powered => character.with_mode(mode).with_weight(1.0),
-        })
+    fn character_ragdoll(&self) -> Option<CharacterRagdoll> {
+        Some(CharacterRagdoll::new(AssetHandle::weak(self.ragdoll?)))
+    }
+
+    fn insert_character(&self, cmd: &mut CommandQueue, character: Entity) {
+        if let Some(body) = self.character_ragdoll() {
+            cmd.insert(body, character);
+        }
+        if self.limp {
+            if let Some(graph) = &self.limp_graph {
+                cmd.insert(AnimationHandleComponent::new(graph.clone()), character);
+            }
+        } else if let Some(skeleton) = &self.skeleton {
+            cmd.remove::<AnimationHandleComponent>(character);
+            cmd.insert(AnimationPlayer::new(skeleton.bone_count()), character);
+        }
     }
 }
 
@@ -148,6 +163,7 @@ fn show_stage(
     on: On<ShowRagdollStage>,
     mut stage: ResMut<RagdollStage>,
     mut skeletons: ResMut<AssetStore<Skeleton>>,
+    server: Res<AssetServer>,
     mut cmd: CommandQueue,
 ) {
     let signal = on.signal();
@@ -176,6 +192,10 @@ fn show_stage(
         skeleton_id: signal.skeleton_id,
         scene,
         ragdoll: stage.ragdoll,
+        limp_graph: stage
+            .limp_graph
+            .clone()
+            .or_else(|| Some(server.add(AnimationGraph::from_node(LimpNode::default())))),
         ..RagdollStage::default()
     };
     cmd.trigger(SetSkeletonGizmo(false));
@@ -192,8 +212,8 @@ fn set_ragdoll(
     ragdolls.insert(signal.id, signal.ragdoll.clone());
     stage.ragdoll = Some(signal.id);
     if let Some(character) = stage.character
-        && let Some(held) = characters.get_entity(character)
-        && let Some(rebuilt) = stage.character_ragdoll(held.mode)
+        && characters.get_entity(character).is_some()
+        && let Some(rebuilt) = stage.character_ragdoll()
     {
         cmd.insert(rebuilt, character);
     }
@@ -266,9 +286,7 @@ fn find_character(
         }
     };
     stage.character = Some(character);
-    if let Some(body) = stage.character_ragdoll(RagdollMode::FollowsAnimation) {
-        cmd.insert(body, character);
-    }
+    stage.insert_character(&mut cmd, character);
 }
 
 fn pose_at_rest(
@@ -314,11 +332,9 @@ fn reset_ragdoll(
     stage.lift = Lift::None;
     stage.poke = None;
     cmd.trigger(ClearClip);
-    if let (Some(character), Some(body)) = (
-        stage.character,
-        stage.character_ragdoll(RagdollMode::FollowsAnimation),
-    ) {
-        cmd.insert(body, character);
+    stage.limp = false;
+    if let Some(character) = stage.character {
+        stage.insert_character(&mut cmd, character);
     }
 }
 
@@ -335,11 +351,9 @@ fn play_ragdoll(
     pose_at_rest(&stage, &skeleton, &components, &mut transforms);
     stage.lift = Lift::None;
     stage.poke = None;
-    if let (Some(character), Some(body)) = (
-        stage.character,
-        stage.character_ragdoll(RagdollMode::FollowsAnimation),
-    ) {
-        cmd.insert(body, character);
+    stage.limp = false;
+    if let Some(character) = stage.character {
+        stage.insert_character(&mut cmd, character);
     }
     cmd.trigger(ShowClip(Arc::clone(&on.signal().0)));
     cmd.trigger(SetClipTransport {
@@ -400,10 +414,9 @@ fn lift_character(
             stage.lift = Lift::Lifted;
         }
         Lift::Lifted => {
-            if let (Some(character), Some(body)) =
-                (stage.character, stage.character_ragdoll(RagdollMode::Limp))
-            {
-                cmd.insert(body, character);
+            stage.limp = true;
+            if let Some(character) = stage.character {
+                stage.insert_character(&mut cmd, character);
             }
             stage.lift = Lift::None;
         }
@@ -447,41 +460,32 @@ fn frame_character(
     stage.framed = true;
 }
 
-fn poke_ragdoll(
-    on: On<PokeRagdoll>,
-    mut stage: ResMut<RagdollStage>,
-    characters: Query<&CharacterRagdoll>,
-    mut cmd: CommandQueue,
-) {
+fn poke_ragdoll(on: On<PokeRagdoll>, mut stage: ResMut<RagdollStage>, mut cmd: CommandQueue) {
     let signal = on.signal();
     stage.poke = Some(Poke {
         bone: signal.bone,
         impulse: signal.impulse,
     });
-    let limp = stage
-        .character
-        .and_then(|character| characters.get_entity(character))
-        .is_some_and(|held| held.mode == RagdollMode::Limp);
-    if !limp
-        && let (Some(character), Some(body)) =
-            (stage.character, stage.character_ragdoll(RagdollMode::Limp))
-    {
-        cmd.insert(body, character);
+    if !stage.limp {
+        stage.limp = true;
+        if let Some(character) = stage.character {
+            stage.insert_character(&mut cmd, character);
+        }
     }
 }
 
 fn apply_poke(
     mut stage: ResMut<RagdollStage>,
-    characters: Query<(&CharacterRagdoll, &RagdollId, &RagdollBody)>,
+    characters: Query<(&RagdollId, &RagdollBody, &AnimationPlayer)>,
     mut state: ResMut<PhysicsState>,
 ) {
     let Some(character) = stage.character else {
         return;
     };
-    let Some((held, id, body)) = characters.get_entity(character) else {
+    let Some((id, body, player)) = characters.get_entity(character) else {
         return;
     };
-    if held.mode != RagdollMode::Limp || stage.poke.is_none() {
+    if !stage.limp || stage.poke.is_none() || body.is_animated(player) {
         return;
     }
     let Some(poke) = stage.poke.take() else {
@@ -538,7 +542,7 @@ pub fn ragdoll_preview(app: &mut App) {
         .add_system(
             LateFixedUpdate,
             apply_poke
-                .after(drive_character_ragdolls)
+                .after(drive_from_graph)
                 .before(step_simulation)
                 .at_preview_time(),
         )

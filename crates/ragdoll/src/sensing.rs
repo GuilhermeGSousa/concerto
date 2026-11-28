@@ -1,3 +1,5 @@
+use std::fmt::Write;
+
 use concerto_ecs::{Component, Entity, Query, ResMut, Without};
 use concerto_foundation::time::Time;
 use concerto_physics::{
@@ -200,6 +202,55 @@ impl BodySense {
     /// Whether the capture point is inside the support: the body can stay up without a step.
     pub fn balanced(&self) -> bool {
         self.support.len() >= 3 && self.off_balance == Vec3::ZERO
+    }
+
+    /// What the body senses as text an agent can read: its centre of mass, the feet that support it, its balance, its lean, how long it has been airborne and whether it is at rest.
+    ///
+    /// `body` names the supporting parts by their bones.
+    pub fn describe(&self, body: &RagdollBody) -> String {
+        let mut text = String::new();
+        let centre = self.centre.position;
+        let velocity = self.centre.velocity;
+        let _ = writeln!(
+            text,
+            "centre of mass: [{:.2}, {:.2}, {:.2}] moving [{:.2}, {:.2}, {:.2}] m/s",
+            centre.x, centre.y, centre.z, velocity.x, velocity.y, velocity.z
+        );
+        let feet: Vec<String> = self
+            .supporting
+            .iter()
+            .filter_map(|part| body.bone_name(*part))
+            .map(|bone| bone.to_string())
+            .collect();
+        let _ = writeln!(
+            text,
+            "support: {}",
+            if feet.is_empty() {
+                "none".to_string()
+            } else {
+                feet.join(", ")
+            }
+        );
+        let _ = writeln!(
+            text,
+            "balance: {}",
+            if self.balanced() {
+                "capture point inside the support".to_string()
+            } else {
+                format!(
+                    "capture point {:.2} m outside the support",
+                    self.off_balance.length()
+                )
+            }
+        );
+        let _ = writeln!(
+            text,
+            "lean {:.2} rad · airborne {:.2} s · {}",
+            self.lean,
+            self.airborne,
+            if self.at_rest { "at rest" } else { "moving" }
+        );
+        text
     }
 }
 

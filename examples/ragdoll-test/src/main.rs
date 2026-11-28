@@ -5,6 +5,15 @@ use std::f32::consts::FRAC_PI_3;
 
 use concerto::{
     DefaultPlugins,
+    animation::{
+        clip::{AnimationChanelOutput, AnimationChannel, AnimationClip},
+        graph::AnimationGraph,
+        node::{
+            AnimationClipNode, AnimationNode,
+            state_machine::{AnimationFSMTrigger, AnimationStateMachine, TransitionBuilder},
+        },
+        player::{AnimationHandleComponent, AnimationPlayer},
+    },
     app::{
         App,
         plugins::ContentSettings,
@@ -16,11 +25,12 @@ use concerto::{
         component::scene::SceneEntityRef, entity::hierarchy::ChildOf,
     },
     foundation::{
-        assets::asset_server::AssetServer,
+        assets::{asset_server::AssetServer, handle::AssetHandle},
         time::Time,
         transform::{GlobalTransform, Transform},
     },
-    mesh::{JointPose, MeshComponent, SkeletonComponent, primitives},
+    mesh::{JointPose, MeshComponent, Skeleton, SkeletonComponent, primitives},
+    name::{Name, name},
     physics::{
         collider::Collider,
         contact::Contacts,
@@ -41,8 +51,10 @@ use concerto::{
 use concerto_debug_gizmos::DebugGizmos;
 use concerto_physics_gizmos::{PhysicsGizmos, PhysicsGizmosPlugin};
 use concerto_ragdoll::{
-    Balance, BodyDrive, BodyHit, BodySense, CharacterRagdoll, Die, FallReaction, PhysicalState,
-    RagdollBody, RagdollMode, ShotReaction, Stagger, testing::reference_humanoid,
+    BRACED, BalanceNode, BalanceSettings, BodyHit, CharacterRagdoll, Death, Die, DyingNode, FLINCH,
+    FallNode, HoldNode, LimpNode, RagdollBody, ShotNode, StaggerNode,
+    messages::{BodyDead, BodyDown, Shot, Stagger, Steadied, Toppled},
+    testing::reference_humanoid,
 };
 use glam::{Quat, Vec3};
 
@@ -64,6 +76,17 @@ const SHOT: f32 = 40.0;
 const STAGGER_SEVERITY: f32 = 0.5;
 const ARM_SWING: f32 = 0.8;
 
+struct PostureKey {
+    key: KeyCode,
+    name: &'static str,
+}
+
+impl PostureKey {
+    const fn new(key: KeyCode, name: &'static str) -> Self {
+        Self { key, name }
+    }
+}
+
 #[derive(Resource)]
 struct Humanoid {
     skeleton: Entity,
@@ -75,6 +98,7 @@ struct Humanoid {
     elapsed: f32,
     walked: f32,
     limp_after: Option<f32>,
+    walking: bool,
 }
 
 #[derive(Component)]
@@ -202,6 +226,212 @@ fn spawn_scene(mut cmd: CommandQueue, mut state: ResMut<PhysicsState>, assets: R
     spawn_humanoid(&mut cmd, &assets);
 }
 
+const HALF_WEIGHT: &str = "half_weight";
+const POSTURES: [&str; 6] = ["walk", "limp", "flinch", "braced", "half", "balance"];
+
+struct Posture {
+    name: Name,
+    graph: AssetHandle<AnimationGraph>,
+}
+
+struct Standing {
+    clip: AssetHandle<AnimationClip>,
+}
+
+impl Standing {
+    fn new(assets: &AssetServer, skeleton: &Skeleton) -> Self {
+        let pelvis = skeleton
+            .bone_index(name!("pelvis"))
+            .expect("the reference humanoid has a pelvis");
+        let mut clip = AnimationClip::default();
+        clip.add_channel(
+            skeleton.bone_ids[pelvis],
+            AnimationChannel::new(
+                vec![0.0, 1.0],
+                AnimationChanelOutput::from_rotation(
+                    [Quat::IDENTITY.to_array(), Quat::IDENTITY.to_array()].into_iter(),
+                ),
+            ),
+        );
+        Self {
+            clip: assets.add(clip),
+        }
+    }
+
+    fn alone(&self, assets: &AssetServer) -> AssetHandle<AnimationGraph> {
+        assets.add(AnimationGraph::from_node(AnimationClipNode::new(
+            self.clip.clone(),
+        )))
+    }
+
+    fn under(&self, assets: &AssetServer, node: impl AnimationNode) -> AssetHandle<AnimationGraph> {
+        let mut graph = AnimationGraph::new();
+        graph
+            .result_node()
+            .input(node)
+            .input(AnimationClipNode::new(self.clip.clone()));
+        assets.add(graph)
+    }
+
+    fn humanoid_graph(&self, assets: &AssetServer) -> AnimationGraph {
+        let postures = [
+            Posture {
+                name: name!("walk"),
+                graph: self.alone(assets),
+            },
+            Posture {
+                name: name!("limp"),
+                graph: self.under(assets, LimpNode::default()),
+            },
+            Posture {
+                name: name!("flinch"),
+                graph: self.under(assets, HoldNode::new(FLINCH)),
+            },
+            Posture {
+                name: name!("braced"),
+                graph: self.under(assets, HoldNode::new(BRACED)),
+            },
+            Posture {
+                name: name!("half"),
+                graph: self.under(
+                    assets,
+                    HoldNode::new(BRACED).with_weight(Name::from(HALF_WEIGHT)),
+                ),
+            },
+            Posture {
+                name: name!("balance"),
+                graph: self.under(
+                    assets,
+                    BalanceNode::default()
+                        .with_settings(BalanceSettings::default().with_settle_seconds(f32::MAX)),
+                ),
+            },
+        ];
+        let mut machine = AnimationStateMachine::from_initial_state(
+            postures[0].name,
+            postures[0].graph.clone(),
+            |to| postures[0].leave(to, &postures),
+        );
+        for posture in &postures[1..] {
+            machine = machine.state(posture.name, posture.graph.clone(), |to| {
+                posture.leave(to, &postures)
+            });
+        }
+        let steady = |to: &mut TransitionBuilder| {
+            to.to(
+                name!("dying"),
+                AnimationFSMTrigger::on_message::<Death>(),
+                0.0,
+            )
+            .to(
+                name!("walk"),
+                AnimationFSMTrigger::on_message::<Steadied>(),
+                0.0,
+            )
+            .to(
+                name!("fall"),
+                AnimationFSMTrigger::on_message::<Toppled>(),
+                0.0,
+            );
+        };
+        AnimationGraph::from_node(
+            machine
+                .state(
+                    name!("shot"),
+                    self.under(assets, ShotNode::default()),
+                    steady,
+                )
+                .state(
+                    name!("stagger"),
+                    self.under(assets, StaggerNode::default()),
+                    steady,
+                )
+                .state(
+                    name!("fall"),
+                    self.under(assets, FallNode::default()),
+                    |to| {
+                        to.to(
+                            name!("dying"),
+                            AnimationFSMTrigger::on_message::<Death>(),
+                            0.0,
+                        )
+                        .to(
+                            name!("down"),
+                            AnimationFSMTrigger::on_message::<BodyDown>(),
+                            0.0,
+                        );
+                    },
+                )
+                .state(
+                    name!("down"),
+                    self.under(assets, LimpNode::default()),
+                    |to| {
+                        to.to(
+                            name!("dying"),
+                            AnimationFSMTrigger::on_message::<Death>(),
+                            0.0,
+                        )
+                        .to(
+                            name!("walk"),
+                            AnimationFSMTrigger::on_bool(name!("walk"), true),
+                            0.0,
+                        );
+                    },
+                )
+                .state(
+                    name!("dying"),
+                    self.under(assets, DyingNode::default()),
+                    |to| {
+                        to.to(
+                            name!("dead"),
+                            AnimationFSMTrigger::on_message::<BodyDead>(),
+                            0.0,
+                        );
+                    },
+                )
+                .state(
+                    name!("dead"),
+                    self.under(assets, LimpNode::default()),
+                    |_| {},
+                )
+                .build(),
+        )
+    }
+}
+
+impl Posture {
+    fn leave(&self, to: &mut TransitionBuilder, postures: &[Posture]) {
+        for posture in postures.iter().filter(|posture| posture.name != self.name) {
+            to.to(
+                posture.name,
+                AnimationFSMTrigger::on_bool(posture.name, true),
+                0.0,
+            );
+        }
+        to.to(
+            name!("shot"),
+            AnimationFSMTrigger::on_message::<Shot>(),
+            0.0,
+        )
+        .to(
+            name!("stagger"),
+            AnimationFSMTrigger::on_message::<Stagger>(),
+            0.0,
+        )
+        .to(
+            name!("dying"),
+            AnimationFSMTrigger::on_message::<Death>(),
+            0.0,
+        );
+    }
+}
+
+fn take_posture(player: &mut AnimationPlayer, posture: &str) {
+    for candidate in POSTURES {
+        player.set_bool_param(Name::from(candidate), candidate == posture);
+    }
+}
+
 fn spawn_humanoid(cmd: &mut CommandQueue, assets: &AssetServer) {
     let reference = reference_humanoid();
     let parents = reference.skeleton.parents.to_vec();
@@ -216,6 +446,7 @@ fn spawn_humanoid(cmd: &mut CommandQueue, assets: &AssetServer) {
     };
     let left_arm = index_of("upperarm_l");
     let right_arm = index_of("upperarm_r");
+    let graph = assets.add(Standing::new(assets, &reference.skeleton).humanoid_graph(assets));
     let skeleton = assets.add(reference.skeleton);
     let mut ragdoll = reference.ragdoll;
     ragdoll.skeleton = skeleton.clone();
@@ -244,9 +475,7 @@ fn spawn_humanoid(cmd: &mut CommandQueue, assets: &AssetServer) {
             bones.first().copied().map(SceneEntityRef::Entity),
         ),
         CharacterRagdoll::new(ragdoll),
-        BodySense::default(),
-        ShotReaction::default(),
-        FallReaction::default(),
+        AnimationHandleComponent::new(graph),
     ));
     let limp_after = std::env::var("RAGDOLL_TEST_LIMP_AFTER")
         .ok()
@@ -261,13 +490,13 @@ fn spawn_humanoid(cmd: &mut CommandQueue, assets: &AssetServer) {
         elapsed: 0.0,
         walked: 0.0,
         limp_after,
+        walking: true,
     });
 }
 
 fn animate_humanoid(
     time: Res<Time>,
     humanoid: Option<ResMut<Humanoid>>,
-    characters: Query<&CharacterRagdoll>,
     mut transforms: Query<&mut Transform>,
 ) {
     let Some(mut humanoid) = humanoid else {
@@ -275,9 +504,6 @@ fn animate_humanoid(
     };
     let delta = time.delta().as_secs_f32();
     humanoid.elapsed += delta;
-    let limp = characters
-        .get_entity(humanoid.skeleton)
-        .is_some_and(|character| character.mode != RagdollMode::FollowsAnimation);
     for (index, &bone) in humanoid.bones.iter().enumerate() {
         if let Some(mut transform) = transforms.get_entity_mut(bone) {
             let rest = &humanoid.rest[index];
@@ -285,7 +511,7 @@ fn animate_humanoid(
             transform.rotation = rest.rotation;
         }
     }
-    if limp {
+    if !humanoid.walking {
         return;
     }
     humanoid.walked += delta;
@@ -303,94 +529,82 @@ fn animate_humanoid(
     }
 }
 
-fn balance_humanoid(
+fn control_humanoid(
     input: Res<Input>,
-    humanoid: Option<Res<Humanoid>>,
+    humanoid: Option<ResMut<Humanoid>>,
     bodies: Query<(&RagdollBody, &RagdollId)>,
+    mut players: Query<&mut AnimationPlayer>,
     mut physics: ResMut<PhysicsState>,
     mut cmd: CommandQueue,
 ) {
-    let Some(humanoid) = humanoid else {
+    let Some(mut humanoid) = humanoid else {
         return;
     };
-    if input.is_just_pressed(PhysicalKey::Code(KeyCode::KeyK)) {
-        cmd.entity(humanoid.skeleton).insert((
-            Balance::default().with_settle_seconds(f32::MAX),
-            BodyDrive::default(),
-            PhysicalState::default(),
-        ));
+    let Some(mut player) = players.get_entity_mut(humanoid.skeleton) else {
+        return;
+    };
+    let pressed = |key: KeyCode| input.is_just_pressed(PhysicalKey::Code(key));
+    let timed = humanoid
+        .limp_after
+        .is_some_and(|after| humanoid.elapsed >= after && humanoid.elapsed - after < 1.0);
+    let posture = [
+        PostureKey::new(KeyCode::KeyH, "limp"),
+        PostureKey::new(KeyCode::KeyJ, "walk"),
+        PostureKey::new(KeyCode::KeyB, "half"),
+        PostureKey::new(KeyCode::KeyP, "flinch"),
+        PostureKey::new(KeyCode::KeyO, "braced"),
+        PostureKey::new(KeyCode::KeyK, "balance"),
+    ]
+    .into_iter()
+    .find_map(|posture| pressed(posture.key).then_some(posture.name))
+    .or(timed.then_some("limp"));
+    if let Some(posture) = posture {
+        if posture == "half" {
+            player.set_float_param(Name::from(HALF_WEIGHT), 0.5);
+        }
+        take_posture(&mut player, posture);
+        humanoid.walking = posture == "walk";
     }
-    if input.is_just_pressed(PhysicalKey::Code(KeyCode::KeyJ)) {
-        cmd.remove::<Balance>(humanoid.skeleton);
-        cmd.remove::<Stagger>(humanoid.skeleton);
-    }
-    if input.is_just_pressed(PhysicalKey::Code(KeyCode::KeyI))
-        && let Some((body, &ragdoll)) = bodies.get_entity(humanoid.skeleton)
-        && let Some(chest) = body.resolved().landmarks().chest
-    {
-        let mut pose = Vec::new();
-        physics.ragdoll_pose(ragdoll, &mut pose);
-        cmd.trigger(
-            BodyHit::new(
-                humanoid.skeleton,
-                chest,
-                pose[chest].translation + Vec3::Z * 0.12,
-                SHOT * Vec3::NEG_Z,
-            )
-            .shot(),
-        );
-    }
-    if input.is_just_pressed(PhysicalKey::Code(KeyCode::KeyX)) {
+    if pressed(KeyCode::KeyX) {
         cmd.trigger(Die {
             character: humanoid.skeleton,
             seconds: DYING_SECONDS,
         });
     }
-    let shove = input.is_just_pressed(PhysicalKey::Code(KeyCode::KeyU));
-    let stagger = input.is_just_pressed(PhysicalKey::Code(KeyCode::KeyY));
-    if (shove || stagger)
-        && let Some((body, &ragdoll)) = bodies.get_entity(humanoid.skeleton)
-        && let Some(chest) = body.resolved().landmarks().chest
-    {
+    let Some((body, &ragdoll)) = bodies.get_entity(humanoid.skeleton) else {
+        return;
+    };
+    let Some(chest) = body.resolved().landmarks().chest else {
+        return;
+    };
+    if pressed(KeyCode::KeyI) {
+        let mut pose = Vec::new();
+        physics.ragdoll_pose(ragdoll, &mut pose);
+        if let Some(chest_pose) = pose.get(chest) {
+            humanoid.walking = false;
+            cmd.trigger(
+                BodyHit::new(
+                    humanoid.skeleton,
+                    chest,
+                    chest_pose.translation + Vec3::Z * 0.12,
+                    SHOT * Vec3::NEG_Z,
+                )
+                .shot(),
+            );
+        }
+    }
+    let shove = pressed(KeyCode::KeyU);
+    let stagger = pressed(KeyCode::KeyY);
+    if shove || stagger {
         let part = physics.ragdoll_bodies(ragdoll)[chest];
         physics.add_impulse(part, PUSH * Vec3::Z);
         if stagger {
-            cmd.entity(humanoid.skeleton)
-                .insert(Stagger::new(Vec3::Z, STAGGER_SEVERITY));
+            humanoid.walking = false;
+            player.send(Stagger {
+                direction: Vec3::Z,
+                severity: STAGGER_SEVERITY,
+            });
         }
-    }
-}
-
-fn control_humanoid(
-    input: Res<Input>,
-    humanoid: Option<Res<Humanoid>>,
-    mut characters: Query<&mut CharacterRagdoll>,
-) {
-    let Some(humanoid) = humanoid else {
-        return;
-    };
-    let Some(mut character) = characters.get_entity_mut(humanoid.skeleton) else {
-        return;
-    };
-    let timed = humanoid
-        .limp_after
-        .is_some_and(|after| humanoid.elapsed >= after && humanoid.elapsed - after < 1.0)
-        && character.mode != RagdollMode::Limp;
-    if input.is_just_pressed(PhysicalKey::Code(KeyCode::KeyH)) || timed {
-        character.go_limp();
-    }
-    if input.is_just_pressed(PhysicalKey::Code(KeyCode::KeyJ)) {
-        character.mode = RagdollMode::FollowsAnimation;
-        character.weight = 0.0;
-    }
-    if input.is_just_pressed(PhysicalKey::Code(KeyCode::KeyB)) {
-        character.weight = 0.5;
-    }
-    if input.is_just_pressed(PhysicalKey::Code(KeyCode::KeyP)) {
-        character.power(concerto_ragdoll::FLINCH);
-    }
-    if input.is_just_pressed(PhysicalKey::Code(KeyCode::KeyO)) {
-        character.power(concerto_ragdoll::BRACED);
     }
 }
 
@@ -510,7 +724,6 @@ fn game(app: &mut App) {
                 toggle_gizmos,
                 animate_humanoid,
                 control_humanoid,
-                balance_humanoid,
                 draw_skeleton,
             ),
         );

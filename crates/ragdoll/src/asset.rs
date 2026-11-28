@@ -7,6 +7,8 @@ use concerto_reflect::{Reflect, ReflectDefault};
 use glam::{Quat, Vec3};
 use serde::{Deserialize, Serialize};
 
+use crate::{attributes::MotorCommand, view::BodyView};
+
 /// The physical body of one skeleton: which bones have a part, and each part's shape, mass and joint.
 #[derive(Clone, Debug, Default, PartialEq, Reflect, Serialize, Deserialize)]
 #[reflect(SkeletonSource, Default)]
@@ -164,6 +166,12 @@ impl StrengthProfile {
             .iter()
             .find(|part| &*part.bone == bone)
             .map_or(self.strength, |part| part.strength)
+    }
+
+    pub(crate) fn command_for(&self, body: BodyView<'_>, part: usize) -> Option<MotorCommand> {
+        let strength = self.strength_of(&body.resolved().bone_name(part)?);
+        (strength != PartStrength::Kinematic)
+            .then(|| MotorCommand::holding(strength, 1.0, body.animated_target(part)))
     }
 }
 

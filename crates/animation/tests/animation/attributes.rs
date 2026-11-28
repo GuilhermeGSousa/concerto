@@ -50,7 +50,7 @@ const ALL_BONES: [usize; BONES] = [0, 1, 2];
 const LONGEST_FRAME: Duration = Duration::from_millis(250);
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-struct Amount(f32);
+pub(crate) struct Amount(pub(crate) f32);
 
 impl PoseAttribute for Amount {
     fn neutral() -> Self {

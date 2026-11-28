@@ -1,60 +1,22 @@
-use concerto_ecs::{
-    CommandQueue, Component, Entity, Query, Res,
-    reflect::{ReflectComponent, ReflectSceneComponent},
-    signal::On,
-};
-use concerto_foundation::time::Time;
-use concerto_physics::{
-    physics_state::PhysicsState,
-    ragdoll::{BodyPose, RagdollId},
-};
+use concerto_physics::{physics_state::PhysicsState, ragdoll::BodyPose};
 use concerto_reflect::{Reflect, ReflectDefault};
 use glam::{Quat, Vec3};
+use serde::{Deserialize, Serialize};
 
 use crate::{
     asset::{PartStrength, Side},
-    behaviour::{
-        BehaviourEnded, BodyDrive, BodyState, BodyStateChanged, LYING, Outcome, PartCommand,
-        PhysicalState,
-    },
-    character::{CharacterRagdoll, RagdollBody, RagdollMode},
-    generate::BRACED,
     ik::{Chain, bent_spine},
+    node::balance::{ClaimsOut, PartCommand},
     resolve::Limbs,
-    sensing::BodySense,
+    view::BodyView,
 };
 
-/// The name the fall behaviour claims parts and reports under.
-pub const FALL: &str = "fall";
-/// The priority of the fall behaviour's claims.
-pub const FALL_PRIORITY: i32 = 15;
+pub(crate) const LYING: f32 = 1.0;
 
-/// Starts a `Fall` of this strength on the character whenever its state becomes `Falling`.
-#[derive(Component, Reflect, Clone, Copy, Debug, PartialEq)]
-#[reflect(Component, Default, SceneComponent)]
-pub struct FallReaction {
-    /// How conscious the fall is, from 1, fully braced, to 0, limp. The game sets it from the wound.
-    pub strength: f32,
-}
-
-impl Default for FallReaction {
-    fn default() -> Self {
-        Self { strength: 1.0 }
-    }
-}
-
-/// A fall the body takes part in.
-///
-/// The hands go to where it will land, with bent elbows that buckle on
-/// contact, the head is held away from the ground, the spine curls and the
-/// knees fold. It ends when the body has landed and relaxed, limp and
-/// `Down`. Add it to start a fall on a standing character too.
-#[derive(Component, Reflect, Clone, Debug, PartialEq)]
-#[reflect(Component, Default, SceneComponent)]
-#[require(BodyDrive, BodySense, PhysicalState)]
-pub struct Fall {
-    /// How conscious the fall is, from 1, fully braced, to 0, which is the limp fall.
-    pub strength: f32,
+/// How a fall plays out: the muscles, how the arms reach and buckle, how the head, spine and legs are held, and how the body relaxes once it has landed.
+#[derive(Clone, Debug, PartialEq, Reflect, Serialize, Deserialize)]
+#[reflect(Default)]
+pub struct FallSettings {
     /// The stiffness of the muscles at strength 1, in N·m/rad.
     pub stiffness: f32,
     /// The most torque one of them applies at strength 1, in N·m.
@@ -83,20 +45,11 @@ pub struct Fall {
     pub relax_seconds: f32,
     /// The share of its strength the body has when it has relaxed.
     pub resting: f32,
-    #[reflect(skip)]
-    started: bool,
-    #[reflect(skip)]
-    left_down: Option<f32>,
-    #[reflect(skip)]
-    right_down: Option<f32>,
-    #[reflect(skip)]
-    landed: Option<f32>,
 }
 
-impl Default for Fall {
+impl Default for FallSettings {
     fn default() -> Self {
         Self {
-            strength: 1.0,
             stiffness: 300.0,
             torque: 100.0,
             legs: 0.3,
@@ -111,56 +64,106 @@ impl Default for Fall {
             brace_seconds: 0.6,
             relax_seconds: 1.0,
             resting: 0.1,
-            started: false,
-            left_down: None,
-            right_down: None,
-            landed: None,
         }
     }
 }
 
-impl Fall {
-    /// Sets how conscious the fall is, from 1, fully braced, to 0, limp.
-    pub fn with_strength(mut self, strength: f32) -> Self {
-        self.strength = strength;
+impl FallSettings {
+    /// Sets `stiffness`.
+    pub fn with_stiffness(mut self, stiffness: f32) -> Self {
+        self.stiffness = stiffness;
         self
     }
 
-    /// Sets how an arm gives once its hand is down: over how many seconds, to what share of its strength.
-    pub fn with_buckle(mut self, buckle_seconds: f32, buckled: f32) -> Self {
+    /// Sets `torque`.
+    pub fn with_torque(mut self, torque: f32) -> Self {
+        self.torque = torque;
+        self
+    }
+
+    /// Sets `legs`.
+    pub fn with_legs(mut self, legs: f32) -> Self {
+        self.legs = legs;
+        self
+    }
+
+    /// Sets `knee_bend`.
+    pub fn with_knee_bend(mut self, knee_bend: f32) -> Self {
+        self.knee_bend = knee_bend;
+        self
+    }
+
+    /// Sets `reach`.
+    pub fn with_reach(mut self, reach: f32) -> Self {
+        self.reach = reach;
+        self
+    }
+
+    /// Sets `spread`.
+    pub fn with_spread(mut self, spread: f32) -> Self {
+        self.spread = spread;
+        self
+    }
+
+    /// Sets `buckle_seconds`.
+    pub fn with_buckle_seconds(mut self, buckle_seconds: f32) -> Self {
         self.buckle_seconds = buckle_seconds;
+        self
+    }
+
+    /// Sets `buckled`.
+    pub fn with_buckled(mut self, buckled: f32) -> Self {
         self.buckled = buckled;
         self
     }
 
-    /// Sets how the body relaxes after landing: over how many seconds, to what share of its strength.
-    pub fn with_relax(mut self, relax_seconds: f32, resting: f32) -> Self {
-        self.relax_seconds = relax_seconds;
-        self.resting = resting;
+    /// Sets `tuck`.
+    pub fn with_tuck(mut self, tuck: f32) -> Self {
+        self.tuck = tuck;
         self
     }
 
-    /// Whether the body has touched down.
-    pub fn landed(&self) -> bool {
-        self.landed.is_some()
+    /// Sets `curl`.
+    pub fn with_curl(mut self, curl: f32) -> Self {
+        self.curl = curl;
+        self
+    }
+
+    /// Sets `twist`.
+    pub fn with_twist(mut self, twist: f32) -> Self {
+        self.twist = twist;
+        self
+    }
+
+    /// Sets `brace_seconds`.
+    pub fn with_brace_seconds(mut self, brace_seconds: f32) -> Self {
+        self.brace_seconds = brace_seconds;
+        self
+    }
+
+    /// Sets `relax_seconds`.
+    pub fn with_relax_seconds(mut self, relax_seconds: f32) -> Self {
+        self.relax_seconds = relax_seconds;
+        self
+    }
+
+    /// Sets `resting`.
+    pub fn with_resting(mut self, resting: f32) -> Self {
+        self.resting = resting;
+        self
     }
 }
 
-/// Starts a fall on a character with a `FallReaction` when its state becomes `Falling`.
-pub fn fall_when_falling(
-    on: On<BodyStateChanged>,
-    characters: Query<(&FallReaction, Option<&Fall>)>,
-    mut cmd: CommandQueue,
-) {
-    let changed = on.signal();
-    if changed.to != BodyState::Falling {
-        return;
-    }
-    if let Some((reaction, None)) = characters.get_entity(changed.character) {
-        cmd.insert(
-            Fall::default().with_strength(reaction.strength),
-            changed.character,
-        );
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct FallRun {
+    left_down: Option<f32>,
+    right_down: Option<f32>,
+    landed: Option<f32>,
+}
+
+impl FallRun {
+    pub(crate) fn landed(&self) -> bool {
+        self.landed.is_some()
     }
 }
 
@@ -202,76 +205,43 @@ fn horizontal(vector: Vec3) -> Vec3 {
     Vec3::new(vector.x, 0.0, vector.z)
 }
 
-/// Drives every falling body with a [`Fall`], each fixed step in `BehaviourSet`.
-///
-/// It sends each hand towards where the chest will land, or to a wall about
-/// to be hit, lets an arm buckle once its hand is down, holds the head away
-/// from the way the body travels, curls the spine and folds the legs.
-///
-/// Once the trunk is down, or the body lies on any part but its feet, and is
-/// slow, the character is `Down`, the strength drains, and the body ends
-/// limp.
-pub fn fall_bodies(
-    mut characters: Query<(
-        Entity,
-        &mut Fall,
-        &mut CharacterRagdoll,
-        &RagdollId,
-        &RagdollBody,
-        &BodySense,
-        &mut BodyDrive,
-        &mut PhysicalState,
-    )>,
-    state: Res<PhysicsState>,
-    mut cmd: CommandQueue,
-) {
-    let dt = Time::fixed_delta_time().as_secs_f32();
-    let mut pose = Vec::new();
-    for (entity, mut fall, mut character, id, body, sense, mut drive, mut physical) in
-        characters.iter_mut()
-    {
-        let fall = &mut *fall;
-        let ended = |cmd: &mut CommandQueue| {
-            cmd.remove::<Fall>(entity);
-            cmd.trigger(BehaviourEnded {
-                character: entity,
-                behaviour: FALL.into(),
-                outcome: Outcome::Succeeded,
-            });
-        };
-        if physical.state == BodyState::Dead {
-            cmd.remove::<Fall>(entity);
-            continue;
-        }
-        if !fall.started {
-            fall.started = true;
-            if physical.state != BodyState::Down {
-                physical.state = BodyState::Falling;
-            }
-            if fall.strength <= 0.0 {
-                character.go_limp();
-                ended(&mut cmd);
-                continue;
-            }
-            if character.mode != RagdollMode::Powered {
-                character.power(BRACED);
-            }
-        }
-        let resolved = body.resolved();
+pub(crate) struct FallController<'a> {
+    pub(crate) settings: &'a FallSettings,
+    pub(crate) strength: f32,
+    pub(crate) run: &'a mut FallRun,
+}
+
+impl FallController<'_> {
+    pub(crate) fn step(
+        &mut self,
+        view: BodyView<'_>,
+        physics: &PhysicsState,
+        dt: f32,
+        lying: bool,
+        claims: &mut ClaimsOut,
+    ) -> bool {
+        let fall = self.settings;
+        let run = &mut *self.run;
+        let resolved = view.resolved();
         let landmarks = resolved.landmarks();
         let settings = &resolved.settings().parts;
         let count = settings.len();
-        let animated = body.animated_pose();
-        state.ragdoll_pose(*id, &mut pose);
-        let (Some(pelvis), Some(chest)) = (landmarks.pelvis, landmarks.chest) else {
-            continue;
+        claims.reset(count);
+        let animated = view.animated();
+        let mut pose = Vec::new();
+        physics.ragdoll_pose(view.ragdoll_id(), &mut pose);
+        let (Some(pelvis), Some(chest), Some(sense)) =
+            (landmarks.pelvis, landmarks.chest, view.sense())
+        else {
+            return false;
         };
         if pose.len() != count || animated.len() != count {
-            continue;
+            return false;
         }
-        let bodies = state.ragdoll_bodies(*id);
+        let entity = view.entity();
+        let bodies = physics.ragdoll_bodies(view.ragdoll_id());
         let touching = |part: usize| {
-            state
+            physics
                 .contacts_of(bodies[part])
                 .iter()
                 .any(|contact| contact.other != Some(entity))
@@ -279,22 +249,17 @@ pub fn fall_bodies(
 
         let on_limbs = sense.lean > LYING
             && (0..count).any(|part| !landmarks.feet().any(|foot| foot == part) && touching(part));
-        let down = physical.state == BodyState::Down
+        let down = lying
             || ((touching(chest) || touching(pelvis) || on_limbs)
                 && sense.centre.velocity.length() < 0.5);
-        if down || fall.landed.is_some() {
-            let landed = fall.landed.map_or(0.0, |landed| landed + dt);
-            fall.landed = Some(landed);
-            if physical.state != BodyState::Down {
-                physical.state = BodyState::Down;
-            }
+        if down || run.landed.is_some() {
+            let landed = run.landed.map_or(0.0, |landed| landed + dt);
+            run.landed = Some(landed);
             if landed >= fall.relax_seconds {
-                character.go_limp();
-                ended(&mut cmd);
-                continue;
+                return true;
             }
         }
-        let relaxed = fall.landed.map_or(1.0, |landed| {
+        let relaxed = run.landed.map_or(1.0, |landed| {
             let through = if fall.relax_seconds > 0.0 {
                 (landed / fall.relax_seconds).clamp(0.0, 1.0)
             } else {
@@ -302,7 +267,8 @@ pub fn fall_bodies(
             };
             1.0 + (fall.resting - 1.0) * through
         });
-        let strength = fall.strength.clamp(0.0, 1.0) * relaxed;
+        let strength = self.strength.clamp(0.0, 1.0) * relaxed;
+
         let muscle = |share: f32| PartStrength::Powered {
             stiffness: fall.stiffness * strength * share,
             damping: fall.stiffness * strength * share * 0.1,
@@ -355,8 +321,8 @@ pub fn fall_bodies(
                 _ => -across,
             };
             let since = match arm.side {
-                Side::Left => &mut fall.left_down,
-                _ => &mut fall.right_down,
+                Side::Left => &mut run.left_down,
+                _ => &mut run.right_down,
             };
             if since.is_some() || touching(arm.hand) {
                 *since = Some(since.map_or(0.0, |since| since + dt));
@@ -388,29 +354,19 @@ pub fn fall_bodies(
                 goal,
                 outward - travel * 0.3,
             );
-            drive.claim(
-                FALL,
+            claims.claim(
                 arm.upper,
-                FALL_PRIORITY,
                 1.0,
                 PartCommand::held(muscle(given))
                     .with_target((pose[shoulder].rotation.inverse() * aimed.upper).normalize()),
             );
-            drive.claim(
-                FALL,
+            claims.claim(
                 arm.lower,
-                FALL_PRIORITY,
                 1.0,
                 PartCommand::held(muscle(given))
                     .with_target((aimed.upper.inverse() * aimed.lower).normalize()),
             );
-            drive.claim(
-                FALL,
-                arm.hand,
-                FALL_PRIORITY,
-                1.0,
-                PartCommand::held(muscle(given)),
-            );
+            claims.claim(arm.hand, 1.0, PartCommand::held(muscle(given)));
         }
 
         if let Some(head) = landmarks.head
@@ -420,10 +376,8 @@ pub fn fall_bodies(
                 Vec3::Y.cross(-travel).try_normalize().unwrap_or(across),
                 fall.tuck,
             );
-            drive.claim(
-                FALL,
+            claims.claim(
                 head,
-                FALL_PRIORITY,
                 1.0,
                 PartCommand::held(muscle(1.5)).with_target(
                     (pose[neck].rotation.inverse() * away * carried[head]).normalize(),
@@ -434,10 +388,8 @@ pub fn fall_bodies(
         let twist = if backwards { fall.twist } else { 0.0 };
         let bend = Vec3::X * fall.curl + Vec3::Y * twist;
         for aimed in bent_spine(&landmarks.spine, settings, animated, bend) {
-            drive.claim(
-                FALL,
+            claims.claim(
                 aimed.part,
-                FALL_PRIORITY,
                 1.0,
                 PartCommand::held(muscle(1.0)).with_target(aimed.target),
             );
@@ -452,29 +404,21 @@ pub fn fall_bodies(
                 (Quat::from_axis_angle(sideways, -fall.knee_bend) * carried[leg.thigh]).normalize();
             let shin =
                 (Quat::from_axis_angle(sideways, fall.knee_bend) * carried[leg.shin]).normalize();
-            drive.claim(
-                FALL,
+            claims.claim(
                 leg.thigh,
-                FALL_PRIORITY,
                 1.0,
                 PartCommand::held(muscle(fall.legs))
                     .with_target((pose[pelvis].rotation.inverse() * thigh).normalize()),
             );
-            drive.claim(
-                FALL,
+            claims.claim(
                 leg.shin,
-                FALL_PRIORITY,
                 1.0,
                 PartCommand::held(muscle(fall.legs))
                     .with_target((thigh.inverse() * shin).normalize()),
             );
-            drive.claim(
-                FALL,
-                leg.foot,
-                FALL_PRIORITY,
-                1.0,
-                PartCommand::held(muscle(fall.legs)),
-            );
+            claims.claim(leg.foot, 1.0, PartCommand::held(muscle(fall.legs)));
         }
+
+        false
     }
 }

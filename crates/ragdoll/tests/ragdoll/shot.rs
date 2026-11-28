@@ -1,12 +1,22 @@
-use concerto_name::Name;
+use concerto_animation::{
+    graph::AnimationGraph,
+    node::{
+        AnimationClipNode,
+        state_machine::{AnimationFSMTrigger, AnimationStateMachine},
+    },
+};
+use concerto_foundation::assets::asset_server::AssetServer;
+use concerto_name::{Name, name};
 use concerto_physics::physics_state::PhysicsState;
 use concerto_physics::ragdoll::RagdollId;
 use concerto_ragdoll::{
-    BALANCE, BodyHit, BodyState, Outcome, RagdollBody, SHOT, ShotReaction, Wounds,
+    BalanceNode, BalanceSettings, BodyHit, LimpNode, RagdollBody, ShotNode, Wounds,
+    messages::{Shot, Steadied, Toppled},
+    testing::humanoid_skeleton,
 };
 use glam::Vec3;
 
-use crate::balance::Stage;
+use crate::balance::{Stage, over_clip, standing_clip};
 
 const SURFACE: f32 = 0.12;
 
@@ -16,10 +26,9 @@ struct Bullet {
 }
 
 #[derive(Debug)]
-struct Shot {
-    balance: Option<Outcome>,
-    shot: Option<Outcome>,
-    state: BodyState,
+struct Answered {
+    entries: Vec<Name>,
+    animated: bool,
     chest: Vec3,
     hand_gap: f32,
     early: Vec3,
@@ -54,9 +63,47 @@ fn shoot(stage: &mut Stage, bullet: &Bullet) -> Vec3 {
     point
 }
 
-fn shot(bullets: &[Bullet]) -> Shot {
-    let mut stage = Stage::new();
-    stage.insert(ShotReaction::default());
+fn shooting_graph(server: &AssetServer) -> AnimationGraph {
+    let skeleton = humanoid_skeleton();
+    let clip = server.add(standing_clip(&skeleton));
+    let walk = server.add(over_clip(
+        BalanceNode::default()
+            .with_settings(BalanceSettings::default().with_settle_seconds(f32::MAX)),
+        &clip,
+    ));
+    let shot = server.add(over_clip(ShotNode::default(), &clip));
+    let steady = server.add(AnimationGraph::from_node(AnimationClipNode::new(
+        clip.clone(),
+    )));
+    let fallen = server.add(over_clip(LimpNode::default(), &clip));
+    AnimationGraph::from_node(
+        AnimationStateMachine::from_initial_state(name!("walk"), walk, |to| {
+            to.to(
+                name!("shot"),
+                AnimationFSMTrigger::on_message::<Shot>(),
+                0.0,
+            );
+        })
+        .state(name!("shot"), shot, |to| {
+            to.to(
+                name!("steady"),
+                AnimationFSMTrigger::on_message::<Steadied>(),
+                0.0,
+            )
+            .to(
+                name!("fallen"),
+                AnimationFSMTrigger::on_message::<Toppled>(),
+                0.0,
+            );
+        })
+        .state(name!("steady"), steady, |_| {})
+        .state(name!("fallen"), fallen, |_| {})
+        .build(),
+    )
+}
+
+fn shot(bullets: &[Bullet]) -> Answered {
+    let mut stage = Stage::graphed(shooting_graph);
     stage.run(10);
     let start = stage.part("pelvis");
     let chest_start = stage.part("spine_03");
@@ -100,17 +147,9 @@ fn shot(bullets: &[Bullet]) -> Shot {
         }
     }
     stage.run(2);
-    let outcome = |name: &str| {
-        stage
-            .ended()
-            .iter()
-            .find(|ended| ended.behaviour == Name::from(name))
-            .map(|ended| ended.outcome)
-    };
-    Shot {
-        balance: outcome(BALANCE),
-        shot: outcome(SHOT),
-        state: stage.state(),
+    Answered {
+        entries: stage.entries().to_vec(),
+        animated: stage.animated(),
         chest,
         hand_gap,
         early,
@@ -140,26 +179,33 @@ fn a_shot_body_answers_by_where_it_was_struck() {
         "a shot to the chest from the front throws it back and brings a hand to the wound: {chest:?}"
     );
     assert_eq!(
-        (chest.balance, chest.shot, chest.state),
-        (
-            Some(Outcome::Succeeded),
-            Some(Outcome::Succeeded),
-            BodyState::Animated
-        ),
-        "a body that keeps its feet ends the reaction standing: {chest:?}"
+        chest.entries,
+        [name!("walk"), name!("shot"), name!("steady")],
+        "a body that keeps its feet ends the reaction, steady once and for good: {chest:?}"
+    );
+    assert!(
+        chest.animated,
+        "a body that keeps its feet ends the reaction drawn from its animation: {chest:?}"
     );
     assert_eq!(
         chest.wounded, 0.6,
-        "the chest stays wounded after the reaction"
+        "the chest stays wounded after the shot ends: {chest:?}"
     );
 
     let heavy = shot(&[bullet("spine_03", 300.0)]);
     assert_eq!(
-        (heavy.balance, heavy.shot),
-        (Some(Outcome::GaveUp), Some(Outcome::GaveUp)),
-        "a shot the body cannot take ends the reaction with balance's failure: {heavy:?}"
+        heavy.entries,
+        [name!("walk"), name!("shot"), name!("fallen")],
+        "a shot the body cannot take ends the reaction fallen, once and for good: {heavy:?}"
     );
-    assert!(matches!(heavy.state, BodyState::Falling | BodyState::Down));
+    assert_eq!(
+        heavy.wounded, 0.6,
+        "the chest stays wounded after a shot that brings the body down: {heavy:?}"
+    );
+    assert!(
+        heavy.lowest < 0.3,
+        "a shot the body cannot take puts it on the ground: {heavy:?}"
+    );
 
     let left = shot(&[bullet("thigh_l", 20.0)]);
     let right = shot(&[bullet("thigh_r", 20.0)]);
@@ -176,7 +222,7 @@ fn a_shot_body_answers_by_where_it_was_struck() {
 
     let both = shot(&[bullet("thigh_l", 20.0), bullet("thigh_r", 20.0)]);
     assert!(
-        both.lowest < 0.52 && both.balance == Some(Outcome::GaveUp),
+        both.lowest < 0.52 && both.entries == [name!("walk"), name!("shot"), name!("fallen")],
         "shots to both thighs fold the knees and bring the pelvis under knee height: {both:?}"
     );
 }
