@@ -273,7 +273,7 @@ mod tests {
         },
         transform::{GlobalTransform, Transform},
     };
-    use concerto_mcp::{McpPlugin, spawn_server};
+    use concerto_mcp::{McpPlugin, ServerHandle};
     use concerto_mesh::Mesh;
     use concerto_render::components::camera::Camera;
     use concerto_scene::node_id::NodeId;
@@ -390,7 +390,7 @@ mod tests {
 
     fn serve(app: &mut App, calls: Vec<Call>) -> Vec<Answer> {
         let (client_io, server_io) = tokio::io::duplex(64 * 1024);
-        let _server = spawn_server(app, server_io);
+        let _server = ServerHandle::spawn(app, server_io);
         let client = std::thread::spawn(move || {
             tokio::runtime::Builder::new_current_thread()
                 .enable_all()

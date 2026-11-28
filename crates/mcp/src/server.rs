@@ -80,47 +80,47 @@ impl ServerHandle {
     pub fn join(self) {
         let _ = self.thread.join();
     }
-}
 
-/// Serves MCP over `io` on a new thread, offering the tools `app` has registered so far.
-///
-/// # Panics
-///
-/// Panics when `app` has no [`McpPlugin`](crate::McpPlugin), or when the thread
-/// or its runtime cannot start.
-pub fn spawn_server<IO>(app: &App, io: IO) -> ServerHandle
-where
-    IO: AsyncRead + AsyncWrite + Send + Unpin + 'static,
-{
-    let handler = Handler {
-        tools: Arc::new(
-            app.get_resource::<ToolRegistry>()
-                .expect("spawn_server needs McpPlugin")
-                .descriptors(),
-        ),
-        inbox: app
-            .get_resource::<McpInbox>()
-            .expect("spawn_server needs McpPlugin")
-            .sender(),
-    };
-    let thread = std::thread::Builder::new()
-        .name("mcp-server".into())
-        .spawn(move || {
-            let runtime = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .expect("the MCP server's runtime starts");
-            runtime.block_on(async move {
-                match handler.serve(io).await {
-                    Ok(service) => {
-                        if let Err(error) = service.waiting().await {
-                            log::error!("MCP server stopped: {error}");
+    /// Serves MCP over `io` on a new thread, offering the tools `app` has registered so far.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `app` has no [`McpPlugin`](crate::McpPlugin), or when the thread
+    /// or its runtime cannot start.
+    pub fn spawn<IO>(app: &App, io: IO) -> Self
+    where
+        IO: AsyncRead + AsyncWrite + Send + Unpin + 'static,
+    {
+        let handler = Handler {
+            tools: Arc::new(
+                app.get_resource::<ToolRegistry>()
+                    .expect("ServerHandle::spawn needs McpPlugin")
+                    .descriptors(),
+            ),
+            inbox: app
+                .get_resource::<McpInbox>()
+                .expect("ServerHandle::spawn needs McpPlugin")
+                .sender(),
+        };
+        let thread = std::thread::Builder::new()
+            .name("mcp-server".into())
+            .spawn(move || {
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .expect("the MCP server's runtime starts");
+                runtime.block_on(async move {
+                    match handler.serve(io).await {
+                        Ok(service) => {
+                            if let Err(error) = service.waiting().await {
+                                log::error!("MCP server stopped: {error}");
+                            }
                         }
+                        Err(error) => log::error!("MCP client failed to initialise: {error}"),
                     }
-                    Err(error) => log::error!("MCP client failed to initialise: {error}"),
-                }
-            });
-        })
-        .expect("the MCP server thread starts");
-    ServerHandle { thread }
+                });
+            })
+            .expect("the MCP server thread starts");
+        Self { thread }
+    }
 }

@@ -13,7 +13,7 @@ use concerto_render::{
 use concerto_window::plugin::{Window, WindowCommand};
 use tokio::io::{AsyncRead, AsyncWrite};
 
-use crate::{FrameDemand, McpInbox, McpRead, ToolRegistry, spawn_server};
+use crate::{FrameDemand, McpInbox, McpRead, ServerHandle, ToolRegistry};
 
 const FRAME: Duration = Duration::from_micros(16_667);
 const IDLE_CHECK: Duration = Duration::from_millis(100);
@@ -85,7 +85,7 @@ where
     if closes(&mut app) {
         return;
     }
-    let server = spawn_server(&app, io);
+    let server = ServerHandle::spawn(&app, io);
     while !server.is_finished() {
         let demanded = frame_demanded(&app);
         let timeout = if demanded { Duration::ZERO } else { IDLE_CHECK };

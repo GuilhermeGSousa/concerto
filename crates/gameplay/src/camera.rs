@@ -182,17 +182,17 @@ impl CameraBoom {
         self.return_halflife = return_halflife;
         self
     }
+
+    /// The boom length after `dt` seconds: `allowed` at once when it is shorter than `current`, else eased toward it.
+    pub fn eased_length(&self, current: f32, allowed: f32, dt: f32) -> f32 {
+        if allowed <= current || self.return_halflife <= 0.0 {
+            return allowed;
+        }
+        allowed + (current - allowed) * 0.5f32.powf(dt / self.return_halflife)
+    }
 }
 
 const BOOM_SKIN: f32 = 0.02;
-
-/// The boom length after `dt` seconds: `allowed` at once when it is shorter than `current`, else eased toward it.
-pub fn boom_distance(current: f32, allowed: f32, dt: f32, return_halflife: f32) -> f32 {
-    if allowed <= current || return_halflife <= 0.0 {
-        return allowed;
-    }
-    allowed + (current - allowed) * 0.5f32.powf(dt / return_halflife)
-}
 
 /// Pulls each boomed camera in toward its shoulder point when a body lies in the way, and eases it back out.
 pub fn update_camera_booms(
@@ -244,14 +244,14 @@ pub fn update_camera_booms(
 
         let shoulder_local = pivot.rotation.inverse() * (shoulder_point - pivot.translation);
         let current = (transform.translation - shoulder_local).dot(direction);
-        let distance = boom_distance(current, allowed, dt, boom.return_halflife);
+        let distance = boom.eased_length(current, allowed, dt);
         transform.translation = shoulder_local + direction * distance;
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::boom_distance;
+    use super::CameraBoom;
 
     struct Ease {
         current: f32,
@@ -296,7 +296,9 @@ mod tests {
         ];
         for ease in eases {
             let distance = ease.steps.iter().fold(ease.current, |current, dt| {
-                boom_distance(current, ease.allowed, *dt, ease.halflife)
+                CameraBoom::default()
+                    .with_return_halflife(ease.halflife)
+                    .eased_length(current, ease.allowed, *dt)
             });
             assert!(
                 (distance - ease.distance).abs() < 1e-5,

@@ -230,6 +230,32 @@ impl FirstPersonWalker {
     fn capsule_half_height(&self) -> f32 {
         ((self.height - self.step_height) / 2.0 - self.radius).max(0.0)
     }
+
+    /// Spawns the walker with its body, standing with its feet at `transform`, driven by `player`'s `Move` and `Look`.
+    pub fn spawn(
+        self,
+        cmd: &mut CommandQueue,
+        player: PlayerIndex,
+        transform: Transform,
+    ) -> Entity {
+        let collider = Collider::capsule(self.capsule_half_height(), self.radius);
+        let offset = ColliderOffset(Vec3::Y * (collider.bottom_offset() + self.step_height));
+        cmd.spawn((
+            player,
+            RigidBody {
+                density: 1000.0,
+                allowed_dofs: AllowedDofs::TRANSLATION,
+                motion_type: MotionType::Dynamic,
+            },
+            collider,
+            offset,
+            GravityScale(0.0),
+            CollisionLayers::character(),
+            transform,
+            self,
+        ))
+        .entity()
+    }
 }
 
 /// Puts the entity at the eyes of `walker`, looking where it looks.
@@ -239,32 +265,6 @@ impl FirstPersonWalker {
 pub struct FirstPersonView {
     /// The walker entity whose eyes this entity sits at.
     pub walker: Entity,
-}
-
-/// Spawns `walker` with its body, standing with its feet at `transform`, driven by `player`'s `Move` and `Look`.
-pub fn spawn_first_person_walker(
-    cmd: &mut CommandQueue,
-    player: PlayerIndex,
-    transform: Transform,
-    walker: FirstPersonWalker,
-) -> Entity {
-    let collider = Collider::capsule(walker.capsule_half_height(), walker.radius);
-    let offset = ColliderOffset(Vec3::Y * (collider.bottom_offset() + walker.step_height));
-    cmd.spawn((
-        player,
-        RigidBody {
-            density: 1000.0,
-            allowed_dofs: AllowedDofs::TRANSLATION,
-            motion_type: MotionType::Dynamic,
-        },
-        collider,
-        offset,
-        GravityScale(0.0),
-        CollisionLayers::character(),
-        transform,
-        walker,
-    ))
-    .entity()
 }
 
 /// Steers and turns each walker from its player's `Move` and `Look` actions and, for the player who holds it, the mouse.

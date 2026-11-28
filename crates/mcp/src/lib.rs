@@ -27,7 +27,7 @@ pub use pending::{
     FrameDemand, PendingCall, demand_frames, expire_pending_calls, reset_frame_demand,
 };
 pub use reply::{Reply, ToolError};
-pub use server::{ServerHandle, spawn_server};
+pub use server::ServerHandle;
 pub use tools::{AppMcpExt, McpTool, Needs, ToolRegistry};
 
 /// The schedule of tool systems in a frame, run from `First` right after [`receive_calls`].

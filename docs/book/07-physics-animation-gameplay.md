@@ -2437,7 +2437,7 @@ motion, still passes the events, and warns once.
   left stick), `Look` (the right stick) and `Stroll` (left Shift). `GameplayPlugin` binds them through
   `bind_gameplay_actions`, which a test calls on its own `ActionMap`.
 - `gameplay::first_person` is a first-person character that walks, with no
-  jump. `spawn_first_person_walker(&mut cmd, player, transform, walker)` spawns
+  jump. `walker.spawn(&mut cmd, player, transform)` spawns
   a `FirstPersonWalker` with its body, feet at `transform`, and returns the
   entity; `player` is the `PlayerIndex` whose `Move` and `Look` drive it, so two
   walkers with two indices are two players. The left stick walks up to
