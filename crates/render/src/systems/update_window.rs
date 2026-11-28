@@ -6,8 +6,10 @@ use concerto_ecs::{
 use concerto_window::plugin::Window;
 
 use crate::{
-    components::camera::create_rtt, device::RenderDevice, draw_target::DrawTarget,
-    render_asset::render_window::RenderWindow, resources::RenderContext,
+    device::RenderDevice,
+    draw_target::DrawTarget,
+    render_asset::{render_texture::RenderTexture, render_window::RenderWindow},
+    resources::RenderContext,
 };
 
 pub(crate) fn extract_window(
@@ -49,7 +51,12 @@ pub(crate) fn update_render_window(
             if resized || render_window.get_view().is_none() {
                 context.surface_config.width = size.0;
                 context.surface_config.height = size.1;
-                let texture = create_rtt(&device, context.surface_config.format, size.0, size.1);
+                let texture = RenderTexture::camera_target(
+                    &device,
+                    context.surface_config.format,
+                    size.0,
+                    size.1,
+                );
                 render_window.set_offscreen(texture.view.clone());
                 shared.publish(texture);
             }

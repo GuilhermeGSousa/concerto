@@ -10,7 +10,7 @@ use concerto_ecs::component::scene::SceneEntityRef;
 use concerto_foundation::assets::{AssetId, handle::AssetHandle};
 use concerto_foundation::transform::Transform;
 use concerto_mesh::{JointPose, Skeleton, SkeletonComponent};
-use concerto_reflect::{Reflect, apply_value};
+use concerto_reflect::Reflect;
 use concerto_scene::scene::{Scene, SceneNode};
 use glam::{Mat4, Quat, Vec3};
 use uuid::Uuid;
@@ -125,7 +125,7 @@ fn decode<T: Reflect + Default>(node: &SceneNode) -> Option<T> {
         .iter()
         .find(|component| component.type_name == std::any::type_name::<T>())?;
     let mut value = T::default();
-    let warnings = apply_value(&mut value, &component.value);
+    let warnings = component.value.apply(&mut value);
     assert!(warnings.is_empty(), "{warnings:?}");
     Some(value)
 }
@@ -152,7 +152,7 @@ fn event_keys(clip: &AnimationClip) -> Vec<NamedKey> {
                 std::any::type_name::<AnimationEvent>()
             );
             let mut event = AnimationEvent::default();
-            let warnings = apply_value(&mut event, &key.event.value().unwrap());
+            let warnings = key.event.value().unwrap().apply(&mut event);
             assert!(warnings.is_empty(), "{warnings:?}");
             named_key(key.time, event.name.as_str())
         })

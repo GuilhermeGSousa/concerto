@@ -738,7 +738,7 @@ mod tests {
             install_layout_listeners,
         },
         sets::UiSet,
-        text::fonts::{UIFonts, build_font_system},
+        text::fonts::UIFonts,
     };
 
     const EPS: f32 = 1e-5;
@@ -759,7 +759,7 @@ mod tests {
             world.insert_resource(UILayoutEngine::default());
             world.insert_resource(UILayoutDiagnostics::default());
             world.insert_resource(UIPanelStack::default());
-            world.insert_resource(UITextMeasure::new(build_font_system(&UIFonts::default())));
+            world.insert_resource(UITextMeasure::new(UIFonts::default().build_font_system()));
             world.insert_resource(Input::new());
             world.insert_resource(FocusedWidget::default());
             world.insert_resource(EventChannel::<ActionFired>::default());

@@ -13,7 +13,7 @@ use concerto_foundation::transform::Transform;
 use concerto_mesh::{JointPose, Skeleton, SkeletonComponent};
 use concerto_name::Name;
 use concerto_reflect::{Reflect, ReflectDefault};
-use concerto_scene::node_id::{NodeId, derive_ids};
+use concerto_scene::node_id::NodeId;
 use concerto_scene::scene::{Scene, SceneNode};
 use glam::{Mat4, Quat, Vec3};
 use serde::{Deserialize, Serialize};
@@ -257,7 +257,7 @@ impl Bvh {
                 nodes[parent].children.push(index);
             }
         }
-        derive_ids(&mut nodes);
+        SceneNode::derive_ids(&mut nodes);
         Ok(Scene {
             nodes,
             referenced_assets: vec![skeleton_id],

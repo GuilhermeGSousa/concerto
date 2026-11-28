@@ -16,7 +16,7 @@ use concerto_mesh::vertex::Vertex;
 use concerto_reflect::Reflect;
 use concerto_render::assets::material::StandardMaterial;
 use concerto_render::components::material::MaterialComponent;
-use concerto_scene::node_id::{NodeId, derive_ids};
+use concerto_scene::node_id::NodeId;
 use concerto_scene::scene::{Scene, SceneNode};
 
 /// The [`Importer`] of `.obj` sources, registered under the name `obj`.
@@ -95,7 +95,7 @@ impl Importer for ObjImporter {
 
             nodes.push(node);
         }
-        derive_ids(&mut nodes);
+        SceneNode::derive_ids(&mut nodes);
 
         ctx.emit(
             "scene",

@@ -51,6 +51,51 @@ impl ResolvedTexture {
 }
 
 impl TextureSource {
+    /// Derives the levels the GPU samples from `source`, as a texture of `role` with `settings`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `source` fails to decode, when `settings` ask for a
+    /// block compression with no sRGB form (BC4 or BC5) in the sRGB colour space,
+    /// or, on wasm, when `settings` ask for any block compression, which the web
+    /// build cannot encode.
+    pub fn derive_levels(
+        &self,
+        role: TextureRole,
+        settings: &TextureSettings,
+    ) -> anyhow::Result<TextureLevels> {
+        let image = self.decode()?;
+        let resolved = ResolvedTexture::resolve(role, settings, has_alpha(&image))?;
+        let compressed = resolved.compression != Compression::Uncompressed;
+        let image = fit(image, settings.max_size.pixels(), compressed);
+        let (width, height) = image.dimensions();
+        let texels = match (role, settings.color_space_for(role)) {
+            (TextureRole::Normal, _) => Texels::Normals,
+            (_, ColorSpace::Srgb) => Texels::Srgb,
+            (_, ColorSpace::Linear) => Texels::Linear,
+        };
+        let base = image.into_raw();
+        let mips = if settings.mips {
+            build_mips(width, height, texels, &base)
+        } else {
+            Vec::new()
+        };
+        let levels = std::iter::once(base)
+            .chain(mips)
+            .enumerate()
+            .map(|(level, texels)| {
+                let extent = level_extent(width, height, level as u32);
+                encode_level(resolved, extent, texels)
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        Ok(TextureLevels {
+            format: resolved.format,
+            width,
+            height,
+            levels,
+        })
+    }
+
     pub(crate) fn decode(&self) -> anyhow::Result<RgbaImage> {
         let format = match self.encoding {
             SourceEncoding::Png => ImageFormat::Png,
@@ -64,51 +109,6 @@ impl TextureSource {
 
 pub(crate) fn has_alpha(image: &RgbaImage) -> bool {
     image.pixels().any(|pixel| pixel.0[3] < 255)
-}
-
-/// Derives the levels the GPU samples from `source`, as a texture of `role` with `settings`.
-///
-/// # Errors
-///
-/// Returns an error when `source` fails to decode, when `settings` ask for a
-/// block compression with no sRGB form (BC4 or BC5) in the sRGB colour space,
-/// or, on wasm, when `settings` ask for any block compression, which the web
-/// build cannot encode.
-pub fn derive_levels(
-    source: &TextureSource,
-    role: TextureRole,
-    settings: &TextureSettings,
-) -> anyhow::Result<TextureLevels> {
-    let image = source.decode()?;
-    let resolved = ResolvedTexture::resolve(role, settings, has_alpha(&image))?;
-    let compressed = resolved.compression != Compression::Uncompressed;
-    let image = fit(image, settings.max_size.pixels(), compressed);
-    let (width, height) = image.dimensions();
-    let texels = match (role, settings.color_space_for(role)) {
-        (TextureRole::Normal, _) => Texels::Normals,
-        (_, ColorSpace::Srgb) => Texels::Srgb,
-        (_, ColorSpace::Linear) => Texels::Linear,
-    };
-    let base = image.into_raw();
-    let mips = if settings.mips {
-        build_mips(width, height, texels, &base)
-    } else {
-        Vec::new()
-    };
-    let levels = std::iter::once(base)
-        .chain(mips)
-        .enumerate()
-        .map(|(level, texels)| {
-            let extent = level_extent(width, height, level as u32);
-            encode_level(resolved, extent, texels)
-        })
-        .collect::<anyhow::Result<Vec<_>>>()?;
-    Ok(TextureLevels {
-        format: resolved.format,
-        width,
-        height,
-        levels,
-    })
 }
 
 fn fit(image: RgbaImage, max_size: Option<u32>, blocks: bool) -> RgbaImage {

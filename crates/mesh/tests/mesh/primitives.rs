@@ -1,7 +1,4 @@
-use concerto_mesh::{
-    primitives::{capsule, cuboid, plane, uv_sphere},
-    Mesh,
-};
+use concerto_mesh::Mesh;
 use glam::{Vec2, Vec3};
 
 const EPSILON: f32 = 1e-5;
@@ -80,28 +77,28 @@ fn every_shape_is_well_formed_with_its_counts_bounds_and_texture_directions() {
     let shapes = [
         Shape {
             case: "plane",
-            mesh: plane(Vec2::new(4.0, 2.0)),
+            mesh: Mesh::plane(Vec2::new(4.0, 2.0)),
             vertices: 4,
             indices: 6,
             half_extents: Vec3::new(2.0, 0.0, 1.0),
         },
         Shape {
             case: "cuboid",
-            mesh: cuboid(Vec3::new(2.0, 4.0, 6.0)),
+            mesh: Mesh::cuboid(Vec3::new(2.0, 4.0, 6.0)),
             vertices: 24,
             indices: 36,
             half_extents: Vec3::new(1.0, 2.0, 3.0),
         },
         Shape {
             case: "sphere",
-            mesh: uv_sphere(1.5, 8, 16),
+            mesh: Mesh::uv_sphere(1.5, 8, 16),
             vertices: 9 * 17,
             indices: 6 * 16 * 7,
             half_extents: Vec3::splat(1.5),
         },
         Shape {
             case: "capsule",
-            mesh: capsule(0.5, 1.0, 4, 16),
+            mesh: Mesh::capsule(0.5, 1.0, 4, 16),
             vertices: 10 * 17,
             indices: 6 * 16 * 8,
             half_extents: Vec3::new(0.5, 1.5, 0.5),
@@ -134,13 +131,13 @@ struct Round {
 fn a_round_shape_puts_every_vertex_at_its_radius_from_its_axis_and_closes_its_seam() {
     let shapes = [
         Round {
-            mesh: uv_sphere(1.5, 8, 16),
+            mesh: Mesh::uv_sphere(1.5, 8, 16),
             radius: 1.5,
             half_height: 0.0,
             segments: 16,
         },
         Round {
-            mesh: capsule(0.25, 2.0, 6, 12),
+            mesh: Mesh::capsule(0.25, 2.0, 6, 12),
             radius: 0.25,
             half_height: 2.0,
             segments: 12,

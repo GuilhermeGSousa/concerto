@@ -9,7 +9,7 @@ use concerto_foundation::{
     assets::{asset_server::AssetServer, handle::AssetHandle},
     transform::Transform,
 };
-use concerto_mesh::{MeshComponent, primitives::plane};
+use concerto_mesh::{Mesh, MeshComponent};
 use concerto_render::{
     MaterialComponent, MaterialPlugin,
     assets::material::StandardMaterial,
@@ -17,7 +17,6 @@ use concerto_render::{
     draw_target::{DrawTarget, SharedTexture},
     gpu::Gpu,
     plugin::RenderPlugin,
-    readback::read_texture,
     wgpu,
 };
 use concerto_skybox::{Sky, SkyboxPlugin, Sun};
@@ -72,7 +71,7 @@ impl Scene {
         let mesh = app
             .get_resource::<AssetServer>()
             .unwrap()
-            .add(plane(Vec2::splat(200.0)));
+            .add(Mesh::plane(Vec2::splat(200.0)));
         let mirror = metal(&app, 0.0);
         let world = app.main_mut().world_mut();
         world.register_component::<Transform>();
@@ -107,7 +106,7 @@ impl Scene {
         for _ in 0..30 {
             self.app.update();
         }
-        let image = read_texture(&self.gpu, self.shared.get().unwrap().texture());
+        let image = self.gpu.read_texture(self.shared.get().unwrap().texture());
         let rgb = |y: u32| {
             let [r, g, b, _] = image.get_pixel(WIDTH / 2, y).0;
             [r, g, b]

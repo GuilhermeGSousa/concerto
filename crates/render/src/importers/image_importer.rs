@@ -34,37 +34,39 @@ pub struct ImportedTexture {
     pub source: TextureSource,
 }
 
-/// The texture `name` of `ctx` from image file `bytes`.
-///
-/// It takes the `given` settings, else the ones its previous import or the
-/// editor gave it, else the defaults.
-///
-/// # Errors
-///
-/// Returns a message when `bytes` are not a PNG or JPEG image, when the image
-/// header cannot be read, or when the settings cannot derive a texture for
-/// `role`.
-pub fn imported_texture(
-    ctx: &ImportContext,
-    name: &str,
-    role: TextureRole,
-    bytes: Vec<u8>,
-    given: Option<TextureSettings>,
-) -> Result<ImportedTexture, String> {
-    let encoding = SourceEncoding::detect(&bytes)?;
-    let source = TextureSource::new(bytes, encoding).map_err(|err| format!("{err:#}"))?;
-    let settings = given
-        .or_else(|| {
-            ctx.previous::<Texture>(name)
-                .map(|previous| previous.settings)
+impl ImportedTexture {
+    /// The texture `name` of `ctx` from image file `bytes`.
+    ///
+    /// It takes the `given` settings, else the ones its previous import or the
+    /// editor gave it, else the defaults.
+    ///
+    /// # Errors
+    ///
+    /// Returns a message when `bytes` are not a PNG or JPEG image, when the image
+    /// header cannot be read, or when the settings cannot derive a texture for
+    /// `role`.
+    pub fn from_bytes(
+        ctx: &ImportContext,
+        name: &str,
+        role: TextureRole,
+        bytes: Vec<u8>,
+        given: Option<TextureSettings>,
+    ) -> Result<Self, String> {
+        let encoding = SourceEncoding::detect(&bytes)?;
+        let source = TextureSource::new(bytes, encoding).map_err(|err| format!("{err:#}"))?;
+        let settings = given
+            .or_else(|| {
+                ctx.previous::<Texture>(name)
+                    .map(|previous| previous.settings)
+            })
+            .unwrap_or_default();
+        ResolvedTexture::resolve(role, &settings, false)
+            .map_err(|err| format!("texture `{name}` cannot be derived as {role:?}: {err:#}"))?;
+        Ok(Self {
+            texture: Texture::imported(role, settings, &source),
+            source,
         })
-        .unwrap_or_default();
-    ResolvedTexture::resolve(role, &settings, false)
-        .map_err(|err| format!("texture `{name}` cannot be derived as {role:?}: {err:#}"))?;
-    Ok(ImportedTexture {
-        texture: Texture::imported(role, settings, &source),
-        source,
-    })
+    }
 }
 
 impl Importer for ImageImporter {
@@ -99,7 +101,7 @@ impl Importer for ImageImporter {
             source_path: source_path.to_path_buf(),
             message: err.to_string(),
         })?;
-        let ImportedTexture { texture, source } = imported_texture(
+        let ImportedTexture { texture, source } = ImportedTexture::from_bytes(
             ctx,
             "main",
             TextureRole::Color,

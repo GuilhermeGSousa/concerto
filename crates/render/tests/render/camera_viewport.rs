@@ -6,7 +6,7 @@ use concerto_app::{
 use concerto_color::Color;
 use concerto_ecs::{events::event_channel::EventChannel, Entity};
 use concerto_foundation::{assets::asset_server::AssetServer, transform::Transform};
-use concerto_mesh::{primitives::cuboid, MeshComponent};
+use concerto_mesh::{Mesh, MeshComponent};
 use concerto_render::{
     assets::material::StandardMaterial,
     components::{
@@ -17,7 +17,6 @@ use concerto_render::{
     draw_target::{DrawTarget, SharedTexture},
     gpu::Gpu,
     plugin::RenderPlugin,
-    readback::read_texture,
     wgpu, MaterialComponent, MaterialPlugin,
 };
 use concerto_window::{
@@ -86,9 +85,7 @@ impl Hosted {
 
     fn pixel(&self, x: u32, y: u32) -> [u8; 4] {
         let published = self.shared.get().expect("a texture was published");
-        read_texture(&self.gpu, published.texture())
-            .get_pixel(x, y)
-            .0
+        self.gpu.read_texture(published.texture()).get_pixel(x, y).0
     }
 }
 
@@ -160,7 +157,7 @@ fn draws_stay_inside_their_camera_rect() {
     let (mesh, material) = {
         let server = hosted.app.get_resource::<AssetServer>().unwrap();
         (
-            server.add(cuboid(Vec3::new(10.0, 10.0, 1.0))),
+            server.add(Mesh::cuboid(Vec3::new(10.0, 10.0, 1.0))),
             server.add(StandardMaterial::default()),
         )
     };
@@ -200,7 +197,7 @@ fn a_camera_draws_only_the_layers_it_has() {
     let (mesh, material) = {
         let server = hosted.app.get_resource::<AssetServer>().unwrap();
         (
-            server.add(cuboid(Vec3::new(10.0, 10.0, 1.0))),
+            server.add(Mesh::cuboid(Vec3::new(10.0, 10.0, 1.0))),
             server.add(StandardMaterial::default()),
         )
     };

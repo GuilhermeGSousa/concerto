@@ -156,6 +156,24 @@ impl Default for UIAnchoredPanel {
 }
 
 impl UIAnchoredPanel {
+    /// Places a panel of size `panel` against `anchor` inside `window`, in logical pixels, as this panel asks.
+    pub fn place(&self, anchor: UIBox, panel: Vec2, window: Vec2) -> Placement {
+        let side = if fits(anchor, panel, window, self.side, self.gap) {
+            self.side
+        } else if fits(anchor, panel, window, self.side.opposite(), self.gap) {
+            self.side.opposite()
+        } else {
+            self.side
+        };
+
+        let mut origin = main_axis_origin(anchor, panel, side, self.gap);
+        align_cross_axis(&mut origin, anchor, panel, side, self.align);
+        shift_cross_axis(&mut origin, panel, window, side);
+        clamp(&mut origin, panel, window);
+
+        Placement { origin, side }
+    }
+
     /// A closed panel anchored to `target`, below it, start-aligned, 4 logical pixels away.
     pub fn new(target: UIAnchorTarget) -> Self {
         Self {
@@ -239,24 +257,6 @@ pub struct Placement {
     pub side: UIAnchorSide,
 }
 
-/// Places `panel` against `anchor` inside `window`, in logical pixels.
-pub fn place(anchor: UIBox, panel: Vec2, window: Vec2, spec: &UIAnchoredPanel) -> Placement {
-    let side = if fits(anchor, panel, window, spec.side, spec.gap) {
-        spec.side
-    } else if fits(anchor, panel, window, spec.side.opposite(), spec.gap) {
-        spec.side.opposite()
-    } else {
-        spec.side
-    };
-
-    let mut origin = main_axis_origin(anchor, panel, side, spec.gap);
-    align_cross_axis(&mut origin, anchor, panel, side, spec.align);
-    shift_cross_axis(&mut origin, panel, window, side);
-    clamp(&mut origin, panel, window);
-
-    Placement { origin, side }
-}
-
 fn fits(anchor: UIBox, panel: Vec2, window: Vec2, side: UIAnchorSide, gap: f32) -> bool {
     let max = anchor.max();
     match side {
@@ -324,14 +324,17 @@ pub struct PanelRects {
     pub owner_rect: Option<UIBox>,
 }
 
-/// The panels a press at `cursor` should close, given the open stack in outermost-first order.
-pub fn panels_to_close(stack: &[PanelRects], cursor: Vec2) -> &[PanelRects] {
-    let deepest = stack.iter().rposition(|panel| {
-        panel.rect.contains(cursor) || panel.owner_rect.is_some_and(|owner| owner.contains(cursor))
-    });
-    match deepest {
-        Some(index) => &stack[index + 1..],
-        None => stack,
+impl PanelRects {
+    /// The panels a press at `cursor` should close, given the open stack in outermost-first order.
+    pub fn to_close(stack: &[Self], cursor: Vec2) -> &[Self] {
+        let deepest = stack.iter().rposition(|panel| {
+            panel.rect.contains(cursor)
+                || panel.owner_rect.is_some_and(|owner| owner.contains(cursor))
+        });
+        match deepest {
+            Some(index) => &stack[index + 1..],
+            None => stack,
+        }
     }
 }
 
@@ -726,7 +729,7 @@ pub(crate) fn dismiss_panels(
                 })
             })
             .collect::<Vec<_>>();
-        for closing in panels_to_close(&rects, cursor) {
+        for closing in PanelRects::to_close(&rects, cursor) {
             if let Some((mut panel, _)) = panels.get_entity_mut(closing.panel) {
                 panel.open = false;
             }

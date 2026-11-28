@@ -27,6 +27,33 @@ impl UIFonts {
     pub fn set_sans_serif(&mut self, family: impl Into<String>) {
         self.sans_serif = Some(family.into());
     }
+
+    /// Builds a [`FontSystem`] holding every registered face.
+    #[doc(hidden)]
+    pub fn build_font_system(&self) -> FontSystem {
+        let mut font_system = FontSystem::new();
+        let db = font_system.db_mut();
+
+        #[cfg(target_arch = "wasm32")]
+        {
+            db.load_font_data(include_bytes!("../../fonts/DejaVuSansMono.ttf").to_vec());
+            const FALLBACK: &str = "DejaVu Sans Mono";
+            db.set_sans_serif_family(FALLBACK);
+            db.set_serif_family(FALLBACK);
+            db.set_monospace_family(FALLBACK);
+            db.set_cursive_family(FALLBACK);
+            db.set_fantasy_family(FALLBACK);
+        }
+
+        for face in &self.faces {
+            db.load_font_data(face.to_vec());
+        }
+        if let Some(family) = &self.sans_serif {
+            db.set_sans_serif_family(family);
+        }
+
+        font_system
+    }
 }
 
 /// Registers fonts with the UI.
@@ -58,31 +85,4 @@ fn fonts_mut(app: &mut App) -> &mut UIFonts {
     }
     app.get_resource_mut::<UIFonts>()
         .expect("UIFonts was just inserted")
-}
-
-/// Builds a [`FontSystem`] holding every registered face.
-#[doc(hidden)]
-pub fn build_font_system(fonts: &UIFonts) -> FontSystem {
-    let mut font_system = FontSystem::new();
-    let db = font_system.db_mut();
-
-    #[cfg(target_arch = "wasm32")]
-    {
-        db.load_font_data(include_bytes!("../../fonts/DejaVuSansMono.ttf").to_vec());
-        const FALLBACK: &str = "DejaVu Sans Mono";
-        db.set_sans_serif_family(FALLBACK);
-        db.set_serif_family(FALLBACK);
-        db.set_monospace_family(FALLBACK);
-        db.set_cursive_family(FALLBACK);
-        db.set_fantasy_family(FALLBACK);
-    }
-
-    for face in &fonts.faces {
-        db.load_font_data(face.to_vec());
-    }
-    if let Some(family) = &fonts.sans_serif {
-        db.set_sans_serif_family(family);
-    }
-
-    font_system
 }

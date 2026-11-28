@@ -9,14 +9,14 @@ use concerto_app::{
 use concerto_foundation::assets::{
     asset_server::AssetServer,
     asset_store::AssetStore,
-    content::{read_content_asset_header, save_content_asset_with_uncooked},
+    content::{save_content_asset_with_uncooked, ContentAssetHeader},
     derived::DerivedDataCache,
     registry::AssetRegistry,
     AssetId, ContentAssetRoot,
 };
 use concerto_render::assets::texture::{
-    derive_levels, ColorSpace, Compression, MaxSize, SourceEncoding, Texture, TextureFormat,
-    TextureRole, TextureSettings, TextureSource,
+    ColorSpace, Compression, MaxSize, SourceEncoding, Texture, TextureFormat, TextureRole,
+    TextureSettings, TextureSource,
 };
 use image::{DynamicImage, ImageBuffer, ImageFormat, Luma, Rgb, Rgba};
 
@@ -179,7 +179,7 @@ fn levels_follow_role_settings_and_size() {
         },
     ];
     for row in rows {
-        let derived = derive_levels(&row.source, row.role, &row.settings);
+        let derived = row.source.derive_levels(row.role, &row.settings);
         match (derived, row.outcome) {
             (Ok(levels), Ok(expected)) => assert_eq!(
                 Levels {
@@ -308,12 +308,12 @@ fn a_cooked_texture_loads_its_levels_without_deriving() {
     assert_eq!(report.cooked, ["content/swatch.gasset"]);
     assert!(!project.root.join("derived-cache").exists());
     let uncooked = project.root.join("content/swatch.gasset");
-    assert!(read_content_asset_header(&uncooked)
+    assert!(ContentAssetHeader::read_file(&uncooked)
         .unwrap()
         .uncooked
         .is_some());
     let cooked = out.join("content/swatch.gasset");
-    assert!(read_content_asset_header(&cooked)
+    assert!(ContentAssetHeader::read_file(&cooked)
         .unwrap()
         .uncooked
         .is_none());

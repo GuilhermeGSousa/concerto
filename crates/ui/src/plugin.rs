@@ -45,7 +45,7 @@ use crate::{
     splitter::{setup_splitter_visuals, sync_splitter_lines},
     text::{
         extract_text_nodes,
-        fonts::{UIFonts, build_font_system},
+        fonts::UIFonts,
         resources::{
             TextAtlas, TextCache, TextFontSystem, TextRenderers, TextSwashCache, TextViewport,
         },
@@ -243,8 +243,8 @@ impl Plugin for UIPlugin {
         let fonts = app.get_resource::<UIFonts>();
         let default_fonts = UIFonts::default();
         let fonts = fonts.unwrap_or(&default_fonts);
-        let measure = build_font_system(fonts);
-        let font_system = build_font_system(fonts);
+        let measure = fonts.build_font_system();
+        let font_system = fonts.build_font_system();
         let swash_cache = SwashCache::new();
         let cache = Cache::new(device);
         let viewport = Viewport::new(device, &cache);

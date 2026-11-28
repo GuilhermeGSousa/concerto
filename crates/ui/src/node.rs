@@ -1170,7 +1170,7 @@ fn place_panels(
             continue;
         };
 
-        let placement = crate::anchor::place(anchor, size, walk.logical_size, &panel);
+        let placement = panel.place(anchor, size, walk.logical_size);
         if panel.resolved_side != placement.side {
             panel.resolved_side = placement.side;
         }
@@ -2013,9 +2013,7 @@ mod tests {
     }
 
     fn measurer() -> UITextMeasure {
-        UITextMeasure::new(crate::text::fonts::build_font_system(
-            &crate::text::fonts::UIFonts::default(),
-        ))
+        UITextMeasure::new(crate::text::fonts::UIFonts::default().build_font_system())
     }
 
     fn label(text: &str) -> TextMeasure {
@@ -3035,12 +3033,8 @@ mod tests {
             "no binding without its texture"
         );
 
-        let render_texture = concerto_render::components::camera::create_rtt(
-            &gpu.device,
-            wgpu::TextureFormat::Rgba8Unorm,
-            8,
-            8,
-        );
+        let render_texture =
+            RenderTexture::camera_target(&gpu.device, wgpu::TextureFormat::Rgba8Unorm, 8, 8);
         app.render_mut()
             .get_resource_mut::<RenderAssets<RenderTexture>>()
             .unwrap()

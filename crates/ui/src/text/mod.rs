@@ -368,7 +368,7 @@ mod tests {
             width: f32,
             fits: bool,
         }
-        let mut font_system = fonts::build_font_system(&fonts::UIFonts::default());
+        let mut font_system = fonts::UIFonts::default().build_font_system();
         let metrics = physical_metrics(14.0, 20.0, 1.0);
         let mut truncate = |text: &str, width: f32| {
             truncate_to_width(&mut font_system, metrics, &Attrs::new(), text, width)
@@ -407,7 +407,7 @@ mod tests {
         assert_eq!(metrics.font_size, 28.0);
         assert_eq!(metrics.line_height, 40.0);
 
-        let mut font_system = fonts::build_font_system(&fonts::UIFonts::default());
+        let mut font_system = fonts::UIFonts::default().build_font_system();
         let one = widest(
             &mut font_system,
             physical_metrics(14.0, 20.0, 1.0),
@@ -453,9 +453,9 @@ mod tests {
         let mut main = concerto_ecs::World::new();
         main.insert_resource(Window::new((800, 600), 1.5));
         let mut render = concerto_ecs::World::new();
-        render.insert_resource(TextFontSystem(fonts::build_font_system(
-            &fonts::UIFonts::default(),
-        )));
+        render.insert_resource(TextFontSystem(
+            fonts::UIFonts::default().build_font_system(),
+        ));
         render.insert_resource(UIRenderDiagnostics::default());
         let target = render.spawn(());
         let rect = crate::node::UIBox {
@@ -509,9 +509,9 @@ mod tests {
         let mut main = concerto_ecs::World::new();
         main.insert_resource(Window::new((800, 600), 1.0));
         let mut render = concerto_ecs::World::new();
-        render.insert_resource(TextFontSystem(fonts::build_font_system(
-            &fonts::UIFonts::default(),
-        )));
+        render.insert_resource(TextFontSystem(
+            fonts::UIFonts::default().build_font_system(),
+        ));
         render.insert_resource(UIRenderDiagnostics::default());
         let mut nodes = Vec::new();
         let mut targets = Vec::new();

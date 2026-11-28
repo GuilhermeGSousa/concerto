@@ -436,7 +436,7 @@ impl RenderCamera {
         height: u32,
     ) {
         if self.render_target.is_some() {
-            self.render_target = Some(create_rtt(device, format, width, height));
+            self.render_target = Some(RenderTexture::camera_target(device, format, width, height));
         }
     }
 }
@@ -588,7 +588,7 @@ pub(crate) fn extract_cameras(
         );
 
         let render_target: Option<RenderTexture> = target_size.map(|size| {
-            create_rtt(
+            RenderTexture::camera_target(
                 &device,
                 context.surface_config.format,
                 size.width.max(1),
@@ -667,51 +667,6 @@ pub(crate) fn rebind_sky_radiance(
     }
     for mut render_camera in render_cameras.iter_mut() {
         render_camera.rebind(&device, &camera_layouts, &sky_radiance, &fallbacks);
-    }
-}
-
-/// Creates a single [`RenderTexture`] for use as a camera render target.
-///
-/// The texture is owned exclusively by [`RenderCamera::render_target`].
-/// Viewports that want to display this camera's output look up the matching
-/// camera by handle ID and borrow the view directly — no shared allocation needed.
-pub fn create_rtt(
-    device: &wgpu::Device,
-    format: wgpu::TextureFormat,
-    width: u32,
-    height: u32,
-) -> RenderTexture {
-    let texture = device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("Camera RTT"),
-        size: wgpu::Extent3d {
-            width,
-            height,
-            depth_or_array_layers: 1,
-        },
-        mip_level_count: 1,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format,
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-            | wgpu::TextureUsages::TEXTURE_BINDING
-            | wgpu::TextureUsages::COPY_SRC
-            | wgpu::TextureUsages::COPY_DST,
-        view_formats: &[],
-    });
-    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-    let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-        label: Some("RTT Sampler"),
-        address_mode_u: wgpu::AddressMode::ClampToEdge,
-        address_mode_v: wgpu::AddressMode::ClampToEdge,
-        address_mode_w: wgpu::AddressMode::ClampToEdge,
-        mag_filter: wgpu::FilterMode::Linear,
-        min_filter: wgpu::FilterMode::Linear,
-        ..Default::default()
-    });
-    RenderTexture {
-        texture,
-        view,
-        sampler,
     }
 }
 

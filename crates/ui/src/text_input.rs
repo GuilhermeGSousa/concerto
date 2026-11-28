@@ -1042,7 +1042,7 @@ mod tests {
             UITextMeasure, compute_ui_nodes, install_layout_listeners,
         },
         sets::UiSet,
-        text::fonts::{UIFonts, build_font_system},
+        text::fonts::UIFonts,
         theme::UITheme,
     };
 
@@ -1075,7 +1075,7 @@ mod tests {
             world.insert_resource(UILayoutEngine::default());
             world.insert_resource(UILayoutDiagnostics::default());
             world.insert_resource(UIPanelStack::default());
-            world.insert_resource(UITextMeasure::new(build_font_system(&UIFonts::default())));
+            world.insert_resource(UITextMeasure::new(UIFonts::default().build_font_system()));
             world.insert_resource(UITheme::nocturne());
             world.insert_resource(Input::new());
             world.insert_resource(FocusedWidget::default());
@@ -1672,7 +1672,7 @@ mod tests {
             world.insert_resource(UIInputState::default());
             world.insert_resource(Input::new());
             world.insert_resource(WindowClipboard::default());
-            world.insert_resource(UITextMeasure::new(build_font_system(&UIFonts::default())));
+            world.insert_resource(UITextMeasure::new(UIFonts::default().build_font_system()));
             world.insert_resource(UITheme::nocturne());
             world.insert_resource(EventChannel::<UITextInputChanged>::default());
             world.insert_resource(EventChannel::<UITextInputSubmitted>::default());

@@ -4,73 +4,73 @@ use glam::{Vec2, Vec3};
 
 use crate::{mesh::Mesh, vertex::Vertex};
 
-/// A rectangle on the XZ plane, `size.x` along X and `size.y` along Z, centred on the origin and facing up.
-pub fn plane(size: Vec2) -> Mesh {
-    let mut mesh = Mesh::empty();
-    mesh.push_quad(Vec3::ZERO, Vec3::Y, Vec3::X, size.x * 0.5, size.y * 0.5);
-    mesh
-}
-
-/// A box of full extents `size`, centred on the origin, with its own vertices on each face.
-pub fn cuboid(size: Vec3) -> Mesh {
-    let half = size * 0.5;
-    let mut mesh = Mesh::empty();
-    for (normal, tangent) in [
-        (Vec3::X, Vec3::NEG_Z),
-        (Vec3::NEG_X, Vec3::Z),
-        (Vec3::Y, Vec3::X),
-        (Vec3::NEG_Y, Vec3::X),
-        (Vec3::Z, Vec3::X),
-        (Vec3::NEG_Z, Vec3::NEG_X),
-    ] {
-        let bitangent = normal.cross(tangent);
-        mesh.push_quad(
-            normal * half.dot(normal.abs()),
-            normal,
-            tangent,
-            half.dot(tangent.abs()),
-            half.dot(bitangent.abs()),
-        );
-    }
-    mesh
-}
-
-/// A sphere of `radius` centred on the origin.
-///
-/// It has at least 2 `rings` from pole to pole and 3 `segments` around Y.
-pub fn uv_sphere(radius: f32, rings: u32, segments: u32) -> Mesh {
-    let rings = rings.max(2);
-    let profile: Vec<(Vec2, Vec2)> = (0..=rings)
-        .map(|ring| {
-            let normal = meridian(PI * ring as f32 / rings as f32);
-            (normal * radius, normal)
-        })
-        .collect();
-    Mesh::revolved(&profile, segments)
-}
-
-/// A capsule along Y: a cylinder of `half_height` either side of the origin, capped by hemispheres.
-///
-/// Each hemisphere has at least 1 ring, and the capsule at least 3 `segments`.
-/// A `half_height` of 0 or less gives a sphere.
-pub fn capsule(radius: f32, half_height: f32, rings: u32, segments: u32) -> Mesh {
-    let rings = rings.max(1);
-    if half_height <= 0.0 {
-        return uv_sphere(radius, rings * 2, segments);
-    }
-    let cap = |offset: f32, height: f32| {
-        (0..=rings).map(move |ring| {
-            let normal = meridian(offset + FRAC_PI_2 * ring as f32 / rings as f32);
-            (normal * radius + Vec2::new(0.0, height), normal)
-        })
-    };
-    let profile: Vec<(Vec2, Vec2)> = cap(0.0, half_height)
-        .chain(cap(FRAC_PI_2, -half_height))
-        .collect();
-    Mesh::revolved(&profile, segments)
-}
-
 impl Mesh {
+    /// A rectangle on the XZ plane, `size.x` along X and `size.y` along Z, centred on the origin and facing up.
+    pub fn plane(size: Vec2) -> Self {
+        let mut mesh = Self::empty();
+        mesh.push_quad(Vec3::ZERO, Vec3::Y, Vec3::X, size.x * 0.5, size.y * 0.5);
+        mesh
+    }
+
+    /// A box of full extents `size`, centred on the origin, with its own vertices on each face.
+    pub fn cuboid(size: Vec3) -> Self {
+        let half = size * 0.5;
+        let mut mesh = Self::empty();
+        for (normal, tangent) in [
+            (Vec3::X, Vec3::NEG_Z),
+            (Vec3::NEG_X, Vec3::Z),
+            (Vec3::Y, Vec3::X),
+            (Vec3::NEG_Y, Vec3::X),
+            (Vec3::Z, Vec3::X),
+            (Vec3::NEG_Z, Vec3::NEG_X),
+        ] {
+            let bitangent = normal.cross(tangent);
+            mesh.push_quad(
+                normal * half.dot(normal.abs()),
+                normal,
+                tangent,
+                half.dot(tangent.abs()),
+                half.dot(bitangent.abs()),
+            );
+        }
+        mesh
+    }
+
+    /// A sphere of `radius` centred on the origin.
+    ///
+    /// It has at least 2 `rings` from pole to pole and 3 `segments` around Y.
+    pub fn uv_sphere(radius: f32, rings: u32, segments: u32) -> Self {
+        let rings = rings.max(2);
+        let profile: Vec<(Vec2, Vec2)> = (0..=rings)
+            .map(|ring| {
+                let normal = meridian(PI * ring as f32 / rings as f32);
+                (normal * radius, normal)
+            })
+            .collect();
+        Self::revolved(&profile, segments)
+    }
+
+    /// A capsule along Y: a cylinder of `half_height` either side of the origin, capped by hemispheres.
+    ///
+    /// Each hemisphere has at least 1 ring, and the capsule at least 3 `segments`.
+    /// A `half_height` of 0 or less gives a sphere.
+    pub fn capsule(radius: f32, half_height: f32, rings: u32, segments: u32) -> Self {
+        let rings = rings.max(1);
+        if half_height <= 0.0 {
+            return Self::uv_sphere(radius, rings * 2, segments);
+        }
+        let cap = |offset: f32, height: f32| {
+            (0..=rings).map(move |ring| {
+                let normal = meridian(offset + FRAC_PI_2 * ring as f32 / rings as f32);
+                (normal * radius + Vec2::new(0.0, height), normal)
+            })
+        };
+        let profile: Vec<(Vec2, Vec2)> = cap(0.0, half_height)
+            .chain(cap(FRAC_PI_2, -half_height))
+            .collect();
+        Self::revolved(&profile, segments)
+    }
+
     fn empty() -> Self {
         Self {
             vertices: Vec::new(),

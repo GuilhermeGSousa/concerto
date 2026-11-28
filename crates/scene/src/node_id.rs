@@ -43,10 +43,12 @@ impl fmt::Display for NodeId {
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SceneNodeId(pub NodeId);
 
-/// Gives every node of `nodes` the id derived from its name path, as an import does.
-pub fn derive_ids(nodes: &mut [SceneNode]) {
-    let kept = vec![None; nodes.len()];
-    derive_missing_ids(nodes, &kept);
+impl SceneNode {
+    /// Gives every node of `nodes` the id derived from its name path, as an import does.
+    pub fn derive_ids(nodes: &mut [Self]) {
+        let kept = vec![None; nodes.len()];
+        derive_missing_ids(nodes, &kept);
+    }
 }
 
 pub(crate) fn derive_missing_ids(nodes: &mut [SceneNode], kept: &[Option<NodeId>]) {

@@ -34,6 +34,25 @@ pub struct UIScrollArea {
     pub content: Option<Entity>,
 }
 
+impl UIScrollArea {
+    /// Scrolls this area the least distance that shows the span from `min` to `max`, in content
+    /// coordinates, in a viewport `viewport_extent` high.
+    ///
+    /// When the span is taller than the viewport, its end is shown. The offset stays within the
+    /// content.
+    pub fn scroll_to_rect(&mut self, viewport_extent: f32, min: f32, max: f32) {
+        if min < self.offset {
+            self.offset = min;
+        }
+        if max > self.offset + viewport_extent {
+            self.offset = max - viewport_extent;
+        }
+        self.offset = self
+            .offset
+            .clamp(0.0, (self.content_extent - viewport_extent).max(0.0));
+    }
+}
+
 impl Default for UIScrollArea {
     fn default() -> Self {
         Self {
@@ -77,6 +96,12 @@ pub struct UISplitPane {
 }
 
 impl UISplitPane {
+    /// Applies a split ratio to two caller-owned child nodes.
+    pub fn apply_split(&self, available: f32, first: &mut UINode, second: &mut UINode) {
+        self.apply_first_split(available, first);
+        self.apply_second_split(second);
+    }
+
     /// A pane split half and half between `first` and `second`, each at least 120 logical pixels.
     pub fn new(axis: UISplitAxis, first: Entity, second: Entity) -> Self {
         Self {
@@ -216,29 +241,6 @@ pub(crate) fn sync_split_panes(
         pane.apply_second_split(&mut next);
         second_node.set_if_neq(next);
     }
-}
-
-/// Applies a split ratio to two caller-owned child nodes.
-pub fn apply_split(pane: &UISplitPane, available: f32, first: &mut UINode, second: &mut UINode) {
-    pane.apply_first_split(available, first);
-    pane.apply_second_split(second);
-}
-
-/// Scrolls `area` the least distance that shows the span from `min` to `max`, in content
-/// coordinates, in a viewport `viewport_extent` high.
-///
-/// When the span is taller than the viewport, its end is shown. The offset stays within the
-/// content.
-pub fn scroll_to_rect(area: &mut UIScrollArea, viewport_extent: f32, min: f32, max: f32) {
-    if min < area.offset {
-        area.offset = min;
-    }
-    if max > area.offset + viewport_extent {
-        area.offset = max - viewport_extent;
-    }
-    area.offset = area
-        .offset
-        .clamp(0.0, (area.content_extent - viewport_extent).max(0.0));
 }
 
 impl UISplitAxis {
@@ -386,7 +388,7 @@ mod tests {
     fn panes_clip_their_contents_so_they_cannot_paint_over_each_other() {
         let mut first = UINode::default();
         let mut second = UINode::default();
-        apply_split(&pane(0.5), 600.0, &mut first, &mut second);
+        pane(0.5).apply_split(600.0, &mut first, &mut second);
         assert_eq!(first.overflow_x, Overflow::Hidden);
         assert_eq!(second.overflow_y, Overflow::Hidden);
     }
@@ -398,9 +400,9 @@ mod tests {
             content_extent: 300.0,
             content: None,
         };
-        scroll_to_rect(&mut area, 100.0, 220.0, 240.0);
+        area.scroll_to_rect(100.0, 220.0, 240.0);
         assert_eq!(area.offset, 140.0);
-        scroll_to_rect(&mut area, 100.0, 10.0, 20.0);
+        area.scroll_to_rect(100.0, 10.0, 20.0);
         assert_eq!(area.offset, 10.0);
     }
 }
@@ -430,24 +432,21 @@ pub struct ThumbGeometry {
     pub height: f32,
 }
 
-/// Thumb position and size for a scroll state, or `None` when the content fits and no bar should be drawn.
-pub fn thumb_geometry(
-    offset: f32,
-    content_extent: f32,
-    viewport: f32,
-    track: f32,
-) -> Option<ThumbGeometry> {
-    let scrollable = content_extent - viewport;
-    if scrollable <= 0.0 || viewport <= 0.0 || track <= 0.0 {
-        return None;
+impl ThumbGeometry {
+    /// Thumb position and size for a scroll state, or `None` when the content fits and no bar should be drawn.
+    pub fn of(offset: f32, content_extent: f32, viewport: f32, track: f32) -> Option<Self> {
+        let scrollable = content_extent - viewport;
+        if scrollable <= 0.0 || viewport <= 0.0 || track <= 0.0 {
+            return None;
+        }
+        let height = (viewport / content_extent * track).clamp(MIN_THUMB.min(track), track);
+        let travel = track - height;
+        let progress = (offset / scrollable).clamp(0.0, 1.0);
+        Some(Self {
+            offset: progress * travel,
+            height,
+        })
     }
-    let height = (viewport / content_extent * track).clamp(MIN_THUMB.min(track), track);
-    let travel = track - height;
-    let progress = (offset / scrollable).clamp(0.0, 1.0);
-    Some(ThumbGeometry {
-        offset: progress * travel,
-        height,
-    })
 }
 
 /// Spawns a track and thumb for each new scroll area.
@@ -497,7 +496,7 @@ pub(crate) fn sync_scrollbar_tracks(
         };
         let viewport = layout.content_rect.size.y;
         let visible =
-            thumb_geometry(area.offset, area.content_extent, viewport, viewport).is_some();
+            ThumbGeometry::of(area.offset, area.content_extent, viewport, viewport).is_some();
         if node.visible != visible {
             node.visible = visible;
         }
@@ -525,7 +524,8 @@ pub(crate) fn sync_scrollbar_thumbs(
             continue;
         };
         let viewport = layout.content_rect.size.y;
-        let Some(geometry) = thumb_geometry(area.offset, area.content_extent, viewport, viewport)
+        let Some(geometry) =
+            ThumbGeometry::of(area.offset, area.content_extent, viewport, viewport)
         else {
             continue;
         };
@@ -557,7 +557,7 @@ fn drag_scrollbar_thumb(
         return;
     };
     let viewport = layout.content_rect.size.y;
-    let Some(geometry) = thumb_geometry(area.offset, area.content_extent, viewport, viewport)
+    let Some(geometry) = ThumbGeometry::of(area.offset, area.content_extent, viewport, viewport)
     else {
         return;
     };

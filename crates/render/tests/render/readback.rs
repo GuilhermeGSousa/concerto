@@ -1,4 +1,4 @@
-use concerto_render::{gpu::Gpu, readback::read_texture, wgpu};
+use concerto_render::{gpu::Gpu, wgpu};
 
 fn gpu() -> Option<Gpu> {
     Gpu::request_for_test()
@@ -52,7 +52,7 @@ fn a_texture_whose_width_is_not_a_multiple_of_64_reads_back_exactly() {
         size,
     );
 
-    let image = read_texture(&gpu, &texture);
+    let image = gpu.read_texture(&texture);
 
     assert_eq!(image.dimensions(), (width, height));
     assert_eq!(image.into_raw(), expected);

@@ -28,8 +28,8 @@ use concerto_render::assets::material::{AlphaMode, StandardMaterial};
 use concerto_render::assets::texture::{Texture, TextureRole};
 use concerto_render::components::light::{Light, LightType};
 use concerto_render::components::material::MaterialComponent;
-use concerto_render::importers::image_importer::{ImportedTexture, imported_texture};
-use concerto_scene::node_id::{NodeId, derive_ids};
+use concerto_render::importers::image_importer::ImportedTexture;
+use concerto_scene::node_id::NodeId;
 use concerto_scene::scene::{Scene, SceneNode};
 use glam::{Mat4, Quat, Vec3};
 use gltf::{Node, Primitive, buffer::Data};
@@ -157,7 +157,7 @@ impl Importer for GltfImporter {
             mut nodes,
             referenced_assets,
         } = scene;
-        derive_ids(&mut nodes);
+        SceneNode::derive_ids(&mut nodes);
         ctx.emit(
             "scene",
             &Scene {
@@ -221,7 +221,7 @@ impl GltfSource<'_> {
             let ImportedTexture {
                 texture,
                 source: texture_source,
-            } = imported_texture(ctx, &name, *role, bytes, None).map_err(unkept)?;
+            } = ImportedTexture::from_bytes(ctx, &name, *role, bytes, None).map_err(unkept)?;
             ctx.emit_with(&name, &texture, &texture_source)?;
         }
         Ok(())

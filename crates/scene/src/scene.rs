@@ -92,7 +92,7 @@ impl SceneNode {
     pub fn push_component<T: Reflect>(&mut self, component: &T) -> anyhow::Result<()> {
         self.components.push(SerializedComponent {
             type_name: std::any::type_name::<T>().to_owned(),
-            value: concerto_reflect::to_value(component)?,
+            value: concerto_reflect::ReflectedValue::encode(component)?,
         });
         Ok(())
     }

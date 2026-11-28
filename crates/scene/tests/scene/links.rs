@@ -15,17 +15,16 @@ use concerto_ecs::{
 use concerto_foundation::assets::{asset_server::AssetServer, handle::AssetHandle, AssetId};
 use concerto_foundation::transform::Transform;
 use concerto_reflect::{Reflect, ReflectDefault};
-use concerto_scene::node_id::{derive_ids, NodeId};
+use concerto_scene::node_id::NodeId;
 use concerto_scene::{
-    capture::{capture_scene, capture_subtree},
     link::{
-        owning_link, ChangeOutcome, LinkParent, LinkRoot, LinkedNode, OwnedPath, SceneLink,
-        SceneLinkSpawned, SceneLinkState,
+        ChangeOutcome, LinkParent, LinkRoot, LinkedNode, OwnedPath, SceneLink, SceneLinkSpawned,
+        SceneLinkState,
     },
     link_path::LinkPath,
     plugin::ScenePlugin,
     scene::{LinkChange, Scene, SceneLinkData, SceneNode, SerializedComponent},
-    spawner::{spawn_scene_in_world, SpawnFilter},
+    spawner::SpawnFilter,
 };
 
 #[derive(Component, Reflect, Default, Clone, Debug, PartialEq)]
@@ -63,14 +62,14 @@ fn node(name: &str, children: Vec<usize>) -> SceneNode {
 fn label(text: &str) -> SerializedComponent {
     SerializedComponent {
         type_name: std::any::type_name::<Label>().into(),
-        value: concerto_reflect::to_value(&Label { text: text.into() }).unwrap(),
+        value: concerto_reflect::ReflectedValue::encode(&Label { text: text.into() }).unwrap(),
     }
 }
 
 fn prop(art: AssetId) -> SerializedComponent {
     SerializedComponent {
         type_name: std::any::type_name::<Prop>().into(),
-        value: concerto_reflect::to_value(&Prop {
+        value: concerto_reflect::ReflectedValue::encode(&Prop {
             art: AssetHandle::weak(art),
             facing: SceneEntityRef::default(),
         })
@@ -90,12 +89,12 @@ fn at(levels: &[&str]) -> LinkPath {
 fn link_parent(path: LinkPath) -> SerializedComponent {
     SerializedComponent {
         type_name: std::any::type_name::<LinkParent>().into(),
-        value: concerto_reflect::to_value(&LinkParent { path }).unwrap(),
+        value: concerto_reflect::ReflectedValue::encode(&LinkParent { path }).unwrap(),
     }
 }
 
 fn imported(mut nodes: Vec<SceneNode>) -> Scene {
-    derive_ids(&mut nodes);
+    SceneNode::derive_ids(&mut nodes);
     Scene {
         nodes,
         referenced_assets: vec![],
@@ -298,7 +297,7 @@ fn a_link_spawns_its_scene_applies_its_changes_and_respawns_keeping_own_children
         .get_component_for_entity_mut::<Label>(chairs[1])
         .unwrap()
         .text = "edited".into();
-    let captured = capture_subtree(app.main().world(), link).unwrap();
+    let captured = Scene::capture_subtree(app.main().world(), link).unwrap();
     let mut saved = changes.clone();
     saved[2] = LinkChange::AddComponent {
         path: at(&["room/chair#1"]),
@@ -324,11 +323,12 @@ fn a_link_spawns_its_scene_applies_its_changes_and_respawns_keeping_own_children
         .insert_loaded(s, room());
     let world = copy.main_mut().world_mut();
     let holder = world.spawn(Transform::IDENTITY);
-    let copied =
-        spawn_scene_in_world(world, &captured, holder, &SpawnFilter::default()).node_entities[0];
+    let copied = captured
+        .spawn_in_world(world, holder, &SpawnFilter::default())
+        .node_entities[0];
     assert!(matches!(settle(&mut copy, copied), SceneLinkState::Spawned));
     assert_eq!(
-        bincode::serialize(&capture_scene(copy.main().world(), holder).unwrap()).unwrap(),
+        bincode::serialize(&Scene::capture(copy.main().world(), holder).unwrap()).unwrap(),
         bincode::serialize(&captured).unwrap()
     );
     let world = app.main_mut().world_mut();
@@ -339,7 +339,7 @@ fn a_link_spawns_its_scene_applies_its_changes_and_respawns_keeping_own_children
         },
         own,
     );
-    let refused = capture_subtree(world, link).unwrap_err().to_string();
+    let refused = Scene::capture_subtree(world, link).unwrap_err().to_string();
     assert!(
         refused.contains(
             "references the linked node lamp; references into a link are not supported yet"
@@ -411,7 +411,7 @@ fn a_link_spawns_its_scene_applies_its_changes_and_respawns_keeping_own_children
     let deep_chair = linked(&mut app, inner, "room/chair");
     assert_eq!(label_of(&app, deep_chair).as_deref(), Some("deep"));
     assert_eq!(
-        owning_link(app.main().world(), deep_chair),
+        OwnedPath::of(app.main().world(), deep_chair),
         Some(OwnedPath {
             link: outer,
             path: at(&["inner", "room/chair"])
@@ -445,7 +445,7 @@ fn a_link_spawns_its_scene_applies_its_changes_and_respawns_keeping_own_children
     settle(&mut app, inner);
     let deep_chair = linked(&mut app, inner, "room/chair");
     assert_eq!(label_of(&app, deep_chair).as_deref(), Some("edited"));
-    let captured = capture_subtree(app.main().world(), outer).unwrap();
+    let captured = Scene::capture_subtree(app.main().world(), outer).unwrap();
     assert_eq!(
         captured.nodes[0].link.as_ref().unwrap().changes[0],
         LinkChange::AddComponent {
@@ -512,7 +512,7 @@ fn a_link_spawns_its_scene_applies_its_changes_and_respawns_keeping_own_children
         parent(&app, lodger),
         Some(linked(&mut app, late, "room/lamp"))
     );
-    let captured = capture_subtree(app.main().world(), early).unwrap();
+    let captured = Scene::capture_subtree(app.main().world(), early).unwrap();
     assert_eq!(captured.nodes.len(), 2);
     assert!(captured.nodes[1]
         .components
@@ -528,15 +528,11 @@ fn a_link_spawns_its_scene_applies_its_changes_and_respawns_keeping_own_children
     });
     let world = app.main_mut().world_mut();
     let holder = world.spawn(Transform::IDENTITY);
-    let opened = spawn_scene_in_world(
-        world,
-        &Scene {
-            nodes: vec![copy],
-            referenced_assets: vec![],
-        },
-        holder,
-        &SpawnFilter::default(),
-    )
+    let opened = (Scene {
+        nodes: vec![copy],
+        referenced_assets: vec![],
+    })
+    .spawn_in_world(world, holder, &SpawnFilter::default())
     .node_entities[0];
     assert!(matches!(settle(&mut app, opened), SceneLinkState::Spawned));
     assert_eq!(

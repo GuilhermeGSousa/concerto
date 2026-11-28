@@ -907,7 +907,7 @@ mod tests {
         assets::{asset_server::AssetServer, handle::AssetHandle},
         transform::Transform,
     };
-    use concerto_mesh::{primitives::cuboid, MeshComponent};
+    use concerto_mesh::MeshComponent;
     use concerto_window::plugin::{Window, WindowPlugin};
     use glam::Vec3;
 
@@ -1017,7 +1017,7 @@ mod tests {
     fn mesh(app: &App) -> AssetHandle<Mesh> {
         app.get_resource::<AssetServer>()
             .unwrap()
-            .add(cuboid(Vec3::ONE))
+            .add(Mesh::cuboid(Vec3::ONE))
     }
 
     fn material(app: &App) -> AssetHandle<StandardMaterial> {

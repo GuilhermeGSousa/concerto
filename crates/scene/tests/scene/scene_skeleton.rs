@@ -2,7 +2,7 @@ use concerto_ecs::component::scene::SceneEntityRef;
 use concerto_ecs::{Entity, World};
 use concerto_foundation::assets::{handle::AssetHandle, AssetId};
 use concerto_mesh::skeleton::{Skeleton, SkeletonComponent};
-use concerto_reflect::{to_value, ReflectedValue};
+use concerto_reflect::ReflectedValue;
 
 struct Authored {
     name: &'static str,
@@ -37,7 +37,7 @@ fn a_spawned_skeleton_resolves_its_references_in_place_and_leaves_bad_ones_unset
         let mut world = World::default();
         world.register_type::<SkeletonComponent>();
         let nodes: Vec<Entity> = (0..3).map(|_| world.spawn(())).collect();
-        let ReflectedValue::Struct(mut fields) = to_value(&SkeletonComponent {
+        let ReflectedValue::Struct(mut fields) = ReflectedValue::encode(&SkeletonComponent {
             skeleton: AssetHandle::<Skeleton>::weak(AssetId::from_path("rig.gltf#skeleton/0")),
             bones: case.bones,
             root: case.root,

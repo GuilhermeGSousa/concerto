@@ -7,12 +7,11 @@ use concerto_ecs::{Entity, IntoSystem, Res, Resource, System, World};
 use concerto_foundation::assets::{handle::AssetHandle, AssetId};
 use concerto_foundation::transform::Transform;
 use concerto_mesh::skeleton::{Skeleton, SkeletonComponent};
-use concerto_reflect::{apply_value, to_value, Reflect, ReflectedValue};
+use concerto_reflect::{Reflect, ReflectedValue};
 use concerto_render::components::camera::Camera;
-use concerto_scene::capture::{capture_scene, capture_subtree};
 use concerto_scene::node_id::{NodeId, SceneNodeId};
 use concerto_scene::scene::{Scene, SceneNode, SerializedComponent};
-use concerto_scene::spawner::{spawn_scene, spawn_scene_in_world, SpawnFilter};
+use concerto_scene::spawner::SpawnFilter;
 use glam::Vec3;
 
 fn world() -> World {
@@ -46,13 +45,13 @@ fn node(name: &str, children: Vec<usize>, components: Vec<SerializedComponent>) 
 fn serialized<T: Reflect>(value: &T) -> SerializedComponent {
     SerializedComponent {
         type_name: std::any::type_name::<T>().into(),
-        value: to_value(value).unwrap(),
+        value: ReflectedValue::encode(value).unwrap(),
     }
 }
 
 fn decode<T: Reflect + Default>(component: &SerializedComponent) -> T {
     let mut value = T::default();
-    assert!(apply_value(&mut value, &component.value).is_empty());
+    assert!(component.value.apply(&mut value).is_empty());
     value
 }
 
@@ -94,7 +93,9 @@ fn comparable(scene: &Scene) -> Vec<Comparable> {
 struct Fixture(Scene, Entity);
 
 fn spawn_fixture(mut cmd: CommandQueue, fixture: Res<Fixture>) {
-    spawn_scene(&mut cmd, &fixture.0, fixture.1, &SpawnFilter::default());
+    fixture
+        .0
+        .spawn(&mut cmd, fixture.1, &SpawnFilter::default());
 }
 
 fn spawn(world: &mut World, scene: Scene) -> Entity {
@@ -116,7 +117,7 @@ fn the_root_is_not_a_node_and_unnamed_entities_get_an_empty_name_and_a_unique_id
     world.entity_mut(root).add_child(child);
     world.entity_mut(root).add_child(holder);
 
-    let captured = capture_scene(&world, root).unwrap();
+    let captured = Scene::capture(&world, root).unwrap();
 
     assert_eq!(captured.nodes.len(), 2);
     assert_eq!(captured.nodes[0].name, "");
@@ -135,8 +136,8 @@ fn two_captures_of_the_same_world_are_identical() {
         world.entity_mut(root).add_child(child);
     }
 
-    let first = bincode::serialize(&capture_scene(&world, root).unwrap()).unwrap();
-    let second = bincode::serialize(&capture_scene(&world, root).unwrap()).unwrap();
+    let first = bincode::serialize(&Scene::capture(&world, root).unwrap()).unwrap();
+    let second = bincode::serialize(&Scene::capture(&world, root).unwrap()).unwrap();
 
     assert_eq!(first, second);
 }
@@ -169,7 +170,7 @@ fn a_subtree_capture_starts_at_the_entity_remaps_inner_references_and_refuses_ou
     world.entity_mut(root).add_child(sibling);
     let group = skinned(&mut world, root, true);
 
-    let captured = capture_subtree(&world, group).unwrap();
+    let captured = Scene::capture_subtree(&world, group).unwrap();
 
     let names: Vec<_> = captured
         .nodes
@@ -182,7 +183,7 @@ fn a_subtree_capture_starts_at_the_entity_remaps_inner_references_and_refuses_ou
     assert_eq!(skeleton.bones, [SceneEntityRef::Index(2)]);
 
     let outside = skinned(&mut world, root, false);
-    assert!(capture_subtree(&world, outside).is_err());
+    assert!(Scene::capture_subtree(&world, outside).is_err());
 }
 
 #[test]
@@ -202,7 +203,7 @@ fn a_scene_spawned_by_command_or_in_the_world_captures_back_to_what_was_spawned(
     let queued = spawn(&mut world, scene.clone());
     let direct = world.spawn(Transform::IDENTITY);
 
-    let spawned = spawn_scene_in_world(&mut world, &scene, direct, &SpawnFilter::default());
+    let spawned = scene.spawn_in_world(&mut world, direct, &SpawnFilter::default());
 
     assert_eq!(spawned.node_entities.len(), 4);
     assert_eq!(
@@ -210,7 +211,7 @@ fn a_scene_spawned_by_command_or_in_the_world_captures_back_to_what_was_spawned(
         [spawned.node_entities[0], spawned.node_entities[3]]
     );
     for root in [queued, direct] {
-        let captured = capture_scene(&world, root).unwrap();
+        let captured = Scene::capture(&world, root).unwrap();
         assert_eq!(comparable(&captured), comparable(&scene));
         assert!(captured.referenced_assets.is_empty());
     }

@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use concerto_foundation::assets::content::check_encoding;
 use concerto_foundation::assets::Asset;
 use concerto_foundation::transform::Transform;
-use concerto_reflect::{apply_value, to_value, ReflectedValue};
+use concerto_reflect::ReflectedValue;
 use glam::{Mat4, Quat, Vec3};
 use serde::{Deserialize, Serialize};
 
@@ -42,10 +42,10 @@ fn mat4() -> Mat4 {
 #[test]
 fn reflected_glam_leaves_keep_their_encoding() {
     let leaves = GlamLeaves {
-        transform: to_value(&transform()).unwrap(),
-        vec3: to_value(&vec3()).unwrap(),
-        quat: to_value(&quat()).unwrap(),
-        mat4: to_value(&mat4()).unwrap(),
+        transform: ReflectedValue::encode(&transform()).unwrap(),
+        vec3: ReflectedValue::encode(&vec3()).unwrap(),
+        quat: ReflectedValue::encode(&quat()).unwrap(),
+        mat4: ReflectedValue::encode(&mat4()).unwrap(),
     };
 
     check_encoding(&leaves, &encoding_dir());
@@ -54,20 +54,20 @@ fn reflected_glam_leaves_keep_their_encoding() {
     let stored: GlamLeaves = bincode::deserialize(&fixture).unwrap();
 
     let mut read_transform = Transform::default();
-    assert!(apply_value(&mut read_transform, &stored.transform).is_empty());
+    assert!(stored.transform.apply(&mut read_transform).is_empty());
     assert_eq!(read_transform.translation, transform().translation);
     assert_eq!(read_transform.rotation, transform().rotation);
     assert_eq!(read_transform.scale, transform().scale);
 
     let mut read_vec3 = Vec3::ZERO;
-    assert!(apply_value(&mut read_vec3, &stored.vec3).is_empty());
+    assert!(stored.vec3.apply(&mut read_vec3).is_empty());
     assert_eq!(read_vec3, vec3());
 
     let mut read_quat = Quat::IDENTITY;
-    assert!(apply_value(&mut read_quat, &stored.quat).is_empty());
+    assert!(stored.quat.apply(&mut read_quat).is_empty());
     assert_eq!(read_quat, quat());
 
     let mut read_mat4 = Mat4::IDENTITY;
-    assert!(apply_value(&mut read_mat4, &stored.mat4).is_empty());
+    assert!(stored.mat4.apply(&mut read_mat4).is_empty());
     assert_eq!(read_mat4, mat4());
 }
