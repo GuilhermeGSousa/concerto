@@ -133,39 +133,41 @@ unsafe impl Send for Stepper {}
 // SAFETY: the stepper is only used through `&mut`, under the scheduler's exclusive `ResMut` access, so a shared reference never reaches the pointer.
 unsafe impl Sync for Stepper {}
 
-fn to_jolt_dofs(dofs: AllowedDofs) -> concerto_jolt_ffi::JoltAllowedDofs {
-    let mut jolt_dofs = 0;
-    for (axis, jolt_axis) in [
-        (
-            AllowedDofs::TRANSLATION_X,
-            concerto_jolt_ffi::JOLT_ALLOWED_DOFS_TRANSLATION_X,
-        ),
-        (
-            AllowedDofs::TRANSLATION_Y,
-            concerto_jolt_ffi::JOLT_ALLOWED_DOFS_TRANSLATION_Y,
-        ),
-        (
-            AllowedDofs::TRANSLATION_Z,
-            concerto_jolt_ffi::JOLT_ALLOWED_DOFS_TRANSLATION_Z,
-        ),
-        (
-            AllowedDofs::ROTATION_X,
-            concerto_jolt_ffi::JOLT_ALLOWED_DOFS_ROTATION_X,
-        ),
-        (
-            AllowedDofs::ROTATION_Y,
-            concerto_jolt_ffi::JOLT_ALLOWED_DOFS_ROTATION_Y,
-        ),
-        (
-            AllowedDofs::ROTATION_Z,
-            concerto_jolt_ffi::JOLT_ALLOWED_DOFS_ROTATION_Z,
-        ),
-    ] {
-        if dofs.contains(axis) {
-            jolt_dofs |= jolt_axis;
+impl AllowedDofs {
+    fn to_jolt_dofs(self) -> concerto_jolt_ffi::JoltAllowedDofs {
+        let mut jolt_dofs = 0;
+        for (axis, jolt_axis) in [
+            (
+                AllowedDofs::TRANSLATION_X,
+                concerto_jolt_ffi::JOLT_ALLOWED_DOFS_TRANSLATION_X,
+            ),
+            (
+                AllowedDofs::TRANSLATION_Y,
+                concerto_jolt_ffi::JOLT_ALLOWED_DOFS_TRANSLATION_Y,
+            ),
+            (
+                AllowedDofs::TRANSLATION_Z,
+                concerto_jolt_ffi::JOLT_ALLOWED_DOFS_TRANSLATION_Z,
+            ),
+            (
+                AllowedDofs::ROTATION_X,
+                concerto_jolt_ffi::JOLT_ALLOWED_DOFS_ROTATION_X,
+            ),
+            (
+                AllowedDofs::ROTATION_Y,
+                concerto_jolt_ffi::JOLT_ALLOWED_DOFS_ROTATION_Y,
+            ),
+            (
+                AllowedDofs::ROTATION_Z,
+                concerto_jolt_ffi::JOLT_ALLOWED_DOFS_ROTATION_Z,
+            ),
+        ] {
+            if self.contains(axis) {
+                jolt_dofs |= jolt_axis;
+            }
         }
+        jolt_dofs
     }
-    jolt_dofs
 }
 
 impl JoltBackend {
@@ -267,7 +269,7 @@ impl PhysicsBackend for JoltBackend {
             if let Some(rigid_body) = rigid_body {
                 concerto_jolt_ffi::jolt_body_creation_settings_set_allowed_dofs(
                     settings,
-                    to_jolt_dofs(rigid_body.allowed_dofs),
+                    rigid_body.allowed_dofs.to_jolt_dofs(),
                 );
             }
             if let Some(offset) = offset {

@@ -15,7 +15,7 @@ use concerto_foundation::assets::{
     registry::{AssetEntry, AssetRegistry},
 };
 
-use crate::document::{TextureTab, hold_document, read_texture_payload};
+use crate::document::{TextureTab, read_texture_payload};
 
 fn save_document(
     document: &mut EditorDocument,
@@ -35,7 +35,7 @@ fn save_document(
         .get(id)
         .cloned()
         .context("The saved texture was not registered")?;
-    hold_document(tab, &texture);
+    tab.hold_document(&texture);
     document.title = saved.name().into_owned();
     document.current = Some(saved.clone());
     Ok(saved)

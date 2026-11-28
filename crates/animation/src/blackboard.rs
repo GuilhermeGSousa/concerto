@@ -53,4 +53,32 @@ impl AnimationBlackboard {
     pub fn get_vec2(&self, key: Name) -> Option<Vec2> {
         self.get::<Vec2>(key).copied()
     }
+
+    /// The rate a node plays at.
+    ///
+    /// It is `play_rate` times the `f32` under `param`, or `play_rate` alone when `param` is `None`
+    /// or holds no `f32`. A negative or non-finite result is 0.
+    pub fn effective_play_rate(&self, play_rate: f32, param: Option<Param<f32>>) -> f32 {
+        let scale = param.and_then(|param| self.read(&param).copied());
+        let rate = play_rate * scale.unwrap_or(1.0);
+        if rate.is_finite() && rate > 0.0 {
+            rate
+        } else {
+            0.0
+        }
+    }
+
+    /// The weight a node applies.
+    ///
+    /// It is `weight` times the `f32` under `param`, or `weight` alone when `param` is `None` or
+    /// holds no `f32`, clamped to 0 to 1. A NaN result is 0.
+    pub fn effective_weight(&self, weight: f32, param: Option<Param<f32>>) -> f32 {
+        let scale = param.and_then(|param| self.read(&param).copied());
+        let weight = weight * scale.unwrap_or(1.0);
+        if weight.is_nan() {
+            0.0
+        } else {
+            weight.clamp(0.0, 1.0)
+        }
+    }
 }

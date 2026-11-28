@@ -1,7 +1,7 @@
 use concerto_foundation::assets::{handle::AssetHandle, AssetId};
 use concerto_motion_matching::{
-    weightless_hash, FeatureChannel, FeatureChannelData, FrameContext, MirrorAxis, MotionDatabase,
-    MotionEntry, ReflectFeatureChannel, SimulationBoneSettings, TimeRange,
+    FeatureChannel, FeatureChannelData, FrameContext, MirrorAxis, MotionDatabase, MotionEntry,
+    ReflectFeatureChannel, SimulationBoneSettings, TimeRange,
 };
 use concerto_reflect::Reflect;
 
@@ -92,7 +92,7 @@ impl Inputs {
 
     fn hash(&self) -> u64 {
         let clips: Vec<&[u8]> = self.clips.iter().map(Vec::as_slice).collect();
-        weightless_hash(&self.definition, &self.skeleton, &clips)
+        self.definition.weightless_hash(&self.skeleton, &clips)
     }
 }
 

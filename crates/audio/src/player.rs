@@ -123,6 +123,25 @@ pub struct SoundFinished {
     pub entity: Entity,
 }
 
+impl PlaybackEnd {
+    fn finish(
+        self,
+        entity: Entity,
+        finished: &mut EventWriter<SoundFinished>,
+        cmd: &mut CommandQueue,
+    ) {
+        finished.write(SoundFinished { entity });
+        match self {
+            PlaybackEnd::Despawn => cmd.despawn(entity),
+            PlaybackEnd::Remove => cmd.remove::<AudioPlayer>(entity),
+            PlaybackEnd::Keep => {
+                cmd.remove::<PlayingSound>(entity);
+                cmd.insert(SoundDone, entity);
+            }
+        }
+    }
+}
+
 #[derive(Component)]
 pub(crate) struct PlayingSound {
     handle: StaticSoundHandle,
@@ -132,23 +151,6 @@ pub(crate) struct PlayingSound {
 
 #[derive(Component)]
 pub(crate) struct SoundDone;
-
-fn end(
-    entity: Entity,
-    end: PlaybackEnd,
-    finished: &mut EventWriter<SoundFinished>,
-    cmd: &mut CommandQueue,
-) {
-    finished.write(SoundFinished { entity });
-    match end {
-        PlaybackEnd::Despawn => cmd.despawn(entity),
-        PlaybackEnd::Remove => cmd.remove::<AudioPlayer>(entity),
-        PlaybackEnd::Keep => {
-            cmd.remove::<PlayingSound>(entity);
-            cmd.insert(SoundDone, entity);
-        }
-    }
-}
 
 pub(crate) fn start_sounds(
     players: Query<(Entity, &AudioPlayer), (Without<PlayingSound>, Without<SoundDone>)>,
@@ -175,7 +177,7 @@ pub(crate) fn start_sounds(
             ),
             Err(error) => {
                 log::warn!("{entity:?} plays nothing: {error}");
-                end(entity, player.end, &mut finished, &mut cmd);
+                player.end.finish(entity, &mut finished, &mut cmd);
             }
         }
     }
@@ -191,7 +193,7 @@ pub(crate) fn fail_sounds(
         for (entity, player) in players.iter() {
             if player.clip.id() == id {
                 log::warn!("{entity:?} plays nothing: its clip {id:?} failed to load");
-                end(entity, player.end, &mut finished, &mut cmd);
+                player.end.finish(entity, &mut finished, &mut cmd);
             }
         }
     }
@@ -230,7 +232,7 @@ pub(crate) fn finish_sounds(
     }
     for (entity, player, playing) in players.iter() {
         if playing.handle.state() == PlaybackState::Stopped {
-            end(entity, player.end, &mut finished, &mut cmd);
+            player.end.finish(entity, &mut finished, &mut cmd);
         }
     }
 }

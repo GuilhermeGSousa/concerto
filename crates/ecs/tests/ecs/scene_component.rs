@@ -4,7 +4,7 @@ use concerto_ecs::{
     entity::EntityHashMap,
     reflect::{AppTypeRegistry, ReflectSceneComponent, SceneCapture},
 };
-use concerto_reflect::{Reflect, ReflectedValue, ValueWarning, to_value};
+use concerto_reflect::{Reflect, ReflectedValue, ValueWarning};
 
 #[derive(Component, Reflect, Default, Debug, PartialEq, Clone)]
 #[reflect(SceneComponent)]
@@ -19,7 +19,7 @@ struct Rig {
 struct PlainMarker;
 
 fn stored_rig(bones: Vec<usize>, root: Option<usize>) -> ReflectedValue {
-    to_value(&Rig {
+    ReflectedValue::encode(&Rig {
         weight: 2.0,
         bones: bones.into_iter().map(SceneEntityRef::Index).collect(),
         root: root.map(SceneEntityRef::Index),
@@ -59,7 +59,7 @@ fn spawn_rig(world: &mut World, rig: &Rig, entity: Entity, nodes: &[Entity]) -> 
         .get_type_data::<ReflectSceneComponent>(std::any::TypeId::of::<Rig>())
         .unwrap()
         .spawn;
-    spawn(world, entity, &to_value(rig).unwrap(), nodes)
+    spawn(world, entity, &ReflectedValue::encode(rig).unwrap(), nodes)
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -170,7 +170,7 @@ fn a_unit_component_spawns_and_captures() {
     let mut world = World::new();
     world.register_type::<PlainMarker>();
     let entity = world.spawn(());
-    let stored = to_value(&PlainMarker).unwrap();
+    let stored = ReflectedValue::encode(&PlainMarker).unwrap();
 
     assert!(world.apply_scene_component("PlainMarker", &stored, entity, &[entity]));
     assert!(

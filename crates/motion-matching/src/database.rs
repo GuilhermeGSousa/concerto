@@ -17,12 +17,11 @@ use concerto_reflect::TypeRegistry;
 use glam::{Quat, Vec3};
 use serde::{Deserialize, Serialize};
 
-use crate::bake::{bake_with_progress, model_pose, reexpress_roots, sample_pose};
+use crate::bake::{model_pose, reexpress_roots, sample_pose};
 use crate::channel::{BodyMotion, FeatureChannel, FeatureChannelData};
 use crate::definition::{MirrorAxis, MotionEntry, SimulationBoneSettings, TrajectorySettings};
 use crate::features::reference_channels;
 use crate::simulation::TrajectorySample;
-use crate::staleness::weightless_hash;
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub(crate) struct Span {
@@ -543,7 +542,7 @@ impl DerivedData for MotionDatabase {
             .clips()
             .map(|clip| self.input_bytes(inputs, clip.id()))
             .collect::<anyhow::Result<Vec<_>>>()?;
-        Ok(weightless_hash(self, skeleton, &clips))
+        Ok(self.weightless_hash(skeleton, &clips))
     }
 
     fn derive(
@@ -557,7 +556,7 @@ impl DerivedData for MotionDatabase {
             .map(|clip| inputs.decode::<AnimationClip>(clip.id()))
             .collect::<anyhow::Result<Vec<_>>>()?;
         let clips: Vec<&AnimationClip> = clips.iter().collect();
-        let baked = bake_with_progress(self, &skeleton, &clips, progress)?;
+        let baked = self.bake_with_progress(&skeleton, &clips, progress)?;
         bincode::serialize(&baked).context("failed to encode a baked motion database")
     }
 

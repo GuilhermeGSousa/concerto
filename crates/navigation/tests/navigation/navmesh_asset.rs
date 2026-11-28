@@ -18,10 +18,10 @@ use concerto_foundation::{
     },
     transform::Transform,
 };
-use concerto_mesh::{MeshComponent, primitives::plane};
+use concerto_mesh::{Mesh, MeshComponent};
 use concerto_navigation::{
     NavAgent, NavDestination, NavMesh, NavMeshComponent, NavMeshData, NavMeshGeometry,
-    NavMeshSettings, NavMeshStatus, NavPoint, NavRoute, NavigationPlugin, bake,
+    NavMeshSettings, NavMeshStatus, NavPoint, NavRoute, NavigationPlugin,
 };
 use concerto_physics::{collider::BoxCollider, sensor::Sensor, shape::MeshCollider};
 use concerto_reflect::Reflect;
@@ -250,7 +250,7 @@ fn solid_colliders_in_a_scene_are_baked_and_sensor_boxes_are_not() {
         Level {
             name: "a mesh collider floor",
             build: |project| {
-                let ground = project.save("ground", &plane(Vec2::splat(10.0)));
+                let ground = project.save("ground", &Mesh::plane(Vec2::splat(10.0)));
                 scene(vec![with(
                     with(node("ground", Vec3::ZERO, Vec::new()), &MeshCollider),
                     &mesh_component(ground),
@@ -366,7 +366,7 @@ fn floor_data() -> NavMeshData {
         Affine3A::from_translation(Vec3::new(0.0, -0.5, 0.0)),
         Vec3::new(5.0, 0.5, 5.0),
     );
-    bake(&geometry, &NavMeshSettings::new()).unwrap()
+    geometry.bake(&NavMeshSettings::new()).unwrap()
 }
 
 #[test]

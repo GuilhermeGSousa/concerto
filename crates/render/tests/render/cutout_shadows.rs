@@ -9,10 +9,7 @@ use concerto_foundation::{
     assets::{asset_server::AssetServer, asset_store::AssetStore, handle::AssetHandle, AssetId},
     transform::Transform,
 };
-use concerto_mesh::{
-    primitives::{cuboid, plane},
-    MeshComponent,
-};
+use concerto_mesh::{Mesh, MeshComponent};
 use concerto_render::{
     assets::{
         material::{AlphaMode, StandardMaterial},
@@ -28,7 +25,6 @@ use concerto_render::{
     gpu::Gpu,
     material_plugin::MaterialPlugin,
     plugin::RenderPlugin,
-    readback::read_texture,
     shadow_pipeline::ShadowPipelinePlugin,
 };
 use concerto_window::plugin::{Window, WindowPlugin};
@@ -85,7 +81,7 @@ fn brightness(app: &App, gpu: &Gpu, camera: concerto_ecs::Entity, point: Vec3) -
         .world()
         .get_component_for_entity::<RenderCamera>(render_entity)
         .unwrap();
-    let image = read_texture(gpu, render_camera.render_target.as_ref().unwrap().texture());
+    let image = gpu.read_texture(render_camera.render_target.as_ref().unwrap().texture());
     let rgba = image
         .get_pixel(to_pixel(ndc.x * 0.5 + 0.5), to_pixel(0.5 - ndc.y * 0.5))
         .0;
@@ -109,7 +105,7 @@ fn a_masked_sheet_shadows_the_ground_only_under_what_its_cutout_leaves() {
     let server = app.get_resource::<AssetServer>().unwrap().clone();
     app.main_mut().world_mut().spawn((
         MeshComponent {
-            handle: server.add(cuboid(Vec3::new(40.0, 0.2, 40.0))),
+            handle: server.add(Mesh::cuboid(Vec3::new(40.0, 0.2, 40.0))),
         },
         MaterialComponent::<StandardMaterial> {
             handle: server.add(StandardMaterial::default()),
@@ -120,7 +116,7 @@ fn a_masked_sheet_shadows_the_ground_only_under_what_its_cutout_leaves() {
     cutout.set_base_color_texture(server.add(one_opaque_quarter()));
     app.main_mut().world_mut().spawn((
         MeshComponent {
-            handle: server.add(plane(Vec2::splat(SHEET_SIZE))),
+            handle: server.add(Mesh::plane(Vec2::splat(SHEET_SIZE))),
         },
         MaterialComponent::<StandardMaterial> {
             handle: server.add(cutout),

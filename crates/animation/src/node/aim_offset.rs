@@ -17,10 +17,10 @@ use crate::{
     blackboard::AnimationBlackboard,
     clip::{Additive, AnimationClip},
     evaluation::AnimationGraphContext,
-    look_at::{LookFrame, yaw_pitch_to},
+    look_at::LookFrame,
     node::{
         AnimationNode, EditorAnimationNode, InputSlots, ReflectAnimationNode,
-        model_space::{WorldToModel, bone_under_first, model_joint},
+        model_space::{ModelJoint, WorldToModel, bone_under_first},
         pass_through,
     },
     param::Param,
@@ -164,7 +164,7 @@ impl AimOffsetNode {
     fn resolve<'a>(&self, skeleton: Option<&'a Skeleton>) -> Result<AimFrame<'a>, String> {
         let skeleton = skeleton.ok_or("the player has no skeleton")?;
         let bone = bone_under_first(skeleton, self.frame_bone)?;
-        let rest = model_joint(skeleton, &skeleton.rest_pose, bone)
+        let rest = ModelJoint::of(skeleton, &skeleton.rest_pose, bone)
             .ok_or("the skeleton's rest pose is missing a bone")?;
         let inverse = rest.rotation.inverse();
         let frame = LookFrame::new(inverse * self.forward, inverse * self.up)
@@ -264,13 +264,13 @@ struct AimFrame<'a> {
 
 impl AimFrame<'_> {
     fn measure(&self, joints: &[JointPose], target: Vec3) -> Option<Vec2> {
-        let joint = model_joint(self.skeleton, joints, self.bone)?;
+        let joint = ModelJoint::of(self.skeleton, joints, self.bone)?;
         let direction =
             joint.rotation.inverse() * (target - Vec3::from(joint.transform.translation));
         if direction.length_squared() <= 0.0 {
             return None;
         }
-        let angles = yaw_pitch_to(&self.frame, direction);
+        let angles = self.frame.yaw_pitch_to(direction);
         let angles = Vec2::new(angles.yaw, angles.pitch);
         angles.is_finite().then_some(angles)
     }

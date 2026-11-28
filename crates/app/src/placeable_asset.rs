@@ -84,20 +84,22 @@ impl PlaceableAssets {
 #[derive(Resource, Default)]
 struct PlacementLoads(HashMap<AssetId, Box<dyn Any + Send + Sync>>);
 
-pub(crate) fn register<A: PlaceableAsset>(app: &mut App) {
-    if app.get_resource::<PlaceableAssets>().is_none() {
-        app.insert_resource(PlaceableAssets::default());
-        app.insert_resource(PlacementLoads::default());
-        app.add_system(Update, release_failed_loads.at_edit_time());
+impl App {
+    pub(crate) fn install_placeable<A: PlaceableAsset>(&mut self) {
+        if self.get_resource::<PlaceableAssets>().is_none() {
+            self.insert_resource(PlaceableAssets::default());
+            self.insert_resource(PlacementLoads::default());
+            self.add_system(Update, release_failed_loads.at_edit_time());
+        }
+        let placeable = self
+            .get_resource_mut::<PlaceableAssets>()
+            .expect("PlaceableAssets was just inserted");
+        if placeable.get(A::name()).is_some() {
+            return;
+        }
+        placeable.0.push(PlaceableKind::of::<A>());
+        self.add_listener(fill_placed::<A>.at_edit_time());
     }
-    let placeable = app
-        .get_resource_mut::<PlaceableAssets>()
-        .expect("PlaceableAssets was just inserted");
-    if placeable.get(A::name()).is_some() {
-        return;
-    }
-    placeable.0.push(PlaceableKind::of::<A>());
-    app.add_listener(fill_placed::<A>.at_edit_time());
 }
 
 fn release_failed_loads(

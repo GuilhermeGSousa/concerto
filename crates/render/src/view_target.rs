@@ -8,10 +8,8 @@ use concerto_reflect::{Reflect, ReflectDefault};
 use glam::UVec2;
 
 use crate::{
-    components::camera::{create_rtt, RenderCamera},
-    device::RenderDevice,
-    render_asset::render_texture::RenderTexture,
-    resources::RenderContext,
+    components::camera::RenderCamera, device::RenderDevice,
+    render_asset::render_texture::RenderTexture, resources::RenderContext,
 };
 
 /// How many samples a camera's scene is drawn with per pixel, to smooth the edges of geometry.
@@ -103,7 +101,7 @@ impl ViewTarget {
         let format = context.view_target_format;
         let size = size.max(UVec2::ONE);
         let samples = msaa.samples();
-        let main = create_rtt(device, format, size.x, size.y);
+        let main = RenderTexture::camera_target(device, format, size.x, size.y);
         if samples == 1 {
             return Self {
                 main,

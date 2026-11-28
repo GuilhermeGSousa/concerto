@@ -70,7 +70,7 @@ pub fn run(
 ) {
     #[cfg(not(target_arch = "wasm32"))]
     {
-        match cook_arg(std::env::args().skip(1)) {
+        match CookArg::parse(std::env::args().skip(1)) {
             CookArg::Absent => {}
             CookArg::Dir(out) => std::process::exit(report_cook(cook(build, content, &out))),
             CookArg::Missing => std::process::exit(report_cook(Err(anyhow::anyhow!(
@@ -84,7 +84,7 @@ pub fn run(
     init_logging();
     concerto_winit::run(move |app| {
         build(app);
-        concerto_app::plugins::install_content_registry(app, content);
+        app.install_content_registry(content);
     });
 }
 
@@ -98,15 +98,17 @@ enum CookArg {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn cook_arg(args: impl IntoIterator<Item = String>) -> CookArg {
-    let mut args = args.into_iter();
-    if !args.any(|arg| arg == "--cook") {
-        return CookArg::Absent;
-    }
-    match args.next() {
-        None => CookArg::Missing,
-        Some(out) if out.starts_with('-') => CookArg::Flag(out),
-        Some(out) => CookArg::Dir(out.into()),
+impl CookArg {
+    fn parse(args: impl IntoIterator<Item = String>) -> Self {
+        let mut args = args.into_iter();
+        if !args.any(|arg| arg == "--cook") {
+            return Self::Absent;
+        }
+        match args.next() {
+            None => Self::Missing,
+            Some(out) if out.starts_with('-') => Self::Flag(out),
+            Some(out) => Self::Dir(out.into()),
+        }
     }
 }
 
@@ -276,7 +278,7 @@ pub fn headless(build: impl FnOnce(&mut App)) -> Option<App> {
 mod cook_tests {
     use concerto_app::{plugins::ContentSettings, App};
     use concerto_foundation::assets::{
-        content::{read_content_asset_parts, save_content_asset_into},
+        content::{save_content_asset_into, ContentAssetParts},
         derived::{DerivedData, DerivedInputs},
         registry::AssetRegistry,
         Asset, AssetId, LoadableAsset,
@@ -383,7 +385,7 @@ mod cook_tests {
 
         assert_eq!(report.cooked, vec!["content/doubled.gasset"]);
         let bytes = std::fs::read(out.join("content/doubled.gasset")).unwrap();
-        let parts = read_content_asset_parts(&bytes).unwrap();
+        let parts = ContentAssetParts::read(&bytes).unwrap();
         assert_eq!(parts.header.derived.map(|section| section.key), Some(21));
         assert_eq!(parts.derived_blob, Some(&42u64.to_le_bytes()[..]));
 
@@ -428,7 +430,7 @@ mod cook_tests {
         ];
         for row in rows {
             let args = row.args.iter().map(|arg| arg.to_string());
-            assert_eq!(super::cook_arg(args), row.cook, "{:?}", row.args);
+            assert_eq!(super::CookArg::parse(args), row.cook, "{:?}", row.args);
         }
     }
 }

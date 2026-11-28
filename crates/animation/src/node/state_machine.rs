@@ -17,7 +17,6 @@ use concerto_foundation::assets::{asset_store::AssetStore, handle::AssetHandle};
 use concerto_name::Name;
 use concerto_reflect::{
     EncodeError, Reflect, ReflectDefault, ReflectedValue, TypeRegistry, ValueWarning,
-    apply_value_with, to_value,
 };
 use derive_more::Deref;
 use glam::Vec2;
@@ -105,7 +104,7 @@ impl AnimationFSMTrigger {
     pub fn on_message_value<M: AnimationMessage>(message: &M) -> Result<Self, EncodeError> {
         Ok(Self::OnMessage {
             message: MessageType::of::<M>(),
-            value: Some(to_value(message)?),
+            value: Some(ReflectedValue::encode(message)?),
         })
     }
 }
@@ -651,7 +650,8 @@ impl AnimationNode for AnimationStateMachine {
                 continue;
             };
             warnings.extend(
-                apply_value_with(probe.as_mut(), wanted, leaves)
+                wanted
+                    .apply_with(probe.as_mut(), leaves)
                     .into_iter()
                     .map(|warning| ValueWarning {
                         path: message.path().to_owned(),
@@ -859,7 +859,7 @@ fn heard<'m>(
     messages.any(|message| {
         wanted.matches(message)
             && value.as_ref().is_none_or(|wanted| {
-                to_value(message).is_ok_and(|encoded| encoded.contains(wanted))
+                ReflectedValue::encode(message).is_ok_and(|encoded| encoded.contains(wanted))
             })
     })
 }

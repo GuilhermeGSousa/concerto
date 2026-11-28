@@ -6,7 +6,7 @@ use concerto_app::{
 use concerto_color::Color;
 use concerto_ecs::{component::scene::SceneEntityRef, entity::Entity};
 use concerto_foundation::{assets::asset_server::AssetServer, transform::Transform};
-use concerto_mesh::{MeshComponent, primitives::cuboid};
+use concerto_mesh::{Mesh, MeshComponent};
 use concerto_render::{
     MaterialComponent, MaterialPlugin,
     assets::material::StandardMaterial,
@@ -18,7 +18,6 @@ use concerto_render::{
     draw_target::{DrawTarget, SharedTexture},
     gpu::Gpu,
     plugin::RenderPlugin,
-    readback::read_texture,
     wgpu,
 };
 use concerto_skybox::{Sky, SkyboxPlugin, Sun};
@@ -84,7 +83,7 @@ impl SkyScene {
         let (mesh, material) = {
             let server = app.get_resource::<AssetServer>().unwrap();
             (
-                server.add(cuboid(Vec3::ONE)),
+                server.add(Mesh::cuboid(Vec3::ONE)),
                 server.add(
                     StandardMaterial::default()
                         .with_base_color_factor(Color::rgba(1.0, 0.0, 0.0, 1.0)),
@@ -181,7 +180,9 @@ impl SkyScene {
         let x = ((ndc.x * 0.5 + 0.5) * WIDTH as f32) as u32;
         let y = ((0.5 - ndc.y * 0.5) * HEIGHT as f32) as u32;
         let published = self.shared.get().expect("a texture was published");
-        let texel = read_texture(&self.gpu, published.texture())
+        let texel = self
+            .gpu
+            .read_texture(published.texture())
             .get_pixel(x.min(WIDTH - 1), y.min(HEIGHT - 1))
             .0;
         Pixel {

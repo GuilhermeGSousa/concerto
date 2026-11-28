@@ -2,9 +2,7 @@ use std::any::TypeId;
 
 use concerto_mesh::skeleton::{JointName, JointPose, Skeleton};
 use concerto_name::name;
-use concerto_reflect::{
-    apply_value, json_to_value, to_json, to_value, ReflectedValue, TypeRegistry,
-};
+use concerto_reflect::{to_json, ReflectedValue, TypeRegistry};
 use glam::{Mat4, Quat, Vec3};
 use serde_json::json;
 use uuid::Uuid;
@@ -65,11 +63,11 @@ fn joint_pose_to_mat4_scales_then_rotates_then_translates() {
 
 #[test]
 fn a_joint_name_encodes_as_its_text_in_reflection_json_and_bincode() {
-    let stored = to_value(&JointName::from("Hips")).unwrap();
+    let stored = ReflectedValue::encode(&JointName::from("Hips")).unwrap();
     assert!(matches!(stored, ReflectedValue::Leaf(_)));
-    assert_eq!(stored, to_value(&"Hips".to_string()).unwrap());
+    assert_eq!(stored, ReflectedValue::encode(&"Hips".to_string()).unwrap());
     let mut read = JointName::default();
-    assert!(apply_value(&mut read, &stored).is_empty());
+    assert!(stored.apply(&mut read).is_empty());
     assert_eq!(read, JointName::from("Hips"));
 
     let mut registry = TypeRegistry::default();
@@ -77,10 +75,10 @@ fn a_joint_name_encodes_as_its_text_in_reflection_json_and_bincode() {
     let id = TypeId::of::<JointName>();
     assert_eq!(to_json(&JointName::from("Hips"), &registry), json!("Hips"));
     assert_eq!(
-        json_to_value(&json!("Spine"), id, &registry).unwrap(),
-        to_value(&JointName::from("Spine")).unwrap()
+        ReflectedValue::from_json(&json!("Spine"), id, &registry).unwrap(),
+        ReflectedValue::encode(&JointName::from("Spine")).unwrap()
     );
-    assert!(json_to_value(&json!(3), id, &registry).is_err());
+    assert!(ReflectedValue::from_json(&json!(3), id, &registry).is_err());
 
     let bytes = bincode::serialize(&JointName::from("Hips")).unwrap();
     assert_eq!(bytes, bincode::serialize("Hips").unwrap());

@@ -8,7 +8,7 @@ use concerto_ecs::{
     signal::{On, lifecycle::Add},
 };
 use concerto_editor::{
-    asset_editor::{AssetEditor, EditorDocument, PreviewSpec, Unsaved, finish_asset_request},
+    asset_editor::{AssetEditor, EditorDocument, PreviewSpec, Unsaved},
     guard::DiscardEdits,
     hosted::{Hosted, HostedApp},
     inspector::{DocumentValue, InspectedValues, PropertyTarget, RefreshInspector, ShownValue},
@@ -19,7 +19,7 @@ use concerto_editor::{
 };
 use concerto_foundation::assets::{
     Asset, AssetId,
-    content::{decode_content_asset, read_asset_record, read_content_asset},
+    content::{ContentAssetHeader, decode_content_asset},
     handle::AssetHandle,
     registry::AssetEntry,
 };
@@ -289,8 +289,8 @@ pub(crate) fn publish_values(
 /// Returns an error when the file cannot be read or decoded, or holds another
 /// id or kind than `asset` names.
 pub fn read_definition(root: &Path, asset: &AssetEntry) -> anyhow::Result<MotionDatabase> {
-    let bytes = read_asset_record(root, asset)?;
-    let (header, _) = read_content_asset(&bytes)?;
+    let bytes = asset.read_record(root)?;
+    let (header, _) = ContentAssetHeader::read(&bytes)?;
     anyhow::ensure!(
         header.asset_id == asset.id && header.kind == MotionDatabase::name(),
         "Asset identity or type mismatch"
@@ -298,26 +298,28 @@ pub fn read_definition(root: &Path, asset: &AssetEntry) -> anyhow::Result<Motion
     Ok(decode_content_asset::<MotionDatabase>(&bytes)?.1)
 }
 
-fn hold_definition(
-    state: &mut DefinitionDocument,
-    mut definition: MotionDatabase,
-    channels: Option<Vec<HeldChannel>>,
-) {
-    if let Some(channels) = &channels {
-        definition.channels = channels.iter().map(HeldChannel::data).collect();
+impl DefinitionDocument {
+    fn hold_definition(
+        &mut self,
+        mut definition: MotionDatabase,
+        channels: Option<Vec<HeldChannel>>,
+    ) {
+        if let Some(channels) = &channels {
+            definition.channels = channels.iter().map(HeldChannel::data).collect();
+        }
+        self.settings = channels
+            .is_some()
+            .then(|| DatabaseSettings::of(&definition));
+        self.channels = channels.unwrap_or_default();
+        self.skeleton = definition.skeleton.clone();
+        self.entries = definition.entries.clone();
+        self.selected_entry = (!definition.entries.is_empty()).then_some(0);
+        self.entry_facts.clear();
+        self.shown_skeleton = None;
+        self.time = 0.0;
+        self.sought_entry = None;
+        self.loaded = Some(definition);
     }
-    state.settings = channels
-        .is_some()
-        .then(|| DatabaseSettings::of(&definition));
-    state.channels = channels.unwrap_or_default();
-    state.skeleton = definition.skeleton.clone();
-    state.entries = definition.entries.clone();
-    state.selected_entry = (!definition.entries.is_empty()).then_some(0);
-    state.entry_facts.clear();
-    state.shown_skeleton = None;
-    state.time = 0.0;
-    state.sought_entry = None;
-    state.loaded = Some(definition);
 }
 
 fn live_channels(
@@ -364,11 +366,11 @@ pub(crate) fn load_definition(
         let (definition, channels) = match read {
             Ok(read) => read,
             Err(error) => {
-                finish_asset_request(&mut document, &asset, Err(error));
+                document.finish_request(&asset, Err(error));
                 continue;
             }
         };
-        hold_definition(&mut state, definition, channels);
+        state.hold_definition(definition, channels);
         state.stats = None;
         state.playback = None;
         state.derive_job = None;
@@ -377,7 +379,7 @@ pub(crate) fn load_definition(
         if let Some(types) = types {
             publish_values(entity, &state, &types.read(), None, &mut cmd);
         }
-        finish_asset_request(&mut document, &asset, Ok(()));
+        document.finish_request(&asset, Ok(()));
     }
 }
 
@@ -406,7 +408,7 @@ pub(crate) fn restore_discarded_edits(
             return;
         }
     };
-    hold_definition(&mut state, definition, channels);
+    state.hold_definition(definition, channels);
     state.derive_wanted = true;
     if let Some(types) = types {
         publish_values(document, &state, &types.read(), None, &mut cmd);

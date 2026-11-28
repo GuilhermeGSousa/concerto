@@ -11,10 +11,9 @@ use concerto_ecs::{
 use concerto_foundation::transform::Transform;
 use concerto_render::components::render_entity::SyncWithRenderWorld;
 use concerto_scene::{
-    capture::capture_subtree,
     node_id::{NodeId, SceneNodeId},
     scene::Scene,
-    spawner::{SpawnFilter, spawn_scene_in_world},
+    spawner::SpawnFilter,
 };
 
 use crate::tools::{
@@ -133,7 +132,7 @@ fn apply(world: &mut World, edit: &EntityEdit) -> anyhow::Result<Applied> {
         EntityEdit::Duplicate(entity) => {
             let parent = editable(world, *entity)?;
             refuse_linked(world, *entity, LinkedEdit::Duplicate)?;
-            let mut scene = capture_subtree(world, *entity)?;
+            let mut scene = Scene::capture_subtree(world, *entity)?;
             for node in &mut scene.nodes {
                 node.id = NodeId::fresh();
             }
@@ -198,7 +197,7 @@ fn editable(world: &mut World, entity: Entity) -> anyhow::Result<Option<Entity>>
 
 fn spawn_beside(world: &mut World, scene: &Scene, parent: Option<Entity>) -> Option<Entity> {
     let holder = parent.unwrap_or_else(|| world.spawn(()));
-    let spawned = spawn_scene_in_world(world, scene, holder, &SpawnFilter::default());
+    let spawned = scene.spawn_in_world(world, holder, &SpawnFilter::default());
     if parent.is_none() {
         for root in &spawned.root_entities {
             world.remove_component::<ChildOf>(*root);

@@ -271,8 +271,10 @@ pub(crate) fn subtitle(
     Some(asset.name().into_owned())
 }
 
-fn canvas_id(id: GraphNodeId) -> CanvasNodeId {
-    CanvasNodeId(id.0)
+impl GraphNodeId {
+    fn canvas_id(self) -> CanvasNodeId {
+        CanvasNodeId(self.0)
+    }
 }
 
 fn node_id(id: CanvasNodeId) -> GraphNodeId {
@@ -359,52 +361,54 @@ pub(crate) fn time_text(time: f32) -> String {
     format!("{time:.2}s")
 }
 
-fn shown_canvas(
-    state: &GraphDocument,
-    live: Option<LiveView>,
-    types: Option<&TypeRegistry>,
-    assets: &AssetRegistry,
-) -> GraphCanvas {
-    if let Some(machine) = state.machine() {
-        let playing = state
-            .shown_machine()
-            .and_then(|node| live?.node(node)?.machine);
-        return shown_diagram(machine, state.selection, playing, assets);
+impl GraphDocument {
+    fn shown_canvas(
+        &self,
+        live: Option<LiveView>,
+        types: Option<&TypeRegistry>,
+        assets: &AssetRegistry,
+    ) -> GraphCanvas {
+        if let Some(machine) = self.machine() {
+            let playing = self
+                .shown_machine()
+                .and_then(|node| live?.node(node)?.machine);
+            return shown_diagram(machine, self.selection, playing, assets);
+        }
+        let mut canvas = GraphCanvas::new(CanvasMode::Flow);
+        let Some(copy) = self.graph() else {
+            return canvas;
+        };
+        for node in copy.nodes() {
+            let mut shown = CanvasNode::new(node.id.canvas_id(), node.short_name());
+            let playing = live.and_then(|live| live.node(node.id));
+            if let Some(playing) = playing {
+                shown = shown.with_badge(weight_text(playing.weight));
+            }
+            if let Some(subtitle) = subtitle(node, types, assets) {
+                shown = shown.with_subtitle(match playing.and_then(|playing| playing.clip_time) {
+                    Some(time) => format!("{subtitle} · {}", time_text(time)),
+                    None => subtitle,
+                });
+            }
+            for pin in pins(node) {
+                shown = shown.with_input(pin);
+            }
+            if node.id != copy.result() {
+                shown = shown.with_output();
+            }
+            if copy.editable() && node.live().is_none() {
+                shown = shown.with_emphasis(CanvasEmphasis::Warning);
+            }
+            canvas.nodes.push(shown);
+            for (slot, input) in node.inputs.iter().enumerate() {
+                canvas
+                    .links
+                    .push(CanvasLink::new(input.canvas_id(), node.id.canvas_id()).with_slot(slot));
+            }
+        }
+        canvas.selection = selected(copy, self.selection, &canvas.links);
+        canvas
     }
-    let mut canvas = GraphCanvas::new(CanvasMode::Flow);
-    let Some(copy) = state.graph() else {
-        return canvas;
-    };
-    for node in copy.nodes() {
-        let mut shown = CanvasNode::new(canvas_id(node.id), node.short_name());
-        let playing = live.and_then(|live| live.node(node.id));
-        if let Some(playing) = playing {
-            shown = shown.with_badge(weight_text(playing.weight));
-        }
-        if let Some(subtitle) = subtitle(node, types, assets) {
-            shown = shown.with_subtitle(match playing.and_then(|playing| playing.clip_time) {
-                Some(time) => format!("{subtitle} · {}", time_text(time)),
-                None => subtitle,
-            });
-        }
-        for pin in pins(node) {
-            shown = shown.with_input(pin);
-        }
-        if node.id != copy.result() {
-            shown = shown.with_output();
-        }
-        if copy.editable() && node.live().is_none() {
-            shown = shown.with_emphasis(CanvasEmphasis::Warning);
-        }
-        canvas.nodes.push(shown);
-        for (slot, input) in node.inputs.iter().enumerate() {
-            canvas
-                .links
-                .push(CanvasLink::new(canvas_id(*input), canvas_id(node.id)).with_slot(slot));
-        }
-    }
-    canvas.selection = selected(copy, state.selection, &canvas.links);
-    canvas
 }
 
 fn selected(
@@ -415,10 +419,10 @@ fn selected(
     match selection? {
         GraphSelection::Node(id) => copy
             .node(id)
-            .map(|node| CanvasTarget::Node(canvas_id(node.id))),
+            .map(|node| CanvasTarget::Node(node.id.canvas_id())),
         GraphSelection::Link { child } => links
             .iter()
-            .position(|link| link.from == canvas_id(child))
+            .position(|link| link.from == child.canvas_id())
             .map(CanvasTarget::Link),
         GraphSelection::State(_) | GraphSelection::Transition(_) => None,
     }
@@ -953,7 +957,7 @@ pub(crate) fn sync_graph_panels(
         let types = hosted.and_then(HostedApp::type_registry);
         let types = types.as_ref().map(|types| types.read());
         let live = LiveView::latest(live, sent);
-        let wanted = shown_canvas(state, live, types.as_deref(), &assets);
+        let wanted = state.shown_canvas(live, types.as_deref(), &assets);
         if let Some(mut canvas) = canvases.get_entity_mut(panels.canvas)
             && **canvas != wanted
         {
@@ -1025,7 +1029,7 @@ pub(crate) fn sync_graph_panels(
         if panels.framed != state.levels() {
             let first = match (state.machine(), state.graph()) {
                 (Some(machine), _) => machine.states().next().map(|_| state_id(0)),
-                (None, Some(copy)) => Some(canvas_id(copy.result())),
+                (None, Some(copy)) => Some(copy.result().canvas_id()),
                 (None, None) => None,
             };
             if let Some(node) = first {
@@ -1040,7 +1044,7 @@ pub(crate) fn sync_graph_panels(
                     .states()
                     .position(|state| state.name == name)
                     .map(state_id),
-                (None, Some(GraphSelection::Node(id))) => Some(canvas_id(id)),
+                (None, Some(GraphSelection::Node(id))) => Some(id.canvas_id()),
                 _ => None,
             };
             if let Some(node) = node {

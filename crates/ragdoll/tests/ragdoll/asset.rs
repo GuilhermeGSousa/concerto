@@ -3,7 +3,7 @@ use std::path::Path;
 
 use concerto_foundation::assets::{
     Asset, AssetId,
-    content::{ContentAssetHeader, check_encoding, decode_content_asset, write_content_asset},
+    content::{ContentAssetHeader, check_encoding, decode_content_asset},
     handle::AssetHandle,
 };
 use concerto_foundation::transform::Transform;
@@ -37,7 +37,9 @@ fn a_ragdoll_built_in_code_saves_loads_and_drops_as_one_jointed_body() {
         derived: None,
         embedded: Vec::new(),
     };
-    let file = write_content_asset(&header, &bincode::serialize(&authored).unwrap()).unwrap();
+    let file = header
+        .write(&bincode::serialize(&authored).unwrap())
+        .unwrap();
     let (_, loaded): (_, Ragdoll) = decode_content_asset(&file).unwrap();
     assert_eq!(loaded, authored);
 

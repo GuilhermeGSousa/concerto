@@ -247,7 +247,7 @@ pub fn drive_main_camera(
 
     let live_pose = director
         .live()
-        .and_then(|live| sample_pose(live, &vcams, current));
+        .and_then(|live| current.sample(live, &vcams));
 
     let mut state = std::mem::replace(&mut director.state, DirectorState::Settled);
     let mut blend_finished = false;
@@ -259,7 +259,7 @@ pub fn drive_main_camera(
             elapsed,
             duration,
             ease,
-        } => match (sample_pose(*from, &vcams, current), live_pose) {
+        } => match (current.sample(*from, &vcams), live_pose) {
             (Some(from_pose), Some(live_pose)) => {
                 *elapsed += delta;
                 let t = ease.apply(*elapsed / *duration);
@@ -305,19 +305,21 @@ struct Fallback {
     focus: Option<DepthOfField>,
 }
 
-fn sample_pose(
-    vcam: Entity,
-    vcams: &Query<(&VirtualCamera, &GlobalTransform)>,
-    fallback: Fallback,
-) -> Option<CameraPose> {
-    let (vcam, global_transform) = vcams.get_entity(vcam)?;
+impl Fallback {
+    fn sample(
+        self,
+        vcam: Entity,
+        vcams: &Query<(&VirtualCamera, &GlobalTransform)>,
+    ) -> Option<CameraPose> {
+        let (vcam, global_transform) = vcams.get_entity(vcam)?;
 
-    Some(CameraPose {
-        translation: global_transform.translation(),
-        rotation: normalize(global_transform.rotation()),
-        lens: vcam.lens.unwrap_or(fallback.lens),
-        focus: vcam.focus.or(fallback.focus),
-    })
+        Some(CameraPose {
+            translation: global_transform.translation(),
+            rotation: normalize(global_transform.rotation()),
+            lens: vcam.lens.unwrap_or(self.lens),
+            focus: vcam.focus.or(self.focus),
+        })
+    }
 }
 
 fn normalize(rotation: Quat) -> Quat {
@@ -338,7 +340,7 @@ mod tests {
     use concerto_ecs::system::schedule::Schedule;
     use concerto_ecs::world::World;
     use concerto_foundation::{time::Time, transform::Transform};
-    use concerto_reflect::{apply_value, to_value};
+    use concerto_reflect::ReflectedValue;
     use concerto_render::{DepthOfField, components::camera::Camera};
     use glam::Vec3;
 
@@ -411,7 +413,7 @@ mod tests {
         }
 
         fn edit_vcam(&mut self, vcam: concerto_ecs::Entity, replacement: &VirtualCamera) {
-            let stored = to_value(replacement).unwrap();
+            let stored = ReflectedValue::encode(replacement).unwrap();
             let reflect = self
                 .world
                 .get_resource::<AppTypeRegistry>()
@@ -419,7 +421,7 @@ mod tests {
                 .get_type_data::<ReflectComponent>(TypeId::of::<VirtualCamera>())
                 .expect("a virtual camera is an editable component");
             assert!((reflect.edit)(&mut self.world, vcam, &mut |value| {
-                apply_value(value, &stored);
+                stored.apply(value);
             }));
         }
 

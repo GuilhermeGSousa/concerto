@@ -26,9 +26,7 @@ use concerto_ecs::{
 };
 use concerto_editor::{
     actions::EditorContextSet,
-    asset_editor::{
-        AssetEditor, AssetEditorAppExt, EditorDocument, PreviewSpec, Unsaved, finish_asset_request,
-    },
+    asset_editor::{AssetEditor, AssetEditorAppExt, EditorDocument, PreviewSpec, Unsaved},
     fonts::{AssetIconsAppExt, glyph},
     hosted::{Hosted, HostedEventsAppExt},
     preview::PreviewSignals,
@@ -38,7 +36,7 @@ use concerto_editor::{
 };
 use concerto_foundation::assets::{
     Asset, AssetId,
-    content::{decode_content_asset, read_asset_record},
+    content::decode_content_asset,
     registry::{AssetEntry, AssetRegistry},
 };
 use concerto_scene::scene::Scene;
@@ -124,12 +122,14 @@ impl ClipDocument {
     }
 }
 
-pub(crate) fn measure_transport(transport: &mut ClipTransport, facts: &ClipFacts) {
-    if transport.duration != facts.duration {
-        transport.duration = facts.duration;
-    }
-    if transport.rate != facts.rate {
-        transport.rate = facts.rate;
+impl ClipTransport {
+    pub(crate) fn measure_transport(&mut self, facts: &ClipFacts) {
+        if self.duration != facts.duration {
+            self.duration = facts.duration;
+        }
+        if self.rate != facts.rate {
+            self.rate = facts.rate;
+        }
     }
 }
 
@@ -248,7 +248,7 @@ pub(crate) fn sync_clip_preview(
 /// Returns an error when the file cannot be read or decoded as a clip, or when its header
 /// names another asset.
 pub fn read_clip(root: &Path, asset: &AssetEntry) -> anyhow::Result<AnimationClip> {
-    let bytes = read_asset_record(root, asset)?;
+    let bytes = asset.read_record(root)?;
     let (header, clip) = decode_content_asset::<AnimationClip>(&bytes)?;
     anyhow::ensure!(header.asset_id == asset.id, "Asset identity mismatch");
     Ok(clip)
@@ -314,17 +314,19 @@ pub fn read_shown_scene(
         .transpose()
 }
 
-fn scene_signal(
-    state: &mut ClipDocument,
-    root: &Path,
-    clip: Option<&AssetEntry>,
-    assets: &AssetRegistry,
-) -> ShowClipScene {
-    let shown = read_shown_scene(root, clip, state.picked_scene, assets);
-    state.scene_error = shown.as_ref().err().map(|error| format!("{error:#}"));
-    let shown = shown.ok().flatten();
-    state.shown_scene = shown.as_ref().map(|(id, _)| *id);
-    ShowClipScene(shown.map(|(_, scene)| scene))
+impl ClipDocument {
+    fn scene_signal(
+        &mut self,
+        root: &Path,
+        clip: Option<&AssetEntry>,
+        assets: &AssetRegistry,
+    ) -> ShowClipScene {
+        let shown = read_shown_scene(root, clip, self.picked_scene, assets);
+        self.scene_error = shown.as_ref().err().map(|error| format!("{error:#}"));
+        let shown = shown.ok().flatten();
+        self.shown_scene = shown.as_ref().map(|(id, _)| *id);
+        ShowClipScene(shown.map(|(_, scene)| scene))
+    }
 }
 
 pub(crate) fn load_clip(
@@ -348,14 +350,14 @@ pub(crate) fn load_clip(
         let clip = match read_clip(&root, &asset) {
             Ok(clip) => Arc::new(clip),
             Err(error) => {
-                finish_asset_request(&mut document, &asset, Err(error));
+                document.finish_request(&asset, Err(error));
                 continue;
             }
         };
         let events = match read_events(&clip) {
             Ok(events) => events,
             Err(error) => {
-                finish_asset_request(&mut document, &asset, Err(anyhow::anyhow!(error)));
+                document.finish_request(&asset, Err(anyhow::anyhow!(error)));
                 continue;
             }
         };
@@ -368,7 +370,7 @@ pub(crate) fn load_clip(
         };
         state.clip = Some(Arc::clone(&clip));
         state.rebuild_rows();
-        measure_transport(&mut transport, &state.facts);
+        transport.measure_transport(&state.facts);
         transport.time = 0.0;
         transport.playing = true;
         previews.trigger(entity, ShowClip(clip));
@@ -380,11 +382,8 @@ pub(crate) fn load_clip(
                 rate: transport.speed,
             },
         );
-        previews.trigger(
-            entity,
-            scene_signal(&mut state, &root, Some(&asset), &assets),
-        );
-        finish_asset_request(&mut document, &asset, Ok(()));
+        previews.trigger(entity, state.scene_signal(&root, Some(&asset), &assets));
+        document.finish_request(&asset, Ok(()));
     }
 }
 
@@ -461,7 +460,7 @@ mod tests {
     };
     use concerto_foundation::assets::{Asset, content::save_content_asset_into};
     use concerto_name::Name;
-    use concerto_reflect::{ReflectedValue, to_value};
+    use concerto_reflect::ReflectedValue;
     use concerto_ui::theme::UITheme;
     use concerto_window::plugin::{Window, WindowPlugin};
     use glam::Vec2;
@@ -503,7 +502,7 @@ mod tests {
         stored_key(
             time,
             std::any::type_name::<AnimationEvent>(),
-            to_value(&event).unwrap(),
+            ReflectedValue::encode(&event).unwrap(),
         )
     }
 

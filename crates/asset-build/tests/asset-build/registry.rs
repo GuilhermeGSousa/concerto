@@ -2,7 +2,7 @@
 use std::path::Path;
 
 use concerto_asset_build::write_registry_into;
-use concerto_asset_format::{parse_registry, write_content_asset, AssetId, ContentAssetHeader};
+use concerto_asset_format::{AssetId, ContentAssetHeader, ScannedEntry};
 
 fn write_asset(path: &Path, id: AssetId, kind: &str) {
     let header = ContentAssetHeader {
@@ -16,7 +16,7 @@ fn write_asset(path: &Path, id: AssetId, kind: &str) {
         embedded: Vec::new(),
     };
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-    std::fs::write(path, write_content_asset(&header, b"payload").unwrap()).unwrap();
+    std::fs::write(path, header.write(b"payload").unwrap()).unwrap();
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -36,7 +36,7 @@ fn listed(address: &str, kind: &str) -> Listed {
 
 fn written(out: &Path) -> Vec<Listed> {
     let text = std::fs::read_to_string(out.join("concerto_registry.toml")).unwrap();
-    let mut entries: Vec<_> = parse_registry(&text)
+    let mut entries: Vec<_> = ScannedEntry::parse_registry(&text)
         .unwrap()
         .into_iter()
         .map(|entry| Listed {

@@ -29,10 +29,7 @@ use concerto_foundation::{
 use concerto_mesh::skeleton::{Skeleton, SkeletonComponent};
 use concerto_name::Name;
 use concerto_render::plugin::RenderPlugin;
-use concerto_scene::{
-    scene::Scene,
-    spawner::{SpawnFilter, spawn_scene},
-};
+use concerto_scene::{scene::Scene, spawner::SpawnFilter};
 use glam::Vec3;
 use uuid::Uuid;
 
@@ -393,7 +390,7 @@ fn show_clip_scene(
     }
     if let Some(scene) = &on.signal().0 {
         let root = cmd.spawn((Transform::IDENTITY, ClipPreviewRoot)).entity();
-        spawn_scene(&mut cmd, scene, root, &SpawnFilter::default());
+        scene.spawn(&mut cmd, root, &SpawnFilter::default());
     }
 }
 

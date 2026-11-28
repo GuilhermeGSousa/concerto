@@ -1,8 +1,5 @@
 //! `AssetRegistry` get/insert/remove/iter and scanning.
-use concerto_foundation::assets::content::{
-    write_content_asset, write_content_asset_with_embedded, ContentAssetHeader, EmbeddedPayload,
-    ImportProvenance,
-};
+use concerto_foundation::assets::content::{ContentAssetHeader, EmbeddedPayload, ImportProvenance};
 use concerto_foundation::assets::registry::{AssetEntry, AssetRegistry, EmbeddedIn};
 use concerto_foundation::assets::AssetId;
 use proptest::prelude::*;
@@ -50,11 +47,7 @@ fn from_content_tree_indexes_every_gasset_by_its_header_id_and_follows_a_moved_f
             embedded: Vec::new(),
         };
         std::fs::create_dir_all(dir.join("content/hero")).unwrap();
-        std::fs::write(
-            dir.join(&address),
-            write_content_asset(&header, b"payload").unwrap(),
-        )
-        .unwrap();
+        std::fs::write(dir.join(&address), header.write(b"payload").unwrap()).unwrap();
         expected.push(AssetEntry {
             kind_version: Some(1),
             provenance,
@@ -126,30 +119,30 @@ fn a_host_and_its_embedded_assets_are_listed_and_found() {
     std::fs::create_dir_all(dir.join("content/hero")).unwrap();
     std::fs::write(
         dir.join("content/hero/crate.gasset"),
-        write_content_asset(&header(loose, "Mesh", "mesh/crate"), b"loose").unwrap(),
+        header(loose, "Mesh", "mesh/crate").write(b"loose").unwrap(),
     )
     .unwrap();
     std::fs::write(
         dir.join(scene),
-        write_content_asset_with_embedded(
-            &header(host, "Scene", "scene"),
-            b"scene",
-            &[
-                EmbeddedPayload {
-                    header: header(mesh, "Mesh", "mesh/0"),
-                    payload: b"mesh",
-                    uncooked: None,
-                    derived_blob: None,
-                },
-                EmbeddedPayload {
-                    header: header(material, "StandardMaterial", "material/steel"),
-                    payload: b"material",
-                    uncooked: None,
-                    derived_blob: None,
-                },
-            ],
-        )
-        .unwrap(),
+        header(host, "Scene", "scene")
+            .write_with_embedded(
+                b"scene",
+                &[
+                    EmbeddedPayload {
+                        header: header(mesh, "Mesh", "mesh/0"),
+                        payload: b"mesh",
+                        uncooked: None,
+                        derived_blob: None,
+                    },
+                    EmbeddedPayload {
+                        header: header(material, "StandardMaterial", "material/steel"),
+                        payload: b"material",
+                        uncooked: None,
+                        derived_blob: None,
+                    },
+                ],
+            )
+            .unwrap(),
     )
     .unwrap();
 

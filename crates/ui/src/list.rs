@@ -192,7 +192,7 @@ pub(crate) mod tests {
         },
         search::update_search_fields,
         sets::UiSet,
-        text::fonts::{UIFonts, build_font_system},
+        text::fonts::UIFonts,
         text_input::{UITextInput, UITextInputCancelled, UITextInputSubmitted},
         theme::UITheme,
         transform::UIValue,
@@ -232,7 +232,7 @@ pub(crate) mod tests {
             world.insert_resource(UILayoutEngine::default());
             world.insert_resource(UILayoutDiagnostics::default());
             world.insert_resource(UIPanelStack::default());
-            world.insert_resource(UITextMeasure::new(build_font_system(&UIFonts::default())));
+            world.insert_resource(UITextMeasure::new(UIFonts::default().build_font_system()));
             world.insert_resource(Input::new());
             world.insert_resource(HoveredNode::default());
             world.insert_resource(UIInputState::default());

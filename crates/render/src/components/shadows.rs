@@ -21,7 +21,7 @@ use crate::{
     components::{
         camera::RenderCamera,
         light::{
-            entity_order, LightType, RenderLight, RenderLights, RenderShadowCascades,
+            EntityOrder, LightType, RenderLight, RenderLights, RenderShadowCascades,
             RenderShadowsEnabled, ShadowCascades, VisibleLights, POINT_SHADOW_NEAR,
         },
         mesh::{RenderMeshInstanceFlags, RenderMeshInstances},
@@ -272,7 +272,7 @@ fn assign_layers(
     point_limit: u32,
 ) -> AssignedLayers {
     let mut casters: Vec<&ShadowCandidate> = lights.iter().filter(|light| light.enabled).collect();
-    casters.sort_by_key(|light| entity_order(&light.entity));
+    casters.sort_by_key(|light| EntityOrder::of(&light.entity));
 
     let mut spot_directional = Vec::new();
     let mut point = Vec::new();
@@ -309,7 +309,7 @@ fn layer_of(slots: &[Entity], entity: Entity) -> i32 {
 
 fn cameras_in_order(cameras: &mut Query<(Entity, &mut RenderCamera)>) -> Vec<Entity> {
     let mut entities: Vec<Entity> = cameras.iter_mut().map(|(entity, _)| entity).collect();
-    entities.sort_by_key(entity_order);
+    entities.sort_by_key(EntityOrder::of);
     entities
 }
 
@@ -615,7 +615,7 @@ pub(crate) fn update_shadow_view_proj(
     queue: Res<RenderQueue>,
 ) {
     let mut ordered: Vec<Entity> = cameras.iter().map(|(entity, _)| entity).collect();
-    ordered.sort_by_key(entity_order);
+    ordered.sort_by_key(EntityOrder::of);
     let views: Vec<CascadeCamera> = ordered
         .iter()
         .filter_map(|&entity| cameras.get_entity(entity))
@@ -633,7 +633,7 @@ pub(crate) fn update_shadow_view_proj(
             continue;
         };
         if light.light_type != LightType::Directional.index() {
-            matrices.push(spot_view_proj(light));
+            matrices.push(light.spot_view_proj());
             continue;
         }
         let count = light.shadow_cascades.max(1) as usize;
@@ -652,15 +652,21 @@ pub(crate) fn update_shadow_view_proj(
     clip_from_world.0 = matrices;
 }
 
-fn spot_view_proj(light: &RenderLight) -> Mat4 {
-    let direction = light.direction;
-    let up = shadow_up_vector(direction);
-    let translation = light.translation;
-    let view = glam::camera::rh::view::look_at_mat4(translation, translation + direction, up);
-    let fov = 2.0 * light.cos_cone_angle.clamp(-1.0, 1.0).acos();
-    let proj =
-        glam::camera::rh::proj::directx::perspective(fov, 1.0, SPOT_SHADOW_NEAR, SPOT_SHADOW_FAR);
-    proj * view
+impl RenderLight {
+    fn spot_view_proj(&self) -> Mat4 {
+        let direction = self.direction;
+        let up = shadow_up_vector(direction);
+        let translation = self.translation;
+        let view = glam::camera::rh::view::look_at_mat4(translation, translation + direction, up);
+        let fov = 2.0 * self.cos_cone_angle.clamp(-1.0, 1.0).acos();
+        let proj = glam::camera::rh::proj::directx::perspective(
+            fov,
+            1.0,
+            SPOT_SHADOW_NEAR,
+            SPOT_SHADOW_FAR,
+        );
+        proj * view
+    }
 }
 
 const CLIP_CORNERS: [Vec2; 4] = [
@@ -1043,7 +1049,7 @@ mod tests {
         assets::{asset_server::AssetServer, handle::AssetHandle},
         transform::Transform,
     };
-    use concerto_mesh::{primitives::cuboid, MeshComponent};
+    use concerto_mesh::MeshComponent;
     use concerto_window::plugin::{Window, WindowPlugin};
     use glam::Vec2;
 
@@ -1626,7 +1632,7 @@ mod tests {
     fn cube(app: &App) -> AssetHandle<Mesh> {
         app.get_resource::<AssetServer>()
             .unwrap()
-            .add(cuboid(Vec3::ONE))
+            .add(Mesh::cuboid(Vec3::ONE))
     }
 
     fn material(app: &App) -> AssetHandle<StandardMaterial> {

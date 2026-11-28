@@ -1,7 +1,7 @@
 use concerto_app::App;
 use concerto_director::{CameraDirector, CameraDirectorPlugin, VirtualCamera};
-use concerto_reflect::{ReflectedValue, to_value};
-use concerto_scene::capture::capture_subtree;
+use concerto_reflect::ReflectedValue;
+use concerto_scene::scene::Scene;
 
 #[test]
 fn an_edit_app_opens_and_saves_a_virtual_camera_whose_missing_fields_keep_their_defaults() {
@@ -12,11 +12,19 @@ fn an_edit_app_opens_and_saves_a_virtual_camera_whose_missing_fields_keep_their_
     let camera = world.spawn(());
     let shot = world.spawn(());
 
-    let camera_fields =
-        ReflectedValue::Struct(vec![("priority".to_owned(), to_value(&7_i32).unwrap())]);
+    let camera_fields = ReflectedValue::Struct(vec![(
+        "priority".to_owned(),
+        ReflectedValue::encode(&7_i32).unwrap(),
+    )]);
     let shot_fields = ReflectedValue::Struct(vec![
-        ("priority".to_owned(), to_value(&9_i32).unwrap()),
-        ("enabled".to_owned(), to_value(&false).unwrap()),
+        (
+            "priority".to_owned(),
+            ReflectedValue::encode(&9_i32).unwrap(),
+        ),
+        (
+            "enabled".to_owned(),
+            ReflectedValue::encode(&false).unwrap(),
+        ),
     ]);
     assert!(world.apply_scene_component("VirtualCamera", &camera_fields, camera, &[camera]));
     assert!(world.apply_scene_component("VirtualCamera", &shot_fields, shot, &[shot]));
@@ -32,7 +40,7 @@ fn an_edit_app_opens_and_saves_a_virtual_camera_whose_missing_fields_keep_their_
         7
     );
 
-    let scene = capture_subtree(world, camera).unwrap();
+    let scene = Scene::capture_subtree(world, camera).unwrap();
     let names: Vec<&str> = scene.nodes[0]
         .components
         .iter()

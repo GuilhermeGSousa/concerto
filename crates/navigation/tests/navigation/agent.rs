@@ -22,7 +22,7 @@ use concerto_name::Name;
 use concerto_navigation::{
     NavAgent, NavArrived, NavDestination, NavLink, NavLinks, NavMesh, NavMeshComponent,
     NavMeshData, NavMeshGeometry, NavMeshSettings, NavPoint, NavRoute, NavSteering, NavTarget,
-    NavUnreachable, NavigationPlugin, bake, steer_nav_agents,
+    NavUnreachable, NavigationPlugin, steer_nav_agents,
 };
 use glam::{Affine3A, Quat, Vec3};
 
@@ -359,7 +359,7 @@ fn obstacle_mesh() -> NavMesh {
         Vec3::splat(0.5),
     );
     let settings = NavMeshSettings::new();
-    NavMesh::baked(settings.clone(), bake(&geometry, &settings).unwrap())
+    NavMesh::baked(settings.clone(), geometry.bake(&settings).unwrap())
 }
 
 fn add_mesh(app: &mut App, navmesh: NavMesh) -> AssetHandle<NavMesh> {

@@ -179,7 +179,7 @@ impl World {
     ) -> usize {
         self.find_or_create_archetype(type_ids.to_vec(), |_| {
             let mut table = T::generate_empty_table();
-            add_required_columns(&mut table, required);
+            table.add_required_columns(required);
             table
         })
     }
@@ -199,7 +199,7 @@ impl World {
         self.find_or_create_archetype(component_ids, |archetypes| {
             let mut table = archetypes[source_index].clone_empty_table();
             table.merge(T::generate_empty_table());
-            add_required_columns(&mut table, required);
+            table.add_required_columns(required);
             table
         })
     }
@@ -1288,12 +1288,4 @@ impl<'w> RestrictedWorld<'w> {
 pub trait FromWorld {
     /// Creates the value from `world`.
     fn from_world(world: &World) -> Self;
-}
-
-fn add_required_columns(table: &mut Table, required: &[RequiredComponent]) {
-    for entry in required {
-        if !table.has_column(entry.id()) {
-            entry.add_column(table);
-        }
-    }
 }

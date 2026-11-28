@@ -295,7 +295,7 @@ pub(crate) fn test_ragdoll(
             reply.err(refused("no_project", "Open a project first."));
             continue;
         };
-        let action = match trial_action(&arguments) {
+        let action = match arguments.trial_action() {
             Ok(action) => action,
             Err(message) => {
                 reply.err(refused("invalid_arguments", message));
@@ -318,46 +318,46 @@ pub(crate) fn test_ragdoll(
     }
 }
 
-fn trial_action(arguments: &TestRagdoll) -> Result<TrialAction, String> {
-    match arguments
-        .action
-        .as_deref()
-        .unwrap_or("drop")
-        .to_ascii_lowercase()
-        .as_str()
-    {
-        "drop" => Ok(TrialAction::Drop {
-            height: arguments.height.unwrap_or(DEFAULT_DROP_HEIGHT),
-        }),
-        "poke" => Ok(TrialAction::Poke {
-            bone: arguments.bone.clone().ok_or_else(|| {
-                "A poke needs `bone`, the part to hit; ragdoll_parts lists them.".to_owned()
-            })?,
-            impulse: arguments.impulse.map_or(DEFAULT_IMPULSE, vec3),
-        }),
-        other => Err(format!("`{other}` is not an action; use drop or poke.")),
+impl TestRagdoll {
+    fn trial_action(&self) -> Result<TrialAction, String> {
+        match self
+            .action
+            .as_deref()
+            .unwrap_or("drop")
+            .to_ascii_lowercase()
+            .as_str()
+        {
+            "drop" => Ok(TrialAction::Drop {
+                height: self.height.unwrap_or(DEFAULT_DROP_HEIGHT),
+            }),
+            "poke" => Ok(TrialAction::Poke {
+                bone: self.bone.clone().ok_or_else(|| {
+                    "A poke needs `bone`, the part to hit; ragdoll_parts lists them.".to_owned()
+                })?,
+                impulse: self.impulse.map_or(DEFAULT_IMPULSE, vec3),
+            }),
+            other => Err(format!("`{other}` is not an action; use drop or poke.")),
+        }
     }
 }
 
-fn part_edit(arguments: &SetRagdollPart) -> Result<PartEdit, String> {
-    Ok(PartEdit {
-        remove: arguments.remove.unwrap_or(false),
-        shape: arguments
-            .shape
-            .as_deref()
-            .map(ShapeKind::parse)
-            .transpose()?,
-        radius: arguments.radius,
-        half_height: arguments.half_height,
-        half_extents: arguments.half_extents.map(vec3),
-        mass: arguments.mass,
-        offset: arguments.offset.map(vec3),
-        swing_normal: arguments.swing_normal,
-        swing_plane: arguments.swing_plane,
-        twist_min: arguments.twist_min,
-        twist_max: arguments.twist_max,
-        friction: arguments.friction,
-    })
+impl SetRagdollPart {
+    fn part_edit(&self) -> Result<PartEdit, String> {
+        Ok(PartEdit {
+            remove: self.remove.unwrap_or(false),
+            shape: self.shape.as_deref().map(ShapeKind::parse).transpose()?,
+            radius: self.radius,
+            half_height: self.half_height,
+            half_extents: self.half_extents.map(vec3),
+            mass: self.mass,
+            offset: self.offset.map(vec3),
+            swing_normal: self.swing_normal,
+            swing_plane: self.swing_plane,
+            twist_min: self.twist_min,
+            twist_max: self.twist_max,
+            friction: self.friction,
+        })
+    }
 }
 
 pub(crate) fn set_ragdoll_part(
@@ -373,7 +373,7 @@ pub(crate) fn set_ragdoll_part(
             reply.err(refused("no_project", "Open a project first."));
             continue;
         };
-        let edit = match part_edit(&arguments) {
+        let edit = match arguments.part_edit() {
             Ok(edit) => edit,
             Err(message) => {
                 reply.err(refused("invalid_arguments", message));
@@ -463,7 +463,8 @@ pub(crate) fn preview_ragdoll(
                     .get_entity(document)
                     .map(|state| state.preview.clone())
                     .unwrap_or_default();
-                let request = preview_request(&arguments, &settings, &registry)
+                let request = arguments
+                    .preview_request(&settings, &registry)
                     .map_err(|message| refused("invalid_arguments", message))?;
                 let report = perform(
                     document,
@@ -487,43 +488,45 @@ pub(crate) fn preview_ragdoll(
     }
 }
 
-fn preview_request(
-    arguments: &PreviewRagdoll,
-    settings: &crate::tab::RagdollPreview,
-    registry: &AssetRegistry,
-) -> Result<PreviewRequest, String> {
-    let seconds = arguments.seconds.unwrap_or(settings.seconds);
-    match arguments.action.to_ascii_lowercase().as_str() {
-        "drop" => Ok(PreviewRequest::Drop {
-            height: arguments.height.unwrap_or(settings.drop_height),
-            seconds,
-        }),
-        "poke" => Ok(PreviewRequest::Poke {
-            bone: arguments
-                .bone
-                .clone()
-                .unwrap_or_else(|| settings.poke_bone.0.as_str().to_owned()),
-            impulse: arguments.impulse.map_or(settings.poke_impulse, vec3),
-            seconds,
-        }),
-        "play" => {
-            let clip = match arguments.clip.as_deref() {
-                Some(asked) => registry
-                    .id_for_location(asked)
-                    .or_else(|| AssetId::from_simple_hex(asked).ok())
-                    .filter(|id| registry.get(*id).is_some())
-                    .ok_or_else(|| {
-                        format!(
-                            "No clip `{asked}` in the project; list_assets kind=AnimationClip shows the clips."
-                        )
-                    })?,
-                None => settings.clip.id(),
-            };
-            Ok(PreviewRequest::Play { clip })
+impl PreviewRagdoll {
+    fn preview_request(
+        &self,
+        settings: &crate::tab::RagdollPreview,
+        registry: &AssetRegistry,
+    ) -> Result<PreviewRequest, String> {
+        let seconds = self.seconds.unwrap_or(settings.seconds);
+        match self.action.to_ascii_lowercase().as_str() {
+            "drop" => Ok(PreviewRequest::Drop {
+                height: self.height.unwrap_or(settings.drop_height),
+                seconds,
+            }),
+            "poke" => Ok(PreviewRequest::Poke {
+                bone: self
+                    .bone
+                    .clone()
+                    .unwrap_or_else(|| settings.poke_bone.0.as_str().to_owned()),
+                impulse: self.impulse.map_or(settings.poke_impulse, vec3),
+                seconds,
+            }),
+            "play" => {
+                let clip = match self.clip.as_deref() {
+                    Some(asked) => registry
+                        .id_for_location(asked)
+                        .or_else(|| AssetId::from_simple_hex(asked).ok())
+                        .filter(|id| registry.get(*id).is_some())
+                        .ok_or_else(|| {
+                            format!(
+                                "No clip `{asked}` in the project; list_assets kind=AnimationClip shows the clips."
+                            )
+                        })?,
+                    None => settings.clip.id(),
+                };
+                Ok(PreviewRequest::Play { clip })
+            }
+            "reset" => Ok(PreviewRequest::Reset),
+            other => Err(format!(
+                "`{other}` is not an action; use drop, poke, play or reset."
+            )),
         }
-        "reset" => Ok(PreviewRequest::Reset),
-        other => Err(format!(
-            "`{other}` is not an action; use drop, poke, play or reset."
-        )),
     }
 }

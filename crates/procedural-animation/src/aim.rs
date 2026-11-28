@@ -1,10 +1,10 @@
 use concerto_animation::{
     blackboard::AnimationBlackboard,
     evaluation::AnimationGraphContext,
-    look_at::{LookFrame, YawPitch, look_rotation, yaw_pitch_to},
+    look_at::{LookFrame, YawPitch},
     node::{
         AnimationNode, EditorAnimationNode, InputSlots, ReflectAnimationNode,
-        model_space::{WorldToModel, bone_under_first, model_joint},
+        model_space::{ModelJoint, WorldToModel, bone_under_first},
     },
     param::Param,
     pose::{AnimationFrame, EvaluatedFrame, FramePool, JointPose},
@@ -285,7 +285,7 @@ struct Barrel {
 
 impl ResolvedAim<'_> {
     fn barrel(&self, joints: &[JointPose]) -> Option<Barrel> {
-        let joint = model_joint(self.skeleton, joints, self.muzzle)?;
+        let joint = ModelJoint::of(self.skeleton, joints, self.muzzle)?;
         Some(Barrel {
             point: joint.transform.transform_point3(self.offset),
             direction: joint.rotation * self.direction,
@@ -299,7 +299,9 @@ impl ResolvedAim<'_> {
         barrel: &Barrel,
         up: Vec3,
     ) -> Option<LookFrame> {
-        let inverse = model_joint(self.skeleton, joints, bone)?.rotation.inverse();
+        let inverse = ModelJoint::of(self.skeleton, joints, bone)?
+            .rotation
+            .inverse();
         LookFrame::new(inverse * barrel.direction, inverse * up)
     }
 }
@@ -391,7 +393,7 @@ impl AimNode {
         working: &mut Vec<JointPose>,
     ) -> Option<Vec<Quat>> {
         let barrel = aim.barrel(input)?;
-        let first = model_joint(aim.skeleton, input, aim.links.first()?.bone)?;
+        let first = ModelJoint::of(aim.skeleton, input, aim.links.first()?.bone)?;
         let first = Vec3::from(first.transform.translation);
         if (target - barrel.point).dot(barrel.direction) <= 0.0
             || target.distance(first) < barrel.point.distance(first)
@@ -410,12 +412,12 @@ impl AimNode {
             for ((link, frame), turn) in aim.links.iter().zip(&frames).zip(&mut turns) {
                 let barrel = aim.barrel(working)?;
                 let now = LookFrame::new(barrel.direction, self.up)?;
-                let needed = yaw_pitch_to(&now, target - barrel.point);
+                let needed = now.yaw_pitch_to(target - barrel.point);
                 let limits = link.limits;
                 turn.yaw = (turn.yaw + link.part * needed.yaw).clamp(-limits.yaw, limits.yaw);
                 turn.pitch =
                     (turn.pitch + link.part * needed.pitch).clamp(-limits.pitch, limits.pitch);
-                let rotation = input.get(link.bone)?.rotation * look_rotation(frame, *turn);
+                let rotation = input.get(link.bone)?.rotation * frame.rotation_by(*turn);
                 working.get_mut(link.bone)?.rotation = rotation;
             }
         }
@@ -423,7 +425,7 @@ impl AimNode {
             frames
                 .iter()
                 .zip(&turns)
-                .map(|(frame, turn)| look_rotation(frame, *turn))
+                .map(|(frame, turn)| frame.rotation_by(*turn))
                 .collect(),
         )
     }
@@ -555,7 +557,7 @@ mod tests {
     use concerto_animation::{
         evaluation::AnimationGraphContext,
         graph::AnimationGraph,
-        look_at::{LookFrame, YawPitch, look_rotation, yaw_pitch_to},
+        look_at::{LookFrame, YawPitch},
         node::{AnimationNode, EditorAnimationNode, ReflectAnimationNode},
         player::AnimationPlayer,
         pose::{AnimationFrame, EvaluatedFrame, FramePool, JointPose},
@@ -768,13 +770,13 @@ mod tests {
         fn turn(&self, joints: &[JointPose], bone: usize) -> YawPitch {
             let offset = self.input()[bone].rotation.inverse() * joints[bone].rotation;
             let frame = self.input_frame(bone);
-            yaw_pitch_to(&frame, offset * frame.forward())
+            frame.yaw_pitch_to(offset * frame.forward())
         }
 
         fn toward(&self, yaw: f32, pitch: f32, distance: f32) -> Vec3 {
             let input = self.input();
             let frame = LookFrame::new(self.barrel(&input).direction, Vec3::Y).unwrap();
-            let direction = look_rotation(&frame, YawPitch { yaw, pitch }) * frame.forward();
+            let direction = frame.rotation_by(YawPitch { yaw, pitch }) * frame.forward();
             self.model_position(&input, self.first) + direction * distance
         }
 

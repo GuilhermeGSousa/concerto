@@ -524,21 +524,25 @@ fn marker_rows(markers: &[TimelineMarker]) -> Vec<u32> {
         .collect()
 }
 
-fn marker_color(marker: &TimelineMarker, selected: bool, theme: &UITheme) -> Color {
-    if selected {
-        theme.selection()
-    } else if marker.locked {
-        theme.text_muted
-    } else {
-        theme.accent
+impl TimelineMarker {
+    fn marker_color(&self, selected: bool, theme: &UITheme) -> Color {
+        if selected {
+            theme.selection()
+        } else if self.locked {
+            theme.text_muted
+        } else {
+            theme.accent
+        }
     }
 }
 
-fn marker_inset(timeline: &Timeline, marker: &TimelineMarker, row: u32) -> UIInset {
-    UIInset {
-        left: UIValue::Percent(fraction(marker.time, timeline.duration) * 100.0),
-        top: UIValue::Px(row as f32 * MARKER_ROW_HEIGHT),
-        ..Default::default()
+impl Timeline {
+    fn marker_inset(&self, marker: &TimelineMarker, row: u32) -> UIInset {
+        UIInset {
+            left: UIValue::Percent(fraction(marker.time, self.duration) * 100.0),
+            top: UIValue::Px(row as f32 * MARKER_ROW_HEIGHT),
+            ..Default::default()
+        }
     }
 }
 
@@ -792,7 +796,7 @@ fn sync_timeline_markers(
                     let mut node = lane.spawn_child((
                         UINode::default()
                             .with_position(Position::Absolute)
-                            .with_inset(marker_inset(timeline, marker, row))
+                            .with_inset(timeline.marker_inset(marker, row))
                             .with_height(UIValue::Px(MARKER_ROW_HEIGHT))
                             .with_flex_direction(FlexDirection::Row)
                             .with_gap(Vec2::new(theme.spacing_xs, 0.0))
@@ -810,7 +814,7 @@ fn sync_timeline_markers(
                                 .with_width(UIValue::Px(HEAD_WIDTH))
                                 .with_height(UIValue::Px(MARKER_ROW_HEIGHT))
                                 .with_flex_shrink(0.0),
-                            UIMaterial::flat(marker_color(marker, selected, &theme)),
+                            UIMaterial::flat(marker.marker_color(selected, &theme)),
                         ))
                         .entity();
                     node.add_child(theme.label(marker.label.clone()).small().no_wrap().fixed());
@@ -833,14 +837,14 @@ fn sync_timeline_markers(
             .enumerate()
         {
             if let Some(mut node) = nodes.get_entity_mut(shown.node) {
-                let inset = marker_inset(timeline, marker, row);
+                let inset = timeline.marker_inset(marker, row);
                 if node.inset != inset {
                     node.inset = inset;
                 }
             }
             if let Some(mut material) = materials.get_entity_mut(shown.line) {
                 let selected = timeline.selected_marker == Some(index);
-                let color = marker_color(marker, selected, &theme).to_linear();
+                let color = marker.marker_color(selected, &theme).to_linear();
                 if material.color != color {
                     material.color = color;
                 }

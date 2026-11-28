@@ -3,7 +3,7 @@ use std::sync::mpsc::{channel, Receiver, Sender};
 use js_sys::wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::JsFuture;
 
-use super::{text_read, ClipboardBackend, ClipboardRead};
+use super::{ClipboardBackend, ClipboardRead};
 
 /// The browser's `navigator.clipboard`, whose reads resolve on a later frame.
 pub struct OsClipboard {
@@ -53,7 +53,7 @@ impl ClipboardBackend for OsClipboard {
                 .await
                 .map(|text| text.as_string().unwrap_or_default())
                 .map_err(|error| describe(&error));
-            let _ = sender.send(text_read(result));
+            let _ = sender.send(ClipboardRead::from_text(result));
         });
     }
 

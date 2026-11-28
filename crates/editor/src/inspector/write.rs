@@ -9,16 +9,13 @@ use concerto_ecs::{
     signal::{On, Signal},
 };
 use concerto_foundation::assets::{asset_server::AssetServer, handle::LiveLeaves};
-use concerto_reflect::{
-    Reflect, ReflectDefault, ReflectJson, ReflectedValue, TypeRegistry, apply_value_with,
-    json_to_value_with, to_value_with, with_property, with_property_mut,
-};
+use concerto_reflect::{Reflect, ReflectDefault, ReflectJson, ReflectedValue, TypeRegistry};
 use serde_json::Value;
 
 use super::{
     ErasedEditor, InspectorRegistry, Property, PropertyAddress, PropertyCommit, PropertyTarget,
     apply_value_commit, current_editor,
-    paths::{find_path, listed_paths, unknown_path},
+    paths::{find_path, listed_paths},
     report_value_edit,
 };
 use crate::{
@@ -61,28 +58,28 @@ impl WriteRefusal {
             message: message.into(),
         }
     }
-}
 
-pub(crate) fn refused(reason: &str) -> WriteRefusal {
-    WriteRefusal::new("refused", reason)
-}
-
-pub(crate) fn not_editable(name: &str) -> WriteRefusal {
-    WriteRefusal::new("not_editable", format!("{name} has no editor."))
-}
-
-/// The refusal a refused property write answers.
-pub(crate) fn refusal_error(refusal: &PropertyRefusal) -> WriteRefusal {
-    match refusal {
-        PropertyRefusal::Undecodable(reason) => WriteRefusal::new("invalid_value", reason),
-        PropertyRefusal::NotEditable(reason) => WriteRefusal::new("not_editable", reason),
-        PropertyRefusal::Refused(reason) => refused(reason),
+    pub(crate) fn refused(reason: &str) -> Self {
+        Self::new("refused", reason)
     }
-}
 
-/// The refusal an edit of a value that is gone answers.
-pub(crate) fn gone(attempt: &str) -> WriteRefusal {
-    refused(&format!("{attempt} failed: {}", EditError::MissingTarget))
+    pub(crate) fn not_editable(name: &str) -> Self {
+        Self::new("not_editable", format!("{name} has no editor."))
+    }
+
+    /// The refusal a refused property write answers.
+    pub(crate) fn from_property(refusal: &PropertyRefusal) -> Self {
+        match refusal {
+            PropertyRefusal::Undecodable(reason) => Self::new("invalid_value", reason),
+            PropertyRefusal::NotEditable(reason) => Self::new("not_editable", reason),
+            PropertyRefusal::Refused(reason) => Self::refused(reason),
+        }
+    }
+
+    /// The refusal an edit of a value that is gone answers.
+    pub(crate) fn gone(attempt: &str) -> Self {
+        Self::refused(&format!("{attempt} failed: {}", EditError::MissingTarget))
+    }
 }
 
 fn decoded(
@@ -106,13 +103,13 @@ fn decoded(
             ));
         };
         let mut built = default.default();
-        if let Ok(current) = to_value_with(field, hook) {
-            apply_value_with(built.as_mut(), &current, hook);
+        if let Ok(current) = ReflectedValue::encode_with(field, hook) {
+            current.apply_with(built.as_mut(), hook);
         }
         built
     };
-    let stored = json_to_value_with(value, type_id, types, hook).map_err(invalid)?;
-    let warnings = apply_value_with(built.as_mut(), &stored, hook);
+    let stored = ReflectedValue::from_json_with(value, type_id, types, hook).map_err(invalid)?;
+    let warnings = stored.apply_with(built.as_mut(), hook);
     if warnings.is_empty() {
         Ok(built)
     } else {
@@ -175,12 +172,12 @@ pub(crate) fn adapter_commit(
     let name = dotted_name(owner, &property.path);
     let row = property
         .row(target, source.changed)
-        .ok_or_else(|| not_editable(&name))?;
+        .ok_or_else(|| WriteRefusal::not_editable(&name))?;
     let editor = current_editor(source.registry, Some(source.types), source.changed, &row)
-        .map_err(|error| refused(&format!("Set {name} failed: {error}")))?;
-    let mut edit = Err(unknown_path(owner, "", &[]));
+        .map_err(|error| WriteRefusal::refused(&format!("Set {name} failed: {error}")))?;
+    let mut edit = Err(WriteRefusal::unknown_path(owner, "", &[]));
     let mut hook = LiveLeaves::from_parts(source.types, source.server);
-    let _ = with_property(value, &row.address.path, &mut |field| {
+    let _ = row.address.path.access(value, &mut |field| {
         edit = value_edit(
             field,
             json,
@@ -219,7 +216,7 @@ fn value_write(
         return Ok(ValueWrite::Adapter(commit));
     }
     let mut field = TypeId::of::<()>();
-    let _ = with_property(value, &found.path, &mut |value| {
+    let _ = found.path.access(value, &mut |value| {
         field = (value as &dyn Any).type_id();
     });
     let root = (value as &dyn Any).type_id();
@@ -260,8 +257,8 @@ fn write_json(
     let found = address
         .target
         .try_edit(world, &mut |value| {
-            let _ = with_property_mut(value, &address.path, &mut |value| {
-                warnings = apply_value_with(value, stored, hook);
+            let _ = address.path.access_mut(value, &mut |value| {
+                warnings = stored.apply_with(value, hook);
             });
         })
         .map_err(PropertyRefusal::Refused)?;
@@ -285,7 +282,7 @@ pub(crate) fn set_value(
     let write = reading(world, target.as_ref(), |value, source| {
         value_write(target, path, json, value, source)
     })
-    .unwrap_or_else(|| Err(gone(&attempt)))?;
+    .unwrap_or_else(|| Err(WriteRefusal::gone(&attempt)))?;
     let result = match write {
         ValueWrite::Adapter(commit) => apply_value_commit(world, &commit),
         ValueWrite::Json {
@@ -303,7 +300,7 @@ pub(crate) fn set_value(
             result
         }
     };
-    result.map_err(|refusal| refusal_error(&refusal))
+    result.map_err(|refusal| WriteRefusal::from_property(&refusal))
 }
 
 /// Calls `read` with `target`'s value and what building an edit of it reads; `None` when the value is gone.

@@ -555,123 +555,6 @@ fn shift_held(input: &Input) -> bool {
         || input.is_held(PhysicalKey::Code(KeyCode::ShiftRight))
 }
 
-fn apply_pointer(
-    state: &mut UITextEditState,
-    font_system: &mut FontSystem,
-    input: &Input,
-    pointer: &UIInputState,
-    entity: Entity,
-    (screen, at): (Vec2, Vec2),
-    focusing: bool,
-    now: Instant,
-) {
-    match input.get_mouse_button_state(MouseButton::Left) {
-        InputState::Pressed if pointer.pressed(MouseButton::Left) == Some(entity) => {
-            state.press(font_system, (screen, at), shift_held(input), focusing, now);
-        }
-        InputState::Down if pointer.captured(MouseButton::Left) == Some(entity) => {
-            state.drag(font_system, screen, at);
-        }
-        _ => {}
-    }
-}
-
-fn apply_keys(
-    state: &mut UITextEditState,
-    font_system: &mut FontSystem,
-    input: &Input,
-    clipboard: &mut WindowClipboard,
-    pastes: &[String],
-) -> bool {
-    let held = |key| input.is_held(PhysicalKey::Code(key));
-    let pressed = |key| input.is_just_pressed(PhysicalKey::Code(key));
-    let command = held(KeyCode::ControlLeft)
-        || held(KeyCode::ControlRight)
-        || held(KeyCode::MetaLeft)
-        || held(KeyCode::MetaRight);
-    let shift = shift_held(input);
-    let mut acted = false;
-
-    if command && pressed(KeyCode::KeyA) {
-        state.select_all();
-        acted = true;
-    }
-    if command
-        && pressed(KeyCode::KeyC)
-        && let Some(text) = state.copy()
-    {
-        clipboard.write(text);
-    }
-    if command
-        && pressed(KeyCode::KeyX)
-        && let Some(text) = state.copy()
-    {
-        clipboard.write(text);
-        state.edit(false, |editor| {
-            editor.delete_selection();
-        });
-        acted = true;
-    }
-    if command && pressed(KeyCode::KeyV) {
-        clipboard.request_paste();
-    }
-    if command && pressed(KeyCode::KeyZ) {
-        if shift {
-            state.redo();
-        } else {
-            state.undo();
-        }
-        acted = true;
-    }
-    if command && pressed(KeyCode::KeyY) {
-        state.redo();
-        acted = true;
-    }
-    for paste in pastes {
-        state.edit(false, |editor| editor.insert_string(paste, None));
-        acted = true;
-    }
-    for &character in input.typed_chars().iter().filter(|_| !command) {
-        state.edit(true, |editor| {
-            editor.action(font_system, Action::Insert(character))
-        });
-        acted = true;
-    }
-
-    if pressed(KeyCode::Backspace) {
-        acted = true;
-        if command {
-            state.delete_word(font_system, Motion::PreviousWord);
-        } else {
-            state.edit(false, |editor| {
-                editor.action(font_system, Action::Backspace)
-            });
-        }
-    }
-    if pressed(KeyCode::Delete) {
-        acted = true;
-        if command {
-            state.delete_word(font_system, Motion::NextWord);
-        } else {
-            state.edit(false, |editor| editor.action(font_system, Action::Delete));
-        }
-    }
-
-    let moves = [
-        (KeyCode::ArrowLeft, Motion::Left, Motion::LeftWord),
-        (KeyCode::ArrowRight, Motion::Right, Motion::RightWord),
-        (KeyCode::Home, Motion::Home, Motion::Home),
-        (KeyCode::End, Motion::End, Motion::End),
-    ];
-    for (key, motion, word) in moves {
-        if pressed(key) {
-            state.motion(font_system, if command { word } else { motion }, shift);
-            acted = true;
-        }
-    }
-    acted
-}
-
 /// Edits the focused [`UITextInput`] through its cosmic-text editor and writes the result back to it.
 pub(crate) fn update_text_inputs(
     mut focused: ResMut<FocusedWidget>,
@@ -744,8 +627,7 @@ pub(crate) fn update_text_inputs(
         if let Some(layout) = layouts.get_entity(viewport) {
             let screen = window.logical_pointer_position(&input);
             let at = screen - layout.rect.min + Vec2::new(state.scroll, 0.0);
-            apply_pointer(
-                state,
+            state.apply_pointer(
                 font_system,
                 &input,
                 &pointer,
@@ -755,7 +637,7 @@ pub(crate) fn update_text_inputs(
                 now,
             );
         }
-        if apply_keys(state, font_system, &input, &mut clipboard, &pastes) {
+        if state.apply_keys(font_system, &input, &mut clipboard, &pastes) {
             state.follow = true;
         }
         if keystroke {
@@ -807,14 +689,6 @@ fn single_line(text: &str) -> String {
     text.replace("\r\n", " ").replace(['\r', '\n'], " ")
 }
 
-fn shown_text(input: &UITextInput) -> &str {
-    if input.value.is_empty() {
-        &input.placeholder
-    } else {
-        &input.value
-    }
-}
-
 fn dimmed(color: Color) -> Color {
     match color {
         Color::LinearRgba(mut color) => {
@@ -859,7 +733,7 @@ pub(crate) fn setup_text_inputs(
             )
         };
         let label_text = UIText {
-            text: shown_text(input).to_owned(),
+            text: input.shown_text().to_owned(),
             ellipsis: false,
             ..text.clone()
         };
@@ -941,7 +815,7 @@ pub(crate) fn project_text_inputs(
         let Some((mut text, mut label_node)) = labels.get_entity_mut(parts.label) else {
             continue;
         };
-        let shown = shown_text(input);
+        let shown = input.shown_text();
         if text.text != shown {
             text.text = shown.to_owned();
         }
@@ -1013,6 +887,135 @@ pub(crate) fn project_text_inputs(
     }
 }
 
+impl UITextInput {
+    fn shown_text(&self) -> &str {
+        if self.value.is_empty() {
+            &self.placeholder
+        } else {
+            &self.value
+        }
+    }
+}
+
+impl UITextEditState {
+    fn apply_pointer(
+        &mut self,
+        font_system: &mut FontSystem,
+        input: &Input,
+        pointer: &UIInputState,
+        entity: Entity,
+        (screen, at): (Vec2, Vec2),
+        focusing: bool,
+        now: Instant,
+    ) {
+        match input.get_mouse_button_state(MouseButton::Left) {
+            InputState::Pressed if pointer.pressed(MouseButton::Left) == Some(entity) => {
+                self.press(font_system, (screen, at), shift_held(input), focusing, now);
+            }
+            InputState::Down if pointer.captured(MouseButton::Left) == Some(entity) => {
+                self.drag(font_system, screen, at);
+            }
+            _ => {}
+        }
+    }
+
+    fn apply_keys(
+        &mut self,
+        font_system: &mut FontSystem,
+        input: &Input,
+        clipboard: &mut WindowClipboard,
+        pastes: &[String],
+    ) -> bool {
+        let held = |key| input.is_held(PhysicalKey::Code(key));
+        let pressed = |key| input.is_just_pressed(PhysicalKey::Code(key));
+        let command = held(KeyCode::ControlLeft)
+            || held(KeyCode::ControlRight)
+            || held(KeyCode::MetaLeft)
+            || held(KeyCode::MetaRight);
+        let shift = shift_held(input);
+        let mut acted = false;
+
+        if command && pressed(KeyCode::KeyA) {
+            self.select_all();
+            acted = true;
+        }
+        if command
+            && pressed(KeyCode::KeyC)
+            && let Some(text) = self.copy()
+        {
+            clipboard.write(text);
+        }
+        if command
+            && pressed(KeyCode::KeyX)
+            && let Some(text) = self.copy()
+        {
+            clipboard.write(text);
+            self.edit(false, |editor| {
+                editor.delete_selection();
+            });
+            acted = true;
+        }
+        if command && pressed(KeyCode::KeyV) {
+            clipboard.request_paste();
+        }
+        if command && pressed(KeyCode::KeyZ) {
+            if shift {
+                self.redo();
+            } else {
+                self.undo();
+            }
+            acted = true;
+        }
+        if command && pressed(KeyCode::KeyY) {
+            self.redo();
+            acted = true;
+        }
+        for paste in pastes {
+            self.edit(false, |editor| editor.insert_string(paste, None));
+            acted = true;
+        }
+        for &character in input.typed_chars().iter().filter(|_| !command) {
+            self.edit(true, |editor| {
+                editor.action(font_system, Action::Insert(character))
+            });
+            acted = true;
+        }
+
+        if pressed(KeyCode::Backspace) {
+            acted = true;
+            if command {
+                self.delete_word(font_system, Motion::PreviousWord);
+            } else {
+                self.edit(false, |editor| {
+                    editor.action(font_system, Action::Backspace)
+                });
+            }
+        }
+        if pressed(KeyCode::Delete) {
+            acted = true;
+            if command {
+                self.delete_word(font_system, Motion::NextWord);
+            } else {
+                self.edit(false, |editor| editor.action(font_system, Action::Delete));
+            }
+        }
+
+        let moves = [
+            (KeyCode::ArrowLeft, Motion::Left, Motion::LeftWord),
+            (KeyCode::ArrowRight, Motion::Right, Motion::RightWord),
+            (KeyCode::Home, Motion::Home, Motion::Home),
+            (KeyCode::End, Motion::End, Motion::End),
+        ];
+        for (key, motion, word) in moves {
+            if pressed(key) {
+                self.motion(font_system, if command { word } else { motion }, shift);
+                acted = true;
+            }
+        }
+        acted
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use concerto_ecs::{
@@ -1039,7 +1042,7 @@ mod tests {
             UITextMeasure, compute_ui_nodes, install_layout_listeners,
         },
         sets::UiSet,
-        text::fonts::{UIFonts, build_font_system},
+        text::fonts::UIFonts,
         theme::UITheme,
     };
 
@@ -1072,7 +1075,7 @@ mod tests {
             world.insert_resource(UILayoutEngine::default());
             world.insert_resource(UILayoutDiagnostics::default());
             world.insert_resource(UIPanelStack::default());
-            world.insert_resource(UITextMeasure::new(build_font_system(&UIFonts::default())));
+            world.insert_resource(UITextMeasure::new(UIFonts::default().build_font_system()));
             world.insert_resource(UITheme::nocturne());
             world.insert_resource(Input::new());
             world.insert_resource(FocusedWidget::default());
@@ -1669,7 +1672,7 @@ mod tests {
             world.insert_resource(UIInputState::default());
             world.insert_resource(Input::new());
             world.insert_resource(WindowClipboard::default());
-            world.insert_resource(UITextMeasure::new(build_font_system(&UIFonts::default())));
+            world.insert_resource(UITextMeasure::new(UIFonts::default().build_font_system()));
             world.insert_resource(UITheme::nocturne());
             world.insert_resource(EventChannel::<UITextInputChanged>::default());
             world.insert_resource(EventChannel::<UITextInputSubmitted>::default());

@@ -5,33 +5,6 @@ use concerto_motion_matching::{
     BodyMotion, FrameContext, MotionDatabase, TrajectorySample, bake::model_pose,
 };
 
-/// A database's local pose of `frame`, sampled from its clips.
-///
-/// `None` when they can't be sampled.
-pub fn local_pose(
-    database: &MotionDatabase,
-    skeleton: &Skeleton,
-    clips: &[&AnimationClip],
-    frame: usize,
-) -> Option<Vec<JointPose>> {
-    database.pose(frame, skeleton, clips).ok()
-}
-
-/// A local pose with its root joints moved from the simulation bone's space to where `simulation` puts them.
-pub fn placed_pose(
-    skeleton: &Skeleton,
-    simulation: &Transform,
-    mut pose: Vec<JointPose>,
-) -> Vec<JointPose> {
-    for (joint, parent) in pose.iter_mut().zip(skeleton.parents.iter()) {
-        if parent.is_none() {
-            joint.translation = simulation.rotation * joint.translation + simulation.translation;
-            joint.rotation = simulation.rotation * joint.rotation;
-        }
-    }
-    pose
-}
-
 /// The owned pose, simulation transform and trajectory of a frame, which a [`FrameContext`] borrows.
 pub struct BakedFrame {
     local_pose: Vec<JointPose>,
@@ -41,6 +14,34 @@ pub struct BakedFrame {
 }
 
 impl BakedFrame {
+    /// A database's local pose of `frame`, sampled from its clips.
+    ///
+    /// `None` when they can't be sampled.
+    pub fn sample_local(
+        database: &MotionDatabase,
+        skeleton: &Skeleton,
+        clips: &[&AnimationClip],
+        frame: usize,
+    ) -> Option<Vec<JointPose>> {
+        database.pose(frame, skeleton, clips).ok()
+    }
+
+    /// A local pose with its root joints moved from the simulation bone's space to where `simulation` puts them.
+    pub fn place_pose(
+        skeleton: &Skeleton,
+        simulation: &Transform,
+        mut pose: Vec<JointPose>,
+    ) -> Vec<JointPose> {
+        for (joint, parent) in pose.iter_mut().zip(skeleton.parents.iter()) {
+            if parent.is_none() {
+                joint.translation =
+                    simulation.rotation * joint.translation + simulation.translation;
+                joint.rotation = simulation.rotation * joint.rotation;
+            }
+        }
+        pose
+    }
+
     /// `frame` of the database, as it was baked.
     ///
     /// `None` when its clips can't be sampled or the database is not derived.
@@ -52,7 +53,7 @@ impl BakedFrame {
     ) -> Option<Self> {
         Some(Self::placed(
             skeleton,
-            local_pose(database, skeleton, clips, frame)?,
+            Self::sample_local(database, skeleton, clips, frame)?,
             database.simulation_bone(frame)?,
             database.trajectory_samples(frame)?,
         ))
@@ -66,7 +67,7 @@ impl BakedFrame {
     ) -> Self {
         let model_pose = model_pose(
             skeleton,
-            &placed_pose(skeleton, &simulation, local_pose.clone()),
+            &Self::place_pose(skeleton, &simulation, local_pose.clone()),
         );
         Self {
             local_pose,

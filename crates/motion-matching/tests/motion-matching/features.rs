@@ -1,7 +1,6 @@
 use concerto_animation::clip::{AnimationChanelOutput, AnimationChannel, AnimationClip};
 use concerto_foundation::transform::Transform;
 use concerto_mesh::{JointPose, Skeleton};
-use concerto_motion_matching::bake::{bake, trajectory_samples};
 use concerto_motion_matching::{
     BakeError, BodyMotion, BonePositions, BoneVelocities, FeatureChannel, FeatureChannelData,
     FeatureQuery, FrameContext, JointAxis, MotionDatabase, MotionEntry, ReflectFeatureChannel,
@@ -115,7 +114,7 @@ fn definition_of(channels: Vec<FeatureChannelData>) -> MotionDatabase {
 }
 
 fn with_bake(definition: MotionDatabase) -> Result<MotionDatabase, BakeError> {
-    let baked = bake(&definition, &skeleton(), &[&walk_clip(1.0)])?;
+    let baked = definition.bake(&skeleton(), &[&walk_clip(1.0)])?;
     Ok(definition.with_baked(baked))
 }
 
@@ -304,13 +303,9 @@ fn frame_trajectory(database: &MotionDatabase, frame: usize) -> Vec<TrajectorySa
         .map(|frame| database.simulation_bone(frame).unwrap())
         .collect();
     let motion = vec![BodyMotion::default(); database.frame_count().unwrap()];
-    trajectory_samples(
-        &database.trajectory,
-        &simulation,
-        &motion,
-        database.rate,
-        frame,
-    )
+    database
+        .trajectory
+        .samples(&simulation, &motion, database.rate, frame)
 }
 
 #[test]

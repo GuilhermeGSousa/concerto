@@ -10,9 +10,7 @@ use concerto_ecs::World;
 use concerto_foundation::assets::{
     asset_server::{handle_asset_load_events, AssetServer},
     asset_store::AssetStore,
-    content::{
-        write_content_asset_with_embedded, ContentAssetHeader, EmbeddedPayload, ImportProvenance,
-    },
+    content::{ContentAssetHeader, EmbeddedPayload, ImportProvenance},
     handle::AssetHandle,
     registry::AssetRegistry,
     Asset, AssetId, ContentAssetRoot, LoadableAsset,
@@ -57,35 +55,39 @@ struct Project {
     parts: Vec<AssetId>,
 }
 
-fn write_project() -> Project {
-    let dir = std::env::temp_dir().join(format!("concerto-bench-loading-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(dir.join("content/host")).unwrap();
-    let host = bincode::serialize(&Host {
-        filler: vec![7; HOST_PAYLOAD_BYTES],
-    })
-    .unwrap();
-    let part = bincode::serialize(&Part {
-        vertices: vec![1.0; 64],
-    })
-    .unwrap();
-    let embedded: Vec<EmbeddedPayload> = (0..EMBEDDED)
-        .map(|index| EmbeddedPayload {
-            header: header::<Part>(&format!("mesh/{index}")),
-            payload: &part,
-            uncooked: None,
-            derived_blob: None,
+impl Project {
+    fn write() -> Self {
+        let dir =
+            std::env::temp_dir().join(format!("concerto-bench-loading-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("content/host")).unwrap();
+        let host = bincode::serialize(&Host {
+            filler: vec![7; HOST_PAYLOAD_BYTES],
         })
-        .collect();
-    let parts = embedded.iter().map(|part| part.header.asset_id).collect();
-    let file = write_content_asset_with_embedded(&header::<Host>("scene"), &host, &embedded)
-        .expect("the host file is written");
-    std::fs::write(dir.join("content/host/scene.gasset"), file).unwrap();
-    let registry = AssetRegistry::from_content_tree(&dir, "content", "gasset").unwrap();
-    Project {
-        dir,
-        registry,
-        parts,
+        .unwrap();
+        let part = bincode::serialize(&Part {
+            vertices: vec![1.0; 64],
+        })
+        .unwrap();
+        let embedded: Vec<EmbeddedPayload> = (0..EMBEDDED)
+            .map(|index| EmbeddedPayload {
+                header: header::<Part>(&format!("mesh/{index}")),
+                payload: &part,
+                uncooked: None,
+                derived_blob: None,
+            })
+            .collect();
+        let parts = embedded.iter().map(|part| part.header.asset_id).collect();
+        let file = (header::<Host>("scene"))
+            .write_with_embedded(&host, &embedded)
+            .expect("the host file is written");
+        std::fs::write(dir.join("content/host/scene.gasset"), file).unwrap();
+        let registry = AssetRegistry::from_content_tree(&dir, "content", "gasset").unwrap();
+        Project {
+            dir,
+            registry,
+            parts,
+        }
     }
 }
 
@@ -108,7 +110,7 @@ fn load_every_part(dir: &Path, registry: &AssetRegistry, parts: &[AssetId]) -> W
 }
 
 fn embedded_burst(c: &mut Criterion) {
-    let project = write_project();
+    let project = Project::write();
     let mut group = c.benchmark_group("asset_loading");
     group.sample_size(10);
     group.measurement_time(Duration::from_secs(10));

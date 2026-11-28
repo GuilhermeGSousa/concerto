@@ -1,6 +1,6 @@
 use concerto_mesh::Skeleton;
 use concerto_name::Name;
-use concerto_ragdoll::{Ragdoll, RagdollJoint, RagdollPart, RagdollShape, Trial, run_trial};
+use concerto_ragdoll::{Ragdoll, RagdollJoint, RagdollPart, RagdollShape, Trial};
 use glam::{Quat, Vec3};
 
 const DEFAULT_RADIUS: f32 = 0.05;
@@ -373,7 +373,8 @@ pub(crate) fn trial_report(
             )
         }
     };
-    let report = run_trial(&resolved, trial, seconds)
+    let report = resolved
+        .run_trial(trial, seconds)
         .ok_or_else(|| "The physics backend could not run the trial.".to_owned())?;
     let mut lines = vec![format!("{what}, {seconds:.1} s.")];
     lines.push(match report.rested_after {

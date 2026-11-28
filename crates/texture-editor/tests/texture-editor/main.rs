@@ -10,7 +10,7 @@ use concerto_editor::hosted::EditWorld;
 use concerto_foundation::assets::{
     AssetId,
     asset_store::AssetStore,
-    content::{decode_content_asset, read_content_asset, read_uncooked},
+    content::{ContentAssetHeader, decode_content_asset},
     handle::AssetHandle,
     registry::AssetRegistry,
 };
@@ -189,7 +189,7 @@ async fn edit_a_texture(client: Client, project: &Path, gltf: String) -> Edited 
     until_idle(&client).await;
     let source = json!({ "source": gltf, "destination": "assets/crate.gltf" });
     let imported = ok(&client, "import_source", source.clone()).await;
-    let texture = read_content_asset(&std::fs::read(project.join(TEXTURE)).unwrap())
+    let texture = ContentAssetHeader::read(&std::fs::read(project.join(TEXTURE)).unwrap())
         .unwrap()
         .0
         .asset_id
@@ -362,7 +362,10 @@ fn a_texture_tab_changes_compression_saves_and_survives_reimport() {
             .with_max_size(MaxSize::S512)
     );
     let registry = AssetRegistry::from_content_tree(&root, "content", "gasset").unwrap();
-    let source = read_uncooked::<TextureSource>(&root, registry.get(header.asset_id).unwrap())
+    let source = registry
+        .get(header.asset_id)
+        .unwrap()
+        .read_uncooked::<TextureSource>(&root)
         .unwrap()
         .expect("a save keeps the source section");
     assert_eq!(source.bytes, colour);

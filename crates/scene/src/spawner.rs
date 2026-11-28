@@ -4,7 +4,7 @@ use concerto_foundation::assets::{asset_server::AssetServer, handle::AssetHandle
 
 use crate::link::SceneLink;
 use crate::node_id::SceneNodeId;
-use crate::scene::{Scene, SceneLinkData};
+use crate::scene::Scene;
 
 /// Nodes and components a spawn leaves out; the default leaves out nothing.
 #[derive(Default)]
@@ -64,183 +64,178 @@ pub struct SpawnedScene {
     pub root_entities: Vec<Entity>,
 }
 
-/// Queues one entity per scene node, with the components `filter` allows, parenting every root to `parent`.
-///
-/// The entities are wired into the source hierarchy.
-///
-/// The returned node vector is stable by source index and can be retained by
-/// editors for hierarchy selection and inspection.
-pub fn spawn_scene(
-    cmd: &mut CommandQueue<'_, '_>,
-    scene: &Scene,
-    parent: Entity,
-    filter: &SpawnFilter,
-) -> SpawnedScene {
-    let skipped = filter.skipped_nodes(scene);
-    // The authored name is spawned as a component rather than left in the scene
-    // file, so tools reading the live world can still identify the entity.
-    let mut node_entities = Vec::with_capacity(scene.nodes.len());
-    for (index, node) in scene.nodes.iter().enumerate() {
-        node_entities.push(match skipped[index] {
-            true => cmd.spawn(()).entity(),
-            false => cmd
-                .spawn((Name::new(node.name.clone()), SceneNodeId(node.id)))
-                .entity(),
-        });
-    }
-
-    let shared_nodes: std::sync::Arc<[Entity]> = node_entities.clone().into();
-    for (index, node) in scene.nodes.iter().enumerate() {
-        if skipped[index] {
-            continue;
+impl Scene {
+    /// Queues one entity per node of this scene, with the components `filter` allows, parenting every root to `parent`.
+    ///
+    /// The entities are wired into the source hierarchy.
+    ///
+    /// The returned node vector is stable by source index and can be retained by
+    /// editors for hierarchy selection and inspection.
+    pub fn spawn(
+        &self,
+        cmd: &mut CommandQueue<'_, '_>,
+        parent: Entity,
+        filter: &SpawnFilter,
+    ) -> SpawnedScene {
+        let skipped = filter.skipped_nodes(self);
+        // The authored name is spawned as a component rather than left in the scene
+        // file, so tools reading the live world can still identify the entity.
+        let mut node_entities = Vec::with_capacity(self.nodes.len());
+        for (index, node) in self.nodes.iter().enumerate() {
+            node_entities.push(match skipped[index] {
+                true => cmd.spawn(()).entity(),
+                false => cmd
+                    .spawn((Name::new(node.name.clone()), SceneNodeId(node.id)))
+                    .entity(),
+            });
         }
-        for component in &node.components {
-            if !filter.keeps_component(index, &component.type_name) {
+
+        let shared_nodes: std::sync::Arc<[Entity]> = node_entities.clone().into();
+        for (index, node) in self.nodes.iter().enumerate() {
+            if skipped[index] {
                 continue;
             }
-            cmd.apply_scene_component(
-                component.type_name.clone(),
-                component.value.clone(),
-                node_entities[index],
-                shared_nodes.clone(),
-            );
-        }
-    }
-
-    for (index, node) in scene.nodes.iter().enumerate() {
-        if let Some(data) = node.link.as_ref().filter(|_| !skipped[index]) {
-            cmd.insert(
-                stored_link(data, AssetHandle::weak(data.scene)),
-                node_entities[index],
-            );
-        }
-    }
-
-    let has_parent = parented_nodes(scene, &skipped);
-    for (index, node) in scene.nodes.iter().enumerate() {
-        if skipped[index] {
-            continue;
-        }
-        for &child in &node.children {
-            if child < node_entities.len() && !skipped[child] {
-                cmd.add_child(node_entities[index], node_entities[child]);
+            for component in &node.components {
+                if !filter.keeps_component(index, &component.type_name) {
+                    continue;
+                }
+                cmd.apply_scene_component(
+                    component.type_name.clone(),
+                    component.value.clone(),
+                    node_entities[index],
+                    shared_nodes.clone(),
+                );
             }
         }
-    }
 
-    let root_entities = roots(&node_entities, &has_parent, &skipped);
-    for root in &root_entities {
-        cmd.add_child(parent, *root);
-    }
-    for (index, entity) in node_entities.iter().enumerate() {
-        if skipped[index] {
-            cmd.despawn(*entity);
+        for (index, node) in self.nodes.iter().enumerate() {
+            if let Some(data) = node.link.as_ref().filter(|_| !skipped[index]) {
+                cmd.insert(
+                    SceneLink::stored(data, AssetHandle::weak(data.scene)),
+                    node_entities[index],
+                );
+            }
         }
-    }
 
-    SpawnedScene {
-        node_entities,
-        root_entities,
-    }
-}
-
-/// [`spawn_scene`] for callers holding the [`World`] itself.
-///
-/// The scene exists when this returns.
-pub fn spawn_scene_in_world(
-    world: &mut World,
-    scene: &Scene,
-    parent: Entity,
-    filter: &SpawnFilter,
-) -> SpawnedScene {
-    let skipped = filter.skipped_nodes(scene);
-    let node_entities: Vec<Entity> = scene
-        .nodes
-        .iter()
-        .enumerate()
-        .map(|(index, node)| match skipped[index] {
-            true => world.spawn(()),
-            false => world.spawn((Name::new(node.name.clone()), SceneNodeId(node.id))),
-        })
-        .collect();
-
-    for (index, node) in scene.nodes.iter().enumerate() {
-        if skipped[index] {
-            continue;
-        }
-        for component in &node.components {
-            if !filter.keeps_component(index, &component.type_name) {
+        let has_parent = self.parented_nodes(&skipped);
+        for (index, node) in self.nodes.iter().enumerate() {
+            if skipped[index] {
                 continue;
             }
-            world.apply_scene_component(
-                &component.type_name,
-                &component.value,
-                node_entities[index],
-                &node_entities,
-            );
-        }
-    }
-
-    for (index, node) in scene.nodes.iter().enumerate() {
-        if let Some(data) = node.link.as_ref().filter(|_| !skipped[index]) {
-            let handle = match world.get_resource::<AssetServer>() {
-                Some(server) => server.load::<Scene>(data.scene),
-                None => AssetHandle::weak(data.scene),
-            };
-            world.insert(stored_link(data, handle), node_entities[index]);
-        }
-    }
-
-    let has_parent = parented_nodes(scene, &skipped);
-    for (index, node) in scene.nodes.iter().enumerate() {
-        if skipped[index] {
-            continue;
-        }
-        for &child in &node.children {
-            if child < node_entities.len() && !skipped[child] {
-                world
-                    .entity_mut(node_entities[index])
-                    .add_child(node_entities[child]);
+            for &child in &node.children {
+                if child < node_entities.len() && !skipped[child] {
+                    cmd.add_child(node_entities[index], node_entities[child]);
+                }
             }
         }
-    }
 
-    let root_entities = roots(&node_entities, &has_parent, &skipped);
-    for root in &root_entities {
-        world.entity_mut(parent).add_child(*root);
-    }
-    for (index, entity) in node_entities.iter().enumerate() {
-        if skipped[index] {
-            world.despawn(*entity);
+        let root_entities = roots(&node_entities, &has_parent, &skipped);
+        for root in &root_entities {
+            cmd.add_child(parent, *root);
         }
-    }
-
-    SpawnedScene {
-        node_entities,
-        root_entities,
-    }
-}
-
-fn stored_link(data: &SceneLinkData, handle: AssetHandle<Scene>) -> SceneLink {
-    data.changes
-        .iter()
-        .cloned()
-        .fold(SceneLink::new(handle), SceneLink::with_change)
-}
-
-fn parented_nodes(scene: &Scene, skipped: &[bool]) -> Vec<bool> {
-    let mut has_parent = vec![false; scene.nodes.len()];
-    for (index, node) in scene.nodes.iter().enumerate() {
-        if skipped[index] {
-            continue;
-        }
-        for &child in &node.children {
-            if let Some(flag) = has_parent.get_mut(child) {
-                *flag = true;
+        for (index, entity) in node_entities.iter().enumerate() {
+            if skipped[index] {
+                cmd.despawn(*entity);
             }
         }
+
+        SpawnedScene {
+            node_entities,
+            root_entities,
+        }
     }
-    has_parent
+
+    /// [`Scene::spawn`] for callers holding the [`World`] itself.
+    ///
+    /// The scene exists when this returns.
+    pub fn spawn_in_world(
+        &self,
+        world: &mut World,
+        parent: Entity,
+        filter: &SpawnFilter,
+    ) -> SpawnedScene {
+        let skipped = filter.skipped_nodes(self);
+        let node_entities: Vec<Entity> = self
+            .nodes
+            .iter()
+            .enumerate()
+            .map(|(index, node)| match skipped[index] {
+                true => world.spawn(()),
+                false => world.spawn((Name::new(node.name.clone()), SceneNodeId(node.id))),
+            })
+            .collect();
+
+        for (index, node) in self.nodes.iter().enumerate() {
+            if skipped[index] {
+                continue;
+            }
+            for component in &node.components {
+                if !filter.keeps_component(index, &component.type_name) {
+                    continue;
+                }
+                world.apply_scene_component(
+                    &component.type_name,
+                    &component.value,
+                    node_entities[index],
+                    &node_entities,
+                );
+            }
+        }
+
+        for (index, node) in self.nodes.iter().enumerate() {
+            if let Some(data) = node.link.as_ref().filter(|_| !skipped[index]) {
+                let handle = match world.get_resource::<AssetServer>() {
+                    Some(server) => server.load::<Scene>(data.scene),
+                    None => AssetHandle::weak(data.scene),
+                };
+                world.insert(SceneLink::stored(data, handle), node_entities[index]);
+            }
+        }
+
+        let has_parent = self.parented_nodes(&skipped);
+        for (index, node) in self.nodes.iter().enumerate() {
+            if skipped[index] {
+                continue;
+            }
+            for &child in &node.children {
+                if child < node_entities.len() && !skipped[child] {
+                    world
+                        .entity_mut(node_entities[index])
+                        .add_child(node_entities[child]);
+                }
+            }
+        }
+
+        let root_entities = roots(&node_entities, &has_parent, &skipped);
+        for root in &root_entities {
+            world.entity_mut(parent).add_child(*root);
+        }
+        for (index, entity) in node_entities.iter().enumerate() {
+            if skipped[index] {
+                world.despawn(*entity);
+            }
+        }
+
+        SpawnedScene {
+            node_entities,
+            root_entities,
+        }
+    }
+
+    fn parented_nodes(&self, skipped: &[bool]) -> Vec<bool> {
+        let mut has_parent = vec![false; self.nodes.len()];
+        for (index, node) in self.nodes.iter().enumerate() {
+            if skipped[index] {
+                continue;
+            }
+            for &child in &node.children {
+                if let Some(flag) = has_parent.get_mut(child) {
+                    *flag = true;
+                }
+            }
+        }
+        has_parent
+    }
 }
 
 fn roots(node_entities: &[Entity], has_parent: &[bool], skipped: &[bool]) -> Vec<Entity> {

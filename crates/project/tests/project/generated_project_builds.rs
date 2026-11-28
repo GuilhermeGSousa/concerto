@@ -1,7 +1,7 @@
 use std::path::Path;
 use std::process::Command;
 
-use concerto_project::{new_project, Engine};
+use concerto_project::Engine;
 
 #[test]
 #[ignore = "builds a whole generated project against this checkout; run by hand"]
@@ -13,7 +13,9 @@ fn a_new_project_builds_against_this_checkout() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path().join("built-game");
 
-    new_project(&dir, Engine::Checkout(repository.clone())).unwrap();
+    Engine::Checkout(repository.clone())
+        .new_project(&dir)
+        .unwrap();
     std::fs::copy(repository.join("Cargo.lock"), dir.join("Cargo.lock")).unwrap();
 
     let status = Command::new(env!("CARGO"))

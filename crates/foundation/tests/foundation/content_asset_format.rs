@@ -1,11 +1,9 @@
 //! The on-disk framing for game-ready content assets: magic, a
 //! length-prefixed bincode header, the payload verbatim, an optional derived blob, the embedded assets, then the uncooked sections.
 use concerto_foundation::assets::content::{
-    asset_record, read_content_asset, read_content_asset_header, read_content_asset_parts,
-    read_content_without_uncooked, read_uncooked_section, without_uncooked, write_content_asset,
-    write_content_asset_with_embedded, write_content_asset_with_uncooked,
-    write_cooked_content_asset, ContentAssetHeader, CookedSection, DerivedSection, EmbeddedAsset,
-    EmbeddedPayload, ImportProvenance, UncookedBytes, UncookedSection, CONTENT_ASSET_MAGIC,
+    asset_record, read_content_without_uncooked, without_uncooked, ContentAssetHeader,
+    ContentAssetParts, CookedSection, DerivedSection, EmbeddedAsset, EmbeddedPayload,
+    ImportProvenance, UncookedBytes, UncookedSection, CONTENT_ASSET_MAGIC,
 };
 use concerto_foundation::assets::AssetId;
 use proptest::prelude::*;
@@ -51,8 +49,8 @@ fn written_loose(
     uncooked: &Option<Vec<u8>>,
 ) -> Vec<u8> {
     match uncooked {
-        Some(bytes) => write_content_asset_with_uncooked(header, payload, SECTION_VERSION, bytes),
-        None => write_content_asset(header, payload),
+        Some(bytes) => header.write_with_uncooked(payload, SECTION_VERSION, bytes),
+        None => header.write(payload),
     }
     .unwrap()
 }
@@ -152,11 +150,9 @@ proptest! {
         key in any::<u64>(),
     ) {
         let bytes = match &blob {
-            Some(blob) => write_cooked_content_asset(
-                &header,
+            Some(blob) => header.write_cooked(
                 &payload,
-                CookedSection { derived_version, key, blob },
-            ),
+                CookedSection { derived_version, key, blob }),
             None => Ok(written_loose(&header, &payload, &uncooked)),
         }
         .unwrap();
@@ -172,12 +168,12 @@ proptest! {
         };
 
         prop_assert_eq!(&bytes[..4], &CONTENT_ASSET_MAGIC);
-        let parts = read_content_asset_parts(&bytes).unwrap();
+        let parts = ContentAssetParts::read(&bytes).unwrap();
         prop_assert_eq!(&parts.header, &expected);
         prop_assert_eq!(parts.payload, &payload[..]);
         prop_assert_eq!(parts.uncooked, uncooked.as_deref());
         prop_assert_eq!(parts.derived_blob, blob.as_deref());
-        let read = read_content_asset(&bytes).unwrap();
+        let read = ContentAssetHeader::read(&bytes).unwrap();
         prop_assert_eq!(read.0, expected);
         prop_assert_eq!(read.1, &payload[..]);
         prop_assert_eq!(asset_record(&bytes, None).unwrap(), bytes);
@@ -269,16 +265,16 @@ proptest! {
             ..host
         };
         let file =
-            write_content_asset_with_embedded(&host, &host_payload, &embedded(&stored)).unwrap();
+            host.write_with_embedded( &host_payload, &embedded(&stored)).unwrap();
 
-        let whole = read_content_asset_parts(&file).unwrap();
+        let whole = ContentAssetParts::read(&file).unwrap();
         prop_assert_eq!(whole.payload, &host_payload[..]);
         prop_assert_eq!(whole.derived_blob, None);
         prop_assert_eq!(whole.header.embedded.len(), stored.len());
         prop_assert_eq!(whole.header.record_header(None), Some(host.clone()));
 
         let record = asset_record(&file, None).unwrap();
-        let parts = read_content_asset_parts(&record).unwrap();
+        let parts = ContentAssetParts::read(&record).unwrap();
         prop_assert_eq!(&parts.header, &host);
         prop_assert_eq!(parts.payload, &host_payload[..]);
         prop_assert_eq!(parts.derived_blob, None);
@@ -286,7 +282,7 @@ proptest! {
         for (index, asset) in stored.iter().enumerate() {
             let name = format!("mesh/{index}");
             let record = asset_record(&file, Some(&name)).unwrap();
-            let parts = read_content_asset_parts(&record).unwrap();
+            let parts = ContentAssetParts::read(&record).unwrap();
             prop_assert_eq!(&parts.header, &asset.header(index));
             prop_assert_eq!(whole.header.record_header(Some(&name)), Some(asset.header(index)));
             prop_assert_eq!(parts.payload, &asset.payload[..]);
@@ -312,11 +308,11 @@ proptest! {
             .map(|(index, asset)| asset.without_uncooked(index))
             .collect();
         let packed =
-            write_content_asset_with_embedded(&host, &host_payload, &embedded(&stored)).unwrap();
-        let packed_plain = write_content_asset_with_embedded(&host, &host_payload, &plain).unwrap();
+            host.write_with_embedded( &host_payload, &embedded(&stored)).unwrap();
+        let packed_plain = host.write_with_embedded( &host_payload, &plain).unwrap();
         let loose =
             written_loose(&host, &host_payload, &host_uncooked);
-        let loose_plain = write_content_asset(&host, &host_payload).unwrap();
+        let loose_plain = host.write( &host_payload).unwrap();
 
         prop_assert_eq!(&without_uncooked(&packed).unwrap(), &packed_plain);
         prop_assert_eq!(&without_uncooked(&packed_plain).unwrap(), &packed_plain);
@@ -324,7 +320,7 @@ proptest! {
 
         let path = written_to_disk("packed", &packed);
         prop_assert_eq!(&read_content_without_uncooked(&path).unwrap(), &packed_plain);
-        prop_assert_eq!(read_uncooked_section(&path, None).unwrap(), None);
+        prop_assert_eq!(UncookedBytes::read(&path, None).unwrap(), None);
         for (index, asset) in stored.iter().enumerate() {
             let name = format!("mesh/{index}");
             let expected = asset.uncooked.as_ref().map(|bytes| UncookedBytes {
@@ -332,9 +328,9 @@ proptest! {
                 version: SECTION_VERSION,
                 bytes: bytes.to_vec(),
             });
-            prop_assert_eq!(read_uncooked_section(&path, Some(&name)).unwrap(), expected);
+            prop_assert_eq!(UncookedBytes::read(&path, Some(&name)).unwrap(), expected);
         }
-        prop_assert!(read_uncooked_section(&path, Some("mesh/9")).is_err());
+        prop_assert!(UncookedBytes::read(&path, Some("mesh/9")).is_err());
 
         std::fs::write(&path, &loose).unwrap();
         prop_assert_eq!(&read_content_without_uncooked(&path).unwrap(), &loose_plain);
@@ -343,7 +339,7 @@ proptest! {
             version: SECTION_VERSION,
             bytes: bytes.to_vec(),
         });
-        prop_assert_eq!(read_uncooked_section(&path, None).unwrap(), expected);
+        prop_assert_eq!(UncookedBytes::read(&path, None).unwrap(), expected);
         std::fs::remove_file(&path).ok();
     }
 }
@@ -416,22 +412,22 @@ struct Malformed {
 fn a_malformed_directory_is_rejected() {
     let sound = host_file(vec![listed("mesh/0", 1, 4, 4), listed("mesh/1", 2, 8, 4)]);
     assert_eq!(
-        read_content_asset(&asset_record(&sound, Some("mesh/1")).unwrap())
+        ContentAssetHeader::read(&asset_record(&sound, Some("mesh/1")).unwrap())
             .unwrap()
             .1,
         b"BBBB"
     );
     let sectioned_host =
         host_file_with_sections(sectioned(2), sectioned_assets(), b"hostAAAABBBBhsbbb");
-    let parts = read_content_asset_parts(&sectioned_host).unwrap();
+    let parts = ContentAssetParts::read(&sectioned_host).unwrap();
     assert_eq!(parts.payload, b"host");
     assert_eq!(parts.uncooked, Some(&b"hs"[..]));
     let record = asset_record(&sectioned_host, Some("mesh/1")).unwrap();
-    let parts = read_content_asset_parts(&record).unwrap();
+    let parts = ContentAssetParts::read(&record).unwrap();
     assert_eq!(parts.payload, b"BBBB");
     assert_eq!(parts.uncooked, Some(&b"bbb"[..]));
     let record = asset_record(&sectioned_host, Some("mesh/0")).unwrap();
-    assert_eq!(read_content_asset_parts(&record).unwrap().uncooked, None);
+    assert_eq!(ContentAssetParts::read(&record).unwrap().uncooked, None);
     let cases = [
         Malformed {
             name: "bytes between the last asset and the sections",
@@ -510,7 +506,7 @@ fn a_malformed_directory_is_rejected() {
             case.name
         );
         assert_eq!(
-            read_content_asset_parts(&case.bytes).is_ok(),
+            ContentAssetParts::read(&case.bytes).is_ok(),
             case.the_host_reads,
             "{}",
             case.name
@@ -563,7 +559,7 @@ fn each_reader_reads_versions_4_to_8_and_refuses_anything_else() {
         kind_version: 3,
         provenance: None,
     };
-    let written = write_content_asset(&header(), b"payload").unwrap();
+    let written = header().write(b"payload").unwrap();
     let mut no_magic = written.clone();
     no_magic[0] = b'X';
     let version = |format_version: u32| {
@@ -574,7 +570,7 @@ fn each_reader_reads_versions_4_to_8_and_refuses_anything_else() {
     let cases = [
         Read {
             name: "a version 8 cooked file",
-            bytes: write_cooked_content_asset(&header(), b"payload", section(b"blob")).unwrap(),
+            bytes: header().write_cooked(b"payload", section(b"blob")).unwrap(),
             expected: Ok(ContentAssetHeader {
                 derived: Some(DerivedSection {
                     derived_version: 2,
@@ -653,18 +649,18 @@ fn each_reader_reads_versions_4_to_8_and_refuses_anything_else() {
     ];
     for case in cases {
         let mut outcomes = vec![
-            read_content_asset(&case.bytes).map(|read| {
+            ContentAssetHeader::read(&case.bytes).map(|read| {
                 assert_eq!(read.1, b"payload", "{}", case.name);
                 read.0
             }),
-            read_content_asset_parts(&case.bytes).map(|parts| {
+            ContentAssetParts::read(&case.bytes).map(|parts| {
                 assert_eq!(parts.payload, b"payload", "{}", case.name);
                 parts.header
             }),
         ];
         if case.header_from_file {
             let path = written_to_disk("read", &case.bytes);
-            outcomes.push(read_content_asset_header(&path));
+            outcomes.push(ContentAssetHeader::read_file(&path));
             std::fs::remove_file(&path).ok();
         }
         if case.expected.is_ok() {
@@ -740,7 +736,7 @@ fn the_framing_matches_its_fixture_and_the_version_6_fixture_still_reads() {
     let dir = fixture_dir();
 
     let version_6 = std::fs::read(dir.join("content_asset.v6.bin")).expect("the version 6 fixture");
-    let parts = read_content_asset_parts(&version_6).expect("read version 6");
+    let parts = ContentAssetParts::read(&version_6).expect("read version 6");
     assert_eq!(
         parts.header,
         ContentAssetHeader {
@@ -765,17 +761,17 @@ fn the_framing_matches_its_fixture_and_the_version_6_fixture_still_reads() {
         derived: Some(fixture_derived()),
         embedded: Vec::new(),
     };
-    let bytes = write_content_asset_with_embedded(
-        &fixture_host(),
-        b"payload",
-        &[EmbeddedPayload {
-            header: mesh,
-            payload: b"embedded",
-            uncooked: Some(b"source"),
-            derived_blob: Some(b"derived"),
-        }],
-    )
-    .expect("write");
+    let bytes = fixture_host()
+        .write_with_embedded(
+            b"payload",
+            &[EmbeddedPayload {
+                header: mesh,
+                payload: b"embedded",
+                uncooked: Some(b"source"),
+                derived_blob: Some(b"derived"),
+            }],
+        )
+        .expect("write");
 
     let path = dir.join("content_asset.v8.bin");
     if std::env::var("CONCERTO_BLESS_ENCODING").as_deref() == Ok("1") {

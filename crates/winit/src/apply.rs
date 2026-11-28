@@ -14,24 +14,23 @@ pub(crate) enum WindowAction {
     Cursor(CursorMode),
 }
 
-pub(crate) fn settings_actions(
-    applied: Option<&WindowSettings>,
-    wanted: &WindowSettings,
-) -> Vec<WindowAction> {
-    let mut actions = Vec::new();
-    if applied.map(|applied| &applied.title) != Some(&wanted.title) {
-        actions.push(WindowAction::Title(wanted.title.clone()));
+impl WindowAction {
+    pub(crate) fn diff(applied: Option<&WindowSettings>, wanted: &WindowSettings) -> Vec<Self> {
+        let mut actions = Vec::new();
+        if applied.map(|applied| &applied.title) != Some(&wanted.title) {
+            actions.push(Self::Title(wanted.title.clone()));
+        }
+        if applied.map(|applied| applied.decorations) != Some(wanted.decorations) {
+            actions.push(Self::Decorations(wanted.decorations));
+        }
+        if applied.map(|applied| applied.min_size) != Some(wanted.min_size) {
+            actions.push(Self::MinSize(wanted.min_size));
+        }
+        if applied.map(|applied| applied.cursor) != Some(wanted.cursor) {
+            actions.push(Self::Cursor(wanted.cursor));
+        }
+        actions
     }
-    if applied.map(|applied| applied.decorations) != Some(wanted.decorations) {
-        actions.push(WindowAction::Decorations(wanted.decorations));
-    }
-    if applied.map(|applied| applied.min_size) != Some(wanted.min_size) {
-        actions.push(WindowAction::MinSize(wanted.min_size));
-    }
-    if applied.map(|applied| applied.cursor) != Some(wanted.cursor) {
-        actions.push(WindowAction::Cursor(wanted.cursor));
-    }
-    actions
 }
 
 pub(crate) fn exits_on_close(window: Option<&Window>) -> bool {
@@ -118,7 +117,7 @@ mod tests {
         ];
         for case in cases {
             assert_eq!(
-                settings_actions(case.applied.as_ref(), &wanted),
+                WindowAction::diff(case.applied.as_ref(), &wanted),
                 case.actions
             );
         }

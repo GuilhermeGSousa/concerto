@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 use concerto_scene::link_path::LinkPath;
-use concerto_scene::node_id::{derive_ids, NodeId};
+use concerto_scene::node_id::NodeId;
 use concerto_scene::scene::SceneNode;
 
 fn node(name: &str, children: Vec<usize>) -> SceneNode {
@@ -41,7 +41,7 @@ fn node_ids_follow_name_paths_tell_every_node_apart_and_cross_links() {
         node("lamp.primitive1", vec![]),
     ];
 
-    derive_ids(&mut nodes);
+    SceneNode::derive_ids(&mut nodes);
 
     let paths = [
         "chair",

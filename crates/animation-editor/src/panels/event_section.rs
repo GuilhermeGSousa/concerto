@@ -108,58 +108,62 @@ struct FieldRow {
     field: Entity,
 }
 
-fn field_row(panel: &mut EntityCommandQueue, label: &str, theme: &UITheme) -> FieldRow {
-    let mut row = panel.spawn_child(theme.row().gap(theme.spacing_sm).fixed().hidden());
-    row.add_child(
-        theme
-            .label(label)
-            .muted()
-            .width(UIValue::Px(FIELD_LABEL_WIDTH))
-            .fixed(),
-    );
-    let field = row.spawn_child(theme.text_field("").grow()).entity();
-    FieldRow {
-        row: row.entity(),
-        field,
+impl FieldRow {
+    fn new(panel: &mut EntityCommandQueue, label: &str, theme: &UITheme) -> Self {
+        let mut row = panel.spawn_child(theme.row().gap(theme.spacing_sm).fixed().hidden());
+        row.add_child(
+            theme
+                .label(label)
+                .muted()
+                .width(UIValue::Px(FIELD_LABEL_WIDTH))
+                .fixed(),
+        );
+        let field = row.spawn_child(theme.text_field("").grow()).entity();
+        FieldRow {
+            row: row.entity(),
+            field,
+        }
     }
 }
 
-pub(crate) fn build_events(
-    panel: &mut EntityCommandQueue,
-    document: Entity,
-    theme: &UITheme,
-) -> EventsPanel {
-    panel.add_child(title(theme, "Events"));
-    let add = panel
-        .spawn_child(
-            theme
-                .button("Add event")
-                .ghost()
-                .on_click(add_event_at_head(document)),
-        )
-        .entity();
-    let name = field_row(panel, "Name", theme);
-    let time = field_row(panel, "Time", theme);
-    let type_name = panel
-        .spawn_child(theme.label("").muted().hidden().fixed())
-        .entity();
-    let remove = panel
-        .spawn_child(
-            theme
-                .button("Remove")
-                .ghost()
-                .hidden()
-                .on_click(remove_selected(document)),
-        )
-        .entity();
-    EventsPanel {
-        add,
-        name_row: name.row,
-        name: name.field,
-        time_row: time.row,
-        time: time.field,
-        type_name,
-        remove,
+impl EventsPanel {
+    pub(crate) fn build_events(
+        panel: &mut EntityCommandQueue,
+        document: Entity,
+        theme: &UITheme,
+    ) -> Self {
+        panel.add_child(title(theme, "Events"));
+        let add = panel
+            .spawn_child(
+                theme
+                    .button("Add event")
+                    .ghost()
+                    .on_click(add_event_at_head(document)),
+            )
+            .entity();
+        let name = FieldRow::new(panel, "Name", theme);
+        let time = FieldRow::new(panel, "Time", theme);
+        let type_name = panel
+            .spawn_child(theme.label("").muted().hidden().fixed())
+            .entity();
+        let remove = panel
+            .spawn_child(
+                theme
+                    .button("Remove")
+                    .ghost()
+                    .hidden()
+                    .on_click(remove_selected(document)),
+            )
+            .entity();
+        EventsPanel {
+            add,
+            name_row: name.row,
+            name: name.field,
+            time_row: time.row,
+            time: time.field,
+            type_name,
+            remove,
+        }
     }
 }
 
@@ -180,12 +184,31 @@ fn time_text(time: f32, rate: Option<f32>) -> String {
     }
 }
 
-fn field_text(state: &ClipDocument, field: EventField) -> Option<String> {
-    let event = selected_named(state)?;
-    Some(match field {
-        EventField::Name => event.label().to_owned(),
-        EventField::Time => time_text(event.time, state.facts.rate),
-    })
+impl ClipDocument {
+    fn field_text(&self, field: EventField) -> Option<String> {
+        let event = selected_named(self)?;
+        Some(match field {
+            EventField::Name => event.label().to_owned(),
+            EventField::Time => time_text(event.time, self.facts.rate),
+        })
+    }
+
+    fn submitted_edit(&mut self, field: EventField, value: &str) -> Option<Result<(), String>> {
+        let index = self.selected_event?;
+        let current = self.events.get(index)?.clone();
+        match field {
+            EventField::Name if current.label() == value => None,
+            EventField::Name => Some(self.rename_event(index, value)),
+            EventField::Time => {
+                let rate = self.facts.rate;
+                match parsed_time(value, rate) {
+                    Err(message) => Some(Err(message)),
+                    Ok(time) if same_time(current.time, time, rate) => None,
+                    Ok(time) => Some(self.move_event(index, time)),
+                }
+            }
+        }
+    }
 }
 
 fn parsed_time(value: &str, rate: Option<f32>) -> Result<f32, String> {
@@ -205,27 +228,6 @@ fn same_time(current: f32, time: f32, rate: Option<f32>) -> bool {
     match rate {
         Some(rate) => frame_at(current, rate) == frame_at(time, rate),
         None => current == time,
-    }
-}
-
-fn submitted_edit(
-    state: &mut ClipDocument,
-    field: EventField,
-    value: &str,
-) -> Option<Result<(), String>> {
-    let index = state.selected_event?;
-    let current = state.events.get(index)?.clone();
-    match field {
-        EventField::Name if current.label() == value => None,
-        EventField::Name => Some(state.rename_event(index, value)),
-        EventField::Time => {
-            let rate = state.facts.rate;
-            match parsed_time(value, rate) {
-                Err(message) => Some(Err(message)),
-                Ok(time) if same_time(current.time, time, rate) => None,
-                Ok(time) => Some(state.move_event(index, time)),
-            }
-        }
     }
 }
 
@@ -251,10 +253,10 @@ pub(crate) fn apply_clip_event_fields(
             let Some(field) = panels.inspector.events.field(event.entity) else {
                 continue;
             };
-            if let Some(result) = submitted_edit(&mut state, field, &event.value) {
+            if let Some(result) = state.submitted_edit(field, &event.value) {
                 settle_edit(result, document, &mut editor, &mut cmd);
             }
-            if let Some(value) = field_text(&state, field) {
+            if let Some(value) = state.field_text(field) {
                 write_value(&mut fields, event.entity, &value);
             }
         }
@@ -264,7 +266,7 @@ pub(crate) fn apply_clip_event_fields(
             let Some(field) = panels.inspector.events.field(event.entity) else {
                 continue;
             };
-            if let Some(value) = field_text(&state, field) {
+            if let Some(value) = state.field_text(field) {
                 write_value(&mut fields, event.entity, &value);
             }
         }
@@ -322,7 +324,7 @@ pub(crate) fn sync_clip_events(
             if **focus == Some(entity) {
                 continue;
             }
-            if let Some(value) = field_text(state, field) {
+            if let Some(value) = state.field_text(field) {
                 write_value(&mut fields, entity, &value);
             }
         }

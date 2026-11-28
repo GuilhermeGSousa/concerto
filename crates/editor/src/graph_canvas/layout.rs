@@ -209,17 +209,19 @@ struct Placement {
     top: f32,
 }
 
-fn node_height(node: &CanvasNode, mode: CanvasMode) -> f32 {
-    let subtitle = if node.subtitle.is_some() {
-        SUBTITLE_HEIGHT
-    } else {
-        0.0
-    };
-    let pins = match mode {
-        CanvasMode::Flow => node.inputs.len() as f32 * PIN_ROW_HEIGHT,
-        CanvasMode::Diagram => 0.0,
-    };
-    HEADER_HEIGHT + subtitle + pins + NODE_PADDING
+impl CanvasNode {
+    fn node_height(&self, mode: CanvasMode) -> f32 {
+        let subtitle = if self.subtitle.is_some() {
+            SUBTITLE_HEIGHT
+        } else {
+            0.0
+        };
+        let pins = match mode {
+            CanvasMode::Flow => self.inputs.len() as f32 * PIN_ROW_HEIGHT,
+            CanvasMode::Diagram => 0.0,
+        };
+        HEADER_HEIGHT + subtitle + pins + NODE_PADDING
+    }
 }
 
 fn edges_of(nodes: &[CanvasNode], links: &[CanvasLink]) -> Vec<Edge> {
@@ -381,28 +383,77 @@ fn boxes(
         .collect()
 }
 
-fn flow_route(edge: &Edge, boxes: &[NodeBox]) -> LinkRoute {
-    let from = &boxes[edge.from];
-    let to = &boxes[edge.to];
-    let start = from
-        .output
-        .unwrap_or(from.rect.min + Vec2::new(NODE_WIDTH, HEADER_HEIGHT / 2.0));
-    let end = edge
-        .slot
-        .and_then(|slot| to.inputs.get(slot).copied())
-        .unwrap_or(to.rect.min + Vec2::new(0.0, HEADER_HEIGHT / 2.0));
-    let bend = if end.x > start.x {
-        (start.x + end.x) / 2.0
-    } else {
-        start.x + COLUMN_GAP / 2.0
-    };
-    LinkRoute {
-        link: edge.link,
-        start,
-        bend,
-        end,
-        arrow: None,
-        detour: None,
+impl Edge {
+    fn flow_route(&self, boxes: &[NodeBox]) -> LinkRoute {
+        let from = &boxes[self.from];
+        let to = &boxes[self.to];
+        let start = from
+            .output
+            .unwrap_or(from.rect.min + Vec2::new(NODE_WIDTH, HEADER_HEIGHT / 2.0));
+        let end = self
+            .slot
+            .and_then(|slot| to.inputs.get(slot).copied())
+            .unwrap_or(to.rect.min + Vec2::new(0.0, HEADER_HEIGHT / 2.0));
+        let bend = if end.x > start.x {
+            (start.x + end.x) / 2.0
+        } else {
+            start.x + COLUMN_GAP / 2.0
+        };
+        LinkRoute {
+            link: self.link,
+            start,
+            bend,
+            end,
+            arrow: None,
+            detour: None,
+        }
+    }
+
+    fn diagram_route(&self, boxes: &[NodeBox]) -> LinkRoute {
+        let from = boxes[self.from].rect;
+        let to = boxes[self.to].rect;
+        let lane = lane_under(boxes, from, to);
+        let upper = |rect: UIBox| rect.min.y + rect.size.y / 3.0;
+        let lower = |rect: UIBox| rect.min.y + rect.size.y * 2.0 / 3.0;
+        if to.min.x > from.min.x {
+            LinkRoute {
+                link: self.link,
+                start: Vec2::new(from.max().x, upper(from)),
+                bend: to.min.x - FORWARD_BEND,
+                end: Vec2::new(to.min.x, upper(to)),
+                arrow: Some(ArrowDirection::Right),
+                detour: lane.map(|lane| Detour {
+                    turn: from.max().x + DETOUR_TURN,
+                    lane: lane + FORWARD_LANE,
+                }),
+            }
+        } else if to.min.x < from.min.x {
+            LinkRoute {
+                link: self.link,
+                start: Vec2::new(from.min.x, lower(from)),
+                bend: to.max().x + BACKWARD_BEND,
+                end: Vec2::new(to.max().x, lower(to)),
+                arrow: Some(ArrowDirection::Left),
+                detour: lane.map(|lane| Detour {
+                    turn: from.min.x - DETOUR_TURN,
+                    lane: lane + BACKWARD_LANE,
+                }),
+            }
+        } else {
+            let offset = if to.min.y < from.min.y {
+                LOOP_OFFSET
+            } else {
+                -LOOP_OFFSET
+            };
+            LinkRoute {
+                link: self.link,
+                start: Vec2::new(from.max().x, upper(from)),
+                bend: from.max().x + LOOP_BEND + offset,
+                end: Vec2::new(to.max().x, lower(to)),
+                arrow: Some(ArrowDirection::Left),
+                detour: None,
+            }
+        }
     }
 }
 
@@ -416,57 +467,10 @@ fn lane_under(boxes: &[NodeBox], from: UIBox, to: UIBox) -> Option<f32> {
         .reduce(f32::max)
 }
 
-fn diagram_route(edge: &Edge, boxes: &[NodeBox]) -> LinkRoute {
-    let from = boxes[edge.from].rect;
-    let to = boxes[edge.to].rect;
-    let lane = lane_under(boxes, from, to);
-    let upper = |rect: UIBox| rect.min.y + rect.size.y / 3.0;
-    let lower = |rect: UIBox| rect.min.y + rect.size.y * 2.0 / 3.0;
-    if to.min.x > from.min.x {
-        LinkRoute {
-            link: edge.link,
-            start: Vec2::new(from.max().x, upper(from)),
-            bend: to.min.x - FORWARD_BEND,
-            end: Vec2::new(to.min.x, upper(to)),
-            arrow: Some(ArrowDirection::Right),
-            detour: lane.map(|lane| Detour {
-                turn: from.max().x + DETOUR_TURN,
-                lane: lane + FORWARD_LANE,
-            }),
-        }
-    } else if to.min.x < from.min.x {
-        LinkRoute {
-            link: edge.link,
-            start: Vec2::new(from.min.x, lower(from)),
-            bend: to.max().x + BACKWARD_BEND,
-            end: Vec2::new(to.max().x, lower(to)),
-            arrow: Some(ArrowDirection::Left),
-            detour: lane.map(|lane| Detour {
-                turn: from.min.x - DETOUR_TURN,
-                lane: lane + BACKWARD_LANE,
-            }),
-        }
-    } else {
-        let offset = if to.min.y < from.min.y {
-            LOOP_OFFSET
-        } else {
-            -LOOP_OFFSET
-        };
-        LinkRoute {
-            link: edge.link,
-            start: Vec2::new(from.max().x, upper(from)),
-            bend: from.max().x + LOOP_BEND + offset,
-            end: Vec2::new(to.max().x, lower(to)),
-            arrow: Some(ArrowDirection::Left),
-            detour: None,
-        }
-    }
-}
-
 /// Lays out `nodes` and `links`: a tree per root growing leftward in `Flow`, layers left to right in `Diagram`.
 pub fn layout(nodes: &[CanvasNode], links: &[CanvasLink], mode: CanvasMode) -> CanvasLayout {
     let edges = edges_of(nodes, links);
-    let heights: Vec<f32> = nodes.iter().map(|node| node_height(node, mode)).collect();
+    let heights: Vec<f32> = nodes.iter().map(|node| node.node_height(mode)).collect();
     let placements = match mode {
         CanvasMode::Flow => place_flow(nodes, &edges, &heights),
         CanvasMode::Diagram => place_diagram(nodes, &edges, &heights),
@@ -475,8 +479,8 @@ pub fn layout(nodes: &[CanvasNode], links: &[CanvasLink], mode: CanvasMode) -> C
     let links: Vec<LinkRoute> = edges
         .iter()
         .map(|edge| match mode {
-            CanvasMode::Flow => flow_route(edge, &boxes),
-            CanvasMode::Diagram => diagram_route(edge, &boxes),
+            CanvasMode::Flow => edge.flow_route(&boxes),
+            CanvasMode::Diagram => edge.diagram_route(&boxes),
         })
         .collect();
     let extent = boxes

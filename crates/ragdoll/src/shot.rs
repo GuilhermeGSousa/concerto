@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     asset::{PartStrength, Segment, Side},
-    ik::{Chain, bent_spine, reach_hinged},
+    ik::{Chain, bent_spine},
     node::balance::{ClaimsOut, Hindrance, PartCommand},
     resolve::{Limbs, ResolvedRagdoll},
     view::BodyView,
@@ -418,12 +418,12 @@ fn hand_to_wound(reaction: &ShotSettings, struck: &[Wound], posed: &Posed, muscl
             Side::Left => posed.across,
             _ => -posed.across,
         };
-        let aimed = reach_hinged(
-            &Chain {
-                upper: arm.upper,
-                lower: arm.lower,
-                end: arm.hand,
-            },
+        let aimed = Chain {
+            upper: arm.upper,
+            lower: arm.lower,
+            end: arm.hand,
+        }
+        .reach_hinged(
             settings,
             posed.rest,
             posed.carried,

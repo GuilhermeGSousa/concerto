@@ -77,6 +77,14 @@ pub struct Modifiers {
 }
 
 impl Modifiers {
+    fn held_in(self, input: &Input) -> bool {
+        let held = Self::from_input(input);
+        (!self.ctrl || held.ctrl)
+            && (!self.shift || held.shift)
+            && (!self.alt || held.alt)
+            && (!self.logo || held.logo)
+    }
+
     /// No modifiers.
     pub const NONE: Modifiers = Modifiers {
         ctrl: false,
@@ -281,6 +289,14 @@ struct ButtonReading {
 }
 
 impl ButtonReading {
+    fn of_pad(pad: &Gamepad, button: GamepadButton) -> Self {
+        Self::new(
+            pad.is_held(button),
+            pad.is_just_pressed(button),
+            pad.is_just_released(button),
+        )
+    }
+
     fn new(held: bool, pressed: bool, released: bool) -> Self {
         Self {
             held,
@@ -760,7 +776,7 @@ impl ActionMap {
                     return ButtonReading::default();
                 }
                 let key = PhysicalKey::Code(shortcut.key);
-                let modifiers = modifiers_held(shortcut.modifiers, input);
+                let modifiers = shortcut.modifiers.held_in(input);
                 ButtonReading::new(
                     input.is_held(key) && modifiers,
                     input.is_just_pressed(key) && modifiers,
@@ -774,7 +790,7 @@ impl ActionMap {
             ),
             ButtonBinding::Gamepad(button) => devices
                 .pads(input)
-                .map(|pad| pad_reading(pad, button))
+                .map(|pad| ButtonReading::of_pad(pad, button))
                 .fold(ButtonReading::default(), ButtonReading::merge),
         }
     }
@@ -836,22 +852,6 @@ fn push_onto(stack: &mut Vec<InternedContextLabel>, context: InternedContextLabe
     // duplicate, so one stray push cannot outlive its pop.
     stack.retain(|active| *active != context);
     stack.push(context);
-}
-
-fn modifiers_held(required: Modifiers, input: &Input) -> bool {
-    let held = Modifiers::from_input(input);
-    (!required.ctrl || held.ctrl)
-        && (!required.shift || held.shift)
-        && (!required.alt || held.alt)
-        && (!required.logo || held.logo)
-}
-
-fn pad_reading(pad: &Gamepad, button: GamepadButton) -> ButtonReading {
-    ButtonReading::new(
-        pad.is_held(button),
-        pad.is_just_pressed(button),
-        pad.is_just_released(button),
-    )
 }
 
 /// Turns this frame's key and gamepad button presses into [`ActionFired`] events.

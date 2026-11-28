@@ -65,6 +65,7 @@ draws one that is initialised and hasn't failed, and which one isn't defined.
 channel, and the system only draws them. `GizmoStorage` keeps its vertices
 private, so a test compares these and counts `GizmoStorage::segment_count()`.
 
-`BakedFrame` owns what a `FrameContext` borrows. `placed_shape`, `draw_shape`,
-`draw_simulation`, `channel_color` and the colours are the pieces the editor's
+`BakedFrame` owns what a `FrameContext` borrows. `FeatureShape::placed`, the
+`MotionMatchingDraw` methods `draw_shape` and `draw_simulation`, `channel_color` and
+the colours are the pieces the editor's
 preview shares.

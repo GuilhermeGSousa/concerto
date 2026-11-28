@@ -59,7 +59,7 @@ cached under the same key, before the handle reads as loaded:
   can't be an input, so an entry naming an additive clip fails the database's
   load, and its derive in the motion database editor, with an error naming the
   clip. Plain clips load as before.
-- `derived_key(&inputs)`: `weightless_hash` of the definition and the inputs'
+- `derived_key(&inputs)`: `MotionDatabase::weightless_hash` of the definition and the inputs'
   file bytes; see [Derived key](#derived-key).
 - `derive(&inputs, progress)`: decodes the skeleton and clips, calls
   `bake_with_progress`, and encodes the `BakedDatabase` with bincode.
@@ -69,7 +69,7 @@ cached under the same key, before the handle reads as loaded:
 
 `is_baked()` says whether the part is there. Code that bakes inline, such as a
 test or an `AssetServer::add` caller, attaches it with
-`database.with_baked(bake(&database, &skeleton, &clips)?)`; `add` derives
+`database.with_baked(database.bake(&skeleton, &clips)?)`; `add` derives
 nothing.
 
 A database loaded through the `AssetServer`, or added with
@@ -113,7 +113,7 @@ end of an entry's range is clamped to the range's last frame.
 ### Bake
 
 ```rust
-let baked: BakedDatabase = bake(&database, &skeleton, &clips)?;
+let baked: BakedDatabase = database.bake(&skeleton, &clips)?;
 ```
 
 `bake` reads the persisted fields of a `MotionDatabase` and returns only the
@@ -183,7 +183,7 @@ it in the editor as a `MotionDatabase`.
 
 A `FeatureChannel` writes `dims()` values per frame from a `FrameContext`. The
 channels of a definition are concatenated in order into one feature vector per
-frame. `extract_features(&channels, &frame, &mut out)` runs them; `out` must
+frame. `frame.extract_features(&channels, &mut out)` runs them; `out` must
 hold exactly the sum of their `dims()`.
 
 `FrameContext` fields:
@@ -251,7 +251,7 @@ one under the type's short name, which is how code builds a definition.
 `on_load` loads its channels with the asset server's type registry and logs a
 warning for each that fails, leaving it `Stored`; outside the asset server,
 call `load_channels(&registry)`. After that nothing needs the registry: `bake`,
-`FeatureQuery::new`, `weights_of` and the normalisation read the live channels,
+`FeatureQuery::new`, `MotionDatabase::weights` and the normalisation read the live channels,
 and a channel still `Stored` there is `UnloadedChannel`, or no normalisation.
 
 A channel may also override four methods:
@@ -275,7 +275,7 @@ A channel may also override four methods:
 
 `preview` says how a channel looks for a given feature vector, so the same code
 can draw a baked frame or a runtime query beside the frame it selected.
-`preview_features(&channels, &frame, &features)` gives each channel its span of a
+`frame.preview_features(&channels, &features)` gives each channel its span of a
 raw vector and returns one list of shapes per channel, in order.
 
 `FeatureShape` is a `Ring { center, radius }`, a `Line { start, end }` or an
@@ -335,7 +335,7 @@ positive, or the channel count differs from the bake's.
 ### Derived key
 
 ```rust
-let key = weightless_hash(&database, &skeleton_bytes, &clip_bytes);
+let key = database.weightless_hash(&skeleton_bytes, &clip_bytes);
 ```
 
 `clip_bytes` holds the stored bytes of one clip per entry. `derived_key` passes
@@ -345,7 +345,7 @@ skeleton's and clips' bytes, the entries, `rate`, `speed`, `simulation`,
 `trajectory`, `mirror_axis` when some entry is mirrored, and each channel's type
 name and value with its top-level `weight` field left out.
 
-`weights_of(&database)` gives each live channel's `weight()`, in order.
+`MotionDatabase::weights` gives each live channel's `weight()`, in order.
 
 A stored and a live channel with the same value hash the same.
 
@@ -495,8 +495,8 @@ graph.result_node().add_input(
 );
 ```
 
-The node plays at `r = effective_play_rate(play_rate, play_rate_param,
-blackboard)` from `concerto_animation::node`: the product, or 0 when it is
+The node plays at `r = blackboard.effective_play_rate(play_rate,
+play_rate_param)` from `concerto_animation::blackboard::AnimationBlackboard`: the product, or 0 when it is
 negative, NaN or infinite. With `dt` the frame's delta, the playhead and the
 root motion advance by `dt * r`. The search timer, the forced-search timer and
 the change per second that forces a search run on `dt`, in real time, as do the

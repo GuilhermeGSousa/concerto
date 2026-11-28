@@ -5,8 +5,7 @@
 pub mod bounds;
 /// The mesh asset, its component and its bounding box.
 pub mod mesh;
-/// Builders of simple shapes: plane, cuboid, sphere and capsule.
-pub mod primitives;
+mod primitives;
 /// Rays and their intersection with boxes and meshes.
 pub mod ray;
 /// Skeletons, their poses and the component that binds one to scene entities.

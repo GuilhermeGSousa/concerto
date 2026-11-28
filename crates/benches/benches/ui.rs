@@ -44,47 +44,49 @@ struct Labels {
     readout: Entity,
 }
 
+impl Labels {
+    fn new() -> Option<Self> {
+        let mut app = headless(ui_plugins)?;
+        let world = app.main_mut().world_mut();
+        let root = world.spawn(
+            UINode::default()
+                .with_size(UIValue::Percent(100.0), UIValue::Percent(100.0))
+                .with_flex_direction(FlexDirection::Column),
+        );
+        let labels = (0..LABELS)
+            .map(|index| {
+                world.spawn((
+                    UINode::default()
+                        .with_flex_shrink(0.0)
+                        .with_z_index(index as i32 % 10),
+                    text(format!("label {index}")),
+                    UIMaterial::flat(Color::WHITE),
+                    ChildOf::new(root),
+                ))
+            })
+            .collect();
+        let readout = world.spawn((
+            UINode::default()
+                .with_size(UIValue::Px(200.0), UIValue::Px(20.0))
+                .with_flex_shrink(0.0),
+            text("66 fps"),
+            ChildOf::new(root),
+        ));
+        settle(&mut app);
+        Some(Labels {
+            app,
+            root,
+            labels,
+            readout,
+        })
+    }
+}
+
 fn text(text: impl Into<String>) -> UIText {
     UIText {
         text: text.into(),
         ..Default::default()
     }
-}
-
-fn labels() -> Option<Labels> {
-    let mut app = headless(ui_plugins)?;
-    let world = app.main_mut().world_mut();
-    let root = world.spawn(
-        UINode::default()
-            .with_size(UIValue::Percent(100.0), UIValue::Percent(100.0))
-            .with_flex_direction(FlexDirection::Column),
-    );
-    let labels = (0..LABELS)
-        .map(|index| {
-            world.spawn((
-                UINode::default()
-                    .with_flex_shrink(0.0)
-                    .with_z_index(index as i32 % 10),
-                text(format!("label {index}")),
-                UIMaterial::flat(Color::WHITE),
-                ChildOf::new(root),
-            ))
-        })
-        .collect();
-    let readout = world.spawn((
-        UINode::default()
-            .with_size(UIValue::Px(200.0), UIValue::Px(20.0))
-            .with_flex_shrink(0.0),
-        text("66 fps"),
-        ChildOf::new(root),
-    ));
-    settle(&mut app);
-    Some(Labels {
-        app,
-        root,
-        labels,
-        readout,
-    })
 }
 
 fn node(app: &mut App, entity: Entity) -> &mut UINode {
@@ -102,7 +104,7 @@ fn label_text(app: &mut App, entity: Entity) -> &mut UIText {
 }
 
 fn ui_frames(c: &mut Criterion) {
-    let Some(mut fixture) = labels() else {
+    let Some(mut fixture) = Labels::new() else {
         eprintln!("SKIPPED: no GPU adapter, nothing measured");
         return;
     };

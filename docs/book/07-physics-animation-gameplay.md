@@ -467,7 +467,7 @@ inspector's form.
 
 #### Generating a humanoid
 
-Typing fifteen parts by hand is an afternoon of guessing. `generate_humanoid`
+Typing fifteen parts by hand is an afternoon of guessing. `Ragdoll::humanoid`
 gives a first draft to adjust: a pelvis, up to three spine parts, a head, upper
 and lower arms, hands, thighs, shins and feet. Each foot is a flat box whose
 underside is the sole, so a standing body rests on two faces and not on two
@@ -475,10 +475,10 @@ rolling capsules. A part whose segment is `Foot` is built with a friction of 4,
 which holds a planted foot where it is; every other part has 0.5.
 
 ```rust
-use concerto::ragdoll::{HumanoidSettings, generate_humanoid};
+use concerto::ragdoll::{HumanoidSettings, Ragdoll};
 
 let rig = retarget_rig.resolve(&skeleton, None)?;
-let ragdoll = generate_humanoid(skeleton_handle, &skeleton, &rig, &[&body_mesh], &HumanoidSettings::default())?;
+let ragdoll = Ragdoll::humanoid(skeleton_handle, &skeleton, &rig, &[&body_mesh], &HumanoidSettings::default())?;
 ```
 
 It needs the skeleton's `RetargetRig`, which already says which bones are the
@@ -497,7 +497,7 @@ small ones, and every joint a little friction so a fallen body comes to rest.
 In the editor, a retarget rig's tab has a **Create ragdoll** button, and an
 agent has the `create_ragdoll` tool; both come from the extension crate
 `concerto-ragdoll-editor` and send one signal, `CreateRagdoll`. It reads the
-rig, its skeleton and its reference clip, runs `generate_humanoid`, checks the
+rig, its skeleton and its reference clip, runs `Ragdoll::humanoid`, checks the
 result with `Ragdoll::resolve`, and saves `ragdoll.gasset` beside the rig, or
 at an `address` you give. The tool takes `rig`, and optionally `address`,
 `total_mass` and `chains`, and answers one line per part with its bone, shape
@@ -518,7 +518,7 @@ it go limp, Poke hits the part on `poke_bone` with `poke_impulse` (making the
 body limp first), Play plays the `clip` of the **Preview** value with the
 ragdoll following it kinematically, and Reset stands it in its rest pose again.
 Powered playback, where the body pulls itself toward the clip, does not exist
-yet. Drop and Poke also run the headless trial `run_trial` on the tab's current
+yet. Drop and Poke also run the headless trial `ResolvedRagdoll::run_trial` on the tab's current
 value and print its report under the buttons.
 
 The tools do the same without a screenshot. `ragdoll_parts` lists the parts:
@@ -1288,7 +1288,7 @@ A graph is a tree of nodes under a result node:
   input. Wire it after the nodes whose pose it corrects. A target param the
   game has not set yet leaves the pose as it is. Its `hinge` setting is `Off`
   by default. The same solve is
-  `concerto_animation::ik::solve_two_bone` for code outside a graph: it takes
+  `concerto_animation::ik::TwoBoneChain::solve` for code outside a graph: it takes
   the three joint positions in any one space and returns rotations in that
   space. A `TwoBoneChain` may also carry a `hinge`, a chain-space axis the
   lower bone turns about, positively by the right-hand rule, relative to the
@@ -2437,7 +2437,7 @@ motion, still passes the events, and warns once.
   left stick), `Look` (the right stick) and `Stroll` (left Shift). `GameplayPlugin` binds them through
   `bind_gameplay_actions`, which a test calls on its own `ActionMap`.
 - `gameplay::first_person` is a first-person character that walks, with no
-  jump. `spawn_first_person_walker(&mut cmd, player, transform, walker)` spawns
+  jump. `walker.spawn(&mut cmd, player, transform)` spawns
   a `FirstPersonWalker` with its body, feet at `transform`, and returns the
   entity; `player` is the `PlayerIndex` whose `Move` and `Look` drive it, so two
   walkers with two indices are two players. The left stick walks up to
@@ -2558,7 +2558,7 @@ The mesh is derived data: its file holds the scene list and the settings, and
 the polygons are baked from the box and mesh colliders of those scenes, sensor
 boxes left out, when the asset loads, cached, and cooked into the file by
 `--cook` (see [Derived data](../asset-importing.md#derived-data)). A game that
-builds its geometry in code fills a `NavMeshGeometry`, calls `bake`, and adds
+builds its geometry in code fills a `NavMeshGeometry`, calls `NavMeshGeometry::bake`, and adds
 `NavMesh::baked(settings, data)` with `AssetServer::add`.
 
 A `NavMeshComponent { handle }` on an entity of the level, a scene component,
@@ -2648,7 +2648,7 @@ fn on_post(mut arrived: EventReader<NavArrived>, mut guards: Query<&mut Guard>) 
 The character's body, collider and animation come from the same set-up as the
 player's, under [Characters](#characters). The tech demo's grid level has an
 NPC that patrols a square of four points this way, routing around a box on each
-side of the square on a navmesh the level bakes at startup with `bake` and adds
+side of the square on a navmesh the level bakes at startup with `NavMeshGeometry::bake` and adds
 with `NavMesh::baked`.
 
 ### Drawing the graph

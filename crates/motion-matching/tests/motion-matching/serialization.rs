@@ -2,11 +2,10 @@ use std::path::Path;
 
 use concerto_animation::clip::{AnimationChanelOutput, AnimationChannel, AnimationClip};
 use concerto_foundation::assets::content::{
-    check_encoding, decode_content_asset, write_content_asset, ContentAssetHeader,
+    check_encoding, decode_content_asset, ContentAssetHeader,
 };
 use concerto_foundation::assets::{handle::AssetHandle, Asset, AssetId};
 use concerto_mesh::{JointPose, Skeleton};
-use concerto_motion_matching::bake::bake;
 use concerto_motion_matching::{
     FeatureChannel, FeatureChannelData, FrameContext, JointAxis, MirrorAxis, MotionDatabase,
     MotionEntry, ReflectFeatureChannel, SimulationBoneSettings, TimeRange, TrajectorySettings,
@@ -84,7 +83,7 @@ impl FeatureChannel for HeightChannel {
 }
 
 fn baked(definition: MotionDatabase, clips: &[&AnimationClip]) -> MotionDatabase {
-    let baked = bake(&definition, &skeleton(), clips).unwrap();
+    let baked = definition.bake(&skeleton(), clips).unwrap();
     definition.with_baked(baked)
 }
 
@@ -158,7 +157,7 @@ fn content_asset(kind: &str, version: u32, fixture: &str) -> Vec<u8> {
         derived: None,
         embedded: Vec::new(),
     };
-    write_content_asset(&header, &payload).unwrap()
+    header.write(&payload).unwrap()
 }
 
 #[test]

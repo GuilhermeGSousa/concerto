@@ -582,88 +582,123 @@ struct TreeSpec {
     children: &'static [TreeSpec],
 }
 
-const fn leaf(name: &'static str) -> TreeSpec {
-    TreeSpec {
-        name,
-        expanded: false,
-        children: &[],
+impl TreeSpec {
+    const fn leaf(name: &'static str) -> Self {
+        Self {
+            name,
+            expanded: false,
+            children: &[],
+        }
     }
-}
 
-const fn branch(name: &'static str, expanded: bool, children: &'static [TreeSpec]) -> TreeSpec {
-    TreeSpec {
-        name,
-        expanded,
-        children,
+    const fn branch(name: &'static str, expanded: bool, children: &'static [TreeSpec]) -> Self {
+        Self {
+            name,
+            expanded,
+            children,
+        }
     }
 }
 
 const SHOWCASE_TREE: &[TreeSpec] = &[
-    branch(
+    TreeSpec::branch(
         "World",
         true,
         &[
-            branch(
+            TreeSpec::branch(
                 "Terrain",
                 true,
                 &[
-                    leaf("Heightmap"),
-                    branch(
+                    TreeSpec::leaf("Heightmap"),
+                    TreeSpec::branch(
                         "Foliage",
                         true,
-                        &[leaf("Oak"), leaf("Birch"), leaf("Fern"), leaf("Moss")],
+                        &[
+                            TreeSpec::leaf("Oak"),
+                            TreeSpec::leaf("Birch"),
+                            TreeSpec::leaf("Fern"),
+                            TreeSpec::leaf("Moss"),
+                        ],
                     ),
-                    branch("Rocks", false, &[leaf("Boulder"), leaf("Pebble")]),
+                    TreeSpec::branch(
+                        "Rocks",
+                        false,
+                        &[TreeSpec::leaf("Boulder"), TreeSpec::leaf("Pebble")],
+                    ),
                 ],
             ),
-            branch(
+            TreeSpec::branch(
                 "Lighting",
                 true,
                 &[
-                    leaf("Sun"),
-                    branch(
+                    TreeSpec::leaf("Sun"),
+                    TreeSpec::branch(
                         "Lamps",
                         false,
-                        &[leaf("Lamp A"), leaf("Lamp B"), leaf("Lamp C")],
+                        &[
+                            TreeSpec::leaf("Lamp A"),
+                            TreeSpec::leaf("Lamp B"),
+                            TreeSpec::leaf("Lamp C"),
+                        ],
                     ),
-                    leaf("Ambient"),
+                    TreeSpec::leaf("Ambient"),
                 ],
             ),
-            branch("Water", false, &[leaf("Lake"), leaf("River")]),
+            TreeSpec::branch(
+                "Water",
+                false,
+                &[TreeSpec::leaf("Lake"), TreeSpec::leaf("River")],
+            ),
         ],
     ),
-    branch(
+    TreeSpec::branch(
         "Characters",
         true,
         &[
-            branch(
+            TreeSpec::branch(
                 "Hero",
                 true,
                 &[
-                    leaf("Skeleton"),
-                    branch(
+                    TreeSpec::leaf("Skeleton"),
+                    TreeSpec::branch(
                         "Outfit",
                         true,
-                        &[leaf("Boots"), leaf("Cloak"), leaf("Belt")],
+                        &[
+                            TreeSpec::leaf("Boots"),
+                            TreeSpec::leaf("Cloak"),
+                            TreeSpec::leaf("Belt"),
+                        ],
                     ),
-                    leaf("Voice"),
+                    TreeSpec::leaf("Voice"),
                 ],
             ),
-            branch(
+            TreeSpec::branch(
                 "Villagers",
                 false,
-                &[leaf("Baker"), leaf("Smith"), leaf("Elder")],
+                &[
+                    TreeSpec::leaf("Baker"),
+                    TreeSpec::leaf("Smith"),
+                    TreeSpec::leaf("Elder"),
+                ],
             ),
-            leaf("Companion"),
+            TreeSpec::leaf("Companion"),
         ],
     ),
-    branch(
+    TreeSpec::branch(
         "UI",
         false,
-        &[leaf("Health bar"), leaf("Minimap"), leaf("Dialogue box")],
+        &[
+            TreeSpec::leaf("Health bar"),
+            TreeSpec::leaf("Minimap"),
+            TreeSpec::leaf("Dialogue box"),
+        ],
     ),
-    leaf("Audio"),
-    branch("Scripts", true, &[leaf("Quest log"), leaf("Day cycle")]),
+    TreeSpec::leaf("Audio"),
+    TreeSpec::branch(
+        "Scripts",
+        true,
+        &[TreeSpec::leaf("Quest log"), TreeSpec::leaf("Day cycle")],
+    ),
 ];
 
 fn tree_items(parent: &mut EntityCommandQueue, theme: &UITheme, specs: &[TreeSpec]) {

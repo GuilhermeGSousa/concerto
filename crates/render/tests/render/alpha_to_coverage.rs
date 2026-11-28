@@ -11,7 +11,7 @@ use concerto_foundation::{
     assets::{asset_server::AssetServer, asset_store::AssetStore, handle::AssetHandle, AssetId},
     transform::Transform,
 };
-use concerto_mesh::{primitives::plane, MeshComponent};
+use concerto_mesh::{Mesh, MeshComponent};
 use concerto_render::{
     assets::{
         material::{AlphaMode, StandardMaterial},
@@ -26,7 +26,6 @@ use concerto_render::{
     gpu::Gpu,
     material_plugin::MaterialPlugin,
     plugin::RenderPlugin,
-    readback::read_texture,
     Msaa, Tonemapping,
 };
 use concerto_window::plugin::{Window, WindowPlugin};
@@ -83,7 +82,7 @@ impl Scene {
         material.set_metallic_factor(1.0);
         app.main_mut().world_mut().spawn((
             MeshComponent {
-                handle: server.add(plane(Vec2::splat(40.0))),
+                handle: server.add(Mesh::plane(Vec2::splat(40.0))),
             },
             MaterialComponent::<StandardMaterial> {
                 handle: server.add(material),
@@ -135,10 +134,9 @@ impl Scene {
             .world()
             .get_component_for_entity::<RenderCamera>(render_entity)
             .unwrap();
-        let image = read_texture(
-            &self.gpu,
-            render_camera.render_target.as_ref().unwrap().texture(),
-        );
+        let image = self
+            .gpu
+            .read_texture(render_camera.render_target.as_ref().unwrap().texture());
         let count = |range: std::ops::RangeInclusive<u8>| {
             image
                 .pixels()

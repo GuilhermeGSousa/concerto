@@ -2,9 +2,7 @@ use std::{borrow::Cow, fmt};
 
 use concerto_foundation::transform::Transform;
 use concerto_mesh::{JointPose, Skeleton};
-use concerto_reflect::{
-    apply_value, to_value, EncodeError, FromType, Reflect, ReflectedValue, TypeData, TypeRegistry,
-};
+use concerto_reflect::{EncodeError, FromType, Reflect, ReflectedValue, TypeData, TypeRegistry};
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
 
@@ -111,7 +109,7 @@ impl FeatureChannelData {
     pub fn value(&self) -> Result<Cow<'_, ReflectedValue>, EncodeError> {
         match self {
             Self::Stored { value, .. } => Ok(Cow::Borrowed(value)),
-            Self::Live { channel, .. } => to_value(channel.as_ref()).map(Cow::Owned),
+            Self::Live { channel, .. } => ReflectedValue::encode(channel.as_ref()).map(Cow::Owned),
         }
     }
 
@@ -258,6 +256,26 @@ pub enum FeatureShape {
     },
 }
 
+impl FeatureShape {
+    /// The shape, in the simulation bone's space, moved into the space `bone` lives in.
+    pub fn placed(self, bone: &Transform) -> Self {
+        match self {
+            Self::Ring { center, radius } => Self::Ring {
+                center: bone.transform_point(center),
+                radius,
+            },
+            Self::Line { start, end } => Self::Line {
+                start: bone.transform_point(start),
+                end: bone.transform_point(end),
+            },
+            Self::Arrow { start, end } => Self::Arrow {
+                start: bone.transform_point(start),
+                end: bone.transform_point(end),
+            },
+        }
+    }
+}
+
 /// What a channel reads.
 ///
 /// `Trajectory` channels use only [`FrameContext::simulation`] and
@@ -300,45 +318,6 @@ pub struct BodyMotion {
     pub angular_velocity: Vec3,
 }
 
-/// Runs every channel into its span of `out`, in list order.
-///
-/// `out` holds exactly the sum of their [`dims`](FeatureChannel::dims).
-///
-/// # Panics
-///
-/// Panics if `out` is shorter than the sum of the channels' dims.
-pub fn extract_features(channels: &[&dyn FeatureChannel], frame: &FrameContext, out: &mut [f32]) {
-    let mut offset = 0;
-    for channel in channels {
-        let dims = channel.dims();
-        channel.extract(frame, &mut out[offset..offset + dims]);
-        offset += dims;
-    }
-}
-
-/// The shapes of every channel for one raw feature vector, one list per channel in order.
-///
-/// # Panics
-///
-/// Panics if `features` is shorter than the sum of the channels' dims.
-pub fn preview_features(
-    channels: &[Box<dyn FeatureChannel>],
-    frame: &FrameContext,
-    features: &[f32],
-) -> Vec<Vec<FeatureShape>> {
-    let mut offset = 0;
-    channels
-        .iter()
-        .map(|channel| {
-            let dims = channel.dims();
-            let mut shapes = Vec::new();
-            channel.preview(frame, &features[offset..offset + dims], &mut shapes);
-            offset += dims;
-            shapes
-        })
-        .collect()
-}
-
 /// Builds a live [`FeatureChannel`] from a stored value and stores one back.
 #[derive(Clone, Copy)]
 pub struct ReflectFeatureChannel {
@@ -371,7 +350,7 @@ fn from_value<T: FeatureChannel + Default>(
     stored: &ReflectedValue,
 ) -> Result<Box<dyn FeatureChannel>, String> {
     let mut channel = T::default();
-    let warnings = apply_value(&mut channel, stored);
+    let warnings = stored.apply(&mut channel);
     if warnings.is_empty() {
         Ok(Box::new(channel))
     } else {
@@ -384,5 +363,46 @@ fn from_value<T: FeatureChannel + Default>(
 }
 
 fn store(channel: &dyn FeatureChannel) -> Result<ReflectedValue, EncodeError> {
-    to_value(channel)
+    ReflectedValue::encode(channel)
+}
+
+impl FrameContext<'_> {
+    /// Runs every channel into its span of `out`, in list order.
+    ///
+    /// `out` holds exactly the sum of their [`dims`](FeatureChannel::dims).
+    ///
+    /// # Panics
+    ///
+    /// Panics if `out` is shorter than the sum of the channels' dims.
+    pub fn extract_features(&self, channels: &[&dyn FeatureChannel], out: &mut [f32]) {
+        let mut offset = 0;
+        for channel in channels {
+            let dims = channel.dims();
+            channel.extract(self, &mut out[offset..offset + dims]);
+            offset += dims;
+        }
+    }
+
+    /// The shapes of every channel for one raw feature vector, one list per channel in order.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `features` is shorter than the sum of the channels' dims.
+    pub fn preview_features(
+        &self,
+        channels: &[Box<dyn FeatureChannel>],
+        features: &[f32],
+    ) -> Vec<Vec<FeatureShape>> {
+        let mut offset = 0;
+        channels
+            .iter()
+            .map(|channel| {
+                let dims = channel.dims();
+                let mut shapes = Vec::new();
+                channel.preview(self, &features[offset..offset + dims], &mut shapes);
+                offset += dims;
+                shapes
+            })
+            .collect()
+    }
 }

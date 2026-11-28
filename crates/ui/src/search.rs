@@ -208,7 +208,7 @@ pub(crate) fn update_search_fields<'w, 's>(
         };
         let query_changed = state.query.as_deref() != Some(input.value.as_str());
         if query_changed || changed.contains_entity(search.target) {
-            narrow(&mut target, &input.value, &texts, &mut cmd);
+            target.narrow(&input.value, &texts, &mut cmd);
             if let Some(mut tree) = trees.get_entity_mut(search.target) {
                 let filtering = !input.value.is_empty();
                 if tree.filtering != filtering {
@@ -240,7 +240,7 @@ pub(crate) fn update_search_fields<'w, 's>(
         }
         if **focused == Some(field) {
             for action in &fired {
-                if let Some(next) = step(&target, current, action) {
+                if let Some(next) = target.step(current, action) {
                     highlight(Some(next), current, &mut cmd);
                     cmd.entity(next).trigger(UIItemSelected);
                     state.reveal = Some(next);
@@ -278,23 +278,6 @@ pub(crate) fn update_search_fields<'w, 's>(
     }
 }
 
-fn narrow(target: &mut Target, query: &str, texts: &Query<&UISearchText>, cmd: &mut CommandQueue) {
-    let query = query.to_lowercase();
-    for entity in target.every_item() {
-        let Some(text) = texts.get_entity(entity) else {
-            continue;
-        };
-        let hide = !query.is_empty() && !text.0.to_lowercase().contains(&query);
-        let was = target.hidden.contains_entity(entity);
-        if hide && !was {
-            cmd.insert(UIHidden, entity);
-        } else if !hide && was {
-            cmd.remove::<UIHidden>(entity);
-        }
-        target.overrides.insert(entity, hide);
-    }
-}
-
 fn highlight(next: Option<Entity>, current: Option<Entity>, cmd: &mut CommandQueue) {
     if next == current {
         return;
@@ -307,25 +290,6 @@ fn highlight(next: Option<Entity>, current: Option<Entity>, cmd: &mut CommandQue
             }
         }
     }
-}
-
-fn step(target: &Target, current: Option<Entity>, action: &ActionFired) -> Option<Entity> {
-    let forward = if action.is(UIListNext) {
-        true
-    } else if action.is(UIListPrevious) {
-        false
-    } else {
-        return None;
-    };
-    let rows = target.navigable_rows();
-    let position = current.and_then(|current| rows.iter().position(|&row| row == current));
-    let index = match (position, forward) {
-        (None, true) => 0,
-        (None, false) => rows.len().checked_sub(1)?,
-        (Some(position), true) => position + 1,
-        (Some(position), false) => position.checked_sub(1)?,
-    };
-    rows.get(index).copied().filter(|&row| Some(row) != current)
 }
 
 fn scroll_to_row(area: &mut UIScrollArea, index: usize, rows: usize, height: f32, viewport: f32) {
@@ -364,6 +328,44 @@ fn close_panel(field: Entity, panels: &mut Query<&mut UIAnchoredPanel>, parents:
             return;
         }
         next = parents.get_entity(entity).map(ChildOf::parent);
+    }
+}
+
+impl Target<'_, '_, '_> {
+    fn narrow(&mut self, query: &str, texts: &Query<&UISearchText>, cmd: &mut CommandQueue) {
+        let query = query.to_lowercase();
+        for entity in self.every_item() {
+            let Some(text) = texts.get_entity(entity) else {
+                continue;
+            };
+            let hide = !query.is_empty() && !text.0.to_lowercase().contains(&query);
+            let was = self.hidden.contains_entity(entity);
+            if hide && !was {
+                cmd.insert(UIHidden, entity);
+            } else if !hide && was {
+                cmd.remove::<UIHidden>(entity);
+            }
+            self.overrides.insert(entity, hide);
+        }
+    }
+
+    fn step(&self, current: Option<Entity>, action: &ActionFired) -> Option<Entity> {
+        let forward = if action.is(UIListNext) {
+            true
+        } else if action.is(UIListPrevious) {
+            false
+        } else {
+            return None;
+        };
+        let rows = self.navigable_rows();
+        let position = current.and_then(|current| rows.iter().position(|&row| row == current));
+        let index = match (position, forward) {
+            (None, true) => 0,
+            (None, false) => rows.len().checked_sub(1)?,
+            (Some(position), true) => position + 1,
+            (Some(position), false) => position.checked_sub(1)?,
+        };
+        rows.get(index).copied().filter(|&row| Some(row) != current)
     }
 }
 

@@ -24,7 +24,6 @@ pub use agent::{
     NavUnreachable, plan_nav_routes, steer_nav_agents, stop_nav_agents,
 };
 pub use asset::NavMesh;
-pub use bake::bake;
 pub use component::{NavMeshComponent, NavMeshStatus, update_nav_mesh_status};
 pub use graph::{NavEdge, NavGraph, NavGraphPoint, NavPath, NavPointRecord};
 pub use navmesh::{NavMeshBakeError, NavMeshData, NavMeshGeometry, NavMeshSettings, NavPolygon};

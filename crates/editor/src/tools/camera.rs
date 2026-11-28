@@ -230,7 +230,7 @@ const GRID_SURFACE: Color = Color::srgba(0.247, 0.259, 0.322, 0.0);
 
 fn spawn_editor_camera(cmd: &mut CommandQueue, fly: &FlyCamera) {
     let mut transform = Transform::IDENTITY;
-    apply_fly_transform(fly, &mut transform);
+    fly.apply_fly_transform(&mut transform);
     let camera = cmd.spawn((
         Camera {
             aspect: 4.0 / 3.0,
@@ -263,9 +263,11 @@ fn spawn_camera_and_grid(mut cmd: CommandQueue, fly: Res<FlyCamera>) {
     cmd.spawn((editor_grid(), EditorHelper));
 }
 
-fn apply_fly_transform(fly: &FlyCamera, transform: &mut Transform) {
-    transform.translation = fly.position;
-    transform.rotation = fly.rotation();
+impl FlyCamera {
+    fn apply_fly_transform(&self, transform: &mut Transform) {
+        transform.translation = self.position;
+        transform.rotation = self.rotation();
+    }
 }
 
 fn navigate(
@@ -309,7 +311,7 @@ fn navigate(
     }
 
     for (_, mut transform) in cameras.iter_mut() {
-        apply_fly_transform(&fly, &mut transform);
+        fly.apply_fly_transform(&mut transform);
     }
 }
 
@@ -389,7 +391,7 @@ fn frame_requested_bounds(
     let distance = (radius / (fovy * 0.5).tan() * 1.25).clamp(0.02, 100_000.0);
     fly.position = bounds.center() - fly.forward() * distance;
     for (_, mut camera, mut transform) in cameras.iter_mut() {
-        apply_fly_transform(&fly, &mut transform);
+        fly.apply_fly_transform(&mut transform);
         let far = distance + radius * 2.0;
         if camera.zfar < far {
             camera.zfar = far;
@@ -445,7 +447,7 @@ fn zoom(
     }
     if moved {
         for (_, mut transform) in cameras.iter_mut() {
-            apply_fly_transform(&fly, &mut transform);
+            fly.apply_fly_transform(&mut transform);
         }
     }
 }

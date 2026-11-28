@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     asset::{PartStrength, Side},
-    ik::{Chain, bent_spine, reach_hinged},
+    ik::{Chain, bent_spine},
     node::balance::{ClaimsOut, PartCommand},
     resolve::Limbs,
     view::BodyView,
@@ -341,12 +341,12 @@ impl FallController<'_> {
             let goal = root
                 + (landing + horizontal(outward) * fall.spread - root)
                     .clamp_length_max(length * fall.reach.clamp(0.1, 1.0));
-            let aimed = reach_hinged(
-                &Chain {
-                    upper: arm.upper,
-                    lower: arm.lower,
-                    end: arm.hand,
-                },
+            let aimed = Chain {
+                upper: arm.upper,
+                lower: arm.lower,
+                end: arm.hand,
+            }
+            .reach_hinged(
                 settings,
                 &rest,
                 &carried,

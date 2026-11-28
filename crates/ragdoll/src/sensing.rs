@@ -9,7 +9,7 @@ use concerto_physics::{
 };
 use glam::Vec3;
 
-use crate::{character::RagdollBody, dying::Settled, overlap::rounded_at};
+use crate::{character::RagdollBody, dying::Settled, overlap::Rounded};
 
 const GRAVITY: f32 = 9.81;
 const GROUND_NORMAL: f32 = 0.5;
@@ -337,7 +337,7 @@ pub fn sense_bodies(
             if !foot {
                 continue;
             }
-            let shape = rounded_at(&settings[part], pose[part]);
+            let shape = Rounded::at(&settings[part], pose[part]);
             let lowest = shape.start.y.min(shape.end.y) - shape.radius;
             let ground = match grounded {
                 Some(contact) => Some(contact.point.y),

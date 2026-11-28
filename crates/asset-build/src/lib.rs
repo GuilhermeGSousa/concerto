@@ -3,7 +3,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use anyhow::Context;
-use concerto_asset_format::{scan_content, write_registry, ContentConfig};
+use concerto_asset_format::{ContentConfig, ScannedEntry};
 
 const REGISTRY_FILE: &str = "concerto_registry.toml";
 
@@ -69,9 +69,9 @@ pub fn track_assets(directory: impl AsRef<Path>) -> io::Result<()> {
 /// cannot be read or two assets share an id, and when the file cannot be written.
 pub fn write_registry_into(manifest: &Path, out_dir: &Path) -> anyhow::Result<()> {
     let config = ContentConfig::load_or_default(manifest)?;
-    let entries = scan_content(manifest, &manifest.join(&config.root), &config.extension)?;
+    let entries = ScannedEntry::scan(manifest, &manifest.join(&config.root), &config.extension)?;
     let path = out_dir.join(REGISTRY_FILE);
-    std::fs::write(&path, write_registry(&entries))
+    std::fs::write(&path, ScannedEntry::write_registry(&entries))
         .with_context(|| format!("failed to write '{}'", path.display()))
 }
 

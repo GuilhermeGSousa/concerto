@@ -10,15 +10,14 @@ use concerto_foundation::{
     hash::Fnv1a,
 };
 use concerto_mesh::Mesh;
-use concerto_reflect::{Reflect, ReflectDefault, to_value};
+use concerto_reflect::{Reflect, ReflectDefault, ReflectedValue};
 use concerto_scene::scene::Scene;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    bake::bake,
     navmesh::{NavMeshData, NavMeshGeometry, NavMeshSettings},
     query::NavMeshQuery,
-    scene_colliders::{add_scene, collider_meshes},
+    scene_colliders::collider_meshes,
 };
 
 #[derive(Clone, Debug)]
@@ -156,7 +155,10 @@ impl DerivedData for NavMesh {
 
     fn derived_key(&self, inputs: &DerivedInputs) -> anyhow::Result<u64> {
         let mut hash = Fnv1a::new();
-        hash.value(&to_value(&self.settings).context("failed to encode the navmesh settings")?);
+        hash.value(
+            &ReflectedValue::encode(&self.settings)
+                .context("failed to encode the navmesh settings")?,
+        );
         let scenes = self.scene_ids()?;
         let meshes = self.collider_meshes(inputs)?;
         hash.count(scenes.len());
@@ -182,10 +184,10 @@ impl DerivedData for NavMesh {
         }
         let mut geometry = NavMeshGeometry::new();
         for (index, id) in scenes.iter().enumerate() {
-            add_scene(&mut geometry, &inputs.decode::<Scene>(*id)?, &meshes)?;
+            geometry.add_scene(&inputs.decode::<Scene>(*id)?, &meshes)?;
             progress(index + 1, scenes.len() + 1);
         }
-        let data = bake(&geometry, &self.settings)?;
+        let data = geometry.bake(&self.settings)?;
         progress(scenes.len() + 1, scenes.len() + 1);
         bincode::serialize(&data).context("failed to encode a baked navmesh")
     }

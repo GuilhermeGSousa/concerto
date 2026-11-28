@@ -11,7 +11,7 @@ use crate::{
     evaluation::AnimationGraphContext,
     node::{
         AnimationNode, AnimationPlayMode, ClipClock, ClockSpan, EditorAnimationNode, InputSlots,
-        ReflectAnimationNode, effective_play_rate, effective_weight,
+        ReflectAnimationNode,
     },
     param::Param,
     pose::{AnimationFrame, EvaluatedFrame, FiredEvent, FramePool, apply_additive, twist_about},
@@ -108,18 +108,20 @@ impl AdditiveNodeState {
     }
 }
 
-fn delta_span(clip: &AnimationClip) -> Option<ClockSpan> {
-    let Additive::LocalSpace(base) = clip.additive() else {
-        return None;
-    };
-    let length = clip.additive_duration();
-    if length <= 0.0 {
-        return None;
+impl AnimationClip {
+    fn delta_span(&self) -> Option<ClockSpan> {
+        let Additive::LocalSpace(base) = self.additive() else {
+            return None;
+        };
+        let length = self.additive_duration();
+        if length <= 0.0 {
+            return None;
+        }
+        Some(ClockSpan {
+            length,
+            offset: base.range.map_or(0.0, |range| range.start),
+        })
     }
-    Some(ClockSpan {
-        length,
-        offset: base.range.map_or(0.0, |range| range.start),
-    })
 }
 
 impl AnimationNode for AdditiveNode {
@@ -150,10 +152,12 @@ impl AnimationNode for AdditiveNode {
         let Some(clip) = clips.get(&self.clip) else {
             return;
         };
-        let Some(span) = delta_span(clip) else {
+        let Some(span) = clip.delta_span() else {
             return;
         };
-        let rate = effective_play_rate(self.play_rate, self.play_rate_param, context.blackboard());
+        let rate = context
+            .blackboard()
+            .effective_play_rate(self.play_rate, self.play_rate_param);
         state
             .clock
             .advance(clip, span, delta_time, rate, &self.play_mode);
@@ -195,7 +199,9 @@ impl AnimationNode for AdditiveNode {
         if clip.additive_duration() <= 0.0 {
             return;
         }
-        let weight = effective_weight(self.weight, self.weight_param, context.blackboard());
+        let weight = context
+            .blackboard()
+            .effective_weight(self.weight, self.weight_param);
         if weight <= 0.0 {
             return;
         }

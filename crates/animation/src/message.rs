@@ -8,7 +8,7 @@ use concerto_ecs::{
 use concerto_foundation::assets::handle::AssetHandle;
 use concerto_reflect::{
     PropertyVisitorMut, Reflect, ReflectDefault, ReflectedValue, TypeData, TypeRegistration,
-    TypeRegistry, ValueWarning, apply_value, json_to_value,
+    TypeRegistry, ValueWarning,
 };
 
 use crate::{clip::AnimationClip, player::AnimationPlayer};
@@ -80,7 +80,7 @@ pub fn decode_animation_message(
             "{type_path} has no Default, so a message cannot be built from JSON"
         ));
     }
-    json_to_value(json, TypeRegistration::type_id(&registration), registry)
+    ReflectedValue::from_json(json, TypeRegistration::type_id(&registration), registry)
 }
 
 /// Builds the message of the registered type `type_path` from `stored`, as `decode_animation_message` read it; none when the type is not a registered message or the value does not fit.
@@ -94,9 +94,7 @@ pub fn build_animation_message(
         .filter(|registration| registration.type_path() == type_path)
         .filter(|registration| registration.data::<ReflectAnimationMessage>().is_some())?;
     let mut message = registration.data::<ReflectDefault>()?.default();
-    apply_value(message.as_mut(), stored)
-        .is_empty()
-        .then_some(message)
+    stored.apply(message.as_mut()).is_empty().then_some(message)
 }
 
 /// Queues `message` on the `AnimationPlayer` of `character`, which does nothing without one; the message type must be registered with `register_animation_message`.

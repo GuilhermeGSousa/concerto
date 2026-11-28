@@ -21,8 +21,8 @@ use log::warn;
 
 use crate::link_path::LinkPath;
 use crate::node_id::NodeId;
-use crate::scene::{LinkChange, Scene, SceneNode};
-use crate::spawner::{spawn_scene_in_world, RemovedComponent, SpawnFilter};
+use crate::scene::{LinkChange, Scene, SceneLinkData, SceneNode};
+use crate::spawner::{RemovedComponent, SpawnFilter};
 
 /// A placed scene.
 ///
@@ -52,6 +52,13 @@ struct Handoff {
 }
 
 impl SceneLink {
+    pub(crate) fn stored(data: &SceneLinkData, handle: AssetHandle<Scene>) -> Self {
+        data.changes
+            .iter()
+            .cloned()
+            .fold(Self::new(handle), Self::with_change)
+    }
+
     /// A link to `scene` with no changes.
     pub fn new(scene: AssetHandle<Scene>) -> Self {
         Self {
@@ -172,51 +179,64 @@ pub struct OwnedPath {
     pub path: LinkPath,
 }
 
-/// The outermost link `entity` was spawned by, and the path to `entity` from it.
-///
-/// It follows nested links outwards, joining the path on the way.
-pub fn owning_link(world: &World, entity: Entity) -> Option<OwnedPath> {
-    owning_link_by(entity, |entity| {
-        world.get_component_for_entity::<LinkedNode>(entity)
-    })
+impl LinkPath {
+    /// The name of the node this path reaches from a link to `scene`, read from the scenes in `scenes`.
+    pub fn node_name<'a>(&self, scenes: &'a AssetStore<Scene>, scene: AssetId) -> Option<&'a str> {
+        let mut scene = scenes.get(&AssetHandle::weak(scene))?;
+        let (last, through) = self.ids().split_last()?;
+        for id in through {
+            let node = scene.nodes.iter().find(|node| node.id == *id)?;
+            scene = scenes.get(&AssetHandle::weak(node.link.as_ref()?.scene))?;
+        }
+        scene
+            .nodes
+            .iter()
+            .find(|node| node.id == *last)
+            .map(|node| node.name.as_str())
+    }
+
+    /// The entity `link` spawned for the node at this path, following its inner links.
+    pub fn find_linked(&self, world: &World, link: Entity) -> Option<Entity> {
+        let (first, rest) = self.ids().split_first()?;
+        let entity = *world
+            .get_component_for_entity::<SceneLink>(link)?
+            .spawned
+            .get(first)?;
+        match rest.is_empty() {
+            true => Some(entity),
+            false => LinkPath::new(rest.to_vec()).find_linked(world, entity),
+        }
+    }
 }
 
-/// [`owning_link`], reading each entity's [`LinkedNode`] through `node`.
-pub fn owning_link_by<'a>(
-    entity: Entity,
-    node: impl Fn(Entity) -> Option<&'a LinkedNode>,
-) -> Option<OwnedPath> {
-    let first = node(entity)?;
-    let mut owned = OwnedPath {
-        link: first.link,
-        path: LinkPath::node(first.node),
-    };
-    while let Some(outer) = node(owned.link) {
-        owned = OwnedPath {
-            link: outer.link,
-            path: LinkPath::node(outer.node).join(&owned.path),
+impl OwnedPath {
+    /// The outermost link `entity` was spawned by, and the path to `entity` from it.
+    ///
+    /// It follows nested links outwards, joining the path on the way.
+    pub fn of(world: &World, entity: Entity) -> Option<Self> {
+        Self::of_by(entity, |entity| {
+            world.get_component_for_entity::<LinkedNode>(entity)
+        })
+    }
+
+    /// [`OwnedPath::of`], reading each entity's [`LinkedNode`] through `node`.
+    pub fn of_by<'a>(
+        entity: Entity,
+        node: impl Fn(Entity) -> Option<&'a LinkedNode>,
+    ) -> Option<Self> {
+        let first = node(entity)?;
+        let mut owned = Self {
+            link: first.link,
+            path: LinkPath::node(first.node),
         };
+        while let Some(outer) = node(owned.link) {
+            owned = Self {
+                link: outer.link,
+                path: LinkPath::node(outer.node).join(&owned.path),
+            };
+        }
+        Some(owned)
     }
-    Some(owned)
-}
-
-/// The name of the node `path` reaches from a link to `scene`, read from the scenes in `scenes`.
-pub fn linked_node_name<'a>(
-    scenes: &'a AssetStore<Scene>,
-    scene: AssetId,
-    path: &LinkPath,
-) -> Option<&'a str> {
-    let mut scene = scenes.get(&AssetHandle::weak(scene))?;
-    let (last, through) = path.ids().split_last()?;
-    for id in through {
-        let node = scene.nodes.iter().find(|node| node.id == *id)?;
-        scene = scenes.get(&AssetHandle::weak(node.link.as_ref()?.scene))?;
-    }
-    scene
-        .nodes
-        .iter()
-        .find(|node| node.id == *last)
-        .map(|node| node.name.as_str())
 }
 
 pub(crate) struct SpawnLinks {
@@ -397,14 +417,13 @@ fn spawn_link(world: &mut World, link: Entity) -> Result<(), SpawnLinkError> {
                     link_name(world, link),
                     change.path()
                 );
-                outcomes[at] = unapplied(change.path(), &scene_name);
+                outcomes[at] = ChangeOutcome::unapplied(change.path(), &scene_name);
             }
         }
     }
 
-    let spawned = spawn_scene_in_world(
+    let spawned = scene.spawn_in_world(
         world,
-        &scene,
         link,
         &SpawnFilter::new(removed_nodes, removed_components),
     );
@@ -465,12 +484,12 @@ fn spawn_link(world: &mut World, link: Entity) -> Result<(), SpawnLinkError> {
             outcome: crossing.change,
             inner,
             at,
-            node_name: node_label(node),
+            node_name: node.label(),
             change_path: changes[crossing.change].path().clone(),
         }));
         let inherited = handed
             .iter()
-            .map(|crossing| with_path(&changes[crossing.change], crossing.path.clone()))
+            .map(|crossing| changes[crossing.change].with_path(crossing.path.clone()))
             .collect();
         let mut inner_chain = chain.clone();
         inner_chain.push(id);
@@ -634,7 +653,7 @@ fn live_value(
         .read()
         .get_by_name(type_name)?
         .data::<ReflectSceneComponent>()?;
-    let target = find_linked(world, link, path)?;
+    let target = path.find_linked(world, link)?;
     let mut capture = SceneCapture::default();
     (scene.capture)(world, target, &mut capture)?.ok()
 }
@@ -687,7 +706,7 @@ fn settle_handoffs(world: &mut World, link: Entity) {
 }
 
 fn handed_outcome(world: &World, handoff: &Handoff, scene_name: &str) -> ChangeOutcome {
-    let lost = || unapplied(&handoff.change_path, scene_name);
+    let lost = || ChangeOutcome::unapplied(&handoff.change_path, scene_name);
     let Some(inner) = world.get_component_for_entity::<SceneLink>(handoff.inner) else {
         return lost();
     };
@@ -703,28 +722,34 @@ fn handed_outcome(world: &World, handoff: &Handoff, scene_name: &str) -> ChangeO
     }
 }
 
-fn unapplied(path: &LinkPath, scene_name: &str) -> ChangeOutcome {
-    ChangeOutcome::Unapplied(format!("no node {path} in {scene_name}"))
-}
-
-fn node_label(node: &SceneNode) -> String {
-    match node.name.is_empty() {
-        true => node.id.to_string(),
-        false => node.name.clone(),
+impl ChangeOutcome {
+    fn unapplied(path: &LinkPath, scene_name: &str) -> Self {
+        Self::Unapplied(format!("no node {path} in {scene_name}"))
     }
 }
 
-fn with_path(change: &LinkChange, path: LinkPath) -> LinkChange {
-    match change {
-        LinkChange::AddComponent { component, .. } => LinkChange::AddComponent {
-            path,
-            component: component.clone(),
-        },
-        LinkChange::RemoveComponent { type_name, .. } => LinkChange::RemoveComponent {
-            path,
-            type_name: type_name.clone(),
-        },
-        LinkChange::RemoveNode { .. } => LinkChange::RemoveNode { path },
+impl SceneNode {
+    fn label(&self) -> String {
+        match self.name.is_empty() {
+            true => self.id.to_string(),
+            false => self.name.clone(),
+        }
+    }
+}
+
+impl LinkChange {
+    fn with_path(&self, path: LinkPath) -> Self {
+        match self {
+            LinkChange::AddComponent { component, .. } => LinkChange::AddComponent {
+                path,
+                component: component.clone(),
+            },
+            LinkChange::RemoveComponent { type_name, .. } => LinkChange::RemoveComponent {
+                path,
+                type_name: type_name.clone(),
+            },
+            LinkChange::RemoveNode { .. } => LinkChange::RemoveNode { path },
+        }
     }
 }
 
@@ -809,7 +834,7 @@ fn place_own_entities(world: &mut World, link: Entity, scene_name: &str) {
         let Some(path) = path else {
             continue;
         };
-        match find_linked(world, link, &path) {
+        match path.find_linked(world, link) {
             Some(parent) => {
                 world.entity_mut(parent).add_child(entity);
             }
@@ -820,19 +845,6 @@ fn place_own_entities(world: &mut World, link: Entity, scene_name: &str) {
                 link_name(world, entity)
             ),
         }
-    }
-}
-
-/// The entity `link` spawned for the node at `path`, following its inner links.
-pub fn find_linked(world: &World, link: Entity, path: &LinkPath) -> Option<Entity> {
-    let (first, rest) = path.ids().split_first()?;
-    let entity = *world
-        .get_component_for_entity::<SceneLink>(link)?
-        .spawned
-        .get(first)?;
-    match rest.is_empty() {
-        true => Some(entity),
-        false => find_linked(world, entity, &LinkPath::new(rest.to_vec())),
     }
 }
 

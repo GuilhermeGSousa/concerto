@@ -9,35 +9,36 @@ use concerto_ecs::{
 };
 use concerto_foundation::assets::{handle::ReflectAssetHandle, AssetId};
 use concerto_reflect::{
-    apply_value_with, decode_leaf, LeafError, LeafHook, Reflect, ReflectDefault, ReflectedValue,
-    TypeRegistry,
+    decode_leaf, LeafError, LeafHook, Reflect, ReflectDefault, ReflectedValue, TypeRegistry,
 };
 use log::warn;
 
-use crate::link::{find_linked, owning_link, shown_name, LinkParent, LinkedNode, SceneLink};
+use crate::link::{shown_name, LinkParent, LinkedNode, OwnedPath, SceneLink};
 use crate::link_path::LinkPath;
 use crate::node_id::{derive_missing_ids, NodeId, SceneNodeId};
 use crate::scene::{LinkChange, Scene, SceneLinkData, SceneNode, SerializedComponent};
 
-/// Reads every descendant of `root` back into a [`Scene`], listing every asset its handles name.
-///
-/// It is the inverse of [`spawn_scene`](crate::spawner::spawn_scene).
-///
-/// # Errors
-///
-/// Fails when a component cannot be written to a scene, as when it references
-/// a node inside a link or a component a link adds holds an entity reference.
-pub fn capture_scene(world: &World, root: Entity) -> anyhow::Result<Scene> {
-    capture(world, child_entities(world, root))
-}
+impl Scene {
+    /// Reads every descendant of `root` back into a [`Scene`], listing every asset its handles name.
+    ///
+    /// It is the inverse of [`Scene::spawn`].
+    ///
+    /// # Errors
+    ///
+    /// Fails when a component cannot be written to a scene, as when it references
+    /// a node inside a link or a component a link adds holds an entity reference.
+    pub fn capture(world: &World, root: Entity) -> anyhow::Result<Self> {
+        capture(world, child_entities(world, root))
+    }
 
-/// Like [`capture_scene`], but `entity` itself is node 0.
-///
-/// # Errors
-///
-/// Fails as [`capture_scene`] does.
-pub fn capture_subtree(world: &World, entity: Entity) -> anyhow::Result<Scene> {
-    capture(world, vec![entity])
+    /// Like [`Scene::capture`], but `entity` itself is node 0.
+    ///
+    /// # Errors
+    ///
+    /// Fails as [`Scene::capture`] does.
+    pub fn capture_subtree(world: &World, entity: Entity) -> anyhow::Result<Self> {
+        capture(world, vec![entity])
+    }
 }
 
 struct Collected {
@@ -64,7 +65,7 @@ impl Collector {
             .get_component_for_entity::<LinkedNode>(entity)
             .is_some()
         {
-            let below = owning_link(world, entity)
+            let below = OwnedPath::of(world, entity)
                 .and_then(|owned| {
                     Some(Place {
                         parent: Some(*self.indices.get(&owned.link)?),
@@ -182,7 +183,7 @@ fn capture_node(
             Ok(value) => value,
             Err(error) => match capture
                 .outside()
-                .filter(|&entity| owning_link(world, entity).is_some())
+                .filter(|&entity| OwnedPath::of(world, entity).is_some())
             {
                 Some(linked) => bail!(
                     "component '{}' on '{name}' references the linked node {}; references into a link are not supported yet",
@@ -203,7 +204,7 @@ fn capture_node(
     if let Some(path) = collected.link_parent {
         components.push(SerializedComponent {
             type_name: std::any::type_name::<LinkParent>().to_owned(),
-            value: concerto_reflect::to_value(&LinkParent { path })?,
+            value: concerto_reflect::ReflectedValue::encode(&LinkParent { path })?,
         });
     }
     components.sort_by(|a, b| a.type_name.cmp(&b.type_name));
@@ -256,16 +257,16 @@ fn added_value(
     component: &SerializedComponent,
     capture: &mut SceneCapture,
 ) -> anyhow::Result<ReflectedValue> {
-    let target = find_linked(world, link, path);
+    let target = path.find_linked(world, link);
     let shown = target.map_or_else(
         || path.to_string(),
         |target| shown_name(target, world.get_component_for_entity::<Name>(target)),
     );
     let Some(registry) = world.get_resource::<AppTypeRegistry>() else {
-        return Ok(unlisted(component, &shown));
+        return Ok(component.unlisted(&shown));
     };
     let Some(registration) = registry.read().get_by_name(&component.type_name) else {
-        return Ok(unlisted(component, &shown));
+        return Ok(component.unlisted(&shown));
     };
     let mut added = SceneCapture::default();
     let live = registration
@@ -287,16 +288,14 @@ fn added_value(
                 .data::<ReflectDefault>()
                 .map(ReflectDefault::default)
             else {
-                return Ok(unlisted(component, &shown));
+                return Ok(component.unlisted(&shown));
             };
-            apply_value_with(
+            component.value.apply_with(
                 &mut *value,
-                &component.value,
                 &mut StoredAssets {
                     registry: &registry.read(),
                     capture: &mut added,
-                },
-            );
+                });
             component.value.clone()
         }
     };
@@ -306,12 +305,14 @@ fn added_value(
     Ok(value)
 }
 
-fn unlisted(component: &SerializedComponent, node: &str) -> ReflectedValue {
-    warn!(
-        "{} added to {node} cannot be decoded, so the assets it names are not listed",
-        component.type_name
-    );
-    component.value.clone()
+impl SerializedComponent {
+    fn unlisted(&self, node: &str) -> ReflectedValue {
+        warn!(
+            "{} added to {node} cannot be decoded, so the assets it names are not listed",
+            self.type_name
+        );
+        self.value.clone()
+    }
 }
 
 struct StoredAssets<'a> {

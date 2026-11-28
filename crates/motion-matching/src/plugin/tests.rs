@@ -264,8 +264,9 @@ fn derive_then_apply_gives_what_the_bake_gives() {
     let mut derived = database.clone();
     derived.apply_derived(&blob).unwrap();
 
-    let baked =
-        crate::bake::bake(&database, &skeleton(), &[&walk_forward(), &turn_left()]).unwrap();
+    let baked = database
+        .bake(&skeleton(), &[&walk_forward(), &turn_left()])
+        .unwrap();
     assert_eq!(derived.baked, Some(baked));
 }
 
@@ -277,7 +278,9 @@ fn a_weight_only_change_reuses_the_cached_blob_and_the_search_sees_the_new_weigh
     let [blob] = project.blobs().try_into().unwrap();
     let mut other = first.clone();
     other.speed = 2.0;
-    let marked = crate::bake::bake(&other, &skeleton(), &[&walk_forward(), &turn_left()]).unwrap();
+    let marked = other
+        .bake(&skeleton(), &[&walk_forward(), &turn_left()])
+        .unwrap();
     std::fs::write(&blob, bincode::serialize(&marked).unwrap()).unwrap();
 
     project.save(4.0);

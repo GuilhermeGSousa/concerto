@@ -5,14 +5,13 @@ use concerto_app::{
 };
 use concerto_color::Color;
 use concerto_foundation::{assets::asset_server::AssetServer, transform::Transform};
-use concerto_mesh::{primitives::cuboid, MeshComponent};
+use concerto_mesh::{Mesh, MeshComponent};
 use concerto_render::{
     assets::material::StandardMaterial,
     components::{camera::Camera, camera_environment::UnlitView},
     draw_target::{DrawTarget, SharedTexture},
     gpu::Gpu,
     plugin::RenderPlugin,
-    readback::read_texture,
     tonemapping::Tonemapping,
     wgpu, MaterialComponent, MaterialPlugin,
 };
@@ -51,7 +50,7 @@ fn an_unlit_view_draws_base_colour_without_lights_and_a_lit_one_does_not() {
     let (mesh, material) = {
         let server = app.get_resource::<AssetServer>().unwrap();
         (
-            server.add(cuboid(Vec3::new(10.0, 10.0, 1.0))),
+            server.add(Mesh::cuboid(Vec3::new(10.0, 10.0, 1.0))),
             server.add(
                 StandardMaterial::default().with_base_color_factor(Color::rgba(1.0, 0.0, 0.0, 1.0)),
             ),
@@ -68,7 +67,7 @@ fn an_unlit_view_draws_base_colour_without_lights_and_a_lit_one_does_not() {
         for _ in 0..100 {
             app.update();
             if let Some(published) = shared.get() {
-                let pixel = read_texture(&gpu, published.texture()).get_pixel(16, 16).0;
+                let pixel = gpu.read_texture(published.texture()).get_pixel(16, 16).0;
                 if pixel != [0, 0, 255, 255] {
                     return pixel;
                 }

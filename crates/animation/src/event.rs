@@ -1,9 +1,7 @@
 use concerto_ecs::{CommandQueue, Entity, signal::EntitySignal, signal::Signal};
 use concerto_foundation::assets::handle::LiveLeaves;
 use concerto_name::Name;
-use concerto_reflect::{
-    FromType, Reflect, ReflectDefault, ReflectedValue, TypeData, ValueWarning, apply_value_with,
-};
+use concerto_reflect::{FromType, Reflect, ReflectDefault, ReflectedValue, TypeData, ValueWarning};
 
 use crate::message::AnimationMessage;
 
@@ -86,7 +84,7 @@ impl<S: ClipEvent> FromType<S> for ReflectClipEvent {
 
 fn from_value<S: ClipEvent>(stored: &ReflectedValue, leaves: &mut LiveLeaves) -> BuiltClipEvent {
     let mut event = S::default();
-    let warnings = apply_value_with(&mut event, stored, leaves);
+    let warnings = stored.apply_with(&mut event, leaves);
     BuiltClipEvent {
         value: Box::new(event),
         warnings,

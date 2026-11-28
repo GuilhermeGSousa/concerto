@@ -8,10 +8,10 @@ use uuid::Uuid;
 use crate::{
     blackboard::AnimationBlackboard,
     evaluation::AnimationGraphContext,
-    ik::{Hinge, TwoBoneChain, solve_two_bone},
+    ik::{Hinge, TwoBoneChain},
     node::{
-        AnimationNode, EditorAnimationNode, InputSlots, ReflectAnimationNode, effective_weight,
-        model_space::{ModelJoint, WorldToModel, bone_under_first, model_joint, parent},
+        AnimationNode, EditorAnimationNode, InputSlots, ReflectAnimationNode,
+        model_space::{ModelJoint, WorldToModel, bone_under_first, parent},
         pass_through,
     },
     param::Param,
@@ -148,11 +148,11 @@ impl TwoBoneIkNode {
             root,
             mid,
             tip,
-            target: resolve_goal(skeleton, &self.target)?,
+            target: self.target.resolve(skeleton)?,
             pole: self
                 .pole
                 .as_ref()
-                .map(|pole| resolve_goal(skeleton, pole))
+                .map(|pole| pole.resolve(skeleton))
                 .transpose()?,
             hinge: self.hinge.local(skeleton, root, mid, tip),
         })
@@ -165,7 +165,7 @@ impl TwoBoneIkNode {
         joints: &[JointPose],
     ) -> Option<[(usize, Quat); 3]> {
         let skeleton = chain.skeleton;
-        let model = |bone| model_joint(skeleton, joints, bone);
+        let model = |bone| ModelJoint::of(skeleton, joints, bone);
         let world_to_model = WorldToModel::new(context.model_to_world().unwrap_or_default());
         let blackboard = context.blackboard();
 
@@ -185,13 +185,13 @@ impl TwoBoneIkNode {
             None => Quat::IDENTITY,
         };
 
-        let solution = solve_two_bone(
-            &TwoBoneChain {
-                root: root.transform.translation.into(),
-                mid: mid.transform.translation.into(),
-                tip: tip.transform.translation.into(),
-                hinge: chain.hinge.map(|axis| mid.rotation * axis),
-            },
+        let solution = (TwoBoneChain {
+            root: root.transform.translation.into(),
+            mid: mid.transform.translation.into(),
+            tip: tip.transform.translation.into(),
+            hinge: chain.hinge.map(|axis| mid.rotation * axis),
+        })
+        .solve(
             target.position,
             pole.map(|pole| pole.position),
             self.softness,
@@ -261,19 +261,21 @@ impl ResolvedGoal {
     }
 }
 
-fn resolve_goal(skeleton: &Skeleton, goal: &IkGoal) -> Result<ResolvedGoal, String> {
-    Ok(match goal {
-        IkGoal::Bone {
-            bone,
-            translation,
-            rotation,
-        } => ResolvedGoal::Bone {
-            bone: bone_under_first(skeleton, *bone)?,
-            translation: *translation,
-            rotation: *rotation,
-        },
-        IkGoal::Param { param } => ResolvedGoal::Param(*param),
-    })
+impl IkGoal {
+    fn resolve(&self, skeleton: &Skeleton) -> Result<ResolvedGoal, String> {
+        Ok(match self {
+            IkGoal::Bone {
+                bone,
+                translation,
+                rotation,
+            } => ResolvedGoal::Bone {
+                bone: bone_under_first(skeleton, *bone)?,
+                translation: *translation,
+                rotation: *rotation,
+            },
+            IkGoal::Param { param } => ResolvedGoal::Param(*param),
+        })
+    }
 }
 
 impl AnimationNode for TwoBoneIkNode {
@@ -300,7 +302,9 @@ impl AnimationNode for TwoBoneIkNode {
         output: &mut AnimationFrame,
     ) {
         pass_through(evaluated_inputs, output);
-        let weight = effective_weight(self.weight, self.weight_param, context.blackboard());
+        let weight = context
+            .blackboard()
+            .effective_weight(self.weight, self.weight_param);
         if weight <= 0.0 {
             return;
         }

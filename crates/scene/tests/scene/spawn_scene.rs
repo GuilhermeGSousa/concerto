@@ -7,10 +7,10 @@ use concerto_foundation::assets::handle::AssetHandle;
 use concerto_foundation::assets::AssetId;
 use concerto_foundation::transform::Transform;
 use concerto_mesh::mesh::{Mesh, MeshComponent};
-use concerto_reflect::to_value;
+use concerto_reflect::ReflectedValue;
 use concerto_scene::node_id::NodeId;
 use concerto_scene::scene::{Scene, SceneNode, SerializedComponent};
-use concerto_scene::spawner::{spawn_scene_in_world, SpawnFilter};
+use concerto_scene::spawner::SpawnFilter;
 use glam::Vec3;
 
 fn node(name: &str, children: Vec<usize>, components: Vec<SerializedComponent>) -> SceneNode {
@@ -28,14 +28,14 @@ fn transform_component(x: f32) -> SerializedComponent {
     transform.translation = Vec3::new(x, 0.0, 0.0);
     SerializedComponent {
         type_name: "Transform".to_string(),
-        value: to_value(&transform).unwrap(),
+        value: ReflectedValue::encode(&transform).unwrap(),
     }
 }
 
 fn mesh_component(id: AssetId) -> SerializedComponent {
     SerializedComponent {
         type_name: MeshComponent::name().to_string(),
-        value: to_value(&MeshComponent {
+        value: ReflectedValue::encode(&MeshComponent {
             handle: AssetHandle::weak(id),
         })
         .unwrap(),
@@ -73,7 +73,7 @@ fn spawning_a_scene_applies_its_nodes_and_upgrades_weak_handles() {
         referenced_assets: vec![mesh_id],
     };
     let parent = world.spawn(Transform::IDENTITY);
-    spawn_scene_in_world(&mut world, &scene, parent, &SpawnFilter::default());
+    scene.spawn_in_world(&mut world, parent, &SpawnFilter::default());
 
     let child_count = world
         .get_component_for_entity::<Children>(parent)

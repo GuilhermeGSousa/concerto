@@ -5,7 +5,7 @@ use std::{
 
 use concerto_app::App;
 use concerto_foundation::assets::{
-    content::{decode_content_asset, read_content_asset, save_content_asset_into},
+    content::{ContentAssetHeader, decode_content_asset, save_content_asset_into},
     handle::AssetHandle,
     registry::AssetRegistry,
 };
@@ -138,7 +138,7 @@ async fn generate_ragdolls(client: Client) -> Generated {
 
 pub(crate) fn saved_ragdoll(root: &Path, address: &str) -> Ragdoll {
     let bytes = std::fs::read(root.join(address)).unwrap();
-    read_content_asset(&bytes).unwrap();
+    ContentAssetHeader::read(&bytes).unwrap();
     decode_content_asset::<Ragdoll>(&bytes).unwrap().1
 }
 

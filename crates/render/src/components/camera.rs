@@ -160,18 +160,18 @@ impl PixelRect {
         );
         pass.set_scissor_rect(self.x, self.y, self.width, self.height);
     }
-}
 
-/// The pixels a camera with `viewport` covers on a target of `target` size; the whole target for `None`.
-pub fn viewport_rect(viewport: Option<&Viewport>, target: UVec2) -> PixelRect {
-    match viewport {
-        Some(viewport) => viewport.to_pixels(target),
-        None => PixelRect {
-            x: 0,
-            y: 0,
-            width: target.x,
-            height: target.y,
-        },
+    /// The pixels a camera with `viewport` covers on a target of `target` size; the whole target for `None`.
+    pub fn covering(viewport: Option<&Viewport>, target: UVec2) -> Self {
+        match viewport {
+            Some(viewport) => viewport.to_pixels(target),
+            None => Self {
+                x: 0,
+                y: 0,
+                width: target.x,
+                height: target.y,
+            },
+        }
     }
 }
 
@@ -219,7 +219,7 @@ impl Camera {
 
     /// The pixels this camera covers on a target of `target` size.
     pub fn viewport_rect(&self, target: UVec2) -> PixelRect {
-        viewport_rect(self.viewport.as_ref(), target)
+        PixelRect::covering(self.viewport.as_ref(), target)
     }
 
     /// Returns the projection matrix from view space to clip space, with depth from 0 at
@@ -405,7 +405,7 @@ impl RenderCamera {
 
     /// The pixels this camera covers on a target of `target` size.
     pub fn viewport_rect(&self, target: UVec2) -> PixelRect {
-        viewport_rect(self.viewport.as_ref(), target)
+        PixelRect::covering(self.viewport.as_ref(), target)
     }
 
     pub(crate) fn rebind(
@@ -436,7 +436,7 @@ impl RenderCamera {
         height: u32,
     ) {
         if self.render_target.is_some() {
-            self.render_target = Some(create_rtt(device, format, width, height));
+            self.render_target = Some(RenderTexture::camera_target(device, format, width, height));
         }
     }
 }
@@ -588,7 +588,7 @@ pub(crate) fn extract_cameras(
         );
 
         let render_target: Option<RenderTexture> = target_size.map(|size| {
-            create_rtt(
+            RenderTexture::camera_target(
                 &device,
                 context.surface_config.format,
                 size.width.max(1),
@@ -670,51 +670,6 @@ pub(crate) fn rebind_sky_radiance(
     }
 }
 
-/// Creates a single [`RenderTexture`] for use as a camera render target.
-///
-/// The texture is owned exclusively by [`RenderCamera::render_target`].
-/// Viewports that want to display this camera's output look up the matching
-/// camera by handle ID and borrow the view directly — no shared allocation needed.
-pub fn create_rtt(
-    device: &wgpu::Device,
-    format: wgpu::TextureFormat,
-    width: u32,
-    height: u32,
-) -> RenderTexture {
-    let texture = device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("Camera RTT"),
-        size: wgpu::Extent3d {
-            width,
-            height,
-            depth_or_array_layers: 1,
-        },
-        mip_level_count: 1,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format,
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-            | wgpu::TextureUsages::TEXTURE_BINDING
-            | wgpu::TextureUsages::COPY_SRC
-            | wgpu::TextureUsages::COPY_DST,
-        view_formats: &[],
-    });
-    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-    let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-        label: Some("RTT Sampler"),
-        address_mode_u: wgpu::AddressMode::ClampToEdge,
-        address_mode_v: wgpu::AddressMode::ClampToEdge,
-        address_mode_w: wgpu::AddressMode::ClampToEdge,
-        mag_filter: wgpu::FilterMode::Linear,
-        min_filter: wgpu::FilterMode::Linear,
-        ..Default::default()
-    });
-    RenderTexture {
-        texture,
-        view,
-        sampler,
-    }
-}
-
 /// Keeps every main-window [`Camera`]'s aspect ratio matched to its viewport on the window.
 ///
 /// Runs in the main world, where [`Camera`] lives. The window is the
@@ -743,9 +698,7 @@ mod tests {
     use encase::ShaderType;
     use glam::{Mat4, UVec2, Vec2, Vec3, Vec4};
 
-    use super::{
-        sync_camera_aspect, viewport_rect, Camera, CameraUniform, PixelRect, RenderTarget, Viewport,
-    };
+    use super::{sync_camera_aspect, Camera, CameraUniform, PixelRect, RenderTarget, Viewport};
     use crate::layout_test::{float_words, uniform_words};
 
     fn rect(x: u32, y: u32, width: u32, height: u32) -> PixelRect {
@@ -833,7 +786,7 @@ mod tests {
             },
         ];
         for case in &cases {
-            let pixels = viewport_rect(case.viewport.as_ref(), case.target);
+            let pixels = PixelRect::covering(case.viewport.as_ref(), case.target);
             assert_eq!(pixels, case.rect, "{}", case.case);
             assert_eq!(pixels.is_empty(), case.aspect.is_none(), "{}", case.case);
             assert_eq!(pixels.aspect(), case.aspect, "{}", case.case);

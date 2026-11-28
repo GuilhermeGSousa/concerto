@@ -29,7 +29,7 @@ use concerto::{
         time::Time,
         transform::{GlobalTransform, Transform},
     },
-    mesh::{JointPose, MeshComponent, Skeleton, SkeletonComponent, primitives},
+    mesh::{JointPose, Mesh, MeshComponent, Skeleton, SkeletonComponent},
     name::{Name, name},
     physics::{
         collider::Collider,
@@ -159,7 +159,7 @@ fn spawn_chain(
         return;
     };
 
-    let mesh = assets.add(primitives::capsule(RADIUS, HALF_HEIGHT, 6, 16));
+    let mesh = assets.add(Mesh::capsule(RADIUS, HALF_HEIGHT, 6, 16));
     let material = assets.add(
         StandardMaterial::new(None, None).with_base_color_factor(Color::rgba(0.9, 0.35, 0.2, 1.0)),
     );
@@ -208,7 +208,7 @@ fn spawn_scene(mut cmd: CommandQueue, mut state: ResMut<PhysicsState>, assets: R
         Contacts::default(),
         Transform::from_translation(Vec3::new(0.0, -0.5, 0.0)),
         MeshComponent {
-            handle: assets.add(primitives::cuboid(Vec3::new(40.0, 1.0, 40.0))),
+            handle: assets.add(Mesh::cuboid(Vec3::new(40.0, 1.0, 40.0))),
         },
         MaterialComponent {
             handle: assets.add(

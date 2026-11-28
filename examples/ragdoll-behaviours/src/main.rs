@@ -26,7 +26,7 @@ use concerto::{
         assets::{asset_server::AssetServer, asset_store::AssetStore, handle::AssetHandle},
         transform::Transform,
     },
-    mesh::{JointPose, MeshComponent, Skeleton, SkeletonComponent, primitives},
+    mesh::{JointPose, Mesh, MeshComponent, Skeleton, SkeletonComponent},
     name::name,
     physics::{collider::Collider, physics_state::PhysicsState, ragdoll::RagdollId},
     render::{
@@ -334,7 +334,7 @@ fn spawn_scene(mut cmd: CommandQueue, assets: Res<AssetServer>) {
         Collider::cuboid(20.0, 0.5, 20.0),
         Transform::from_translation(Vec3::new(0.0, -0.5, 0.0)),
         MeshComponent {
-            handle: assets.add(primitives::cuboid(Vec3::new(40.0, 1.0, 40.0))),
+            handle: assets.add(Mesh::cuboid(Vec3::new(40.0, 1.0, 40.0))),
         },
         MaterialComponent {
             handle: assets.add(

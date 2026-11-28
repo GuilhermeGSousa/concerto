@@ -212,7 +212,7 @@ pub(crate) fn extract_text_nodes(
             (rgba.a * 255.0).round() as u8,
         );
         let layer = text_layer(layout);
-        let shaping = shaping_signature(text_component, layout, scale);
+        let shaping = text_component.shaping_signature(layout, scale);
 
         if let Some(mut render_text) = render_text_nodes.get_entity_mut(**render_entity)
             && render_text.shaping == shaping
@@ -323,32 +323,34 @@ pub(crate) fn text_layer(layout: &UILayout) -> i32 {
     (layout.paint_order >> 32) as i32
 }
 
-fn shaping_signature(text: &UIText, layout: &UILayout, scale: f32) -> u64 {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    text.text.hash(&mut hasher);
-    text.font_size.to_bits().hash(&mut hasher);
-    text.line_height.to_bits().hash(&mut hasher);
-    text.font_weight.hash(&mut hasher);
-    (text.font_style as u8).hash(&mut hasher);
-    text.wrap.hash(&mut hasher);
-    text.ellipsis.hash(&mut hasher);
-    match &text.font_family {
-        FontFamily::SansSerif => 0_u8.hash(&mut hasher),
-        FontFamily::Serif => 1_u8.hash(&mut hasher),
-        FontFamily::Monospace => 2_u8.hash(&mut hasher),
-        FontFamily::Name(name) => {
-            3_u8.hash(&mut hasher);
-            name.hash(&mut hasher);
+impl UIText {
+    fn shaping_signature(&self, layout: &UILayout, scale: f32) -> u64 {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        self.text.hash(&mut hasher);
+        self.font_size.to_bits().hash(&mut hasher);
+        self.line_height.to_bits().hash(&mut hasher);
+        self.font_weight.hash(&mut hasher);
+        (self.font_style as u8).hash(&mut hasher);
+        self.wrap.hash(&mut hasher);
+        self.ellipsis.hash(&mut hasher);
+        match &self.font_family {
+            FontFamily::SansSerif => 0_u8.hash(&mut hasher),
+            FontFamily::Serif => 1_u8.hash(&mut hasher),
+            FontFamily::Monospace => 2_u8.hash(&mut hasher),
+            FontFamily::Name(name) => {
+                3_u8.hash(&mut hasher);
+                name.hash(&mut hasher);
+            }
         }
+        for value in [
+            layout.content_rect.size.x,
+            layout.content_rect.size.y,
+            scale,
+        ] {
+            value.to_bits().hash(&mut hasher);
+        }
+        hasher.finish()
     }
-    for value in [
-        layout.content_rect.size.x,
-        layout.content_rect.size.y,
-        scale,
-    ] {
-        value.to_bits().hash(&mut hasher);
-    }
-    hasher.finish()
 }
 
 #[cfg(test)]
@@ -366,7 +368,7 @@ mod tests {
             width: f32,
             fits: bool,
         }
-        let mut font_system = fonts::build_font_system(&fonts::UIFonts::default());
+        let mut font_system = fonts::UIFonts::default().build_font_system();
         let metrics = physical_metrics(14.0, 20.0, 1.0);
         let mut truncate = |text: &str, width: f32| {
             truncate_to_width(&mut font_system, metrics, &Attrs::new(), text, width)
@@ -405,7 +407,7 @@ mod tests {
         assert_eq!(metrics.font_size, 28.0);
         assert_eq!(metrics.line_height, 40.0);
 
-        let mut font_system = fonts::build_font_system(&fonts::UIFonts::default());
+        let mut font_system = fonts::UIFonts::default().build_font_system();
         let one = widest(
             &mut font_system,
             physical_metrics(14.0, 20.0, 1.0),
@@ -451,9 +453,9 @@ mod tests {
         let mut main = concerto_ecs::World::new();
         main.insert_resource(Window::new((800, 600), 1.5));
         let mut render = concerto_ecs::World::new();
-        render.insert_resource(TextFontSystem(fonts::build_font_system(
-            &fonts::UIFonts::default(),
-        )));
+        render.insert_resource(TextFontSystem(
+            fonts::UIFonts::default().build_font_system(),
+        ));
         render.insert_resource(UIRenderDiagnostics::default());
         let target = render.spawn(());
         let rect = crate::node::UIBox {
@@ -507,9 +509,9 @@ mod tests {
         let mut main = concerto_ecs::World::new();
         main.insert_resource(Window::new((800, 600), 1.0));
         let mut render = concerto_ecs::World::new();
-        render.insert_resource(TextFontSystem(fonts::build_font_system(
-            &fonts::UIFonts::default(),
-        )));
+        render.insert_resource(TextFontSystem(
+            fonts::UIFonts::default().build_font_system(),
+        ));
         render.insert_resource(UIRenderDiagnostics::default());
         let mut nodes = Vec::new();
         let mut targets = Vec::new();

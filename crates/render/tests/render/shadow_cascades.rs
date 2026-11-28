@@ -10,7 +10,7 @@ use concerto_foundation::{
     assets::{asset_server::AssetServer, asset_store::AssetStore, handle::AssetHandle, AssetId},
     transform::Transform,
 };
-use concerto_mesh::{primitives::cuboid, MeshComponent};
+use concerto_mesh::{Mesh, MeshComponent};
 use concerto_render::{
     assets::{material::StandardMaterial, texture::Texture},
     components::{
@@ -23,7 +23,6 @@ use concerto_render::{
     gpu::Gpu,
     material_plugin::MaterialPlugin,
     plugin::RenderPlugin,
-    readback::read_texture,
     shadow_pipeline::ShadowPipelinePlugin,
 };
 use concerto_window::plugin::{Window, WindowPlugin};
@@ -51,7 +50,7 @@ fn app(gpu: &Gpu) -> App {
 
 fn spawn_box(app: &mut App, size: Vec3, center: Vec3) {
     let server = app.get_resource::<AssetServer>().unwrap();
-    let mesh = server.add(cuboid(size));
+    let mesh = server.add(Mesh::cuboid(size));
     let material = server.add(StandardMaterial::default());
     app.main_mut().world_mut().spawn((
         MeshComponent { handle: mesh },
@@ -136,7 +135,7 @@ impl Stage {
             .world()
             .get_component_for_entity::<RenderCamera>(render_entity)
             .unwrap();
-        let image = read_texture(gpu, render_camera.render_target.as_ref().unwrap().texture());
+        let image = gpu.read_texture(render_camera.render_target.as_ref().unwrap().texture());
         let rgba = image
             .get_pixel(to_pixel(ndc.x * 0.5 + 0.5), to_pixel(0.5 - ndc.y * 0.5))
             .0;

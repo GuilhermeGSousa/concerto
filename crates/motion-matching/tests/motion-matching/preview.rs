@@ -3,9 +3,8 @@ use std::f32::consts::FRAC_PI_2;
 use concerto_foundation::transform::Transform;
 use concerto_mesh::{JointPose, Skeleton};
 use concerto_motion_matching::{
-    preview_features, BodyMotion, BonePositions, BoneVelocities, FeatureChannel, FeatureShape,
-    FrameContext, ReflectFeatureChannel, TrajectoryDirections, TrajectoryPositions,
-    TrajectorySample,
+    BodyMotion, BonePositions, BoneVelocities, FeatureChannel, FeatureShape, FrameContext,
+    ReflectFeatureChannel, TrajectoryDirections, TrajectoryPositions, TrajectorySample,
 };
 use concerto_reflect::Reflect;
 use glam::{Mat4, Quat, Vec3};
@@ -141,7 +140,7 @@ fn preview_features_gives_each_channel_its_own_span_and_list() {
         trajectory: &[],
     };
 
-    let shapes = preview_features(&channels, &frame, &[1.0, 2.0, 3.0, 9.0, 4.0, 5.0]);
+    let shapes = frame.preview_features(&channels, &[1.0, 2.0, 3.0, 9.0, 4.0, 5.0]);
 
     let end = Vec3::new(4.0, 0.0, 5.0);
     assert_eq!(

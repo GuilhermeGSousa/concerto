@@ -17,7 +17,7 @@ use glam::{UVec2, Vec3};
 use crate::{
     capabilities::RenderCapabilities,
     components::{
-        camera::{create_rtt, Camera, PixelRect, RenderCamera},
+        camera::{Camera, PixelRect, RenderCamera},
         render_entity::RenderEntity,
     },
     device::RenderDevice,
@@ -342,8 +342,8 @@ impl DepthOfFieldView {
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             }),
-            radius: create_rtt(device, BLUR_FORMAT, size.x, size.y),
-            blurred: create_rtt(device, pipelines.format, size.x, size.y),
+            radius: RenderTexture::camera_target(device, BLUR_FORMAT, size.x, size.y),
+            blurred: RenderTexture::camera_target(device, pipelines.format, size.x, size.y),
         }
     }
 }

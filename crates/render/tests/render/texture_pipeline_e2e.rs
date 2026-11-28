@@ -1,7 +1,7 @@
 //! End-to-end proof that an imported texture round-trips through the
 //! runtime byte-loading path — the same envelope `AssetServer` reads.
 use concerto_asset_import::{ImportContext, Importer, NoSettings};
-use concerto_foundation::assets::content::{write_content_asset_with_uncooked, ContentAssetHeader};
+use concerto_foundation::assets::content::ContentAssetHeader;
 use concerto_foundation::assets::derived::DerivedDataCache;
 use concerto_foundation::assets::registry::{AssetEntry, AssetRegistry};
 use concerto_foundation::assets::Asset;
@@ -50,7 +50,8 @@ fn an_imported_image_is_one_srgb_texture_that_loads_back_from_its_content_addres
         .expect("an imported texture carries its source");
     std::fs::write(
         project.root.join(address),
-        write_content_asset_with_uncooked(&header, &sub_asset.bytes, source.version, &source.bytes)
+        header
+            .write_with_uncooked(&sub_asset.bytes, source.version, &source.bytes)
             .unwrap(),
     )
     .unwrap();

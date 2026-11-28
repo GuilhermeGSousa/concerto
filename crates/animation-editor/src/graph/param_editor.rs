@@ -177,10 +177,12 @@ fn pick_param<T: Reflect + Default>(row: Entity, name: Name) -> Listener<UIItemA
     .into_listener()
 }
 
-fn revert(field: &ParamNameField, input: &mut UITextInput) {
-    input.value = field.displayed.as_str().into();
-    input.cursor = input.value.len();
-    input.selection_anchor = None;
+impl ParamNameField {
+    fn revert(&self, input: &mut UITextInput) {
+        input.value = self.displayed.as_str().into();
+        input.cursor = input.value.len();
+        input.selection_anchor = None;
+    }
 }
 
 pub(crate) fn commit_param_fields(
@@ -201,21 +203,21 @@ pub(crate) fn commit_param_fields(
         };
         let name = Name::new(input.value.trim());
         if name == field.displayed || (field.commit)(&mut commits, row, name).is_err() {
-            revert(&field, &mut input);
+            field.revert(&mut input);
             continue;
         }
         field.displayed = name;
     }
     for event in lost.read() {
         if let Some((field, mut input)) = fields.get_entity_mut(event.0) {
-            revert(&field, &mut input);
+            field.revert(&mut input);
         }
     }
     for event in cancelled.read() {
         let Some((field, mut input)) = fields.get_entity_mut(event.entity) else {
             continue;
         };
-        revert(&field, &mut input);
+        field.revert(&mut input);
         if **focused == Some(event.entity) {
             **focused = None;
         }

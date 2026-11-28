@@ -4,7 +4,7 @@ use concerto_ecs::events::event_channel::EventChannel;
 use concerto_ecs::{IntoSystem, System, World, entity::Entity};
 use concerto_ui::anchor::{
     PanelRects, UIAnchorAlign, UIAnchorSide, UIAnchorTarget, UIAnchoredPanel, UIPanelStack,
-    panels_to_close, place, track_panel_stack,
+    track_panel_stack,
 };
 use concerto_ui::focus::{FocusedWidget, UIFocusGained, UIFocusLost};
 use concerto_ui::node::{UIBox, UINode};
@@ -115,12 +115,7 @@ fn a_panel_sits_beside_its_anchor_on_the_side_that_fits_and_inside_the_window() 
             origin: Vec2::new(416.0, 200.0),
         },
     ] {
-        let placement = place(
-            case.anchor,
-            case.size,
-            WINDOW,
-            &panel(case.side, case.align),
-        );
+        let placement = panel(case.side, case.align).place(case.anchor, case.size, WINDOW);
         assert_eq!(placement.side, case.placed_side, "{}", case.name);
         assert_eq!(placement.origin, case.origin, "{}", case.name);
     }
@@ -197,7 +192,7 @@ fn a_press_closes_the_panels_it_stepped_out_of() {
         } else {
             two_deep(&ids)
         };
-        let closing = panels_to_close(&stack, case.press)
+        let closing = PanelRects::to_close(&stack, case.press)
             .iter()
             .map(|panel| panel.panel)
             .collect::<Vec<_>>();

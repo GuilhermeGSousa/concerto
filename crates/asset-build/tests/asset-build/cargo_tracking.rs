@@ -3,10 +3,7 @@
 use std::path::Path;
 use std::process::{Command, Output};
 
-use concerto_asset_format::{
-    write_content_asset, write_content_asset_with_embedded, AssetId, ContentAssetHeader,
-    EmbeddedPayload, ImportProvenance,
-};
+use concerto_asset_format::{AssetId, ContentAssetHeader, EmbeddedPayload, ImportProvenance};
 
 fn cargo(project: &Path) -> Output {
     Command::new(env!("CARGO"))
@@ -34,7 +31,7 @@ fn write_asset(project: &Path, id: AssetId) {
     let payload = b"ASSET_PAYLOAD_SHOULD_NOT_APPEAR_IN_THE_EXECUTABLE".repeat(100_000);
     std::fs::write(
         project.join("content/fixture.gasset"),
-        write_content_asset(&header, &payload).unwrap(),
+        header.write(&payload).unwrap(),
     )
     .unwrap();
 }
@@ -55,25 +52,25 @@ fn write_host(project: &Path, embedded: AssetId) {
     };
     std::fs::write(
         project.join("content/host.gasset"),
-        write_content_asset_with_embedded(
-            &header(AssetId::new(), "Scene", "scene"),
-            b"scene",
-            &[
-                EmbeddedPayload {
-                    header: header(AssetId::new(), "Fixture", "mesh/0"),
-                    payload: b"first",
-                    uncooked: None,
-                    derived_blob: None,
-                },
-                EmbeddedPayload {
-                    header: header(embedded, "Fixture", "mesh/a#b"),
-                    payload: b"second",
-                    uncooked: None,
-                    derived_blob: None,
-                },
-            ],
-        )
-        .unwrap(),
+        (header(AssetId::new(), "Scene", "scene"))
+            .write_with_embedded(
+                b"scene",
+                &[
+                    EmbeddedPayload {
+                        header: header(AssetId::new(), "Fixture", "mesh/0"),
+                        payload: b"first",
+                        uncooked: None,
+                        derived_blob: None,
+                    },
+                    EmbeddedPayload {
+                        header: header(embedded, "Fixture", "mesh/a#b"),
+                        payload: b"second",
+                        uncooked: None,
+                        derived_blob: None,
+                    },
+                ],
+            )
+            .unwrap(),
     )
     .unwrap();
 }
@@ -218,7 +215,7 @@ fn write_asset_at(project: &Path, address: &str, id: AssetId) {
     };
     let path = project.join(address);
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-    std::fs::write(path, write_content_asset(&header, b"payload").unwrap()).unwrap();
+    std::fs::write(path, header.write(b"payload").unwrap()).unwrap();
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -247,7 +244,7 @@ fn run(output: Output) -> Run {
     );
     let stdout = String::from_utf8(output.stdout).unwrap();
     let (project_root, registry) = stdout.split_once('\n').unwrap();
-    let mut registry: Vec<_> = concerto_asset_format::parse_registry(registry)
+    let mut registry: Vec<_> = concerto_asset_format::ScannedEntry::parse_registry(registry)
         .unwrap()
         .into_iter()
         .map(|entry| listed(entry.id, &entry.address))

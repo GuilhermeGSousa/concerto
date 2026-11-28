@@ -98,7 +98,7 @@ impl UIColorPicker {
         if self.shown == self.opened {
             return self.original;
         }
-        color_of(self.shown, self.space)
+        self.shown.color(self.space)
     }
 }
 
@@ -196,27 +196,6 @@ fn shown_of(color: Color) -> (Shown, Space) {
     }
 }
 
-fn color_of(shown: Shown, space: Space) -> Color {
-    let srgb = shown.srgb();
-    match space {
-        Space::Srgb => Color::Srgba(srgb),
-        Space::Hsl => {
-            let mut hsla = srgb.to_hsl();
-            hsla.h = shown.hsv[0].rem_euclid(360.0);
-            Color::Hsla(hsla)
-        }
-        Space::Linear => {
-            let linear = srgb.to_linear();
-            Color::LinearRgba(LinearRgba::new(
-                linear.r * shown.intensity,
-                linear.g * shown.intensity,
-                linear.b * shown.intensity,
-                shown.alpha,
-            ))
-        }
-    }
-}
-
 fn format_hex(srgb: Srgba) -> String {
     let byte = |channel: f32| (channel.clamp(0.0, 1.0) * 255.0).round() as u8;
     let rgb = format!(
@@ -277,43 +256,11 @@ pub(crate) struct ColorPickerField {
     displayed: String,
 }
 
-fn field_text(kind: FieldKind, shown: Shown) -> String {
-    match kind {
-        FieldKind::Hex => format_hex(shown.srgb()),
-        FieldKind::Intensity => format_intensity(shown.intensity),
-    }
-}
-
-fn entered(kind: FieldKind, text: &str, shown: Shown) -> Option<Shown> {
-    match kind {
-        FieldKind::Hex => parse_hex(text).map(|srgb| shown.with_srgb(srgb)),
-        FieldKind::Intensity => parse_intensity(text).map(|intensity| Shown { intensity, ..shown }),
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Area {
     Square,
     Hue,
     Alpha,
-}
-
-fn picked(shown: Shown, area: Area, at: Vec2) -> Shown {
-    let [hue, saturation, value] = shown.hsv;
-    match area {
-        Area::Square => Shown {
-            hsv: [hue, at.x, 1.0 - at.y],
-            ..shown
-        },
-        Area::Hue => Shown {
-            hsv: [at.x * 360.0, saturation, value],
-            ..shown
-        },
-        Area::Alpha => Shown {
-            alpha: at.x,
-            ..shown
-        },
-    }
 }
 
 fn change(
@@ -360,7 +307,7 @@ fn pick_at(
     let Some(shown) = pickers.get_entity_mut(picker).map(|state| state.shown) else {
         return;
     };
-    change(picker, pickers, cmd, picked(shown, area, at));
+    change(picker, pickers, cmd, shown.picked(area, at));
 }
 
 fn press_area(picker: Entity, area: Area) -> Listener<UIPointerDown> {
@@ -403,43 +350,12 @@ fn drag_area(picker: Entity, area: Area) -> Listener<UIDrag> {
     .into_listener()
 }
 
-fn square_gradient(shown: Shown) -> UIGradient {
-    UIGradient::SaturationValue { hue: shown.hsv[0] }
-}
-
-fn alpha_gradient(shown: Shown) -> UIGradient {
-    UIGradient::Alpha {
-        color: Srgba {
-            a: 1.0,
-            ..shown.srgb()
-        },
-        cell: CHECKER_CELL,
-    }
-}
-
-fn marker_inset(shown: Shown) -> UIInset {
-    let [_, saturation, value] = shown.hsv;
-    UIInset {
-        left: UIValue::Px(saturation.clamp(0.0, 1.0) * SQUARE_WIDTH - MARKER / 2.0),
-        top: UIValue::Px((1.0 - value.clamp(0.0, 1.0)) * SQUARE_HEIGHT - MARKER / 2.0),
-        ..Default::default()
-    }
-}
-
 fn thumb_inset(fraction: f32) -> UIInset {
     UIInset {
         left: UIValue::Px(fraction.clamp(0.0, 1.0) * SQUARE_WIDTH - THUMB_WIDTH / 2.0),
         top: UIValue::Px(-THUMB_OVERHANG),
         ..Default::default()
     }
-}
-
-fn hue_thumb_inset(shown: Shown) -> UIInset {
-    thumb_inset(shown.hsv[0] / 360.0)
-}
-
-fn alpha_thumb_inset(shown: Shown) -> UIInset {
-    thumb_inset(shown.alpha)
 }
 
 fn thumb(picker: Entity, kind: PartKind, inset: UIInset) -> (UINode, UIMaterial, ColorPickerPart) {
@@ -502,7 +418,7 @@ pub(crate) fn setup_color_pickers(
                 .with_size(UIValue::Px(SQUARE_WIDTH), UIValue::Px(SQUARE_HEIGHT))
                 .with_flex_shrink(0.0),
             UIMaterial {
-                gradient: square_gradient(shown),
+                gradient: shown.square_gradient(),
                 ..UIMaterial::flat(Color::WHITE)
             },
             Interactable,
@@ -518,7 +434,7 @@ pub(crate) fn setup_color_pickers(
                 UINode::default()
                     .with_size(UIValue::Px(MARKER), UIValue::Px(MARKER))
                     .with_position(Position::Absolute)
-                    .with_inset(marker_inset(shown)),
+                    .with_inset(shown.marker_inset()),
                 UIMaterial {
                     corner_radius: MARKER / 2.0,
                     ..UIMaterial::with_border(Color::TRANSPARENT, OUTLINE, 1.0)
@@ -546,9 +462,9 @@ pub(crate) fn setup_color_pickers(
             },
         );
         root.spawn_child(strip(entity, Area::Hue, UIGradient::Hue))
-            .add_child(thumb(entity, PartKind::HueThumb, hue_thumb_inset(shown)));
+            .add_child(thumb(entity, PartKind::HueThumb, shown.hue_thumb_inset()));
         root.spawn_child((
-            strip(entity, Area::Alpha, alpha_gradient(shown)),
+            strip(entity, Area::Alpha, shown.alpha_gradient()),
             ColorPickerPart {
                 picker: entity,
                 kind: PartKind::AlphaStrip,
@@ -557,7 +473,7 @@ pub(crate) fn setup_color_pickers(
         .add_child(thumb(
             entity,
             PartKind::AlphaThumb,
-            alpha_thumb_inset(shown),
+            shown.alpha_thumb_inset(),
         ));
         let mut fields = root.spawn_child(
             UINode::default()
@@ -565,7 +481,7 @@ pub(crate) fn setup_color_pickers(
                 .with_align_items(AlignItems::Center)
                 .with_gap(Vec2::splat(theme.spacing_sm)),
         );
-        let hex = field_text(FieldKind::Hex, shown);
+        let hex = FieldKind::Hex.text(shown);
         fields.add_child((
             theme
                 .text_field("#RRGGBB")
@@ -578,7 +494,7 @@ pub(crate) fn setup_color_pickers(
             },
         ));
         if picker.space == Space::Linear {
-            let intensity = field_text(FieldKind::Intensity, shown);
+            let intensity = FieldKind::Intensity.text(shown);
             fields
                 .add_child(theme.label("Intensity").small().no_wrap())
                 .add_child((
@@ -626,7 +542,7 @@ pub(crate) fn commit_color_picker_fields(
         else {
             continue;
         };
-        let text = field_text(field.kind, shown);
+        let text = field.kind.text(shown);
         display(&mut field, &mut input, text);
         if **focused == Some(event.entity) {
             **focused = None;
@@ -650,14 +566,14 @@ pub(crate) fn commit_color_picker_fields(
         else {
             continue;
         };
-        let shown = match entered(field.kind, &input.value, shown) {
+        let shown = match field.kind.entered(&input.value, shown) {
             Some(next) => {
                 change(field.picker, &mut pickers, &mut cmd, next);
                 next
             }
             None => shown,
         };
-        let text = field_text(field.kind, shown);
+        let text = field.kind.text(shown);
         display(&mut field, &mut input, text);
     }
 }
@@ -676,9 +592,9 @@ pub(crate) fn sync_color_picker_parts(
         match part.kind {
             PartKind::Square | PartKind::AlphaStrip => {
                 let gradient = if part.kind == PartKind::Square {
-                    square_gradient(shown)
+                    shown.square_gradient()
                 } else {
-                    alpha_gradient(shown)
+                    shown.alpha_gradient()
                 };
                 if material.gradient != gradient {
                     material.gradient = gradient;
@@ -686,9 +602,9 @@ pub(crate) fn sync_color_picker_parts(
             }
             PartKind::Marker | PartKind::HueThumb | PartKind::AlphaThumb => {
                 let inset = match part.kind {
-                    PartKind::Marker => marker_inset(shown),
-                    PartKind::HueThumb => hue_thumb_inset(shown),
-                    _ => alpha_thumb_inset(shown),
+                    PartKind::Marker => shown.marker_inset(),
+                    PartKind::HueThumb => shown.hue_thumb_inset(),
+                    _ => shown.alpha_thumb_inset(),
                 };
                 if node.inset != inset {
                     node.inset = inset;
@@ -703,8 +619,98 @@ pub(crate) fn sync_color_picker_parts(
         let Some(picker) = pickers.get_entity(field.picker) else {
             continue;
         };
-        let text = field_text(field.kind, picker.shown);
+        let text = field.kind.text(picker.shown);
         display(&mut field, &mut input, text);
+    }
+}
+
+impl Shown {
+    fn color(self, space: Space) -> Color {
+        let srgb = self.srgb();
+        match space {
+            Space::Srgb => Color::Srgba(srgb),
+            Space::Hsl => {
+                let mut hsla = srgb.to_hsl();
+                hsla.h = self.hsv[0].rem_euclid(360.0);
+                Color::Hsla(hsla)
+            }
+            Space::Linear => {
+                let linear = srgb.to_linear();
+                Color::LinearRgba(LinearRgba::new(
+                    linear.r * self.intensity,
+                    linear.g * self.intensity,
+                    linear.b * self.intensity,
+                    self.alpha,
+                ))
+            }
+        }
+    }
+
+    fn picked(self, area: Area, at: Vec2) -> Shown {
+        let [hue, saturation, value] = self.hsv;
+        match area {
+            Area::Square => Shown {
+                hsv: [hue, at.x, 1.0 - at.y],
+                ..self
+            },
+            Area::Hue => Shown {
+                hsv: [at.x * 360.0, saturation, value],
+                ..self
+            },
+            Area::Alpha => Shown {
+                alpha: at.x,
+                ..self
+            },
+        }
+    }
+
+    fn square_gradient(self) -> UIGradient {
+        UIGradient::SaturationValue { hue: self.hsv[0] }
+    }
+
+    fn alpha_gradient(self) -> UIGradient {
+        UIGradient::Alpha {
+            color: Srgba {
+                a: 1.0,
+                ..self.srgb()
+            },
+            cell: CHECKER_CELL,
+        }
+    }
+
+    fn marker_inset(self) -> UIInset {
+        let [_, saturation, value] = self.hsv;
+        UIInset {
+            left: UIValue::Px(saturation.clamp(0.0, 1.0) * SQUARE_WIDTH - MARKER / 2.0),
+            top: UIValue::Px((1.0 - value.clamp(0.0, 1.0)) * SQUARE_HEIGHT - MARKER / 2.0),
+            ..Default::default()
+        }
+    }
+
+    fn hue_thumb_inset(self) -> UIInset {
+        thumb_inset(self.hsv[0] / 360.0)
+    }
+
+    fn alpha_thumb_inset(self) -> UIInset {
+        thumb_inset(self.alpha)
+    }
+}
+
+impl FieldKind {
+    fn text(self, shown: Shown) -> String {
+        match self {
+            FieldKind::Hex => format_hex(shown.srgb()),
+            FieldKind::Intensity => format_intensity(shown.intensity),
+        }
+    }
+
+    fn entered(self, text: &str, shown: Shown) -> Option<Shown> {
+        match self {
+            FieldKind::Hex => parse_hex(text).map(|srgb| shown.with_srgb(srgb)),
+            FieldKind::Intensity => {
+                parse_intensity(text).map(|intensity| Shown { intensity, ..shown })
+            }
+        }
     }
 }
 
@@ -732,7 +738,7 @@ mod tests {
             install_layout_listeners,
         },
         sets::UiSet,
-        text::fonts::{UIFonts, build_font_system},
+        text::fonts::UIFonts,
     };
 
     const EPS: f32 = 1e-5;
@@ -753,7 +759,7 @@ mod tests {
             world.insert_resource(UILayoutEngine::default());
             world.insert_resource(UILayoutDiagnostics::default());
             world.insert_resource(UIPanelStack::default());
-            world.insert_resource(UITextMeasure::new(build_font_system(&UIFonts::default())));
+            world.insert_resource(UITextMeasure::new(UIFonts::default().build_font_system()));
             world.insert_resource(Input::new());
             world.insert_resource(FocusedWidget::default());
             world.insert_resource(EventChannel::<ActionFired>::default());
@@ -975,7 +981,7 @@ mod tests {
 
     fn round_trip(color: Color) -> Color {
         let (shown, space) = shown_of(color);
-        color_of(shown, space)
+        shown.color(space)
     }
 
     fn srgb_to_linear(channel: f32) -> f32 {

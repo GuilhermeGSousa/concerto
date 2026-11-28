@@ -33,10 +33,9 @@ use concerto_foundation::{
     transform::{GlobalTransform, Transform, systems::propagate_global_transforms},
 };
 use concerto_mesh::{JointPose, Skeleton, SkeletonComponent};
-use concerto_motion_matching::{FeatureChannel, FeatureShape, MotionDatabase, preview_features};
+use concerto_motion_matching::{FeatureChannel, FeatureShape, MotionDatabase};
 use concerto_motion_matching_gizmos::{
-    BakedFrame, SIMULATION_WIDTH, channel_color, draw_shape, draw_simulation, local_pose,
-    placed_pose,
+    BakedFrame, MotionMatchingDraw, SIMULATION_WIDTH, channel_color,
 };
 
 use crate::{document::DefinitionDocument, panels::shown_index};
@@ -128,8 +127,20 @@ fn frame_in_entry(database: &MotionDatabase, entry: usize, time: f32) -> Option<
     Some(range.start + (along.round().max(0.0) as usize).min(last))
 }
 
-fn sampled_clips(shown: &BakedPlayback) -> Vec<&AnimationClip> {
-    shown.clips.iter().map(Arc::as_ref).collect()
+impl BakedPlayback {
+    fn sampled_clips(&self) -> Vec<&AnimationClip> {
+        self.clips.iter().map(Arc::as_ref).collect()
+    }
+
+    fn frame_shapes(&self, frame: usize) -> Option<Vec<Vec<FeatureShape>>> {
+        let clips = self.sampled_clips();
+        let baked = BakedFrame::new(&self.database, &self.skeleton, &clips, frame)?;
+        Some(
+            baked
+                .context(&self.skeleton)
+                .preview_features(&self.channels, self.database.features(frame)?),
+        )
+    }
 }
 
 fn write_pose(
@@ -171,12 +182,12 @@ fn play_database(
         looped_range(&shown.database, playback.looped),
     );
     let frame = playback.position as usize;
-    let clips = sampled_clips(shown);
+    let clips = shown.sampled_clips();
     let Some(simulation) = shown.database.simulation_bone(frame) else {
         return;
     };
-    let Some(pose) = local_pose(&shown.database, &shown.skeleton, &clips, frame)
-        .map(|pose| placed_pose(&shown.skeleton, &simulation, pose))
+    let Some(pose) = BakedFrame::sample_local(&shown.database, &shown.skeleton, &clips, frame)
+        .map(|pose| BakedFrame::place_pose(&shown.skeleton, &simulation, pose))
     else {
         return;
     };
@@ -196,16 +207,6 @@ fn play_database(
             progress.write(DatabaseProgress { entry, time });
         }
     }
-}
-
-fn frame_shapes(shown: &BakedPlayback, frame: usize) -> Option<Vec<Vec<FeatureShape>>> {
-    let clips = sampled_clips(shown);
-    let baked = BakedFrame::new(&shown.database, &shown.skeleton, &clips, frame)?;
-    Some(preview_features(
-        &shown.channels,
-        &baked.context(&shown.skeleton),
-        shown.database.features(frame)?,
-    ))
 }
 
 fn stage_of(
@@ -237,7 +238,7 @@ fn draw_simulation_bone(
     let stage = stage_of(&skeletons, &parents, &globals);
     let bone = stage.mul_transform(simulation);
     gizmos.set_line_width(SIMULATION_WIDTH);
-    draw_simulation(&mut gizmos, &bone);
+    gizmos.draw_simulation(&bone);
 }
 
 fn draw_feature_channels(
@@ -255,7 +256,7 @@ fn draw_feature_channels(
         return;
     };
     let frame = playback.frame();
-    let Some(channels) = frame_shapes(shown, frame) else {
+    let Some(channels) = shown.frame_shapes(frame) else {
         return;
     };
     let Some(simulation) = shown.database.simulation_bone(frame) else {
@@ -267,7 +268,7 @@ fn draw_feature_channels(
     for (channel, shapes) in channels.iter().enumerate() {
         let color = channel_color(channel, playback.picked);
         for shape in shapes {
-            draw_shape(&mut gizmos, &bone, *shape, color);
+            gizmos.draw_shape(&bone, *shape, color);
         }
     }
 }
@@ -301,13 +302,26 @@ fn seek_database(on: On<SeekDatabase>, mut playback: ResMut<DatabasePlayback>) {
     }
 }
 
-pub(crate) fn baked_entry(state: &DefinitionDocument) -> Option<usize> {
-    let index = state.selected_entry?;
-    let database = &state.playback.as_ref()?.database;
-    database.frames_of_entry(index)?;
-    let baked = database.entries.get(index)?;
-    let entry = state.entries.get(index)?;
-    (entry.clip.id() == baked.clip.id() && entry.mirrored == baked.mirrored).then_some(index)
+impl DefinitionDocument {
+    pub(crate) fn baked_entry(&self) -> Option<usize> {
+        let index = self.selected_entry?;
+        let database = &self.playback.as_ref()?.database;
+        database.frames_of_entry(index)?;
+        let baked = database.entries.get(index)?;
+        let entry = self.entries.get(index)?;
+        (entry.clip.id() == baked.clip.id() && entry.mirrored == baked.mirrored).then_some(index)
+    }
+
+    fn picked_channel(
+        &self,
+        values: Option<&InspectedValues>,
+        shown: Option<&ShownValue>,
+    ) -> Option<usize> {
+        let index = shown_index(values?, shown?)?.checked_sub(1)?;
+        let held = self.channels.get(index)?;
+        let baked = self.playback.as_ref()?.database.channels.get(index)?;
+        (held.type_name == baked.type_name()).then_some(index)
+    }
 }
 
 pub(crate) fn scrub_entry(document: Entity) -> Listener<TimelineScrubbed> {
@@ -321,7 +335,7 @@ pub(crate) fn scrub_entry(document: Entity) -> Listener<TimelineScrubbed> {
         state.time = time;
         if state.playback.is_none() {
             previews.trigger(document, SeekClip(time));
-        } else if let Some(entry) = baked_entry(&state) {
+        } else if let Some(entry) = state.baked_entry() {
             previews.trigger(document, SeekDatabase { entry, time });
         }
     })
@@ -342,21 +356,12 @@ fn deliver_clip(job: ClipJob, document: Entity, previews: &mut PreviewSignals) {
     }
 }
 
-fn start_clip_job(asset: AssetEntry, root: PathBuf) -> ClipJob {
-    ClipJob {
-        handle: std::thread::spawn(move || read_clip(&root, &asset)),
+impl ClipJob {
+    fn start_clip_job(asset: AssetEntry, root: PathBuf) -> Self {
+        ClipJob {
+            handle: std::thread::spawn(move || read_clip(&root, &asset)),
+        }
     }
-}
-
-fn picked_channel(
-    state: &DefinitionDocument,
-    values: Option<&InspectedValues>,
-    shown: Option<&ShownValue>,
-) -> Option<usize> {
-    let index = shown_index(values?, shown?)?.checked_sub(1)?;
-    let held = state.channels.get(index)?;
-    let baked = state.playback.as_ref()?.database.channels.get(index)?;
-    (held.type_name == baked.type_name()).then_some(index)
 }
 
 pub(crate) fn follow_playback(
@@ -384,13 +389,13 @@ pub(crate) fn follow_playback(
             previews.trigger(document, ShowDatabase(None));
         }
 
-        let picked = picked_channel(&state, values, shown);
+        let picked = state.picked_channel(values, shown);
         if state.picked_channel != picked {
             state.picked_channel = picked;
             previews.trigger(document, ShowChannel(picked));
         }
 
-        let sought = baked_entry(&state);
+        let sought = state.baked_entry();
         if state.sought_entry != sought {
             state.sought_entry = sought;
             if let Some(entry) = sought {
@@ -415,7 +420,7 @@ pub(crate) fn follow_playback(
         state.clip_job = None;
         match wanted.and_then(|clip| assets.get(clip)) {
             Some(asset) => {
-                state.clip_job = Some(start_clip_job(asset.clone(), project.root.clone()));
+                state.clip_job = Some(ClipJob::start_clip_job(asset.clone(), project.root.clone()));
             }
             None => previews.trigger(document, ClearClip),
         }
@@ -436,7 +441,7 @@ pub(crate) fn follow_preview_time(
     }
     for (document, progress) in baked.read() {
         if let Some(mut state) = documents.get_entity_mut(document)
-            && baked_entry(&state) == Some(progress.entry)
+            && state.baked_entry() == Some(progress.entry)
         {
             state.time = progress.time;
         }

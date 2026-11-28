@@ -19,7 +19,7 @@ use crate::{
     clip::AnimationClip,
     evaluation::{AnimationGraphContext, RootBone},
     graph::{AnimationGraph, AnimationGraphState},
-    ik::{Hinge, TwoBoneChain, solve_two_bone},
+    ik::{Hinge, TwoBoneChain},
     node::{AnimationNode, EditorAnimationNode, ReflectAnimationNode},
     pose::{AnimationFrame, EvaluatedFrame, FramePool, RootMotion, WeightedMotion, twist_about},
 };
@@ -740,12 +740,12 @@ impl PoseRetarget {
         target: &ResolvedRig,
         target_skeleton: &Skeleton,
     ) -> Result<PoseRetarget, RetargetError> {
-        if !rig_fits(source, source_skeleton) {
+        if !source.fits(source_skeleton) {
             return Err(RetargetError::RigNotForSkeleton {
                 side: RetargetSide::Source,
             });
         }
-        if !rig_fits(target, target_skeleton) {
+        if !target.fits(target_skeleton) {
             return Err(RetargetError::RigNotForSkeleton {
                 side: RetargetSide::Target,
             });
@@ -769,8 +769,11 @@ impl PoseRetarget {
             let source_parameters = chain_parameters(&source_chain.bones, &source.reference_model);
             let target_parameters = chain_parameters(&target_chain.bones, &target.reference_model);
             for (bone, t) in target_chain.bones.iter().zip(target_parameters) {
-                rules[*bone] =
-                    BoneRule::Chain(chain_sample(&source_chain.bones, &source_parameters, t));
+                rules[*bone] = BoneRule::Chain(ChainSample::along(
+                    &source_chain.bones,
+                    &source_parameters,
+                    t,
+                ));
             }
         }
         if let Some(motion_root) = target.motion_root {
@@ -980,7 +983,7 @@ impl PoseRetarget {
             tip,
             hinge: pair.hinge.map(|axis| self.target_rotation[pair.mid] * axis),
         };
-        let solution = solve_two_bone(&chain, tip.lerp(full, weight), None, pair.softness);
+        let solution = chain.solve(tip.lerp(full, weight), None, pair.softness);
         let root_rotation = (solution.root * self.target_rotation[pair.root]).normalize();
         let mid_rotation = (solution.mid * self.target_rotation[pair.mid]).normalize();
         let tip_rotation = self.target_rotation[pair.tip];
@@ -1166,8 +1169,8 @@ impl RetargetNode {
         let target_rig = rigs.get(&self.target)?;
         let source_skeleton = skeletons.get(&source_rig.skeleton)?;
         let target_skeleton = skeletons.get(&target_rig.skeleton)?;
-        let source_clip = reference_clip(source_rig, clips)?;
-        let target_clip = reference_clip(target_rig, clips)?;
+        let source_clip = source_rig.reference_clip(clips)?;
+        let target_clip = target_rig.reference_clip(clips)?;
         let inner_graph = graphs.get(&self.graph)?;
         if !inner_graph.is_live() {
             return None;
@@ -1175,20 +1178,20 @@ impl RetargetNode {
 
         let source = match source_rig.resolve(source_skeleton, source_clip) {
             Ok(source) => source,
-            Err(error) => return Some(failed(format!("the source rig: {error}"), None)),
+            Err(error) => return Some(Stage::failed(format!("the source rig: {error}"), None)),
         };
         let target = match target_rig.resolve(target_skeleton, target_clip) {
             Ok(target) => target,
-            Err(error) => return Some(failed(format!("the target rig: {error}"), None)),
+            Err(error) => return Some(Stage::failed(format!("the target rig: {error}"), None)),
         };
         if target_skeleton.bone_ids != player.bone_ids {
-            return Some(failed(
+            return Some(Stage::failed(
                 "the target rig's skeleton is not the player's skeleton",
                 None,
             ));
         }
-        if holds_retarget_node(inner_graph, graphs) {
-            return Some(failed(
+        if inner_graph.holds_retarget_node(graphs) {
+            return Some(Stage::failed(
                 "its inner graph holds a retarget node",
                 Some(target.reference_local.into_boxed_slice()),
             ));
@@ -1203,7 +1206,7 @@ impl RetargetNode {
                 retarget
             }
             Err(error) => {
-                return Some(failed(
+                return Some(Stage::failed(
                     error,
                     Some(target.reference_local.into_boxed_slice()),
                 ));
@@ -1231,7 +1234,7 @@ impl RetargetNode {
             .inner
             .initialize(self.graph.clone(), graphs, &inner_context);
         if let Some(node) = running.inner.stateless_node(graphs) {
-            return Some(failed(
+            return Some(Stage::failed(
                 format!(
                     "its inner node {node} has no state; its CreateInput must be an update input"
                 ),
@@ -1353,38 +1356,44 @@ impl Running {
     }
 }
 
-fn failed(reason: impl fmt::Display, fallback: Option<Box<[JointPose]>>) -> Stage {
-    warn!("RetargetNode does not play: {reason}");
-    Stage::Failed { fallback }
-}
-
-fn holds_retarget_node(graph: &AnimationGraph, graphs: &AssetStore<AnimationGraph>) -> bool {
-    let mut seen = HashSet::new();
-    let mut pending = vec![graph];
-    while let Some(graph) = pending.pop() {
-        for node in graph.live_nodes() {
-            if node.as_reflect().downcast_ref::<RetargetNode>().is_some() {
-                return true;
-            }
-            node.inner_graphs(&mut |handle| {
-                if seen.insert(handle.id())
-                    && let Some(state_graph) = graphs.get(handle)
-                {
-                    pending.push(state_graph);
-                }
-            });
-        }
+impl Stage {
+    fn failed(reason: impl fmt::Display, fallback: Option<Box<[JointPose]>>) -> Self {
+        warn!("RetargetNode does not play: {reason}");
+        Self::Failed { fallback }
     }
-    false
 }
 
-fn reference_clip<'a>(
-    rig: &RetargetRig,
-    clips: &'a AssetStore<AnimationClip>,
-) -> Option<Option<&'a AnimationClip>> {
-    match &rig.reference {
-        ReferencePose::Rest => Some(None),
-        ReferencePose::ClipFrame { clip, .. } => clips.get(clip).map(Some),
+impl AnimationGraph {
+    fn holds_retarget_node(&self, graphs: &AssetStore<AnimationGraph>) -> bool {
+        let mut seen = HashSet::new();
+        let mut pending = vec![self];
+        while let Some(graph) = pending.pop() {
+            for node in graph.live_nodes() {
+                if node.as_reflect().downcast_ref::<RetargetNode>().is_some() {
+                    return true;
+                }
+                node.inner_graphs(&mut |handle| {
+                    if seen.insert(handle.id())
+                        && let Some(state_graph) = graphs.get(handle)
+                    {
+                        pending.push(state_graph);
+                    }
+                });
+            }
+        }
+        false
+    }
+}
+
+impl RetargetRig {
+    fn reference_clip<'a>(
+        &self,
+        clips: &'a AssetStore<AnimationClip>,
+    ) -> Option<Option<&'a AnimationClip>> {
+        match &self.reference {
+            ReferencePose::Rest => Some(None),
+            ReferencePose::ClipFrame { clip, .. } => clips.get(clip).map(Some),
+        }
     }
 }
 
@@ -1434,7 +1443,7 @@ impl AnimationNode for RetargetNode {
             .skeleton()
             .is_some_and(|player| player.bone_ids != running.player_bone_ids)
         {
-            state.stage = failed("the player's skeleton changed", None);
+            state.stage = Stage::failed("the player's skeleton changed", None);
             return;
         }
         let Some(source) = skeletons.get(&running.source_skeleton) else {
@@ -1538,28 +1547,29 @@ impl AnimationNode for RetargetNode {
 
 impl EditorAnimationNode for RetargetNode {}
 
-fn rig_fits(rig: &ResolvedRig, skeleton: &Skeleton) -> bool {
-    let count = skeleton.bone_count();
-    skeleton.validate().is_ok()
-        && rig.reference_local.len() == count
-        && rig.reference_model.len() == count
-        && rig.root < count
-        && rig
-            .chains
-            .iter()
-            .all(|chain| !chain.bones.is_empty() && chain.bones.iter().all(|bone| *bone < count))
-        && rig.motion_root.is_none_or(|motion_root| {
-            motion_root < count && is_strict_ancestor(skeleton, motion_root, rig.root)
-        })
-        && rig.goals.iter().all(|goal| {
-            goal.tip < count
-                && goal.mid < count
-                && goal.root < count
-                && skeleton.parents[goal.tip].map(usize::from) == Some(goal.mid)
-                && skeleton.parents[goal.mid].map(usize::from) == Some(goal.root)
-        })
-        && rig.root_height.is_finite()
-        && rig.root_height > 1e-4
+impl ResolvedRig {
+    fn fits(&self, skeleton: &Skeleton) -> bool {
+        let count = skeleton.bone_count();
+        skeleton.validate().is_ok()
+            && self.reference_local.len() == count
+            && self.reference_model.len() == count
+            && self.root < count
+            && self.chains.iter().all(|chain| {
+                !chain.bones.is_empty() && chain.bones.iter().all(|bone| *bone < count)
+            })
+            && self.motion_root.is_none_or(|motion_root| {
+                motion_root < count && is_strict_ancestor(skeleton, motion_root, self.root)
+            })
+            && self.goals.iter().all(|goal| {
+                goal.tip < count
+                    && goal.mid < count
+                    && goal.root < count
+                    && skeleton.parents[goal.tip].map(usize::from) == Some(goal.mid)
+                    && skeleton.parents[goal.mid].map(usize::from) == Some(goal.root)
+            })
+            && self.root_height.is_finite()
+            && self.root_height > 1e-4
+    }
 }
 
 fn model_rotations(parents: &[Option<u16>], local: &[JointPose]) -> Vec<Quat> {
@@ -1607,27 +1617,29 @@ fn chain_parameters(bones: &[usize], reference_model: &[Mat4]) -> Vec<f32> {
     parameters
 }
 
-fn chain_sample(bones: &[usize], parameters: &[f32], t: f32) -> ChainSample {
-    let lower = parameters
-        .iter()
-        .rposition(|parameter| *parameter <= t)
-        .unwrap_or(0);
-    let at = |index: usize| ChainSample {
-        lower: bones[index],
-        upper: bones[index],
-        alpha: 0.0,
-    };
-    if lower + 1 >= bones.len() {
-        return at(lower);
-    }
-    let alpha = (t - parameters[lower]) / (parameters[lower + 1] - parameters[lower]);
-    if alpha <= 0.0 {
-        return at(lower);
-    }
-    ChainSample {
-        lower: bones[lower],
-        upper: bones[lower + 1],
-        alpha,
+impl ChainSample {
+    fn along(bones: &[usize], parameters: &[f32], t: f32) -> Self {
+        let lower = parameters
+            .iter()
+            .rposition(|parameter| *parameter <= t)
+            .unwrap_or(0);
+        let at = |index: usize| Self {
+            lower: bones[index],
+            upper: bones[index],
+            alpha: 0.0,
+        };
+        if lower + 1 >= bones.len() {
+            return at(lower);
+        }
+        let alpha = (t - parameters[lower]) / (parameters[lower + 1] - parameters[lower]);
+        if alpha <= 0.0 {
+            return at(lower);
+        }
+        Self {
+            lower: bones[lower],
+            upper: bones[lower + 1],
+            alpha,
+        }
     }
 }
 
@@ -1674,7 +1686,7 @@ mod tests {
         evaluation::{AnimationGraphContext, RootBone},
         event::AnimationEvent,
         graph::AnimationGraph,
-        ik::{Hinge, TwoBoneChain, solve_two_bone},
+        ik::{Hinge, TwoBoneChain},
         message::ClipEnded,
         node::{AnimationClipNode, AnimationNode, AnimationPlayMode},
         player::AnimationPlayer,
@@ -2865,17 +2877,13 @@ mod tests {
         let rest_model = skeleton.forward_kinematics(&skeleton.rest_pose).unwrap();
         let [root, mid, tip] = bones.map(|name| bone(skeleton, name));
         let at = |bone: usize| model_position(&rest_model, bone) + shift;
-        let solution = solve_two_bone(
-            &TwoBoneChain {
-                root: at(root),
-                mid: at(mid),
-                tip: at(tip),
-                hinge: None,
-            },
-            goal,
-            None,
-            0.0,
-        );
+        let solution = (TwoBoneChain {
+            root: at(root),
+            mid: at(mid),
+            tip: at(tip),
+            hinge: None,
+        })
+        .solve(goal, None, 0.0);
         deltas[root] = solution.root;
         deltas[mid] = solution.mid;
     }

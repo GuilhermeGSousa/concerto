@@ -17,8 +17,7 @@ use concerto_foundation::assets::{
 };
 use concerto_reflect::{
     PathSegment, PropertyPath, Reflect, ReflectDefault, ReflectJson, ReflectRef, ReflectedValue,
-    TypeRegistry, ValueWarning, apply_value_with, json_to_value_with, with_property,
-    with_property_mut,
+    TypeRegistry, ValueWarning,
 };
 use serde_json::Value;
 
@@ -146,10 +145,11 @@ pub(crate) fn apply_at(
     context: &EditContext,
 ) -> Result<(), EditError> {
     let mut result = Err(EditError::NotFound);
-    if with_property_mut(value, path, &mut |value| {
-        result = editor.apply(value, edit, context);
-    })
-    .is_err()
+    if path
+        .access_mut(value, &mut |value| {
+            result = editor.apply(value, edit, context);
+        })
+        .is_err()
     {
         result = Err(EditError::NotFound);
     }
@@ -231,10 +231,11 @@ impl SetValue {
         let stored = {
             let live = (component.read)(&ComponentMetadata::new(world), self.entity)
                 .ok_or_else(|| refused(EditError::MissingTarget))?;
-            with_property(live, &self.path, &mut |value| {
-                *field = (value as &dyn Any).type_id();
-            })
-            .map_err(|_| refused(EditError::NotFound))?;
+            self.path
+                .access(live, &mut |value| {
+                    *field = (value as &dyn Any).type_id();
+                })
+                .map_err(|_| refused(EditError::NotFound))?;
             let Some(registry) = world.get_resource::<AppTypeRegistry>() else {
                 return Err(PropertyRefusal::Undecodable(
                     EditError::UnregisteredComponent.to_string(),
@@ -252,8 +253,8 @@ impl SetValue {
         };
         let mut warnings = Vec::new();
         (component.edit)(world, self.entity, &mut |value| {
-            let _ = with_property_mut(value, &self.path, &mut |value| {
-                warnings = apply_value_with(value, &stored, &mut hook);
+            let _ = self.path.access_mut(value, &mut |value| {
+                warnings = stored.apply_with(value, &mut hook);
             });
         });
         applied(&warnings)
@@ -288,7 +289,8 @@ pub(crate) fn decode_property(
     if types.get_type_data::<ReflectJson>(field).is_some()
         || types.get_type_data::<ReflectDefault>(field).is_some()
     {
-        return json_to_value_with(json, field, types, hook).map_err(PropertyRefusal::Undecodable);
+        return ReflectedValue::from_json_with(json, field, types, hook)
+            .map_err(PropertyRefusal::Undecodable);
     }
     let segments = path.segments();
     if segments
@@ -305,15 +307,12 @@ pub(crate) fn decode_property(
     let variants: Vec<Option<&'static str>> = (0..segments.len())
         .map(|depth| {
             let mut variant = None;
-            let _ = with_property(
-                live,
-                &PropertyPath::new(segments[..depth].iter().copied()),
-                &mut |owner| {
+            let _ =
+                PropertyPath::new(segments[..depth].iter().copied()).access(live, &mut |owner| {
                     if let ReflectRef::Enum(owner) = owner.reflect_ref() {
                         variant = Some(owner.variant_name());
                     }
-                },
-            );
+                });
             variant
         })
         .collect();
@@ -331,8 +330,8 @@ pub(crate) fn decode_property(
                     None => field,
                 }
             });
-    let stored =
-        json_to_value_with(&wrapped, root, types, hook).map_err(PropertyRefusal::Undecodable)?;
+    let stored = ReflectedValue::from_json_with(&wrapped, root, types, hook)
+        .map_err(PropertyRefusal::Undecodable)?;
     segments
         .iter()
         .try_fold(stored, |stored, segment| {

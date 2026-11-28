@@ -36,7 +36,7 @@ use super::{
     ClipDocument,
     events::TabEvent,
     preview::{SetRootMotion, SetSkeletonGizmo},
-    scene_signal, settle_edit,
+    settle_edit,
     transport::{TransportTimeline, scrub_transport, spawn_transport},
 };
 
@@ -184,7 +184,7 @@ fn pick_scene(document: Entity) -> impl Fn(AssetId) -> Listener<UIItemActivated>
             state.picked_scene = Some(id);
             if let Some(project) = &project.project {
                 let clip = editor.current.as_ref();
-                let scene = scene_signal(&mut state, &project.root, clip, &assets);
+                let scene = state.scene_signal(&project.root, clip, &assets);
                 previews.trigger(document, scene);
             }
         })
@@ -289,7 +289,7 @@ fn build_inspector(
         rate: fact(&mut panel, "Rate", theme),
         clip_bones: fact(&mut panel, "Clip bones", theme),
         driven: fact(&mut panel, "Driven", theme),
-        events: event_section::build_events(&mut panel, document, theme),
+        events: event_section::EventsPanel::build_events(&mut panel, document, theme),
         status: panel.spawn_child(error_line(theme)).entity(),
     }
 }

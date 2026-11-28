@@ -109,9 +109,37 @@ struct LeftPanel {
     add_channel: Entity,
 }
 
-fn selected_facts(state: &DefinitionDocument) -> Option<&ClipFacts> {
-    let entry = state.entries.get(state.selected_entry?)?;
-    state.facts_of(entry.clip.id())?.read.as_ref().ok()
+impl DefinitionDocument {
+    fn selected_facts(&self) -> Option<&ClipFacts> {
+        let entry = self.entries.get(self.selected_entry?)?;
+        self.facts_of(entry.clip.id())?.read.as_ref().ok()
+    }
+
+    fn shown_channel(&self, values: &InspectedValues, shown: &ShownValue) -> Option<ChannelId> {
+        let channel = shown_index(values, shown)?.checked_sub(1)?;
+        self.channels.get(channel).map(|channel| channel.id)
+    }
+
+    fn wanted_channel_rows(
+        &self,
+        hosted: bool,
+        values: Option<&InspectedValues>,
+    ) -> Vec<(Option<ChannelId>, String)> {
+        if hosted {
+            let names = values.map_or(&[][..], |values| values.0.get(1..).unwrap_or_default());
+            self.channels
+                .iter()
+                .zip(names)
+                .map(|(channel, value)| (Some(channel.id), value.name()))
+                .collect()
+        } else {
+            self.loaded
+                .iter()
+                .flat_map(|definition| &definition.channels)
+                .map(|channel| (None, channel.type_name().to_owned()))
+                .collect()
+        }
+    }
 }
 
 fn range_of(first: u32, last: u32, rate: f32, duration: f32) -> TimeRange {
@@ -128,7 +156,7 @@ fn select_range(document: Entity) -> Listener<TimelineSelected> {
         let Some((mut state, None)) = documents.get_entity_mut(document) else {
             return;
         };
-        let Some(facts) = selected_facts(&state) else {
+        let Some(facts) = state.selected_facts() else {
             return;
         };
         let Some(rate) = facts.rate else {
@@ -329,15 +357,6 @@ pub(crate) fn shown_index(values: &InspectedValues, shown: &ShownValue) -> Optio
         .position(|value| Arc::ptr_eq(value, &shown.0))
 }
 
-fn shown_channel(
-    state: &DefinitionDocument,
-    values: &InspectedValues,
-    shown: &ShownValue,
-) -> Option<ChannelId> {
-    let channel = shown_index(values, shown)?.checked_sub(1)?;
-    state.channels.get(channel).map(|channel| channel.id)
-}
-
 fn channel_types(registry: &TypeRegistry) -> Vec<String> {
     let mut names: Vec<String> = registry
         .iter()
@@ -369,7 +388,9 @@ fn remove_channel(document: Entity, id: ChannelId) -> Listener<UIClick> {
         let Some(index) = state.channels.iter().position(|channel| channel.id == id) else {
             return;
         };
-        let shown = shown_channel(&state, values, shown).filter(|shown| *shown != id);
+        let shown = state
+            .shown_channel(values, shown)
+            .filter(|shown| *shown != id);
         state.channels.remove(index);
         publish_values(document, &state, &types.read(), shown, &mut cmd);
         cmd.insert(Unsaved, document);
@@ -425,7 +446,7 @@ fn pick_channel(document: Entity, name: String) -> Listener<UIItemActivated> {
         let types = types.read();
         match HeldChannel::empty(&name, &types) {
             Ok(channel) => {
-                let shown = shown_channel(&state, values, shown);
+                let shown = state.shown_channel(values, shown);
                 state.channels.push(channel);
                 publish_values(document, &state, &types, shown, &mut cmd);
                 cmd.insert(Unsaved, document);
@@ -474,195 +495,201 @@ fn section(
     (add, list)
 }
 
-fn build_left(host: &mut EntityCommandQueue, document: Entity, theme: &UITheme) -> LeftPanel {
-    let mut view = host.spawn_child((
-        UINode::default()
-            .with_flex_grow(1.0)
-            .with_flex_direction(FlexDirection::Column)
-            .clipped(),
-        Interactable,
-    ));
-    let view_entity = view.entity();
-    let mut content = view.spawn_child(theme.column().fixed().gap(theme.spacing_sm).padding(
-        UIRect {
-            right: SCROLLBAR_WIDTH + theme.spacing_xs,
-            ..UIRect::all(0.0)
-        },
-    ));
-    let content_entity = content.entity();
+impl LeftPanel {
+    fn build_left(host: &mut EntityCommandQueue, document: Entity, theme: &UITheme) -> Self {
+        let mut view = host.spawn_child((
+            UINode::default()
+                .with_flex_grow(1.0)
+                .with_flex_direction(FlexDirection::Column)
+                .clipped(),
+            Interactable,
+        ));
+        let view_entity = view.entity();
+        let mut content = view.spawn_child(theme.column().fixed().gap(theme.spacing_sm).padding(
+            UIRect {
+                right: SCROLLBAR_WIDTH + theme.spacing_xs,
+                ..UIRect::all(0.0)
+            },
+        ));
+        let content_entity = content.entity();
 
-    content.add_child(title(theme, "Skeleton"));
-    let mut row = content.spawn_child(theme.row().fixed());
-    let mut button =
-        row.spawn_child(picker_button(theme).on_click(toggle_skeleton_picker(document)));
-    let skeleton_button = button.entity();
-    let skeleton = button.spawn_child(picker_label(theme)).entity();
-    button.add_child(picker_caret(theme));
-    let skeleton_error = content
-        .spawn_child(theme.label("").color(theme.error).hidden().fixed())
-        .entity();
+        content.add_child(title(theme, "Skeleton"));
+        let mut row = content.spawn_child(theme.row().fixed());
+        let mut button =
+            row.spawn_child(picker_button(theme).on_click(toggle_skeleton_picker(document)));
+        let skeleton_button = button.entity();
+        let skeleton = button.spawn_child(picker_label(theme)).entity();
+        button.add_child(picker_caret(theme));
+        let skeleton_error = content
+            .spawn_child(theme.label("").color(theme.error).hidden().fixed())
+            .entity();
 
-    let (add_entry, entries) =
-        section(&mut content, "Entries", toggle_clip_picker(document), theme);
+        let (add_entry, entries) =
+            section(&mut content, "Entries", toggle_clip_picker(document), theme);
 
-    let mut settings = content.spawn_child(
-        theme
-            .pressable()
-            .row()
-            .height(UIValue::Px(theme.control_height))
-            .padding(UIRect::axes(0.0, ROW_PADDING))
-            .on_click(pick_value(document, 0)),
-    );
-    let settings_entity = settings.entity();
-    settings.add_child(theme.label("Settings").font_size(theme.font_size_sm).grow());
+        let mut settings = content.spawn_child(
+            theme
+                .pressable()
+                .row()
+                .height(UIValue::Px(theme.control_height))
+                .padding(UIRect::axes(0.0, ROW_PADDING))
+                .on_click(pick_value(document, 0)),
+        );
+        let settings_entity = settings.entity();
+        settings.add_child(theme.label("Settings").font_size(theme.font_size_sm).grow());
 
-    let (add_channel, channels) = section(
-        &mut content,
-        "Channels",
-        toggle_channel_menu(document),
-        theme,
-    );
+        let (add_channel, channels) = section(
+            &mut content,
+            "Channels",
+            toggle_channel_menu(document),
+            theme,
+        );
 
-    view.insert(UIScrollArea {
-        content: Some(content_entity),
-        ..Default::default()
-    });
-    LeftPanel {
-        view: view_entity,
-        content: content_entity,
-        skeleton,
-        skeleton_button,
-        skeleton_error,
-        entries,
-        add_entry,
-        settings: settings_entity,
-        channels,
-        add_channel,
+        view.insert(UIScrollArea {
+            content: Some(content_entity),
+            ..Default::default()
+        });
+        LeftPanel {
+            view: view_entity,
+            content: content_entity,
+            skeleton,
+            skeleton_button,
+            skeleton_error,
+            entries,
+            add_entry,
+            settings: settings_entity,
+            channels,
+            add_channel,
+        }
     }
 }
 
-fn spawn_entry_row(
-    list: &mut EntityCommandQueue,
-    document: Entity,
-    index: usize,
-    theme: &UITheme,
-) -> EntryWidgets {
-    let mut row = list.spawn_child(theme.row().fixed().gap(theme.spacing_xs));
-    let mut select = row.spawn_child(
-        theme
-            .pressable()
-            .column()
-            .grow()
-            .shrink(1.0)
-            .min_width(UIValue::Px(0.0))
-            .padding(UIRect::axes(2.0, ROW_PADDING))
-            .on_click(select_entry(document, index)),
-    );
-    let select_entity = select.entity();
-    let name = select
-        .spawn_child(theme.label("").font_size(theme.font_size_sm).single_line())
-        .entity();
-    let mut facts = select.spawn_child(theme.row().fixed());
-    let range = facts
-        .spawn_child(
+impl EntryWidgets {
+    fn spawn_entry_row(
+        list: &mut EntityCommandQueue,
+        document: Entity,
+        index: usize,
+        theme: &UITheme,
+    ) -> Self {
+        let mut row = list.spawn_child(theme.row().fixed().gap(theme.spacing_xs));
+        let mut select = row.spawn_child(
             theme
-                .label("")
-                .small()
-                .muted()
-                .single_line()
+                .pressable()
+                .column()
                 .grow()
                 .shrink(1.0)
-                .min_width(UIValue::Px(0.0)),
-        )
-        .entity();
-    let driven = facts
-        .spawn_child(theme.label("").small().no_wrap())
-        .entity();
-    let mirrored = facts
-        .spawn_child(
+                .min_width(UIValue::Px(0.0))
+                .padding(UIRect::axes(2.0, ROW_PADDING))
+                .on_click(select_entry(document, index)),
+        );
+        let select_entity = select.entity();
+        let name = select
+            .spawn_child(theme.label("").font_size(theme.font_size_sm).single_line())
+            .entity();
+        let mut facts = select.spawn_child(theme.row().fixed());
+        let range = facts
+            .spawn_child(
+                theme
+                    .label("")
+                    .small()
+                    .muted()
+                    .single_line()
+                    .grow()
+                    .shrink(1.0)
+                    .min_width(UIValue::Px(0.0)),
+            )
+            .entity();
+        let driven = facts
+            .spawn_child(theme.label("").small().no_wrap())
+            .entity();
+        let mirrored = facts
+            .spawn_child(
+                theme
+                    .checkbox("", false)
+                    .size(UIValue::Px(CHECKBOX_SIZE), UIValue::Px(CHECKBOX_SIZE))
+                    .padding(0.0)
+                    .margin(UIRect {
+                        left: theme.spacing_sm,
+                        ..UIRect::all(0.0)
+                    })
+                    .radius_sm()
+                    .fixed()
+                    .on_change(toggle_mirrored(document, index)),
+            )
+            .entity();
+        facts.add_child(
             theme
-                .checkbox("", false)
-                .size(UIValue::Px(CHECKBOX_SIZE), UIValue::Px(CHECKBOX_SIZE))
-                .padding(0.0)
+                .label("Mirrored")
+                .small()
+                .muted()
+                .no_wrap()
                 .margin(UIRect {
-                    left: theme.spacing_sm,
+                    left: theme.spacing_xs,
                     ..UIRect::all(0.0)
-                })
-                .radius_sm()
-                .fixed()
-                .on_change(toggle_mirrored(document, index)),
-        )
-        .entity();
-    facts.add_child(
-        theme
-            .label("Mirrored")
-            .small()
-            .muted()
-            .no_wrap()
-            .margin(UIRect {
-                left: theme.spacing_xs,
-                ..UIRect::all(0.0)
-            }),
-    );
-    let remove = row
-        .spawn_child(icon_button(
-            theme,
-            glyph::MINUS,
-            remove_entry(document, index),
-        ))
-        .entity();
-    EntryWidgets {
-        row: select_entity,
-        name,
-        range,
-        driven,
-        mirrored,
-        remove,
+                }),
+        );
+        let remove = row
+            .spawn_child(icon_button(
+                theme,
+                glyph::MINUS,
+                remove_entry(document, index),
+            ))
+            .entity();
+        EntryWidgets {
+            row: select_entity,
+            name,
+            range,
+            driven,
+            mirrored,
+            remove,
+        }
     }
 }
 
-fn spawn_channel_row(
-    list: &mut EntityCommandQueue,
-    document: Entity,
-    index: usize,
-    id: Option<ChannelId>,
-    name: String,
-    theme: &UITheme,
-) -> ChannelWidgets {
-    let label = theme
-        .label(name.as_str())
-        .font_size(theme.font_size_sm)
-        .single_line()
-        .grow()
-        .shrink(1.0)
-        .min_width(UIValue::Px(0.0));
-    let Some(channel) = id else {
-        let row = list.spawn_child(label).entity();
-        return ChannelWidgets { id, name, row };
-    };
-    let mut row = list.spawn_child(theme.row().fixed().gap(theme.spacing_xs));
-    let mut select = row.spawn_child(
-        theme
-            .pressable()
-            .row()
+impl ChannelWidgets {
+    fn spawn_channel_row(
+        list: &mut EntityCommandQueue,
+        document: Entity,
+        index: usize,
+        id: Option<ChannelId>,
+        name: String,
+        theme: &UITheme,
+    ) -> Self {
+        let label = theme
+            .label(name.as_str())
+            .font_size(theme.font_size_sm)
+            .single_line()
             .grow()
             .shrink(1.0)
-            .min_width(UIValue::Px(0.0))
-            .height(UIValue::Px(theme.control_height))
-            .padding(UIRect::axes(0.0, ROW_PADDING))
-            .on_click(pick_value(document, index + 1)),
-    );
-    let select_entity = select.entity();
-    select.add_child(label);
-    row.add_child(icon_button(
-        theme,
-        glyph::MINUS,
-        remove_channel(document, channel),
-    ));
-    ChannelWidgets {
-        id,
-        name,
-        row: select_entity,
+            .min_width(UIValue::Px(0.0));
+        let Some(channel) = id else {
+            let row = list.spawn_child(label).entity();
+            return ChannelWidgets { id, name, row };
+        };
+        let mut row = list.spawn_child(theme.row().fixed().gap(theme.spacing_xs));
+        let mut select = row.spawn_child(
+            theme
+                .pressable()
+                .row()
+                .grow()
+                .shrink(1.0)
+                .min_width(UIValue::Px(0.0))
+                .height(UIValue::Px(theme.control_height))
+                .padding(UIRect::axes(0.0, ROW_PADDING))
+                .on_click(pick_value(document, index + 1)),
+        );
+        let select_entity = select.entity();
+        select.add_child(label);
+        row.add_child(icon_button(
+            theme,
+            glyph::MINUS,
+            remove_channel(document, channel),
+        ));
+        ChannelWidgets {
+            id,
+            name,
+            row: select_entity,
+        }
     }
 }
 
@@ -720,7 +747,7 @@ pub(crate) fn build_definition_panels(
         else {
             continue;
         };
-        let left = build_left(&mut cmd.entity(left), document, &theme);
+        let left = LeftPanel::build_left(&mut cmd.entity(left), document, &theme);
         let inspector = build_inspector(&mut cmd.entity(inspector), &theme);
         let timeline = build_bottom(&mut cmd.entity(bottom), document, &theme);
         cmd.insert(
@@ -799,33 +826,35 @@ fn memory_line(bytes: usize) -> String {
     }
 }
 
-fn stat_lines(stats: &BakedStats, assets: &AssetRegistry) -> Vec<StatLine> {
-    let mut lines = vec![
-        StatLine::new("Frames", stats.frames.to_string()),
-        StatLine::new("Memory", memory_line(stats.bytes)),
-    ];
-    for entry in &stats.entries {
-        lines.push(StatLine {
-            warning: entry.short,
-            ..StatLine::new(asset_name(assets, entry.clip), entry.frames.to_string())
-        });
-        if entry.short {
+impl BakedStats {
+    fn stat_lines(&self, assets: &AssetRegistry) -> Vec<StatLine> {
+        let mut lines = vec![
+            StatLine::new("Frames", self.frames.to_string()),
+            StatLine::new("Memory", memory_line(self.bytes)),
+        ];
+        for entry in &self.entries {
             lines.push(StatLine {
-                warning: true,
-                ..StatLine::new(
-                    format!("Shorter than the {:.2} s trajectory", stats.horizon),
-                    "",
-                )
+                warning: entry.short,
+                ..StatLine::new(asset_name(assets, entry.clip), entry.frames.to_string())
             });
+            if entry.short {
+                lines.push(StatLine {
+                    warning: true,
+                    ..StatLine::new(
+                        format!("Shorter than the {:.2} s trajectory", self.horizon),
+                        "",
+                    )
+                });
+            }
         }
+        for channel in &self.channels {
+            lines.push(StatLine::new(
+                channel.name.as_str(),
+                format!("{:.3} ± {:.3}", channel.mean, channel.deviation),
+            ));
+        }
+        lines
     }
-    for channel in &stats.channels {
-        lines.push(StatLine::new(
-            channel.name.as_str(),
-            format!("{:.3} ± {:.3}", channel.mean, channel.deviation),
-        ));
-    }
-    lines
 }
 
 fn spawn_stat_line(list: &mut EntityCommandQueue, line: &StatLine, theme: &UITheme) {
@@ -944,7 +973,9 @@ fn build_channel_rows(
     wanted
         .into_iter()
         .enumerate()
-        .map(|(index, (id, name))| spawn_channel_row(&mut list, document, index, id, name, theme))
+        .map(|(index, (id, name))| {
+            ChannelWidgets::spawn_channel_row(&mut list, document, index, id, name, theme)
+        })
         .collect()
 }
 
@@ -992,7 +1023,7 @@ pub(crate) fn sync_definition_panels(
             let lines = state
                 .stats
                 .as_ref()
-                .map_or_else(Vec::new, |stats| stat_lines(stats, &assets));
+                .map_or_else(Vec::new, |stats| stats.stat_lines(&assets));
             let mut list = cmd.entity(panels.stats).despawn_children();
             for line in &lines {
                 spawn_stat_line(&mut list, line, &theme);
@@ -1007,7 +1038,7 @@ pub(crate) fn sync_definition_panels(
         if panels.entry_rows.len() != state.entries.len() {
             let mut list = cmd.entity(panels.entries).despawn_children();
             let rows = (0..state.entries.len())
-                .map(|index| spawn_entry_row(&mut list, entity, index, &theme))
+                .map(|index| EntryWidgets::spawn_entry_row(&mut list, entity, index, &theme))
                 .collect();
             panels.entry_rows = rows;
         }
@@ -1031,7 +1062,7 @@ pub(crate) fn sync_definition_panels(
         }
 
         if let Some(mut timeline) = timelines.get_entity_mut(panels.timeline) {
-            let facts = selected_facts(state);
+            let facts = state.selected_facts();
             let rate = facts.and_then(|facts| facts.rate);
             let entry = state
                 .selected_entry
@@ -1062,29 +1093,6 @@ pub(crate) fn sync_definition_panels(
     }
 }
 
-fn wanted_channel_rows(
-    state: &DefinitionDocument,
-    hosted: bool,
-    values: Option<&InspectedValues>,
-) -> Vec<(Option<ChannelId>, String)> {
-    if hosted {
-        let names = values.map_or(&[][..], |values| values.0.get(1..).unwrap_or_default());
-        state
-            .channels
-            .iter()
-            .zip(names)
-            .map(|(channel, value)| (Some(channel.id), value.name()))
-            .collect()
-    } else {
-        state
-            .loaded
-            .iter()
-            .flat_map(|definition| &definition.channels)
-            .map(|channel| (None, channel.type_name().to_owned()))
-            .collect()
-    }
-}
-
 pub(crate) fn sync_channel_rows(
     mut documents: Query<(
         Entity,
@@ -1099,7 +1107,7 @@ pub(crate) fn sync_channel_rows(
     mut cmd: CommandQueue,
 ) {
     for (document, state, mut panels, hosted, values, shown) in documents.iter_mut() {
-        let wanted = wanted_channel_rows(state, hosted.is_some(), values);
+        let wanted = state.wanted_channel_rows(hosted.is_some(), values);
         if !channel_rows_match(&panels.channel_rows, &wanted) {
             panels.channel_rows =
                 build_channel_rows(panels.channels, document, wanted, &theme, &mut cmd);

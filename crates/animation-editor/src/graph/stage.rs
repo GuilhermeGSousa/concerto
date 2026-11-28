@@ -10,7 +10,7 @@ use concerto_editor::{
     project::ProjectState,
 };
 use concerto_foundation::assets::{AssetId, handle::AssetHandle, registry::AssetRegistry};
-use concerto_reflect::{Reflect, ReflectDefault, to_value};
+use concerto_reflect::{Reflect, ReflectDefault, ReflectedValue};
 use concerto_scene::scene::Scene;
 
 use super::{
@@ -203,7 +203,7 @@ impl Default for SentPreview {
 impl SentPreview {
     /// Whether the preview was sent every parameter value `state` holds.
     pub fn holds_params(&self, state: &GraphDocument) -> bool {
-        self.params == wanted_params(state)
+        self.params == state.wanted_params()
     }
 }
 
@@ -290,18 +290,19 @@ fn played(state: &GraphDocument, own: AssetId) -> anyhow::Result<Option<Played>>
     }))
 }
 
-fn wanted_params(state: &GraphDocument) -> Vec<SetGraphParam> {
-    state
-        .parameters
-        .shown()
-        .filter_map(|param| {
-            Some(SetGraphParam {
-                name: param.name,
-                type_name: param.type_name.to_owned(),
-                value: to_value(param.value()).ok()?,
+impl GraphDocument {
+    fn wanted_params(&self) -> Vec<SetGraphParam> {
+        self.parameters
+            .shown()
+            .filter_map(|param| {
+                Some(SetGraphParam {
+                    name: param.name,
+                    type_name: param.type_name.to_owned(),
+                    value: ReflectedValue::encode(param.value()).ok()?,
+                })
             })
-        })
-        .collect()
+            .collect()
+    }
 }
 
 pub(crate) fn sync_graph_preview(
@@ -420,7 +421,7 @@ pub(crate) fn sync_graph_preview(
             }
         }
 
-        let params = wanted_params(&state);
+        let params = state.wanted_params();
         for param in &params {
             if !sent.params.contains(param) {
                 previews.trigger(document, param.clone());

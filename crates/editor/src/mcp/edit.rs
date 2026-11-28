@@ -11,23 +11,19 @@ use concerto_ecs::{
 };
 use concerto_foundation::assets::asset_server::AssetServer;
 use concerto_mcp::{AppMcpExt, McpTool, Needs, PendingCall, Reply, ToolCalls, ToolError};
-use concerto_reflect::{PropertyPath, Reflect, ReflectRef, TypeRegistry, with_property};
+use concerto_reflect::{PropertyPath, Reflect, ReflectRef, TypeRegistry};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::Value;
 
-use super::{
-    act::label,
-    observe::{component_json, names_component},
-};
+use super::{act::label, observe::names_component};
 use crate::{
     entity_ids::{SceneEntities, resolve},
     hosted::{EditTarget, EditWorld, EditWorldSignals, Hosted},
     inspector::{
         ComponentTarget, EditSource, InspectionSource, InspectorRegistry, ListEdit, ListEditor,
-        ListedPath, PropertyAddress, PropertyCommit, PropertyCommits, PropertyTarget,
-        adapter_commit, find_path, listed_paths, not_editable, refusal_error,
-        refused as inspector_refused, unknown_path,
+        ListedPath, PropertyAddress, PropertyCommit, PropertyCommits, PropertyTarget, WriteRefusal,
+        adapter_commit, find_path, listed_paths,
     },
     tools::{
         edits::{
@@ -194,7 +190,7 @@ pub(super) fn build(app: &mut App) {
 }
 
 pub(super) fn refused(reason: &str) -> ToolError {
-    inspector_refused(reason).into()
+    WriteRefusal::refused(reason).into()
 }
 
 fn root_refused(edit: &str) -> ToolError {
@@ -417,29 +413,43 @@ fn pick(
     }
 }
 
-fn carried_component(
-    source: &InspectionSource,
-    entity: Entity,
-    name: &str,
-) -> Result<Named, ToolError> {
-    let mut carried: Vec<Named> = source
-        .visible_components(entity)
-        .into_iter()
-        .filter_map(|(id, short)| Some((id, short, source.types().get(id)?.type_path())))
-        .collect();
-    carried.sort_unstable_by_key(|(_, short, full)| (*short, *full));
-    pick(name, &carried, || {
-        let shorts: Vec<&str> = carried.iter().map(|(_, short, _)| *short).collect();
-        format!(
-            "{} carries no {name}; it carries {}.",
-            entity.to_id_string(),
-            if shorts.is_empty() {
-                "none".to_owned()
-            } else {
-                shorts.join(", ")
-            }
-        )
-    })
+impl InspectionSource<'_> {
+    fn carried_component(&self, entity: Entity, name: &str) -> Result<Named, ToolError> {
+        let mut carried: Vec<Named> = self
+            .visible_components(entity)
+            .into_iter()
+            .filter_map(|(id, short)| Some((id, short, self.types().get(id)?.type_path())))
+            .collect();
+        carried.sort_unstable_by_key(|(_, short, full)| (*short, *full));
+        pick(name, &carried, || {
+            let shorts: Vec<&str> = carried.iter().map(|(_, short, _)| *short).collect();
+            format!(
+                "{} carries no {name}; it carries {}.",
+                entity.to_id_string(),
+                if shorts.is_empty() {
+                    "none".to_owned()
+                } else {
+                    shorts.join(", ")
+                }
+            )
+        })
+    }
+
+    fn component_answer(
+        &self,
+        registry: &InspectorRegistry,
+        entity: Entity,
+        component: TypeId,
+    ) -> String {
+        let (short, full) = self
+            .types()
+            .get(component)
+            .map_or(("", ""), |registration| {
+                (registration.short_name(), registration.type_path())
+            });
+        self.component_json(registry, entity, short, full, component)
+            .to_string()
+    }
 }
 
 fn registered_component(types: &TypeRegistry, name: &str) -> Result<Named, ToolError> {
@@ -491,7 +501,7 @@ fn property_write(
     path: &str,
     value: Value,
 ) -> Result<Write, ToolError> {
-    let (component, short, _) = carried_component(source, entity, component)?;
+    let (component, short, _) = source.carried_component(entity, component)?;
     let changed = registry.changed_tick();
     let rows = source
         .collect_component(registry, entity, component)
@@ -514,7 +524,7 @@ fn property_write(
         }));
     };
     let target = Arc::new(ComponentTarget { entity, component });
-    let current = current.ok_or_else(|| unknown_path(short, path, &[]))?;
+    let current = current.ok_or_else(|| WriteRefusal::unknown_path(short, path, &[]))?;
     let commit = adapter_commit(
         property,
         target,
@@ -603,7 +613,7 @@ fn list_commit(
     path: &str,
     edit: ListEdit,
 ) -> Result<(PropertyCommit, String), ToolError> {
-    let (component, short, _) = carried_component(source, entity, component)?;
+    let (component, short, _) = source.carried_component(entity, component)?;
     let rows = source
         .collect_component(registry, entity, component)
         .unwrap_or_default();
@@ -660,7 +670,7 @@ pub(super) fn list_commit_at(
     }
     let row = list
         .row(target, changed)
-        .ok_or_else(|| not_editable(&name))?;
+        .ok_or_else(|| WriteRefusal::not_editable(&name))?;
     let commit = PropertyCommit::erased::<ListEditor>(&row, edit)
         .map_err(|error| refused(&format!("{attempt} failed: {error}")))?;
     Ok((commit, done))
@@ -764,27 +774,12 @@ fn list_remove(
 /// The length of the list at `path` of `value`, 0 when there is none.
 pub(super) fn list_length(value: &dyn Reflect, path: &PropertyPath) -> usize {
     let mut length = 0;
-    let _ = with_property(value, path, &mut |field| {
+    let _ = path.access(value, &mut |field| {
         if let ReflectRef::List(list) = field.reflect_ref() {
             length = list.len();
         }
     });
     length
-}
-
-fn component_answer(
-    source: &InspectionSource,
-    registry: &InspectorRegistry,
-    entity: Entity,
-    component: TypeId,
-) -> String {
-    let (short, full) = source
-        .types()
-        .get(component)
-        .map_or(("", ""), |registration| {
-            (registration.short_name(), registration.type_path())
-        });
-    component_json(source, registry, entity, short, full, component).to_string()
 }
 
 fn answer_property_commits(
@@ -813,9 +808,11 @@ fn answer_property_commits(
                             .read(target.entity, target.component)
                             .map_or(0, |value| list_length(value, &setting.path))
                     ),
-                    None => component_answer(&source, &registry, target.entity, target.component),
+                    None => source.component_answer(&registry, target.entity, target.component),
                 }),
-                Err(refusal) => pending.reply.err(refusal_error(refusal).into()),
+                Err(refusal) => pending
+                    .reply
+                    .err(WriteRefusal::from_property(refusal).into()),
             }
             cmd.despawn(call);
         }
@@ -875,7 +872,7 @@ fn remove_component(
     };
     for (arguments, reply) in calls.read() {
         let found = resolve(&arguments.entity, &entities).and_then(|entity| {
-            let (component, short, _) = carried_component(&source, entity, &arguments.component)?;
+            let (component, short, _) = source.carried_component(entity, &arguments.component)?;
             if roots.get_entity(entity).is_some() {
                 return Err(root_refused(&format!("Remove {short}")));
             }
@@ -914,7 +911,7 @@ fn answer_component_edits(
             match (&event.result, editing.edit) {
                 (Ok(()), ComponentEdit::Add { entity, component }) => pending
                     .reply
-                    .ok(component_answer(&source, &registry, entity, component)),
+                    .ok(source.component_answer(&registry, entity, component)),
                 (Ok(()), ComponentEdit::Remove { .. }) => pending.reply.ok(editing.label.clone()),
                 (Err(reason), _) => pending.reply.err(refused(reason)),
             }

@@ -35,10 +35,9 @@ pub mod systems;
 #[cfg(test)]
 mod test_support;
 
-pub use bake::{bake, bake_with_progress};
 pub use channel::{
-    extract_features, preview_features, BodyMotion, ChannelSource, DynCloneChannel, FeatureChannel,
-    FeatureChannelData, FeatureShape, FrameContext, ReflectFeatureChannel,
+    BodyMotion, ChannelSource, DynCloneChannel, FeatureChannel, FeatureChannelData, FeatureShape,
+    FrameContext, ReflectFeatureChannel,
 };
 pub use database::{BakeError, BakedDatabase, MotionDatabase};
 pub use definition::{
@@ -51,7 +50,5 @@ pub use features::{
 pub use node::MotionMatchingNode;
 pub use plugin::MotionMatchingPlugin;
 pub use query::FeatureQuery;
-pub use search::{cost_of, search};
 pub use simulation::{CharacterSimulation, DesiredMotion, TrajectorySample};
-pub use staleness::{weightless_hash, weights_of};
 pub use state::{LastQuery, MotionMatchingState};

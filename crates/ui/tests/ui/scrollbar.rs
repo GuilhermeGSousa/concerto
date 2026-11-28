@@ -1,5 +1,5 @@
 //! Covers scrollbar thumb geometry: where the thumb sits and how big it is.
-use concerto_ui::scroll::thumb_geometry;
+use concerto_ui::scroll::ThumbGeometry;
 use proptest::prelude::*;
 
 const TRACK: f32 = 200.0;
@@ -38,7 +38,7 @@ fn the_thumb_is_the_visible_fraction_of_the_track_at_the_scrolled_fraction() {
             thumb: Some([75.0, 50.0]),
         },
     ] {
-        let thumb = thumb_geometry(case.offset, case.content, 500.0, TRACK)
+        let thumb = ThumbGeometry::of(case.offset, case.content, 500.0, TRACK)
             .map(|geometry| [geometry.offset, geometry.height]);
         assert_eq!(thumb, case.thumb, "{}", case.name);
     }
@@ -52,12 +52,12 @@ proptest! {
         scrolled in 0.0f32..2.0,
     ) {
         let content = viewport + extra;
-        let geometry = thumb_geometry(extra * scrolled, content, viewport, TRACK).unwrap();
+        let geometry = ThumbGeometry::of(extra * scrolled, content, viewport, TRACK).unwrap();
         prop_assert!(geometry.offset >= 0.0);
         prop_assert!(geometry.height >= 24.0 && geometry.height <= TRACK, "{}", geometry.height);
         prop_assert!(geometry.offset + geometry.height <= TRACK + 0.01);
 
-        let end = thumb_geometry(extra, content, viewport, TRACK).unwrap();
+        let end = ThumbGeometry::of(extra, content, viewport, TRACK).unwrap();
         prop_assert!((end.offset + end.height - TRACK).abs() < 0.01);
     }
 }

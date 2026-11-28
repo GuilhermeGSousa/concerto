@@ -206,7 +206,7 @@ a project.
 `open_asset` opens `asset`, an address or an id from `list_assets`, in its
 editor: it answers once the asset has loaded, and at once if it is already
 shown. A scene that fails to load answers `open_failed`; another kind answers
-once its editor calls `finish_asset_request`, or `open_failed` with the
+once its editor calls `EditorDocument::finish_request`, or `open_failed` with the
 document's status if the load failed. A kind with no editor answers
 `open_failed`. `create_asset` creates an empty asset of `kind`, one of the kinds
 the Asset Browser's New lists, ignoring case, named `name` in `folder`, or in
@@ -1619,8 +1619,8 @@ decode the file.
 
 A custom editor may load in a synchronous ECS system, as the generic tab does.
 Asynchronous systems capture the `AssetEntry` in `EditorDocument.pending` when they start;
-before mutating domain state, use `asset_request_is_current` with it to reject
-cancelled or superseded results. Call `finish_asset_request` with a mutable
+before mutating domain state, use `EditorDocument::is_request_current` with it to reject
+cancelled or superseded results. Call `EditorDocument::finish_request` with a mutable
 document borrow, the captured `AssetEntry`, and success or an error to update
 the tab's current asset and status. A request still pending in its tab needs
 that call: MCP's `open_asset` waits for it, and times out without it. A call
@@ -1809,7 +1809,7 @@ inspector.
 `Ragdoll` from a retarget rig and saves it as a new asset in the open project,
 and the editor works without it. Its `install` registers the `CreateRagdoll`
 signal, whose one listener reads the rig, its skeleton and its reference clip,
-calls `generate_humanoid`, checks the result with `Ragdoll::resolve`, writes
+calls `Ragdoll::humanoid`, checks the result with `Ragdoll::resolve`, writes
 `ragdoll.gasset` next to the rig (or at `address`) and adds it to the asset
 registry, so the Asset Browser and `list_assets` show it at once. A rig that
 has no chain a humanoid needs, or an address that is taken, answers with what
@@ -1864,7 +1864,7 @@ when there is one. `set_ragdoll_part` edits the ragdoll open in a tab by `bone`:
 `mass`, `offset`, `swing_normal`, `swing_plane`, `twist_min`, `twist_max` and
 `friction`, a part added for a bone that has none, or `remove`. It sends the
 signal the buttons send, which replaces the tab's value and marks it unsaved;
-`save` writes it. `test_ragdoll` runs `run_trial` on the tab's current value,
+`save` writes it. `test_ragdoll` runs `ResolvedRagdoll::run_trial` on the tab's current value,
 `action` drop (`height`) or poke (`bone`, `impulse`), for `seconds`, in a world
 of its own with no preview and no GPU, and answers whether the body came to
 rest and after how long, the peak speed, the widest joint gap, and the pairs of

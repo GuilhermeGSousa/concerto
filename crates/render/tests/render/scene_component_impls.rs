@@ -8,7 +8,7 @@ use concerto_foundation::{
     transform::Transform,
 };
 use concerto_mesh::mesh::{Mesh, MeshComponent};
-use concerto_reflect::{to_value, Reflect, ReflectedValue};
+use concerto_reflect::{Reflect, ReflectedValue};
 use concerto_render::{
     assets::material::StandardMaterial,
     components::{
@@ -46,7 +46,7 @@ fn round_trip<T: Component + Reflect>(
     expected_referenced: Vec<AssetId>,
 ) -> RoundTrip {
     let mut world = world();
-    let stored = to_value(value).unwrap();
+    let stored = ReflectedValue::encode(value).unwrap();
     let entity = world.spawn(());
     let name = std::any::type_name::<T>();
     assert!(world.apply_scene_component(name, &stored, entity, &[entity]));
@@ -119,7 +119,8 @@ fn a_component_spawned_from_its_stored_value_captures_back_to_it_with_its_asset_
 
 #[test]
 fn a_stored_camera_environment_without_ambient_spawns_with_the_default() {
-    let ReflectedValue::Struct(mut fields) = to_value(&CameraEnvironment::default()).unwrap()
+    let ReflectedValue::Struct(mut fields) =
+        ReflectedValue::encode(&CameraEnvironment::default()).unwrap()
     else {
         panic!("a camera environment is a struct");
     };

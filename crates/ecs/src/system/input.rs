@@ -1,7 +1,7 @@
 mod component_reader;
 mod input_set;
 pub use component_reader::ComponentMetadata;
-pub use input_set::{InputSet, InputSetState, Inputs, register_input};
+pub use input_set::{InputSet, InputSetState, Inputs};
 
 use std::{
     borrow::Cow,
@@ -59,6 +59,10 @@ impl ValidationError {
     /// The input `T` lacks data its system needs; its system is skipped with a warning.
     pub fn missing<T: ?Sized>(message: impl Into<Cow<'static, str>>) -> Self {
         Self::new::<T>(ValidationKind::Missing, message)
+    }
+
+    pub(crate) fn missing_resource<T: ?Sized>() -> Self {
+        Self::missing::<T>("the resource does not exist")
     }
 
     fn new<T: ?Sized>(kind: ValidationKind, message: impl Into<Cow<'static, str>>) -> Self {

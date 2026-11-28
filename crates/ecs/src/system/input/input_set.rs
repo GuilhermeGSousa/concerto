@@ -81,18 +81,20 @@ impl<K: 'static> Resource for InputSetRegistry<K> {
     }
 }
 
-/// Makes `P` a member of every `InputSet<K>` initialized afterwards; registering it again changes nothing.
-pub fn register_input<K: 'static, P: ReadOnlySystemInput + 'static>(world: &mut World) {
-    let registry = world.get_resource_or_insert_with(|| InputSetRegistry::<K> {
-        members: Vec::new(),
-        marker: PhantomData,
-    });
-    if registry
-        .members
-        .iter()
-        .all(|member| member.id != TypeId::of::<P>())
-    {
-        registry.members.push(Member::of::<P>());
+impl World {
+    /// Makes `P` a member of every `InputSet<K>` initialized afterwards; registering it again changes nothing.
+    pub fn register_input<K: 'static, P: ReadOnlySystemInput + 'static>(&mut self) {
+        let registry = self.get_resource_or_insert_with(|| InputSetRegistry::<K> {
+            members: Vec::new(),
+            marker: PhantomData,
+        });
+        if registry
+            .members
+            .iter()
+            .all(|member| member.id != TypeId::of::<P>())
+        {
+            registry.members.push(Member::of::<P>());
+        }
     }
 }
 
@@ -228,7 +230,7 @@ mod tests {
         system::{IntoSystem, access::SystemAccess, meta::SystemMetadata},
     };
 
-    use super::{InputSet, register_input};
+    use super::InputSet;
 
     struct Phase;
 
@@ -256,8 +258,8 @@ mod tests {
 
     fn registered() -> World {
         let mut world = World::new();
-        register_input::<Phase, Res<'static, First>>(&mut world);
-        register_input::<Phase, Res<'static, Second>>(&mut world);
+        world.register_input::<Phase, Res<'static, First>>();
+        world.register_input::<Phase, Res<'static, Second>>();
         world
     }
 

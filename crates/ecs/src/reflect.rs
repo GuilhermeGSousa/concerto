@@ -6,7 +6,7 @@ use std::{
 use concerto_asset_format::AssetId;
 use concerto_reflect::{
     EncodeError, FromType, LeafError, LeafHook, Reflect, ReflectDefault, ReflectedValue, TypeData,
-    TypeRegistration, TypeRegistry, ValueWarning, apply_value_with, to_value_with,
+    TypeRegistration, TypeRegistry, ValueWarning,
 };
 use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 
@@ -140,9 +140,8 @@ fn spawn<T: Component + Reflect + Default>(
     node_entities: &[Entity],
 ) -> Vec<ValueWarning> {
     let mut value = T::default();
-    let warnings = apply_value_with(
+    let warnings = stored.apply_with(
         &mut value,
-        stored,
         &mut SpawnHook(SceneSpawn {
             world,
             node_entities,
@@ -158,7 +157,7 @@ fn capture<T: Component + Reflect>(
     capture: &mut SceneCapture,
 ) -> Option<Result<ReflectedValue, EncodeError>> {
     let value = world.get_component_for_entity::<T>(entity)?;
-    Some(to_value_with(
+    Some(ReflectedValue::encode_with(
         value,
         &mut CaptureHook {
             registry: world.get_resource::<AppTypeRegistry>().map(|r| r.read()),

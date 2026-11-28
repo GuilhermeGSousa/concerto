@@ -21,16 +21,17 @@ use concerto_foundation::assets::{
 use super::{
     ClipDocument, ClipFacts,
     events::{TabEvent, TabEventKind, read_events, write_events},
-    measure_transport,
     preview::{SeekClip, SetClipTransport, ShowClip},
     read_clip,
     transport::ClipTransport,
 };
 
-fn event_name(event: &TabEvent) -> &str {
-    match &event.kind {
-        TabEventKind::Named(name) => name.as_str(),
-        TabEventKind::Typed { type_name, .. } => type_name.as_str(),
+impl TabEvent {
+    fn event_name(&self) -> &str {
+        match &self.kind {
+            TabEventKind::Named(name) => name.as_str(),
+            TabEventKind::Typed { type_name, .. } => type_name.as_str(),
+        }
     }
 }
 
@@ -38,7 +39,7 @@ fn check_times(events: &[TabEvent], duration: f32) -> Result<(), String> {
     match events.iter().find(|event| event.time > duration) {
         Some(event) => Err(format!(
             "`{}` at {:.2} s is past the clip's {duration:.2} s",
-            event_name(event),
+            event.event_name(),
             event.time
         )),
         None => Ok(()),
@@ -119,7 +120,7 @@ pub(crate) fn save_clip(
             .context("Open a project before saving")
             .and_then(|root| save_clip_document(&mut document, &mut state, root, &mut assets));
         if written.is_ok() {
-            measure_transport(&mut transport, &state.facts);
+            transport.measure_transport(&state.facts);
             show_saved_clip(entity, &state, &transport, &mut previews);
         }
         report_save(
@@ -166,9 +167,7 @@ mod tests {
     use concerto_editor::hosted::testing::SceneFixture;
     use concerto_foundation::assets::{
         Asset, AssetId,
-        content::{
-            ContentAssetHeader, ImportProvenance, read_content_asset_header, write_content_asset,
-        },
+        content::{ContentAssetHeader, ImportProvenance},
     };
 
     fn save_fixture() -> SceneFixture {
@@ -200,7 +199,7 @@ mod tests {
         let path = f.project_root.join(address);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         let payload = bincode::serialize(clip).unwrap();
-        std::fs::write(&path, write_content_asset(&header, &payload).unwrap()).unwrap();
+        std::fs::write(&path, header.write(&payload).unwrap()).unwrap();
         let entry = AssetEntry {
             embedded_in: None,
             id: header.asset_id,
@@ -242,7 +241,7 @@ mod tests {
             saved,
             vec![order[2].clone(), order[0].clone(), order[1].clone()]
         );
-        let header = read_content_asset_header(&f.project_root.join(&walk.address)).unwrap();
+        let header = ContentAssetHeader::read_file(&f.project_root.join(&walk.address)).unwrap();
         assert_eq!(header.asset_id, walk.id);
         assert_eq!(header.provenance, walk.provenance);
         assert_eq!(state(&f, document).events, order);

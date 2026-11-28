@@ -144,6 +144,233 @@ impl ContentAssetHeader {
     }
 }
 
+impl ContentAssetHeader {
+    fn decode(bytes: &[u8]) -> anyhow::Result<Self> {
+        let mut rest = bytes;
+        let version: u32 = bincode::deserialize_from(&mut rest)
+            .context("failed to deserialize content asset header")?;
+        match version {
+            8 => {
+                let header: Self =
+                    bincode::deserialize(rest).context("failed to deserialize content asset header")?;
+                header.check_directory(None)?;
+                Ok(header)
+            }
+            7 => {
+                let header: HeaderV7 = bincode::deserialize(rest)
+                    .context("failed to deserialize version 7 content asset header")?;
+                let header = ContentAssetHeader {
+                    asset_id: header.asset_id,
+                    references: header.references,
+                    kind: header.kind,
+                    kind_version: header.kind_version,
+                    provenance: header.provenance,
+                    uncooked: None,
+                    derived: header.derived,
+                    embedded: header
+                        .embedded
+                        .into_iter()
+                        .map(|asset| EmbeddedAsset {
+                            asset_id: asset.asset_id,
+                            references: asset.references,
+                            kind: asset.kind,
+                            kind_version: asset.kind_version,
+                            provenance: asset.provenance,
+                            uncooked: None,
+                            derived: asset.derived,
+                            offset: asset.offset,
+                            len: asset.len,
+                        })
+                        .collect(),
+                };
+                header.check_directory(None)?;
+                Ok(header)
+            }
+            6 => {
+                let header: HeaderV6 = bincode::deserialize(rest)
+                    .context("failed to deserialize version 6 content asset header")?;
+                Ok(ContentAssetHeader {
+                    asset_id: header.asset_id,
+                    references: header.references,
+                    kind: header.kind,
+                    kind_version: header.kind_version,
+                    provenance: header.provenance,
+                    uncooked: None,
+                    derived: header.derived,
+                    embedded: Vec::new(),
+                })
+            }
+            5 => {
+                let header: HeaderV5 = bincode::deserialize(rest)
+                    .context("failed to deserialize version 5 content asset header")?;
+                Ok(ContentAssetHeader {
+                    asset_id: header.asset_id,
+                    references: header.references,
+                    kind: header.kind,
+                    kind_version: header.kind_version,
+                    provenance: header.provenance,
+                    uncooked: None,
+                    derived: None,
+                    embedded: Vec::new(),
+                })
+            }
+            4 => {
+                let header: HeaderV4 = bincode::deserialize(rest)
+                    .context("failed to deserialize version 4 content asset header")?;
+                Ok(ContentAssetHeader {
+                    asset_id: header.asset_id,
+                    references: header.references,
+                    kind: header.kind,
+                    kind_version: 1,
+                    provenance: header.provenance,
+                    uncooked: None,
+                    derived: None,
+                    embedded: Vec::new(),
+                })
+            }
+            other => bail!(
+                "unsupported content asset format version {other} (this build reads versions 4 to 8)"
+            ),
+        }
+    }
+
+    fn check_directory(&self, body_len: Option<u64>) -> anyhow::Result<()> {
+        let mut ids = HashSet::from([self.asset_id]);
+        let mut names = HashSet::new();
+        let limit = match body_len {
+            Some(body_len) => Some(self.sections_start(body_len)?),
+            None => None,
+        };
+        let mut cursor = self.derived.map_or(0, |section| section.len);
+        for asset in &self.embedded {
+            let name = asset.name();
+            if !names.insert(name) {
+                bail!(
+                    "content asset directory is malformed: two embedded assets are named '{name}'"
+                );
+            }
+            if !ids.insert(asset.asset_id) {
+                bail!(
+                    "content asset directory is malformed: asset id {} appears twice, the second time on '{name}'",
+                    asset.asset_id.simple_hex()
+                );
+            }
+            if asset.offset < cursor {
+                bail!(
+                    "content asset directory is malformed: embedded asset '{name}' overlaps the asset before it"
+                );
+            }
+            let end = asset
+                .offset
+                .checked_add(asset.len)
+                .and_then(|end| end.checked_add(asset.derived.map_or(0, |section| section.len)))
+                .with_context(|| {
+                    format!(
+                        "content asset directory is malformed: the byte range of embedded asset '{name}' overflows"
+                    )
+                })?;
+            if let Some(limit) = limit.filter(|limit| end > *limit) {
+                bail!(
+                    "content asset truncated: embedded asset '{name}' runs to byte {end} of the {limit} that follow the header and come before the uncooked sections"
+                );
+            }
+            cursor = end;
+        }
+        let gap = limit
+            .filter(|_| !self.embedded.is_empty() && self.has_uncooked())
+            .map_or(0, |limit| limit - cursor);
+        if gap != 0 {
+            bail!(
+                "content asset directory is malformed: {gap} bytes lie between the last embedded asset and the uncooked sections"
+            );
+        }
+        Ok(())
+    }
+
+    fn sections_start(&self, body_len: u64) -> anyhow::Result<u64> {
+        let sections = self
+            .embedded
+            .iter()
+            .map(EmbeddedAsset::uncooked_len)
+            .try_fold(self.uncooked_len(), u64::checked_add);
+        sections
+            .and_then(|sections| body_len.checked_sub(sections))
+            .with_context(|| {
+                format!(
+                    "content asset truncated: its uncooked sections claim more than the {body_len} bytes that follow the header"
+                )
+            })
+    }
+
+    fn section_start(&self, embedded_as: Option<&str>, body_len: u64) -> anyhow::Result<u64> {
+        let start = self.sections_start(body_len)?;
+        let Some(name) = embedded_as else {
+            return Ok(start);
+        };
+        let index = self
+            .embedded
+            .iter()
+            .position(|asset| asset.name() == name)
+            .with_context(|| format!("content asset holds no embedded asset named '{name}'"))?;
+        let before: u64 = self.embedded[..index]
+            .iter()
+            .map(EmbeddedAsset::uncooked_len)
+            .sum();
+        Ok(start + self.uncooked_len() + before)
+    }
+
+    fn refuse_a_directory(&self) -> anyhow::Result<()> {
+        if !self.embedded.is_empty() {
+            bail!("a content asset header that lists embedded assets needs their payloads; write it with write_with_embedded");
+        }
+        Ok(())
+    }
+
+    fn named_asset(&self, name: &str) -> anyhow::Result<&EmbeddedAsset> {
+        let Some(asset) = self.embedded.iter().find(|asset| asset.name() == name) else {
+            let held: Vec<&str> = self.embedded.iter().map(EmbeddedAsset::name).collect();
+            bail!(
+                "content asset holds no embedded asset named '{name}'; it holds [{}]",
+                held.join(", ")
+            );
+        };
+        Ok(asset)
+    }
+
+    fn without_sections(&self) -> ContentAssetHeader {
+        ContentAssetHeader {
+            uncooked: None,
+            embedded: self
+                .embedded
+                .iter()
+                .map(|asset| EmbeddedAsset {
+                    uncooked: None,
+                    ..asset.clone()
+                })
+                .collect(),
+            ..self.clone()
+        }
+    }
+
+    fn frame(&self, pieces: &[&[u8]]) -> anyhow::Result<Vec<u8>> {
+        let header_bytes = bincode::serialize(&(CONTENT_FORMAT_VERSION, self))
+            .context("failed to serialize content asset header")?;
+
+        let header_len =
+            u32::try_from(header_bytes.len()).context("content asset header exceeds 4 GiB")?;
+
+        let body_len: usize = pieces.iter().map(|piece| piece.len()).sum();
+        let mut out = Vec::with_capacity(8 + header_bytes.len() + body_len);
+        out.extend_from_slice(&CONTENT_ASSET_MAGIC);
+        out.extend_from_slice(&header_len.to_le_bytes());
+        out.extend_from_slice(&header_bytes);
+        for piece in pieces {
+            out.extend_from_slice(piece);
+        }
+        Ok(out)
+    }
+}
+
 /// An asset stored inside another asset's file: what its own header would hold, and where its payload is.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EmbeddedAsset {
@@ -241,7 +468,7 @@ impl DerivedSection {
     }
 }
 
-/// The derived blob and its description, for [`write_cooked_content_asset`].
+/// The derived blob and its description, for [`ContentAssetHeader::write_cooked`].
 #[derive(Debug, Clone, Copy)]
 pub struct CookedSection<'a> {
     /// The derived type's `DERIVED_VERSION` at cook time.
@@ -265,7 +492,7 @@ pub struct ContentAssetParts<'a> {
     pub derived_blob: Option<&'a [u8]>,
 }
 
-/// One embedded asset as a loose file of it would hold it, for [`write_content_asset_with_embedded`].
+/// One embedded asset as a loose file of it would hold it, for [`ContentAssetHeader::write_with_embedded`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EmbeddedPayload<'a> {
     /// The header a loose file of the asset would have; its provenance names the asset inside the file.
@@ -328,182 +555,6 @@ struct HeaderV4 {
     provenance: Option<ImportProvenance>,
 }
 
-fn decode_header(bytes: &[u8]) -> anyhow::Result<ContentAssetHeader> {
-    let mut rest = bytes;
-    let version: u32 = bincode::deserialize_from(&mut rest)
-        .context("failed to deserialize content asset header")?;
-    match version {
-        8 => {
-            let header: ContentAssetHeader =
-                bincode::deserialize(rest).context("failed to deserialize content asset header")?;
-            check_directory(&header, None)?;
-            Ok(header)
-        }
-        7 => {
-            let header: HeaderV7 = bincode::deserialize(rest)
-                .context("failed to deserialize version 7 content asset header")?;
-            let header = ContentAssetHeader {
-                asset_id: header.asset_id,
-                references: header.references,
-                kind: header.kind,
-                kind_version: header.kind_version,
-                provenance: header.provenance,
-                uncooked: None,
-                derived: header.derived,
-                embedded: header
-                    .embedded
-                    .into_iter()
-                    .map(|asset| EmbeddedAsset {
-                        asset_id: asset.asset_id,
-                        references: asset.references,
-                        kind: asset.kind,
-                        kind_version: asset.kind_version,
-                        provenance: asset.provenance,
-                        uncooked: None,
-                        derived: asset.derived,
-                        offset: asset.offset,
-                        len: asset.len,
-                    })
-                    .collect(),
-            };
-            check_directory(&header, None)?;
-            Ok(header)
-        }
-        6 => {
-            let header: HeaderV6 = bincode::deserialize(rest)
-                .context("failed to deserialize version 6 content asset header")?;
-            Ok(ContentAssetHeader {
-                asset_id: header.asset_id,
-                references: header.references,
-                kind: header.kind,
-                kind_version: header.kind_version,
-                provenance: header.provenance,
-                uncooked: None,
-                derived: header.derived,
-                embedded: Vec::new(),
-            })
-        }
-        5 => {
-            let header: HeaderV5 = bincode::deserialize(rest)
-                .context("failed to deserialize version 5 content asset header")?;
-            Ok(ContentAssetHeader {
-                asset_id: header.asset_id,
-                references: header.references,
-                kind: header.kind,
-                kind_version: header.kind_version,
-                provenance: header.provenance,
-                uncooked: None,
-                derived: None,
-                embedded: Vec::new(),
-            })
-        }
-        4 => {
-            let header: HeaderV4 = bincode::deserialize(rest)
-                .context("failed to deserialize version 4 content asset header")?;
-            Ok(ContentAssetHeader {
-                asset_id: header.asset_id,
-                references: header.references,
-                kind: header.kind,
-                kind_version: 1,
-                provenance: header.provenance,
-                uncooked: None,
-                derived: None,
-                embedded: Vec::new(),
-            })
-        }
-        other => bail!(
-            "unsupported content asset format version {other} (this build reads versions 4 to 8)"
-        ),
-    }
-}
-
-fn check_directory(header: &ContentAssetHeader, body_len: Option<u64>) -> anyhow::Result<()> {
-    let mut ids = HashSet::from([header.asset_id]);
-    let mut names = HashSet::new();
-    let limit = match body_len {
-        Some(body_len) => Some(sections_start(header, body_len)?),
-        None => None,
-    };
-    let mut cursor = header.derived.map_or(0, |section| section.len);
-    for asset in &header.embedded {
-        let name = asset.name();
-        if !names.insert(name) {
-            bail!("content asset directory is malformed: two embedded assets are named '{name}'");
-        }
-        if !ids.insert(asset.asset_id) {
-            bail!(
-                "content asset directory is malformed: asset id {} appears twice, the second time on '{name}'",
-                asset.asset_id.simple_hex()
-            );
-        }
-        if asset.offset < cursor {
-            bail!(
-                "content asset directory is malformed: embedded asset '{name}' overlaps the asset before it"
-            );
-        }
-        let end = asset
-            .offset
-            .checked_add(asset.len)
-            .and_then(|end| end.checked_add(asset.derived.map_or(0, |section| section.len)))
-            .with_context(|| {
-                format!(
-                    "content asset directory is malformed: the byte range of embedded asset '{name}' overflows"
-                )
-            })?;
-        if let Some(limit) = limit.filter(|limit| end > *limit) {
-            bail!(
-                "content asset truncated: embedded asset '{name}' runs to byte {end} of the {limit} that follow the header and come before the uncooked sections"
-            );
-        }
-        cursor = end;
-    }
-    let gap = limit
-        .filter(|_| !header.embedded.is_empty() && header.has_uncooked())
-        .map_or(0, |limit| limit - cursor);
-    if gap != 0 {
-        bail!(
-            "content asset directory is malformed: {gap} bytes lie between the last embedded asset and the uncooked sections"
-        );
-    }
-    Ok(())
-}
-
-fn sections_start(header: &ContentAssetHeader, body_len: u64) -> anyhow::Result<u64> {
-    let sections = header
-        .embedded
-        .iter()
-        .map(EmbeddedAsset::uncooked_len)
-        .try_fold(header.uncooked_len(), u64::checked_add);
-    sections
-        .and_then(|sections| body_len.checked_sub(sections))
-        .with_context(|| {
-            format!(
-                "content asset truncated: its uncooked sections claim more than the {body_len} bytes that follow the header"
-            )
-        })
-}
-
-fn section_start(
-    header: &ContentAssetHeader,
-    embedded_as: Option<&str>,
-    body_len: u64,
-) -> anyhow::Result<u64> {
-    let start = sections_start(header, body_len)?;
-    let Some(name) = embedded_as else {
-        return Ok(start);
-    };
-    let index = header
-        .embedded
-        .iter()
-        .position(|asset| asset.name() == name)
-        .with_context(|| format!("content asset holds no embedded asset named '{name}'"))?;
-    let before: u64 = header.embedded[..index]
-        .iter()
-        .map(EmbeddedAsset::uncooked_len)
-        .sum();
-    Ok(start + header.uncooked_len() + before)
-}
-
 /// The offline source, and the sub-asset within it, that `import` produced a content asset from.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ImportProvenance {
@@ -514,204 +565,246 @@ pub struct ImportProvenance {
     pub sub_asset: String,
 }
 
-/// Writes a loose file holding `header` and `payload`, with no sections and no embedded assets.
-///
-/// # Errors
-///
-/// Fails when `header` describes a derived or an uncooked section or lists embedded assets,
-/// which the other writers take, or when the header does not serialize or exceeds 4 GiB.
-pub fn write_content_asset(header: &ContentAssetHeader, payload: &[u8]) -> anyhow::Result<Vec<u8>> {
-    if header.derived.is_some() {
-        bail!("a content asset header with a derived section needs its blob; write it with write_cooked_content_asset");
+impl ContentAssetHeader {
+    /// Writes a loose file holding this header and `payload`, with no sections and no embedded assets.
+    ///
+    /// # Errors
+    ///
+    /// Fails when this header describes a derived or an uncooked section or lists embedded assets,
+    /// which the other writers take, or when the header does not serialize or exceeds 4 GiB.
+    pub fn write(&self, payload: &[u8]) -> anyhow::Result<Vec<u8>> {
+        if self.derived.is_some() {
+            bail!("a content asset header with a derived section needs its blob; write it with write_cooked");
+        }
+        if self.uncooked.is_some() {
+            bail!("a content asset header with an uncooked section needs its bytes; write it with write_with_uncooked");
+        }
+        self.refuse_a_directory()?;
+        self.frame(&[payload])
     }
-    if header.uncooked.is_some() {
-        bail!("a content asset header with an uncooked section needs its bytes; write it with write_content_asset_with_uncooked");
-    }
-    refuse_a_directory(header)?;
-    frame_content_asset(header, &[payload])
-}
 
-/// Writes a loose file with `uncooked` as its section, encoded at `version`.
-///
-/// # Errors
-///
-/// Fails when `header` describes a derived section or lists embedded assets,
-/// or when the header does not serialize or exceeds 4 GiB.
-pub fn write_content_asset_with_uncooked(
-    header: &ContentAssetHeader,
-    payload: &[u8],
-    version: u32,
-    uncooked: &[u8],
-) -> anyhow::Result<Vec<u8>> {
-    if header.derived.is_some() {
-        bail!("a content asset written with an uncooked section cannot carry a derived section");
-    }
-    refuse_a_directory(header)?;
-    let header = ContentAssetHeader {
-        uncooked: Some(UncookedSection {
-            len: uncooked.len() as u64,
-            version,
-        }),
-        ..header.clone()
-    };
-    frame_content_asset(&header, &[payload, uncooked])
-}
-
-fn refuse_a_directory(header: &ContentAssetHeader) -> anyhow::Result<()> {
-    if !header.embedded.is_empty() {
-        bail!("a content asset header that lists embedded assets needs their payloads; write it with write_content_asset_with_embedded");
-    }
-    Ok(())
-}
-
-/// Writes a host file with `embedded` stored inside it.
-///
-/// The file holds `header` and `payload`, then each embedded asset's payload and
-/// blob, listed in the header's directory, then their uncooked sections.
-///
-/// # Errors
-///
-/// Fails when `header` already lists embedded assets or describes a derived or
-/// uncooked section; when an embedded asset has no provenance, lists embedded
-/// assets of its own, or has sections its header does not match; when two share
-/// a name or id; and when the header does not serialize or exceeds 4 GiB.
-pub fn write_content_asset_with_embedded(
-    header: &ContentAssetHeader,
-    payload: &[u8],
-    embedded: &[EmbeddedPayload<'_>],
-) -> anyhow::Result<Vec<u8>> {
-    if !header.embedded.is_empty() {
-        bail!("the host header's directory is filled from the embedded payloads; pass it empty");
-    }
-    if header.derived.is_some() {
-        bail!("a host written with embedded assets cannot carry a derived section");
-    }
-    if header.uncooked.is_some() {
-        bail!("a host written with embedded assets cannot carry an uncooked section");
-    }
-    let mut directory = Vec::with_capacity(embedded.len());
-    let mut pieces = vec![payload];
-    let mut sections = Vec::new();
-    let mut offset = payload.len() as u64;
-    for asset in embedded {
-        let Some(provenance) = &asset.header.provenance else {
+    /// Writes a loose file with `uncooked` as its section, encoded at `version`.
+    ///
+    /// # Errors
+    ///
+    /// Fails when this header describes a derived section or lists embedded assets,
+    /// or when the header does not serialize or exceeds 4 GiB.
+    pub fn write_with_uncooked(
+        &self,
+        payload: &[u8],
+        version: u32,
+        uncooked: &[u8],
+    ) -> anyhow::Result<Vec<u8>> {
+        if self.derived.is_some() {
             bail!(
-                "embedded asset {} has no provenance, so it has no name inside the file",
-                asset.header.asset_id.simple_hex()
+                "a content asset written with an uncooked section cannot carry a derived section"
             );
+        }
+        self.refuse_a_directory()?;
+        let header = ContentAssetHeader {
+            uncooked: Some(UncookedSection {
+                len: uncooked.len() as u64,
+                version,
+            }),
+            ..self.clone()
         };
-        let name = &provenance.sub_asset;
-        if !asset.header.embedded.is_empty() {
-            bail!("embedded asset '{name}' lists embedded assets of its own");
-        }
-        let blob = asset.derived_blob.unwrap_or(&[]);
-        let described = asset.header.derived.map(|section| section.len);
-        if described != asset.derived_blob.map(|blob| blob.len() as u64) {
-            bail!("embedded asset '{name}' has a derived section that does not match its blob");
-        }
-        let described = asset.header.uncooked.map(|described| described.len);
-        if described != asset.uncooked.map(|section| section.len() as u64) {
-            bail!("embedded asset '{name}' has an uncooked section that does not match its bytes");
-        }
-        directory.push(EmbeddedAsset {
-            asset_id: asset.header.asset_id,
-            references: asset.header.references.clone(),
-            kind: asset.header.kind.clone(),
-            kind_version: asset.header.kind_version,
-            provenance: provenance.clone(),
-            uncooked: asset.header.uncooked,
-            derived: asset.header.derived,
-            offset,
-            len: asset.payload.len() as u64,
-        });
-        pieces.push(asset.payload);
-        pieces.push(blob);
-        sections.extend(asset.uncooked);
-        offset += (asset.payload.len() + blob.len()) as u64;
+        header.frame(&[payload, uncooked])
     }
-    pieces.extend(sections);
-    let header = ContentAssetHeader {
-        embedded: directory,
-        ..header.clone()
-    };
-    check_directory(&header, None)?;
-    frame_content_asset(&header, &pieces)
-}
 
-/// Writes a content asset whose payload is followed by the blob of `section`, with no uncooked section.
-///
-/// # Errors
-///
-/// Fails when `header` lists embedded assets, or when the header does not
-/// serialize or exceeds 4 GiB.
-pub fn write_cooked_content_asset(
-    header: &ContentAssetHeader,
-    payload: &[u8],
-    section: CookedSection<'_>,
-) -> anyhow::Result<Vec<u8>> {
-    refuse_a_directory(header)?;
-    let header = ContentAssetHeader {
-        uncooked: None,
-        derived: Some(DerivedSection {
-            derived_version: section.derived_version,
-            key: section.key,
-            len: section.blob.len() as u64,
-        }),
-        ..header.clone()
-    };
-    frame_content_asset(&header, &[payload, section.blob])
-}
-
-fn frame_content_asset(header: &ContentAssetHeader, pieces: &[&[u8]]) -> anyhow::Result<Vec<u8>> {
-    let header_bytes = bincode::serialize(&(CONTENT_FORMAT_VERSION, header))
-        .context("failed to serialize content asset header")?;
-
-    let header_len =
-        u32::try_from(header_bytes.len()).context("content asset header exceeds 4 GiB")?;
-
-    let body_len: usize = pieces.iter().map(|piece| piece.len()).sum();
-    let mut out = Vec::with_capacity(8 + header_bytes.len() + body_len);
-    out.extend_from_slice(&CONTENT_ASSET_MAGIC);
-    out.extend_from_slice(&header_len.to_le_bytes());
-    out.extend_from_slice(&header_bytes);
-    for piece in pieces {
-        out.extend_from_slice(piece);
+    /// Writes a host file with `embedded` stored inside it.
+    ///
+    /// The file holds this header and `payload`, then each embedded asset's payload and
+    /// blob, listed in the header's directory, then their uncooked sections.
+    ///
+    /// # Errors
+    ///
+    /// Fails when this header already lists embedded assets or describes a derived or
+    /// uncooked section; when an embedded asset has no provenance, lists embedded
+    /// assets of its own, or has sections its header does not match; when two share
+    /// a name or id; and when the header does not serialize or exceeds 4 GiB.
+    pub fn write_with_embedded(
+        &self,
+        payload: &[u8],
+        embedded: &[EmbeddedPayload<'_>],
+    ) -> anyhow::Result<Vec<u8>> {
+        if !self.embedded.is_empty() {
+            bail!(
+                "the host header's directory is filled from the embedded payloads; pass it empty"
+            );
+        }
+        if self.derived.is_some() {
+            bail!("a host written with embedded assets cannot carry a derived section");
+        }
+        if self.uncooked.is_some() {
+            bail!("a host written with embedded assets cannot carry an uncooked section");
+        }
+        let mut directory = Vec::with_capacity(embedded.len());
+        let mut pieces = vec![payload];
+        let mut sections = Vec::new();
+        let mut offset = payload.len() as u64;
+        for asset in embedded {
+            let Some(provenance) = &asset.header.provenance else {
+                bail!(
+                    "embedded asset {} has no provenance, so it has no name inside the file",
+                    asset.header.asset_id.simple_hex()
+                );
+            };
+            let name = &provenance.sub_asset;
+            if !asset.header.embedded.is_empty() {
+                bail!("embedded asset '{name}' lists embedded assets of its own");
+            }
+            let blob = asset.derived_blob.unwrap_or(&[]);
+            let described = asset.header.derived.map(|section| section.len);
+            if described != asset.derived_blob.map(|blob| blob.len() as u64) {
+                bail!("embedded asset '{name}' has a derived section that does not match its blob");
+            }
+            let described = asset.header.uncooked.map(|described| described.len);
+            if described != asset.uncooked.map(|section| section.len() as u64) {
+                bail!(
+                    "embedded asset '{name}' has an uncooked section that does not match its bytes"
+                );
+            }
+            directory.push(EmbeddedAsset {
+                asset_id: asset.header.asset_id,
+                references: asset.header.references.clone(),
+                kind: asset.header.kind.clone(),
+                kind_version: asset.header.kind_version,
+                provenance: provenance.clone(),
+                uncooked: asset.header.uncooked,
+                derived: asset.header.derived,
+                offset,
+                len: asset.payload.len() as u64,
+            });
+            pieces.push(asset.payload);
+            pieces.push(blob);
+            sections.extend(asset.uncooked);
+            offset += (asset.payload.len() + blob.len()) as u64;
+        }
+        pieces.extend(sections);
+        let header = ContentAssetHeader {
+            embedded: directory,
+            ..self.clone()
+        };
+        header.check_directory(None)?;
+        header.frame(&pieces)
     }
-    Ok(out)
+
+    /// Writes a content asset whose payload is followed by the blob of `section`, with no uncooked section.
+    ///
+    /// # Errors
+    ///
+    /// Fails when this header lists embedded assets, or when the header does not
+    /// serialize or exceeds 4 GiB.
+    pub fn write_cooked(
+        &self,
+        payload: &[u8],
+        section: CookedSection<'_>,
+    ) -> anyhow::Result<Vec<u8>> {
+        self.refuse_a_directory()?;
+        let header = ContentAssetHeader {
+            uncooked: None,
+            derived: Some(DerivedSection {
+                derived_version: section.derived_version,
+                key: section.key,
+                len: section.blob.len() as u64,
+            }),
+            ..self.clone()
+        };
+        header.frame(&[payload, section.blob])
+    }
+
+    /// Reads the header and payload of a content asset file.
+    ///
+    /// # Errors
+    ///
+    /// Fails as [`ContentAssetParts::read`] does: when `bytes` is not a content asset, is
+    /// truncated, or its header does not decode or claims more bytes than the file holds.
+    pub fn read(bytes: &[u8]) -> anyhow::Result<(ContentAssetHeader, &[u8])> {
+        let parts = ContentAssetParts::read(bytes)?;
+        Ok((parts.header, parts.payload))
+    }
+
+    /// Reads just the header of the content asset at `path`, never the payload.
+    ///
+    /// A content tree holds whole textures and meshes of tens of megabytes each, so
+    /// indexing one by reading every file whole is not viable. This reads the
+    /// 8-byte magic-and-length prefix, then exactly the header's length in bytes.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the file cannot be opened or read, lacks the magic prefix, is
+    /// truncated, or holds a header that does not decode or a malformed directory.
+    pub fn read_file(path: &Path) -> anyhow::Result<ContentAssetHeader> {
+        OpenedContentAsset::open(path)?.header(path)
+    }
 }
 
-/// Reads the header and payload of a content asset file.
-///
-/// # Errors
-///
-/// Fails as [`read_content_asset_parts`] does: when `bytes` is not a content asset, is
-/// truncated, or its header does not decode or claims more bytes than the file holds.
-pub fn read_content_asset(bytes: &[u8]) -> anyhow::Result<(ContentAssetHeader, &[u8])> {
-    let parts = read_content_asset_parts(bytes)?;
-    Ok((parts.header, parts.payload))
+impl<'a> ContentAssetParts<'a> {
+    /// Reads a content asset's header, its payload, and the uncooked section and derived blob trailing it, if any.
+    ///
+    /// Of a host, the parts are the host's own.
+    ///
+    /// # Errors
+    ///
+    /// Fails as [`ContentFile::parse`] does, and when the header's sections claim
+    /// more bytes than follow it.
+    pub fn read(bytes: &'a [u8]) -> anyhow::Result<Self> {
+        let file = ContentFile::parse(bytes)?;
+        let extent = HostExtent::of(&file.header, file.body.len() as u64)?;
+        let body = file.body;
+        Ok(ContentAssetParts {
+            payload: &body[extent.payload()],
+            uncooked: file
+                .header
+                .uncooked
+                .map(|_| &body[extent.uncooked(&file.header)]),
+            derived_blob: file.header.derived.map(|_| &body[extent.blob()]),
+            header: file.header,
+        })
+    }
 }
 
-/// Reads a content asset's header, its payload, and the uncooked section and derived blob trailing it, if any.
-///
-/// Of a host, the parts are the host's own.
-///
-/// # Errors
-///
-/// Fails as [`ContentFile::parse`] does, and when the header's sections claim
-/// more bytes than follow it.
-pub fn read_content_asset_parts(bytes: &[u8]) -> anyhow::Result<ContentAssetParts<'_>> {
-    let file = ContentFile::parse(bytes)?;
-    let extent = HostExtent::of(&file.header, file.body.len() as u64)?;
-    let body = file.body;
-    Ok(ContentAssetParts {
-        payload: &body[extent.payload()],
-        uncooked: file
-            .header
-            .uncooked
-            .map(|_| &body[extent.uncooked(&file.header)]),
-        derived_blob: file.header.derived.map(|_| &body[extent.blob()]),
-        header: file.header,
-    })
+impl UncookedBytes {
+    /// Reads only the uncooked section of the host (`None`) or of the named embedded asset of the file at `path`.
+    ///
+    /// Returns `None` when the record has no uncooked section.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the file cannot be read, is not a content asset, has a malformed
+    /// header, or holds no embedded asset named `embedded_as`.
+    pub fn read(path: &Path, embedded_as: Option<&str>) -> anyhow::Result<Option<Self>> {
+        let mut opened = OpenedContentAsset::open(path)?;
+        let header = opened.header(path)?;
+        let in_file = || format!("failed to read an uncooked section of '{}'", path.display());
+        let record = match embedded_as {
+            None => header.record_header(None),
+            Some(name) => Some(
+                header
+                    .named_asset(name)
+                    .with_context(in_file)?
+                    .record_header(),
+            ),
+        };
+        let Some(record) = record else {
+            return Ok(None);
+        };
+        let Some(section) = record.uncooked else {
+            return Ok(None);
+        };
+        let start = header
+            .section_start(embedded_as, opened.body_len)
+            .with_context(in_file)?;
+        let mut bytes = Vec::new();
+        opened
+            .read_body(start..start + section.len, &mut bytes)
+            .with_context(in_file)?;
+        Ok(Some(Self {
+            kind: record.kind,
+            version: section.version,
+            bytes,
+        }))
+    }
 }
 
 struct HostExtent {
@@ -723,7 +816,7 @@ struct HostExtent {
 impl HostExtent {
     fn of(header: &ContentAssetHeader, body_len: u64) -> anyhow::Result<Self> {
         let blob_len = header.derived.map_or(0, |section| section.len);
-        let section_start = sections_start(header, body_len)?;
+        let section_start = header.sections_start(body_len)?;
         let host_end = header
             .embedded
             .first()
@@ -821,9 +914,9 @@ impl<'a> ContentFile<'a> {
             );
         }
 
-        let header = decode_header(&bytes[8..header_end])?;
+        let header = ContentAssetHeader::decode(&bytes[8..header_end])?;
         let body = &bytes[header_end..];
-        check_directory(&header, Some(body.len() as u64))?;
+        header.check_directory(Some(body.len() as u64))?;
         Ok(Self { header, body })
     }
 
@@ -865,7 +958,7 @@ impl<'a> ContentFile<'a> {
         &'file self,
         asset: &'file EmbeddedAsset,
     ) -> anyhow::Result<AssetRecord<'file>> {
-        let asset = named_asset(&self.header, asset.name())?;
+        let asset = self.header.named_asset(asset.name())?;
         let outside = || {
             format!(
                 "embedded asset '{}' is not in this file's directory",
@@ -878,7 +971,8 @@ impl<'a> ContentFile<'a> {
         let bytes = self.body.get(start..blob_end).with_context(outside)?;
         let (payload, blob) = bytes.split_at(asset.len as usize);
         let section_start =
-            section_start(&self.header, Some(asset.name()), self.body.len() as u64)? as usize;
+            self.header
+                .section_start(Some(asset.name()), self.body.len() as u64)? as usize;
         let section = self
             .body
             .get(section_start..section_start + asset.uncooked_len() as usize)
@@ -904,60 +998,25 @@ impl<'a> ContentFile<'a> {
 /// named `embedded_as`.
 pub fn asset_record(file: &[u8], embedded_as: Option<&str>) -> anyhow::Result<Vec<u8>> {
     let Some(name) = embedded_as else {
-        let parts = read_content_asset_parts(file)?;
+        let parts = ContentAssetParts::read(file)?;
         let header = ContentAssetHeader {
             embedded: Vec::new(),
             ..parts.header
         };
-        return frame_content_asset(
-            &header,
-            &[
-                parts.payload,
-                parts.derived_blob.unwrap_or(&[]),
-                parts.uncooked.unwrap_or(&[]),
-            ],
-        );
+        return header.frame(&[
+            parts.payload,
+            parts.derived_blob.unwrap_or(&[]),
+            parts.uncooked.unwrap_or(&[]),
+        ]);
     };
     let file = ContentFile::parse(file)?;
-    let asset = named_asset(&file.header, name)?;
+    let asset = file.header.named_asset(name)?;
     let record = file.embedded(asset)?;
-    frame_content_asset(
-        &asset.record_header(),
-        &[
-            record.payload,
-            record.cooked.map_or(&[], |cooked| cooked.blob),
-            record.uncooked.map_or(&[], |section| section.bytes),
-        ],
-    )
-}
-
-fn named_asset<'header>(
-    header: &'header ContentAssetHeader,
-    name: &str,
-) -> anyhow::Result<&'header EmbeddedAsset> {
-    let Some(asset) = header.embedded.iter().find(|asset| asset.name() == name) else {
-        let held: Vec<&str> = header.embedded.iter().map(EmbeddedAsset::name).collect();
-        bail!(
-            "content asset holds no embedded asset named '{name}'; it holds [{}]",
-            held.join(", ")
-        );
-    };
-    Ok(asset)
-}
-
-fn without_sections(header: &ContentAssetHeader) -> ContentAssetHeader {
-    ContentAssetHeader {
-        uncooked: None,
-        embedded: header
-            .embedded
-            .iter()
-            .map(|asset| EmbeddedAsset {
-                uncooked: None,
-                ..asset.clone()
-            })
-            .collect(),
-        ..header.clone()
-    }
+    asset.record_header().frame(&[
+        record.payload,
+        record.cooked.map_or(&[], |cooked| cooked.blob),
+        record.uncooked.map_or(&[], |section| section.bytes),
+    ])
 }
 
 /// The file with every uncooked section removed.
@@ -974,7 +1033,10 @@ pub fn without_uncooked(file: &[u8]) -> anyhow::Result<Vec<u8>> {
         return Ok(file.to_vec());
     }
     let kept = HostExtent::of(&parsed.header, parsed.body.len() as u64)?.section_start;
-    frame_content_asset(&without_sections(&parsed.header), &[&parsed.body[..kept]])
+    parsed
+        .header
+        .without_sections()
+        .frame(&[&parsed.body[..kept]])
 }
 
 struct OpenedContentAsset {
@@ -1034,10 +1096,11 @@ impl OpenedContentAsset {
     }
 
     fn header(&self, path: &Path) -> anyhow::Result<ContentAssetHeader> {
-        let header = decode_header(&self.header_bytes)
+        let header = ContentAssetHeader::decode(&self.header_bytes)
             .with_context(|| format!("failed to read the header of '{}'", path.display()))?;
         if !header.embedded.is_empty() {
-            check_directory(&header, Some(self.body_len))
+            header
+                .check_directory(Some(self.body_len))
                 .with_context(|| format!("failed to read the header of '{}'", path.display()))?;
         }
         Ok(header)
@@ -1066,13 +1129,13 @@ pub fn read_content_without_uncooked(path: &Path) -> std::io::Result<Vec<u8>> {
         return std::fs::read(path);
     };
     let body_len = opened.body_len;
-    let stripped = decode_header(&opened.header_bytes)
+    let stripped = ContentAssetHeader::decode(&opened.header_bytes)
         .ok()
         .filter(ContentAssetHeader::has_uncooked)
         .and_then(|header| {
-            check_directory(&header, Some(body_len)).ok()?;
+            header.check_directory(Some(body_len)).ok()?;
             let kept = HostExtent::of(&header, body_len).ok()?.section_start as u64;
-            let framed = frame_content_asset(&without_sections(&header), &[]).ok()?;
+            let framed = header.without_sections().frame(&[]).ok()?;
             Some(Stripped { framed, kept })
         });
     let Some(Stripped {
@@ -1089,61 +1152,6 @@ pub fn read_content_without_uncooked(path: &Path) -> std::io::Result<Vec<u8>> {
 struct Stripped {
     framed: Vec<u8>,
     kept: u64,
-}
-
-/// Reads only the uncooked section of the host (`None`) or of the named embedded asset of the file at `path`.
-///
-/// Returns `None` when the record has no uncooked section.
-///
-/// # Errors
-///
-/// Fails when the file cannot be read, is not a content asset, has a malformed
-/// header, or holds no embedded asset named `embedded_as`.
-pub fn read_uncooked_section(
-    path: &Path,
-    embedded_as: Option<&str>,
-) -> anyhow::Result<Option<UncookedBytes>> {
-    let mut opened = OpenedContentAsset::open(path)?;
-    let header = opened.header(path)?;
-    let in_file = || format!("failed to read an uncooked section of '{}'", path.display());
-    let record = match embedded_as {
-        None => header.record_header(None),
-        Some(name) => Some(
-            named_asset(&header, name)
-                .with_context(in_file)?
-                .record_header(),
-        ),
-    };
-    let Some(record) = record else {
-        return Ok(None);
-    };
-    let Some(section) = record.uncooked else {
-        return Ok(None);
-    };
-    let start = section_start(&header, embedded_as, opened.body_len).with_context(in_file)?;
-    let mut bytes = Vec::new();
-    opened
-        .read_body(start..start + section.len, &mut bytes)
-        .with_context(in_file)?;
-    Ok(Some(UncookedBytes {
-        kind: record.kind,
-        version: section.version,
-        bytes,
-    }))
-}
-
-/// Reads just the header of the content asset at `path`, never the payload.
-///
-/// A content tree holds whole textures and meshes of tens of megabytes each, so
-/// indexing one by reading every file whole is not viable. This reads the
-/// 8-byte magic-and-length prefix, then exactly the header's length in bytes.
-///
-/// # Errors
-///
-/// Fails when the file cannot be opened or read, lacks the magic prefix, is
-/// truncated, or holds a header that does not decode or a malformed directory.
-pub fn read_content_asset_header(path: &Path) -> anyhow::Result<ContentAssetHeader> {
-    OpenedContentAsset::open(path)?.header(path)
 }
 
 /// Where an embedded asset is stored: the asset whose file holds it, and its name there.
@@ -1177,6 +1185,198 @@ impl ScannedEntry {
     pub fn location(&self) -> String {
         let name = self.embedded_in.as_ref().map(|held| held.name.as_str());
         asset_location(&self.address, name)
+    }
+
+    /// Lists every asset in the `*.<extension>` files under `dir` by their headers, addressed relative to `base`.
+    ///
+    /// Each file gives its host, then its embedded assets.
+    ///
+    /// # Errors
+    ///
+    /// Fails when a directory or header cannot be read, and when two assets carry
+    /// the same id.
+    pub fn scan(base: &Path, dir: &Path, extension: &str) -> anyhow::Result<Vec<Self>> {
+        let base = normalise_lexically(base);
+        let dir = normalise_lexically(dir);
+
+        let mut entries = Vec::new();
+        let mut index_by_id: HashMap<AssetId, usize> = HashMap::new();
+        let mut visited: HashSet<PathBuf> = HashSet::new();
+        let mut stack = vec![dir];
+        while let Some(path) = stack.pop() {
+            if path.is_dir() {
+                let canonical = match path.canonicalize() {
+                    Ok(canonical) => canonical,
+                    Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
+                    Err(err) => {
+                        return Err(err)
+                            .with_context(|| format!("failed to resolve '{}'", path.display()))
+                    }
+                };
+                if !visited.insert(canonical) {
+                    continue;
+                }
+                let listing = match std::fs::read_dir(&path) {
+                    Ok(listing) => listing,
+                    Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
+                    Err(err) => {
+                        return Err(err)
+                            .with_context(|| format!("failed to read '{}'", path.display()))
+                    }
+                };
+                let mut children = Vec::new();
+                for entry in listing {
+                    children.push(
+                        entry
+                            .with_context(|| {
+                                format!("failed to read an entry of '{}'", path.display())
+                            })?
+                            .path(),
+                    );
+                }
+                children.sort_by(|a, b| a.file_name().cmp(&b.file_name()));
+                stack.extend(children.into_iter().rev());
+                continue;
+            }
+            if path.extension().and_then(|e| e.to_str()) != Some(extension) {
+                continue;
+            }
+
+            let header = ContentAssetHeader::read_file(&path)?;
+            let address = path
+                .strip_prefix(&base)
+                .unwrap_or(&path)
+                .to_string_lossy()
+                .replace('\\', "/");
+
+            let host_id = header.asset_id;
+            let host = ScannedEntry {
+                id: host_id,
+                address: address.clone(),
+                kind: header.kind,
+                kind_version: Some(header.kind_version),
+                provenance: header.provenance,
+                embedded_in: None,
+            };
+            let embedded = header.embedded.into_iter().map(|asset| ScannedEntry {
+                id: asset.asset_id,
+                address: address.clone(),
+                kind: asset.kind,
+                kind_version: Some(asset.kind_version),
+                embedded_in: Some(EmbeddedIn {
+                    host: host_id,
+                    name: asset.provenance.sub_asset.clone(),
+                }),
+                provenance: Some(asset.provenance),
+            });
+            for entry in std::iter::once(host).chain(embedded) {
+                if let Some(&previous) = index_by_id.get(&entry.id) {
+                    let previous: &ScannedEntry = &entries[previous];
+                    bail!(
+                        "content tree is malformed: '{}' and '{}' both carry asset id {}",
+                        previous.location(),
+                        entry.location(),
+                        entry.id.simple_hex()
+                    );
+                }
+                index_by_id.insert(entry.id, entries.len());
+                entries.push(entry);
+            }
+        }
+
+        Ok(entries)
+    }
+
+    /// The registry text for `entries`, ordered by id.
+    ///
+    /// It holds one `id = { address, kind }` line per entry, with `embedded_as` for
+    /// an embedded asset.
+    pub fn write_registry(entries: &[Self]) -> String {
+        let mut ordered: Vec<&ScannedEntry> = entries.iter().collect();
+        ordered.sort_by_key(|entry| entry.id);
+        let mut text = String::from("[assets]\n");
+        for entry in ordered {
+            let embedded_as = entry.embedded_in.as_ref().map_or(String::new(), |held| {
+                format!(", embedded_as = {}", toml::Value::String(held.name.clone()))
+            });
+            text.push_str(&format!(
+                "{} = {{ address = {}, kind = {}{embedded_as} }}\n",
+                entry.id.simple_hex(),
+                toml::Value::String(entry.address.clone()),
+                toml::Value::String(entry.kind.clone()),
+            ));
+        }
+        text
+    }
+
+    /// Reads registry text written by [`ScannedEntry::write_registry`], ordered by id.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the text is not valid TOML, holds an invalid id or a line without
+    /// a kind, maps two ids to one location, or places an asset in an address that
+    /// holds no host.
+    pub fn parse_registry(text: &str) -> anyhow::Result<Vec<Self>> {
+        let file: RegistryFile = toml::from_str(text).context("failed to parse asset registry")?;
+        let mut records = Vec::with_capacity(file.assets.len());
+        let mut id_by_address: HashMap<String, AssetId> = HashMap::new();
+        for (hex, record) in file.assets {
+            let id = AssetId::from_simple_hex(&hex)
+                .map_err(|err| anyhow::anyhow!("invalid asset id '{hex}' in registry: {err}"))?;
+            let record = match record {
+                StoredRecord::Record(record) => record,
+                StoredRecord::Legacy(address) => bail!(
+                    "asset registry predates asset kinds ('{address}' has none); rebuild the game so its build script writes a new one"
+                ),
+            };
+            if record.embedded_as.is_none() {
+                if let Some(existing) = id_by_address.insert(record.address.clone(), id) {
+                    return Err(two_ids_at(&record.address, existing, id));
+                }
+            }
+            records.push(ParsedRecord { id, record });
+        }
+        let mut entries: Vec<ScannedEntry> = Vec::with_capacity(records.len());
+        let mut embedded_by_host: HashMap<AssetId, Vec<usize>> = HashMap::new();
+        for ParsedRecord { id, record } in records {
+            let embedded_in = match record.embedded_as {
+                Some(name) => {
+                    let Some(&host) = id_by_address.get(&record.address) else {
+                        bail!(
+                            "asset registry places {} in '{}' as '{name}', but lists no asset at that address to hold it",
+                            id.simple_hex(),
+                            record.address
+                        );
+                    };
+                    let held = embedded_by_host.entry(host).or_default();
+                    let named = |at: &&usize| {
+                        entries[**at]
+                            .embedded_in
+                            .as_ref()
+                            .is_some_and(|held| held.name == name)
+                    };
+                    if let Some(&existing) = held.iter().find(named) {
+                        return Err(two_ids_at(
+                            &asset_location(&record.address, Some(&name)),
+                            entries[existing].id,
+                            id,
+                        ));
+                    }
+                    held.push(entries.len());
+                    Some(EmbeddedIn { host, name })
+                }
+                None => None,
+            };
+            entries.push(ScannedEntry {
+                id,
+                address: record.address,
+                kind: record.kind,
+                kind_version: None,
+                provenance: None,
+                embedded_in,
+            });
+        }
+        Ok(entries)
     }
 }
 
@@ -1233,105 +1433,6 @@ fn normalise_lexically(path: &Path) -> PathBuf {
     out
 }
 
-/// Lists every asset in the `*.<extension>` files under `dir` by their headers, addressed relative to `base`.
-///
-/// Each file gives its host, then its embedded assets.
-///
-/// # Errors
-///
-/// Fails when a directory or header cannot be read, and when two assets carry
-/// the same id.
-pub fn scan_content(base: &Path, dir: &Path, extension: &str) -> anyhow::Result<Vec<ScannedEntry>> {
-    let base = normalise_lexically(base);
-    let dir = normalise_lexically(dir);
-
-    let mut entries = Vec::new();
-    let mut index_by_id: HashMap<AssetId, usize> = HashMap::new();
-    let mut visited: HashSet<PathBuf> = HashSet::new();
-    let mut stack = vec![dir];
-    while let Some(path) = stack.pop() {
-        if path.is_dir() {
-            let canonical = match path.canonicalize() {
-                Ok(canonical) => canonical,
-                Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
-                Err(err) => {
-                    return Err(err)
-                        .with_context(|| format!("failed to resolve '{}'", path.display()))
-                }
-            };
-            if !visited.insert(canonical) {
-                continue;
-            }
-            let listing = match std::fs::read_dir(&path) {
-                Ok(listing) => listing,
-                Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
-                Err(err) => {
-                    return Err(err).with_context(|| format!("failed to read '{}'", path.display()))
-                }
-            };
-            let mut children = Vec::new();
-            for entry in listing {
-                children.push(
-                    entry
-                        .with_context(|| {
-                            format!("failed to read an entry of '{}'", path.display())
-                        })?
-                        .path(),
-                );
-            }
-            children.sort_by(|a, b| a.file_name().cmp(&b.file_name()));
-            stack.extend(children.into_iter().rev());
-            continue;
-        }
-        if path.extension().and_then(|e| e.to_str()) != Some(extension) {
-            continue;
-        }
-
-        let header = read_content_asset_header(&path)?;
-        let address = path
-            .strip_prefix(&base)
-            .unwrap_or(&path)
-            .to_string_lossy()
-            .replace('\\', "/");
-
-        let host_id = header.asset_id;
-        let host = ScannedEntry {
-            id: host_id,
-            address: address.clone(),
-            kind: header.kind,
-            kind_version: Some(header.kind_version),
-            provenance: header.provenance,
-            embedded_in: None,
-        };
-        let embedded = header.embedded.into_iter().map(|asset| ScannedEntry {
-            id: asset.asset_id,
-            address: address.clone(),
-            kind: asset.kind,
-            kind_version: Some(asset.kind_version),
-            embedded_in: Some(EmbeddedIn {
-                host: host_id,
-                name: asset.provenance.sub_asset.clone(),
-            }),
-            provenance: Some(asset.provenance),
-        });
-        for entry in std::iter::once(host).chain(embedded) {
-            if let Some(&previous) = index_by_id.get(&entry.id) {
-                let previous: &ScannedEntry = &entries[previous];
-                bail!(
-                    "content tree is malformed: '{}' and '{}' both carry asset id {}",
-                    previous.location(),
-                    entry.location(),
-                    entry.id.simple_hex()
-                );
-            }
-            index_by_id.insert(entry.id, entries.len());
-            entries.push(entry);
-        }
-    }
-
-    Ok(entries)
-}
-
 #[derive(Deserialize)]
 struct RegistryRecord {
     address: String,
@@ -1353,28 +1454,6 @@ struct RegistryFile {
     assets: BTreeMap<String, StoredRecord>,
 }
 
-/// The registry text for `entries`, ordered by id.
-///
-/// It holds one `id = { address, kind }` line per entry, with `embedded_as` for
-/// an embedded asset.
-pub fn write_registry(entries: &[ScannedEntry]) -> String {
-    let mut ordered: Vec<&ScannedEntry> = entries.iter().collect();
-    ordered.sort_by_key(|entry| entry.id);
-    let mut text = String::from("[assets]\n");
-    for entry in ordered {
-        let embedded_as = entry.embedded_in.as_ref().map_or(String::new(), |held| {
-            format!(", embedded_as = {}", toml::Value::String(held.name.clone()))
-        });
-        text.push_str(&format!(
-            "{} = {{ address = {}, kind = {}{embedded_as} }}\n",
-            entry.id.simple_hex(),
-            toml::Value::String(entry.address.clone()),
-            toml::Value::String(entry.kind.clone()),
-        ));
-    }
-    text
-}
-
 struct ParsedRecord {
     id: AssetId,
     record: RegistryRecord,
@@ -1386,76 +1465,6 @@ fn two_ids_at(location: &str, first: AssetId, second: AssetId) -> anyhow::Error 
         first.simple_hex(),
         second.simple_hex(),
     )
-}
-
-/// Reads registry text written by [`write_registry`], ordered by id.
-///
-/// # Errors
-///
-/// Fails when the text is not valid TOML, holds an invalid id or a line without
-/// a kind, maps two ids to one location, or places an asset in an address that
-/// holds no host.
-pub fn parse_registry(text: &str) -> anyhow::Result<Vec<ScannedEntry>> {
-    let file: RegistryFile = toml::from_str(text).context("failed to parse asset registry")?;
-    let mut records = Vec::with_capacity(file.assets.len());
-    let mut id_by_address: HashMap<String, AssetId> = HashMap::new();
-    for (hex, record) in file.assets {
-        let id = AssetId::from_simple_hex(&hex)
-            .map_err(|err| anyhow::anyhow!("invalid asset id '{hex}' in registry: {err}"))?;
-        let record = match record {
-            StoredRecord::Record(record) => record,
-            StoredRecord::Legacy(address) => bail!(
-                "asset registry predates asset kinds ('{address}' has none); rebuild the game so its build script writes a new one"
-            ),
-        };
-        if record.embedded_as.is_none() {
-            if let Some(existing) = id_by_address.insert(record.address.clone(), id) {
-                return Err(two_ids_at(&record.address, existing, id));
-            }
-        }
-        records.push(ParsedRecord { id, record });
-    }
-    let mut entries: Vec<ScannedEntry> = Vec::with_capacity(records.len());
-    let mut embedded_by_host: HashMap<AssetId, Vec<usize>> = HashMap::new();
-    for ParsedRecord { id, record } in records {
-        let embedded_in = match record.embedded_as {
-            Some(name) => {
-                let Some(&host) = id_by_address.get(&record.address) else {
-                    bail!(
-                        "asset registry places {} in '{}' as '{name}', but lists no asset at that address to hold it",
-                        id.simple_hex(),
-                        record.address
-                    );
-                };
-                let held = embedded_by_host.entry(host).or_default();
-                let named = |at: &&usize| {
-                    entries[**at]
-                        .embedded_in
-                        .as_ref()
-                        .is_some_and(|held| held.name == name)
-                };
-                if let Some(&existing) = held.iter().find(named) {
-                    return Err(two_ids_at(
-                        &asset_location(&record.address, Some(&name)),
-                        entries[existing].id,
-                        id,
-                    ));
-                }
-                held.push(entries.len());
-                Some(EmbeddedIn { host, name })
-            }
-            None => None,
-        };
-        entries.push(ScannedEntry {
-            id,
-            address: record.address,
-            kind: record.kind,
-            kind_version: None,
-            provenance: None,
-            embedded_in,
-        });
-    }
-    Ok(entries)
 }
 
 /// `content.toml` at a project root.

@@ -17,7 +17,7 @@ use glam::UVec2;
 use crate::{
     capabilities::RenderCapabilities,
     components::{
-        camera::{create_rtt, Camera, RenderCamera},
+        camera::{Camera, RenderCamera},
         render_entity::RenderEntity,
     },
     device::RenderDevice,
@@ -356,7 +356,8 @@ impl BloomChain {
         let levels = bloom_level_sizes(source_size)
             .into_iter()
             .map(|size| {
-                let texture = create_rtt(device, pipelines.format, size.x, size.y);
+                let texture =
+                    RenderTexture::camera_target(device, pipelines.format, size.x, size.y);
                 let bind_group = pipelines.bind_group(device, &texture.view, &uniform);
                 BloomLevel {
                     texture,

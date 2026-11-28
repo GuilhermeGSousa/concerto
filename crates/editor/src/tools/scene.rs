@@ -7,12 +7,7 @@ use concerto_ecs::{
     signal::{On, Signal},
 };
 use concerto_foundation::{assets::AssetId, transform::Transform};
-use concerto_scene::{
-    capture::capture_scene,
-    link::LinkRoot,
-    scene::Scene,
-    spawner::{SpawnFilter, spawn_scene_in_world},
-};
+use concerto_scene::{link::LinkRoot, scene::Scene, spawner::SpawnFilter};
 
 use crate::tools::selection::Select;
 
@@ -63,7 +58,9 @@ fn open_scene(on: On<OpenScene>, world: &mut World) {
         }
     }
     let root = world.spawn((Transform::IDENTITY, SceneRoot));
-    spawn_scene_in_world(world, &on.signal().scene, root, &SpawnFilter::default());
+    on.signal()
+        .scene
+        .spawn_in_world(world, root, &SpawnFilter::default());
     world.insert_resource(SceneDirty(false));
     world.trigger(Select(Some(root)));
 }
@@ -76,7 +73,7 @@ pub(crate) fn capture_open_scene(world: &mut World) -> Result<Scene, String> {
         .map(|(root, _)| root)
         .next();
     root.ok_or_else(|| anyhow::anyhow!("No scene is open"))
-        .and_then(|root| capture_scene(world, root))
+        .and_then(|root| Scene::capture(world, root))
         .map_err(|error| format!("{error:#}"))
 }
 

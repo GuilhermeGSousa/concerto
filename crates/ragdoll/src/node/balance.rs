@@ -16,7 +16,7 @@ use crate::{
     asset::{PartStrength, Side, StrengthProfile},
     attributes::{MotorCommand, PhysicsAmount},
     generate::BRACED,
-    ik::{Chain, reach},
+    ik::Chain,
     messages::{Steadied, Toppled},
     resolve::Limbs,
     sensing::BodySense,
@@ -878,12 +878,12 @@ impl BalanceController<'_> {
                 * (stance.leg_length
                     * settings.step_height
                     * (phase.clamp(0.0, 1.0) * std::f32::consts::PI).sin());
-        let aimed = reach(
-            &Chain {
-                upper: leg.thigh,
-                lower: leg.shin,
-                end: leg.foot,
-            },
+        let aimed = Chain {
+            upper: leg.thigh,
+            lower: leg.shin,
+            end: leg.foot,
+        }
+        .reach(
             stance.rest,
             carried,
             pose[leg.thigh].translation,

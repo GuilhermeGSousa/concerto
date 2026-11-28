@@ -56,7 +56,7 @@ impl FeatureQuery {
         Ok(features)
     }
 
-    /// The vector [`build`](Self::build) normalises, in the units [`preview_features`](crate::channel::preview_features) reads.
+    /// The vector [`build`](Self::build) normalises, in the units [`FrameContext::preview_features`](crate::channel::FrameContext::preview_features) reads.
     ///
     /// Pose channels hold their values as baked for `pose_frame`, and
     /// trajectory channels are extracted from `trajectory` expressed in

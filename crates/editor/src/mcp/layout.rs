@@ -66,12 +66,14 @@ const PANELS: [LayoutPanel; 4] = [
     LayoutPanel::Browser,
 ];
 
-fn name(panel: LayoutPanel) -> &'static str {
-    match panel {
-        LayoutPanel::Left => "left",
-        LayoutPanel::Right => "right",
-        LayoutPanel::Bottom => "bottom",
-        LayoutPanel::Browser => "browser",
+impl LayoutPanel {
+    fn name(self) -> &'static str {
+        match self {
+            LayoutPanel::Left => "left",
+            LayoutPanel::Right => "right",
+            LayoutPanel::Bottom => "bottom",
+            LayoutPanel::Browser => "browser",
+        }
     }
 }
 
@@ -80,9 +82,9 @@ pub(super) fn layout_line((layout, states, window, _): &SystemInputData<LayoutIn
     let panels: Vec<String> = PANELS
         .into_iter()
         .map(|panel| match states.of(panel) {
-            PanelState::Sized => format!("{} {}", name(panel), shown.size(panel).round()),
-            PanelState::Hidden => format!("{} hidden", name(panel)),
-            PanelState::Fill => format!("{} fill", name(panel)),
+            PanelState::Sized => format!("{} {}", panel.name(), shown.size(panel).round()),
+            PanelState::Hidden => format!("{} hidden", panel.name()),
+            PanelState::Fill => format!("{} fill", panel.name()),
         })
         .collect();
     format!("layout: {}", panels.join(" · "))
@@ -119,7 +121,7 @@ fn refused(panel: LayoutPanel, state: PanelState) -> ToolError {
         "refused",
         format!(
             "The {} panel {is} on the front tab and has no size to set; it is sized on {sized_on}.",
-            name(panel)
+            panel.name()
         ),
     )
 }

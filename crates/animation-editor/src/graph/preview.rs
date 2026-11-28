@@ -29,7 +29,7 @@ use concerto_foundation::{
 };
 use concerto_mesh::skeleton::SkeletonComponent;
 use concerto_name::Name;
-use concerto_reflect::{Reflect, ReflectedValue, TypeRegistry, apply_value};
+use concerto_reflect::{Reflect, ReflectedValue, TypeRegistry};
 
 use super::{
     document::{StateValue, TransitionValue},
@@ -197,7 +197,7 @@ fn param_value(types: &TypeRegistry, param: &SetGraphParam) -> Option<Box<dyn Re
         return None;
     };
     let mut value = found.default_value();
-    for warning in apply_value(value.as_mut(), &param.value) {
+    for warning in param.value.apply(value.as_mut()) {
         log::warn!("Parameter {}: {warning}", param.name);
     }
     Some(value)
@@ -434,7 +434,6 @@ mod tests {
     };
     use concerto_mesh::skeleton::{JointPose, Skeleton};
     use concerto_name::name;
-    use concerto_reflect::to_value;
     use glam::{Mat4, Vec2, Vec3};
     use uuid::Uuid;
 
@@ -546,7 +545,7 @@ mod tests {
             self.app.main_mut().world_mut().trigger(SetGraphParam {
                 name,
                 type_name: std::any::type_name::<T>().to_owned(),
-                value: to_value(&value).unwrap(),
+                value: ReflectedValue::encode(&value).unwrap(),
             });
         }
 

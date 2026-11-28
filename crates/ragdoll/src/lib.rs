@@ -54,9 +54,7 @@ pub use attributes::{MotorCommand, PhysicsAmount};
 pub use character::{CharacterRagdoll, PoseLost, RagdollBody, RagdollRefused};
 pub use dying::{BodySettled, Dead, Die, Settled};
 pub use fall::FallSettings;
-pub use generate::{
-    BRACED, FLINCH, GenerateError, HumanoidChains, HumanoidSettings, LIMP, generate_humanoid,
-};
+pub use generate::{BRACED, FLINCH, GenerateError, HumanoidChains, HumanoidSettings, LIMP};
 pub use hit::{BodyHit, HitKind};
 pub use messages::{BodyDead, BodyDown, Death, Hit, PendingImpulses, Wounded};
 pub use node::{
@@ -68,7 +66,7 @@ pub use overlap::PartOverlap;
 pub use plugin::RagdollPlugin;
 pub use report::active_states;
 pub use resolve::{Landmarks, Limbs, RagdollError, ResolvedRagdoll};
-pub use sandbox::{Trial, TrialReport, run_trial};
+pub use sandbox::{Trial, TrialReport};
 pub use sensing::{BodySense, Impact, MassPoint};
 pub use shot::{ShotSettings, Wound, Wounds};
 pub use stagger::StaggerSettings;

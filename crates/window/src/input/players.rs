@@ -209,6 +209,33 @@ pub struct Players {
 }
 
 impl Players {
+    fn join_on_press(&mut self, input: &Input) {
+        let pressed: Vec<GamepadId> = input
+            .gamepads()
+            .filter(|pad| self.player_of(PlayerDevice::Gamepad(pad.id())).is_none())
+            .filter(|pad| {
+                self.settings
+                    .join_buttons
+                    .iter()
+                    .any(|button| pad.is_just_pressed(*button))
+            })
+            .map(|pad| pad.id())
+            .collect();
+        for gamepad in pressed {
+            self.join(PlayerDevice::Gamepad(gamepad));
+        }
+        let keyboard_joins = self.settings.keyboard_mouse_joins
+            && self.player_of(PlayerDevice::KeyboardMouse).is_none()
+            && self
+                .settings
+                .join_keys
+                .iter()
+                .any(|key| input.is_just_pressed(PhysicalKey::Code(*key)));
+        if keyboard_joins {
+            self.join(PlayerDevice::KeyboardMouse);
+        }
+    }
+
     /// Creates an empty set of players with `settings`.
     pub fn new(settings: JoinSettings) -> Self {
         Self {
@@ -391,38 +418,10 @@ pub(crate) fn update_players(
         }
     }
     if players.settings.join_on_press {
-        join_on_press(&input, &mut players);
+        players.join_on_press(&input);
     }
     for event in players.drain_events() {
         events.write(event);
-    }
-}
-
-fn join_on_press(input: &Input, players: &mut Players) {
-    let pressed: Vec<GamepadId> = input
-        .gamepads()
-        .filter(|pad| players.player_of(PlayerDevice::Gamepad(pad.id())).is_none())
-        .filter(|pad| {
-            players
-                .settings
-                .join_buttons
-                .iter()
-                .any(|button| pad.is_just_pressed(*button))
-        })
-        .map(|pad| pad.id())
-        .collect();
-    for gamepad in pressed {
-        players.join(PlayerDevice::Gamepad(gamepad));
-    }
-    let keyboard_joins = players.settings.keyboard_mouse_joins
-        && players.player_of(PlayerDevice::KeyboardMouse).is_none()
-        && players
-            .settings
-            .join_keys
-            .iter()
-            .any(|key| input.is_just_pressed(PhysicalKey::Code(*key)));
-    if keyboard_joins {
-        players.join(PlayerDevice::KeyboardMouse);
     }
 }
 

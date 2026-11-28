@@ -10,10 +10,9 @@ use uuid::Uuid;
 
 use crate::{
     evaluation::{AnimationGraphContext, DriveContext},
-    mask::{BoneMask, MaskResolution, resolve_mask},
+    mask::{BoneMask, MaskResolution},
     node::{
-        AnimationNode, EditorAnimationNode, InputSlots, ReflectAnimationNode, effective_weight,
-        model_space::parent,
+        AnimationNode, EditorAnimationNode, InputSlots, ReflectAnimationNode, model_space::parent,
     },
     param::Param,
     pose::{AnimationFrame, EvaluatedFrame, FiredEvent, FramePool, JointPose},
@@ -133,7 +132,9 @@ impl AnimationNode for LayerNode {
         let Some(overlay) = evaluated_inputs.get(1) else {
             return;
         };
-        let weight = effective_weight(self.weight, self.weight_param, context.blackboard());
+        let weight = context
+            .blackboard()
+            .effective_weight(self.weight, self.weight_param);
         if weight <= 0.0 {
             return;
         }
@@ -150,8 +151,7 @@ impl AnimationNode for LayerNode {
         let Some(skeleton) = context.skeleton() else {
             return;
         };
-        resolve_mask(
-            mask,
+        mask.resolve_into(
             skeleton,
             context.root().map(|root| root.index),
             &mut state.mask,
@@ -199,14 +199,18 @@ impl AnimationNode for LayerNode {
         let Some(overlay) = inputs.get(1) else {
             return;
         };
-        let weight = effective_weight(self.weight, self.weight_param, context.blackboard());
+        let weight = context
+            .blackboard()
+            .effective_weight(self.weight, self.weight_param);
         if weight > 0.0 {
             blend_attributes(&state.mask.weights, weight, &overlay.frame, output);
         }
     }
 
     fn drive_shares(&self, _: &LayerState, context: &DriveContext<'_>, shares: &mut [f32]) {
-        let weight = effective_weight(self.weight, self.weight_param, context.blackboard());
+        let weight = context
+            .blackboard()
+            .effective_weight(self.weight, self.weight_param);
         for (slot, share) in shares.iter_mut().enumerate() {
             *share = match slot {
                 0 => 1.0,

@@ -17,15 +17,15 @@ use concerto_editor::{
 };
 use concerto_foundation::assets::{
     Asset, AssetId,
-    content::{decode_content_asset, read_asset_record, save_content_asset_into},
+    content::{decode_content_asset, save_content_asset_into},
     handle::AssetHandle,
     registry::AssetRegistry,
 };
 use concerto_mcp::{PendingCall, ToolCalls, ToolError};
 use concerto_mesh::Skeleton;
 use concerto_ragdoll::{
-    RagdollPart, RagdollShape,
-    generate::{HumanoidChains, HumanoidSettings, generate_humanoid},
+    Ragdoll, RagdollPart, RagdollShape,
+    generate::{HumanoidChains, HumanoidSettings},
 };
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -111,7 +111,8 @@ pub(crate) fn read_asset<A: Asset>(
     let entry = registry
         .get(id)
         .with_context(|| format!("the {what} is not in the project"))?;
-    let bytes = read_asset_record(root, entry)
+    let bytes = entry
+        .read_record(root)
         .with_context(|| format!("cannot read {}", entry.location()))?;
     let (header, value) = decode_content_asset::<A>(&bytes)?;
     anyhow::ensure!(
@@ -239,7 +240,7 @@ fn generate(
     let settings = HumanoidSettings::default()
         .with_total_mass(total_mass)
         .with_chains(request.chains.over(HumanoidChains::default()));
-    let ragdoll = generate_humanoid(
+    let ragdoll = Ragdoll::humanoid(
         AssetHandle::weak(skeleton_id),
         &skeleton,
         &resolved,

@@ -15,8 +15,8 @@ use concerto_ecs::{
     events::{event_reader::EventReader, event_writer::EventWriter},
 };
 use concerto_mcp::{
-    AppMcpExt, FrameDemand, McpPlugin, McpRead, McpTool, Needs, PendingCall, ToolCalls, ToolError,
-    spawn_server,
+    AppMcpExt, FrameDemand, McpPlugin, McpRead, McpTool, Needs, PendingCall, ServerHandle,
+    ToolCalls, ToolError,
 };
 use rmcp::{
     RoleClient, ServiceExt,
@@ -207,7 +207,7 @@ where
         .unwrap_or_else(PoisonError::into_inner);
     let mut app = app();
     let (client_io, server_io) = tokio::io::duplex(64 * 1024);
-    let _server = spawn_server(&app, server_io);
+    let _server = ServerHandle::spawn(&app, server_io);
     let client = std::thread::spawn(move || {
         tokio::runtime::Builder::new_current_thread()
             .enable_all()

@@ -1,6 +1,4 @@
-use concerto_foundation::assets::content::{
-    decode_content_asset, write_content_asset, ContentAssetHeader,
-};
+use concerto_foundation::assets::content::{decode_content_asset, ContentAssetHeader};
 use concerto_foundation::assets::{Asset, AssetId};
 use serde::{Deserialize, Serialize};
 
@@ -58,7 +56,7 @@ fn content_asset(kind: &str, kind_version: u32, payload: &[u8]) -> Vec<u8> {
         derived: None,
         embedded: Vec::new(),
     };
-    write_content_asset(&header, payload).unwrap()
+    header.write(payload).unwrap()
 }
 
 struct Decode {

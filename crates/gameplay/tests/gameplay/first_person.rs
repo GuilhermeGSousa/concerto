@@ -6,7 +6,7 @@ use concerto_foundation::transform::Transform;
 use concerto_gameplay::actions::bind_gameplay_actions;
 use concerto_gameplay::first_person::{
     FirstPersonView, FirstPersonWalker, place_first_person_views, read_first_person_input,
-    spawn_first_person_walker, step_first_person_walkers,
+    step_first_person_walkers,
 };
 use concerto_physics::body::BodyId;
 use concerto_physics::collider::{Collider, register_colliders};
@@ -44,11 +44,10 @@ fn run<M>(world: &mut World, system: impl concerto_ecs::IntoSystem<(), M> + 'sta
 fn walker(world: &mut World, player: u8, at: Vec3) -> Entity {
     let mut spawned = None;
     run(world, move |mut cmd: concerto_ecs::CommandQueue| {
-        spawn_first_person_walker(
+        FirstPersonWalker::default().spawn(
             &mut cmd,
             PlayerIndex::new(player),
             Transform::from_translation(at),
-            FirstPersonWalker::default(),
         );
     });
     let mut walkers = world.query::<(Entity, &PlayerIndex), ()>();

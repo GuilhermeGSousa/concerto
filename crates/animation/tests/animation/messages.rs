@@ -41,9 +41,7 @@ use concerto_foundation::{
 };
 use concerto_mesh::skeleton::{JointPose, Skeleton, SkeletonComponent};
 use concerto_name::{Name, name};
-use concerto_reflect::{
-    Reflect, ReflectDefault, ReflectedValue, apply_value, json_to_value, to_json, to_value,
-};
+use concerto_reflect::{Reflect, ReflectDefault, ReflectedValue, to_json};
 use glam::{Mat4, Vec3};
 use uuid::Uuid;
 
@@ -621,9 +619,10 @@ impl Stage {
                 json["entries"][0]["node"],
                 serde_json::json!({ "type": std::any::type_name::<Counter>(), "value": {} })
             );
-            let stored = json_to_value(&json, TypeId::of::<SlotNode>(), &registry).unwrap();
+            let stored =
+                ReflectedValue::from_json(&json, TypeId::of::<SlotNode>(), &registry).unwrap();
             let mut rebuilt = SlotNode::new();
-            assert!(apply_value(&mut rebuilt, &stored).is_empty());
+            assert!(stored.apply(&mut rebuilt).is_empty());
             assert_eq!(
                 to_json(&rebuilt, &registry),
                 json,
@@ -1177,7 +1176,7 @@ fn messages_move_the_graph_and_nodes_answer_with_raised_messages_and_signals() {
     );
 
     let heard = stage.heard_by(bodiless).len();
-    let value = to_value(&Poke { strength: 1.0 }).unwrap();
+    let value = ReflectedValue::encode(&Poke { strength: 1.0 }).unwrap();
     stage.world().trigger(SendReflectedMessage {
         character: bodiless,
         type_path: "nope".to_owned(),

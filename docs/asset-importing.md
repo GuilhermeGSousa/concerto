@@ -470,7 +470,7 @@ u32   header length, little-endian
 
 A skeleton asset (`skeleton/N`) holds bone names, parent indices (each parent before its child), inverse bind poses, the rest pose as `JointPose` and the bone ids. `JointPose` lives in `concerto-mesh`; `concerto-animation` re-exports it. A skin whose joints are not ordered parents-first fails the import with an error naming the skin and joint; a skin with a joint outside every scene root is skipped with a warning. Neither emits a skeleton.
 
-The format version is `CONTENT_FORMAT_VERSION`, currently `8`; it changes only when the framing or the header changes, never for a payload. Version 5 adds `kind_version` to the header, version 6 adds `derived`, the description of a derived blob that trails the payload in a cooked file, and version 8 adds `uncooked`, the description of the uncooked section at the end of the file. The payload is everything between the header and the blob or the section; `read_content_asset` returns it alone, and `read_content_asset_parts` returns all three. `write_content_asset` writes neither a section nor a blob and refuses a header that describes one; `write_content_asset_with_uncooked` writes the header, the payload and the uncooked bytes it is given as a section, also when they are empty; `write_cooked_content_asset` writes the header, the payload and the blob of a `CookedSection`, and never an uncooked section. Committed content never has a derived section. A version-4 file reads as kind version 1 and a version-5 file reads with no derived section; a version-6 file reads with no embedded assets, and a version-7 file with no uncooked section. None needs a re-import, and each moves to version 8 the next time the editor saves it or an import rewrites it. Any other version is rejected. glTF clips have no stored frame rate, so the clip editor shows a detected one; BVH clips store the rate from `Frame Time`.
+The format version is `CONTENT_FORMAT_VERSION`, currently `8`; it changes only when the framing or the header changes, never for a payload. Version 5 adds `kind_version` to the header, version 6 adds `derived`, the description of a derived blob that trails the payload in a cooked file, and version 8 adds `uncooked`, the description of the uncooked section at the end of the file. The payload is everything between the header and the blob or the section; `ContentAssetHeader::read` returns it alone, and `ContentAssetParts::read` returns all three. `ContentAssetHeader::write` writes neither a section nor a blob and refuses a header that describes one; `ContentAssetHeader::write_with_uncooked` writes the header, the payload and the uncooked bytes it is given as a section, also when they are empty; `ContentAssetHeader::write_cooked` writes the header, the payload and the blob of a `CookedSection`, and never an uncooked section. Committed content never has a derived section. A version-4 file reads as kind version 1 and a version-5 file reads with no derived section; a version-6 file reads with no embedded assets, and a version-7 file with no uncooked section. None needs a re-import, and each moves to version 8 the next time the editor saves it or an import rewrites it. Any other version is rejected. glTF clips have no stored frame rate, so the clip editor shows a detected one; BVH clips store the rate from `Frame Time`.
 
 `ContentAssetHeader` (see `concerto_foundation::assets::content`):
 
@@ -504,7 +504,7 @@ Embedded assets are stored in directory order, so the host's payload ends
 where the first one starts, less the host's blob. An embedded asset lists no
 embedded assets of its own.
 
-`write_content_asset_with_embedded` writes a host from its header, with an
+`ContentAssetHeader::write_with_embedded` writes a host from its header, with an
 empty directory, its payload and one `EmbeddedPayload` per embedded asset, and
 fills the directory. Each asset's uncooked section is the bytes in
 `EmbeddedPayload::uncooked`, described by its header's `uncooked`,
@@ -513,11 +513,11 @@ host header with a derived or an uncooked section, and an embedded asset
 that has no provenance, lists embedded assets, has a blob its header does not
 describe, has section bytes its header does not describe or describes with
 another length, or repeats an id or a name.
-`write_content_asset_with_uncooked(header, payload, version, bytes)` writes
-a loose file with a section at `version`. `write_content_asset`,
-`write_content_asset_with_uncooked` and `write_cooked_content_asset` refuse
+`ContentAssetHeader::write_with_uncooked(&self, payload, version, bytes)` writes
+a loose file with a section at `version`. `ContentAssetHeader::write`,
+`ContentAssetHeader::write_with_uncooked` and `ContentAssetHeader::write_cooked` refuse
 a header that lists embedded assets.
-`read_content_asset` and `read_content_asset_parts` of a host return the
+`ContentAssetHeader::read` and `ContentAssetParts::read` of a host return the
 host's payload, section and blob, with the directory in the header.
 `asset_record` returns one asset of a file as a standalone record, the bytes a
 loose file of it would have, its uncooked section included: the host for
@@ -536,7 +536,7 @@ none; a file with no section comes back byte for byte, whatever its version.
 `read_content_without_uncooked` reads a file from disk as those same bytes
 without reading the sections, by stopping where they start; a file it cannot
 understand is read whole, so the parser that follows reports what is wrong
-with it. `read_uncooked_section` reads the header and then only the section
+with it. `UncookedBytes::read` reads the header and then only the section
 of one record, the host for `None` or an embedded asset by name, as
 `UncookedBytes { kind, version, bytes }`, the record's kind and the
 section's own version; it returns `None` for a record
@@ -582,15 +582,15 @@ serializes to zero bytes.
 The section is read on its own, through
 `concerto_foundation::assets::content`:
 
-- `read_uncooked::<E>(project_root, entry)` reads and decodes the section
+- `AssetEntry::read_uncooked::<E>(&self, project_root)` reads and decodes the section
   of one registry entry, a loose file or an embedded asset, without reading
   its payload. It returns `None` for a record with no section.
-- `read_asset_record_without_uncooked(project_root, entry)` returns the
-  same standalone record as `read_asset_record` with no section, and does not
-  read the section from disk. `read_asset_record` returns the record with its
-  section.
+- `AssetEntry::read_record_without_uncooked(&self, project_root)` returns the
+  same standalone record as `AssetEntry::read_record` with no section, and does
+  not read the section from disk. `AssetEntry::read_record` returns the record
+  with its section.
 - `decode_uncooked::<E>(kind, version, bytes)` decodes a section's bytes,
-  as `read_uncooked_section` returns them, and rejects a record whose
+  as `UncookedBytes::read` returns them, and rejects a record whose
   `kind` is not `E::Asset`'s.
 
 It is written by
@@ -629,7 +629,7 @@ an id the registry does not hold.
 Each asset type has its own payload version, `Asset::FORMAT_VERSION`, which
 starts at 1 and is written to `kind_version` in every header. Version 1 of a
 type is its encoding as committed at header version 4. Header scans
-(`scan_content`, `asset_id!`, the build script, project open and import) never
+(`ScannedEntry::scan`, `asset_id!`, the build script, project open and import) never
 check it; a file is checked only when it is decoded. Every decode goes through
 `decode_content_asset::<A>`, or `utils::load_content_asset::<A>` for a file
 under a `ContentAssetRoot`, which the `AssetServer` uses:
@@ -1232,7 +1232,7 @@ read-only, and names the way on: set `file = true` for an output in the
 source's `.import.toml` and import again, which makes that output a file of
 its own.
 
-`read_asset_record(project_root, &entry)` reads one asset out of the tree
+`entry.read_record(project_root)` reads one asset out of the tree
 whatever way it is stored: the standalone record of a registry entry, loose,
 host or embedded.
 

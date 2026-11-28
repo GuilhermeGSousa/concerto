@@ -19,9 +19,7 @@ use concerto_mcp::{
     host::HostPicture, receive_read_only_calls,
 };
 use concerto_reflect::{Reflect, TypeRegistry, to_json};
-use concerto_render::{
-    gpu::Gpu, readback::read_texture, render_asset::render_texture::RenderTexture,
-};
+use concerto_render::{gpu::Gpu, render_asset::render_texture::RenderTexture};
 use concerto_scene::{
     link::{SceneLink, SceneLinkState},
     scene::Scene,
@@ -33,7 +31,7 @@ use serde_json::{Map, Value};
 
 use super::{
     BusyInputs,
-    act::{describe_pose, find_asset},
+    act::find_asset,
     is_busy,
     layout::{LayoutInputs, layout_line, viewport_line},
     value::value_names,
@@ -387,20 +385,22 @@ fn filtered<'a>(
         .collect())
 }
 
-fn fold_mark(folds: &ImportFolds, asset: &AssetEntry) -> String {
-    if let Some(face) = folds.face_of(asset) {
-        return format!(" · part of {}", face.address);
-    }
-    match &asset.provenance {
-        Some(provenance) if is_import_face(asset) => {
-            let counted = match folds.parts_of(asset.id).len() {
-                0 => "no parts".to_owned(),
-                1 => "1 part".to_owned(),
-                parts => format!("{parts} parts"),
-            };
-            format!(" · import of {} with {counted}", provenance.source)
+impl ImportFolds<'_> {
+    fn fold_mark(&self, asset: &AssetEntry) -> String {
+        if let Some(face) = self.face_of(asset) {
+            return format!(" · part of {}", face.address);
         }
-        _ => String::new(),
+        match &asset.provenance {
+            Some(provenance) if is_import_face(asset) => {
+                let counted = match self.parts_of(asset.id).len() {
+                    0 => "no parts".to_owned(),
+                    1 => "1 part".to_owned(),
+                    parts => format!("{parts} parts"),
+                };
+                format!(" · import of {} with {counted}", provenance.source)
+            }
+            _ => String::new(),
+        }
     }
 }
 
@@ -444,7 +444,7 @@ fn list(
             asset.location(),
             asset.kind,
             asset.id.simple_hex(),
-            fold_mark(&folds, asset)
+            folds.fold_mark(asset)
         ));
     }
     let next = offset + shown.len();
@@ -452,29 +452,31 @@ fn list(
         lines.push(format!(
             "… {} more: list_assets {}",
             matches.len() - next,
-            continuation(arguments, next, limit)
+            arguments.continuation(next, limit)
         ));
     }
     Ok(lines.join("\n"))
 }
 
-fn continuation(arguments: &ListAssets, offset: usize, limit: usize) -> Value {
-    let mut call = Map::new();
-    if let Some(folder) = &arguments.folder {
-        call.insert("folder".into(), folder.clone().into());
+impl ListAssets {
+    fn continuation(&self, offset: usize, limit: usize) -> Value {
+        let mut call = Map::new();
+        if let Some(folder) = &self.folder {
+            call.insert("folder".into(), folder.clone().into());
+        }
+        if let Some(kind) = &self.kind {
+            call.insert("kind".into(), kind.clone().into());
+        }
+        call.insert("limit".into(), limit.into());
+        call.insert("offset".into(), offset.into());
+        if let Some(parts_of) = &self.parts_of {
+            call.insert("parts_of".into(), parts_of.clone().into());
+        }
+        if let Some(query) = &self.query {
+            call.insert("query".into(), query.clone().into());
+        }
+        Value::Object(call)
     }
-    if let Some(kind) = &arguments.kind {
-        call.insert("kind".into(), kind.clone().into());
-    }
-    call.insert("limit".into(), limit.into());
-    call.insert("offset".into(), offset.into());
-    if let Some(parts_of) = &arguments.parts_of {
-        call.insert("parts_of".into(), parts_of.clone().into());
-    }
-    if let Some(query) = &arguments.query {
-        call.insert("query".into(), query.clone().into());
-    }
-    Value::Object(call)
 }
 
 type EditTargetDocument = Query<
@@ -503,6 +505,56 @@ enum Links {
 }
 
 impl SceneView<'_> {
+    fn tree(&self, arguments: &SceneTree) -> String {
+        if self.starts.is_empty() {
+            return "The scene has no entities.".to_owned();
+        }
+        let depth = arguments.depth.max(1);
+        let mut lines = TreeLines {
+            view: self,
+            depth,
+            limit: arguments.limit.max(1),
+            shown: 0,
+            lines: Vec::new(),
+        };
+        for &start in &self.starts {
+            lines.walk(start, 0);
+        }
+        let total: usize = self
+            .starts
+            .iter()
+            .map(|&start| self.within(start, 0, depth))
+            .sum();
+        let shown = lines.shown;
+        let mut lines = lines.lines;
+        if shown < total {
+            lines.push(format!(
+                "… {} more within depth {depth}: scene_tree {}",
+                total - shown,
+                tree_call(
+                    arguments.root.as_ref().and(self.starts.first().copied()),
+                    depth,
+                    total
+                )
+            ));
+        }
+        lines.join("\n")
+    }
+
+    fn search(
+        &self,
+        entity: Entity,
+        path: &mut Vec<String>,
+        visit: &mut dyn FnMut(Entity, &[String]),
+    ) {
+        path.push((self.label)(entity));
+        visit(entity, path);
+        for child in self.children_of(entity) {
+            self.search(child, path, visit);
+        }
+        path.pop();
+    }
+
     fn line(&self, entity: Entity, label: &str) -> String {
         let id = entity.to_id_string();
         let mut line = match (self.link)(entity) {
@@ -643,7 +695,7 @@ fn scene_tree(
             linked: &linked,
             links,
         };
-        reply.ok(tree(&view, &arguments));
+        reply.ok(view.tree(&arguments));
     }
 }
 
@@ -689,7 +741,7 @@ fn find_entities(
             linked: &linked,
             links: Links::Expanded,
         };
-        reply.ok(find(&view, &arguments));
+        reply.ok(view.find(&arguments));
     }
 }
 
@@ -750,42 +802,6 @@ impl TreeLines<'_, '_> {
     }
 }
 
-fn tree(view: &SceneView, arguments: &SceneTree) -> String {
-    if view.starts.is_empty() {
-        return "The scene has no entities.".to_owned();
-    }
-    let depth = arguments.depth.max(1);
-    let mut lines = TreeLines {
-        view,
-        depth,
-        limit: arguments.limit.max(1),
-        shown: 0,
-        lines: Vec::new(),
-    };
-    for &start in &view.starts {
-        lines.walk(start, 0);
-    }
-    let total: usize = view
-        .starts
-        .iter()
-        .map(|&start| view.within(start, 0, depth))
-        .sum();
-    let shown = lines.shown;
-    let mut lines = lines.lines;
-    if shown < total {
-        lines.push(format!(
-            "… {} more within depth {depth}: scene_tree {}",
-            total - shown,
-            tree_call(
-                arguments.root.as_ref().and(view.starts.first().copied()),
-                depth,
-                total
-            )
-        ));
-    }
-    lines.join("\n")
-}
-
 fn tree_call(root: Option<Entity>, depth: usize, limit: usize) -> Value {
     let mut call = Map::new();
     call.insert("depth".into(), depth.into());
@@ -796,66 +812,55 @@ fn tree_call(root: Option<Entity>, depth: usize, limit: usize) -> Value {
     Value::Object(call)
 }
 
-fn find(view: &SceneView, arguments: &FindEntities) -> String {
-    let name = arguments.name.as_deref().map(str::to_lowercase);
-    let wanted = arguments.component.as_deref();
-    let mut found = Vec::new();
-    let mut path = Vec::new();
-    for &start in &view.starts {
-        search(view, start, &mut path, &mut |entity, path| {
-            let named = name.as_deref().is_none_or(|name| {
-                (view.name)(entity).is_some_and(|candidate| candidate.to_lowercase().contains(name))
+impl SceneView<'_> {
+    fn find(&self, arguments: &FindEntities) -> String {
+        let name = arguments.name.as_deref().map(str::to_lowercase);
+        let wanted = arguments.component.as_deref();
+        let mut found = Vec::new();
+        let mut path = Vec::new();
+        for &start in &self.starts {
+            self.search(start, &mut path, &mut |entity, path| {
+                let named = name.as_deref().is_none_or(|name| {
+                    (self.name)(entity)
+                        .is_some_and(|candidate| candidate.to_lowercase().contains(name))
+                });
+                let carries = wanted.is_none_or(|wanted| {
+                    (self.components)(entity)
+                        .iter()
+                        .any(|(short, full)| short.eq_ignore_ascii_case(wanted) || *full == wanted)
+                });
+                if named && carries {
+                    found.push(self.line(entity, &path.join(" > ")));
+                }
             });
-            let carries = wanted.is_none_or(|wanted| {
-                (view.components)(entity)
-                    .iter()
-                    .any(|(short, full)| short.eq_ignore_ascii_case(wanted) || *full == wanted)
-            });
-            if named && carries {
-                found.push(view.line(entity, &path.join(" > ")));
+        }
+        if found.is_empty() {
+            return "No entities match.".to_owned();
+        }
+        let limit = arguments.limit.max(1);
+        let mut lines = vec![if found.len() == 1 {
+            "1 entity matches:".to_owned()
+        } else {
+            format!("{} entities match:", found.len())
+        }];
+        lines.extend(found.iter().take(limit).cloned());
+        if found.len() > limit {
+            let mut call = Map::new();
+            if let Some(component) = &arguments.component {
+                call.insert("component".into(), component.clone().into());
             }
-        });
-    }
-    if found.is_empty() {
-        return "No entities match.".to_owned();
-    }
-    let limit = arguments.limit.max(1);
-    let mut lines = vec![if found.len() == 1 {
-        "1 entity matches:".to_owned()
-    } else {
-        format!("{} entities match:", found.len())
-    }];
-    lines.extend(found.iter().take(limit).cloned());
-    if found.len() > limit {
-        let mut call = Map::new();
-        if let Some(component) = &arguments.component {
-            call.insert("component".into(), component.clone().into());
+            call.insert("limit".into(), found.len().into());
+            if let Some(name) = &arguments.name {
+                call.insert("name".into(), name.clone().into());
+            }
+            lines.push(format!(
+                "… {} more: find_entities {}",
+                found.len() - limit,
+                Value::Object(call)
+            ));
         }
-        call.insert("limit".into(), found.len().into());
-        if let Some(name) = &arguments.name {
-            call.insert("name".into(), name.clone().into());
-        }
-        lines.push(format!(
-            "… {} more: find_entities {}",
-            found.len() - limit,
-            Value::Object(call)
-        ));
+        lines.join("\n")
     }
-    lines.join("\n")
-}
-
-fn search(
-    view: &SceneView,
-    entity: Entity,
-    path: &mut Vec<String>,
-    visit: &mut dyn FnMut(Entity, &[String]),
-) {
-    path.push((view.label)(entity));
-    visit(entity, path);
-    for child in view.children_of(entity) {
-        search(view, child, path, visit);
-    }
-    path.pop();
 }
 
 fn inspect(
@@ -944,7 +949,7 @@ fn inspection(
                     .any(|name| names_component(short, full, name))
             })
         })
-        .map(|(short, full, id)| component_json(source, registry, entity, short, full, id))
+        .map(|(short, full, id)| source.component_json(registry, entity, short, full, id))
         .collect();
     let mut answer = Map::new();
     answer.insert("entity".into(), entity.to_id_string().into());
@@ -959,22 +964,24 @@ fn inspection(
     Ok(Value::Object(answer).to_string())
 }
 
-pub(super) fn component_json(
-    source: &InspectionSource,
-    registry: &InspectorRegistry,
-    entity: Entity,
-    short: &str,
-    full: &str,
-    id: TypeId,
-) -> Value {
-    let mut component = Map::new();
-    component.insert("name".into(), short.into());
-    component.insert("type".into(), full.into());
-    match source.read(entity, id) {
-        Some(value) => insert_value(&mut component, value, &source.types(), registry),
-        None => insert_unavailable(&mut component),
+impl InspectionSource<'_> {
+    pub(super) fn component_json(
+        &self,
+        registry: &InspectorRegistry,
+        entity: Entity,
+        short: &str,
+        full: &str,
+        id: TypeId,
+    ) -> Value {
+        let mut component = Map::new();
+        component.insert("name".into(), short.into());
+        component.insert("type".into(), full.into());
+        match self.read(entity, id) {
+            Some(value) => insert_value(&mut component, value, &self.types(), registry),
+            None => insert_unavailable(&mut component),
+        }
+        Value::Object(component)
     }
-    Value::Object(component)
 }
 
 /// Adds `value` and `paths` to an answer's JSON.
@@ -1054,7 +1061,10 @@ fn screenshot_viewport(
     let Some(target) = targets.iter().next() else {
         return;
     };
-    let pose = fly.as_deref().map(describe_pose).unwrap_or_default();
+    let pose = fly
+        .as_deref()
+        .map(FlyCamera::describe_pose)
+        .unwrap_or_default();
     for (arguments, reply) in calls.read() {
         if arguments.target == ScreenshotTarget::Viewport {
             let drawn = target.picture().get();
@@ -1084,7 +1094,7 @@ fn answer_picture(
         ));
         return;
     };
-    let picture = fitted(read_texture(gpu, drawn.texture()), max_edge);
+    let picture = fitted(gpu.read_texture(drawn.texture()), max_edge);
     let mut png = std::io::Cursor::new(Vec::new());
     match picture.write_to(&mut png, ImageFormat::Png) {
         Ok(()) => reply.ok_image(png.get_ref(), text),

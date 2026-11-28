@@ -4,7 +4,7 @@ use concerto_animation::{
     graph::{AnimationGraph, AnimationNodeData, AnimationNodeIndex},
     node::{EditorAnimationNode, ErasedAnimationNode, InputSlots, PlaceholderNode},
 };
-use concerto_reflect::{ReflectedValue, to_value};
+use concerto_reflect::ReflectedValue;
 
 /// Names one node of a graph tab for the life of its document; not in the file.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -199,7 +199,7 @@ impl GraphCopy {
 
     fn stored(node: &HeldNode) -> anyhow::Result<AnimationNodeData> {
         let value = match &node.value {
-            HeldValue::Live(live) => to_value(live.as_reflect())?,
+            HeldValue::Live(live) => ReflectedValue::encode(live.as_reflect())?,
             HeldValue::Stored(value) => value.clone(),
         };
         Ok(AnimationNodeData::Stored {

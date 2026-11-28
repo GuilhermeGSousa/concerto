@@ -72,41 +72,45 @@ pub(crate) enum LockShape {
     },
 }
 
-pub(crate) fn leg_shapes(leg: &LegLock) -> Vec<LockShape> {
-    match leg.phase {
-        LockPhase::Locked => vec![
-            LockShape::Circle {
-                center: leg.lock,
-                color: LOCKED_COLOR,
-            },
-            LockShape::Cross {
-                center: leg.lock,
-                color: LOCKED_COLOR,
-            },
-        ],
-        LockPhase::Releasing => vec![
-            LockShape::Circle {
-                center: leg.shown,
-                color: RELEASING_COLOR,
-            },
-            LockShape::Line {
-                start: leg.shown,
-                end: leg.animated,
-                color: RELEASING_COLOR,
-            },
-        ],
-        LockPhase::Free => vec![LockShape::Cross {
-            center: leg.animated,
-            color: FREE_COLOR,
-        }],
+impl LockShape {
+    pub(crate) fn of_leg(leg: &LegLock) -> Vec<LockShape> {
+        match leg.phase {
+            LockPhase::Locked => vec![
+                LockShape::Circle {
+                    center: leg.lock,
+                    color: LOCKED_COLOR,
+                },
+                LockShape::Cross {
+                    center: leg.lock,
+                    color: LOCKED_COLOR,
+                },
+            ],
+            LockPhase::Releasing => vec![
+                LockShape::Circle {
+                    center: leg.shown,
+                    color: RELEASING_COLOR,
+                },
+                LockShape::Line {
+                    start: leg.shown,
+                    end: leg.animated,
+                    color: RELEASING_COLOR,
+                },
+            ],
+            LockPhase::Free => vec![LockShape::Cross {
+                center: leg.animated,
+                color: FREE_COLOR,
+            }],
+        }
     }
-}
 
-fn draw_shape(gizmos: &mut DebugGizmos, shape: LockShape) {
-    match shape {
-        LockShape::Circle { center, color } => gizmos.circle(center, Vec3::Y, LOCK_RADIUS, color),
-        LockShape::Cross { center, color } => gizmos.cross(center, CROSS_SIZE, color),
-        LockShape::Line { start, end, color } => gizmos.line(start, end, color),
+    pub(crate) fn draw(self, gizmos: &mut DebugGizmos) {
+        match self {
+            LockShape::Circle { center, color } => {
+                gizmos.circle(center, Vec3::Y, LOCK_RADIUS, color)
+            }
+            LockShape::Cross { center, color } => gizmos.cross(center, CROSS_SIZE, color),
+            LockShape::Line { start, end, color } => gizmos.line(start, end, color),
+        }
     }
 }
 
@@ -122,8 +126,8 @@ pub fn draw_foot_locks(
         }
         player.for_each_state::<FootLockNode>(&graphs, |_, state, _| {
             for leg in state.legs() {
-                for shape in leg_shapes(leg) {
-                    draw_shape(&mut gizmos, shape);
+                for shape in LockShape::of_leg(leg) {
+                    shape.draw(&mut gizmos);
                 }
             }
         });

@@ -1,14 +1,14 @@
 //! The editor's faces have to carry what the editor asks them for.
 use concerto_app::App;
 use concerto_editor::fonts::{AssetIcons, AssetIconsAppExt, FontsPlugin, glyph};
-use concerto_ui::text::fonts::{UIFonts, build_font_system};
+use concerto_ui::text::fonts::UIFonts;
 use glyphon::cosmic_text::fontdb;
 use glyphon::{Attrs, Buffer, Family, FontSystem, Metrics, Shaping, Wrap};
 
 fn font_system() -> FontSystem {
     let mut app = App::new();
     app.register_plugin(FontsPlugin);
-    build_font_system(app.get_resource::<UIFonts>().unwrap())
+    app.get_resource::<UIFonts>().unwrap().build_font_system()
 }
 
 fn glyph_ids(font_system: &mut FontSystem, text: &str, family: &str) -> Vec<u16> {

@@ -20,7 +20,7 @@ use concerto_import::importer_for;
 use concerto_mcp::{
     AppMcpExt, McpServe, McpTool, Needs, PendingCall, ToolCalls, ToolError, answer_unanswered,
 };
-use concerto_reflect::{Reflect, TypeRegistry, apply_value, json_to_value, to_json};
+use concerto_reflect::{Reflect, ReflectedValue, TypeRegistry, to_json};
 use concerto_scene::scene::Scene;
 use glam::Vec3;
 use schemars::JsonSchema;
@@ -233,12 +233,14 @@ fn busy() -> ToolError {
     )
 }
 
-fn project_opening(state: &ProjectState, commands: &EditorCommands) -> bool {
-    state.busy()
-        || commands
-            .0
-            .iter()
-            .any(|command| matches!(command, EditorCommand::OpenProject(_)))
+impl ProjectState {
+    fn project_opening(&self, commands: &EditorCommands) -> bool {
+        self.busy()
+            || commands
+                .0
+                .iter()
+                .any(|command| matches!(command, EditorCommand::OpenProject(_)))
+    }
 }
 
 fn open_project(
@@ -248,7 +250,7 @@ fn open_project(
     mut cmd: CommandQueue,
 ) {
     for (arguments, reply) in calls.read() {
-        if project_opening(&state, &commands) {
+        if state.project_opening(&commands) {
             reply.err(busy());
             continue;
         }
@@ -352,7 +354,7 @@ fn open_asset(
     mut cmd: CommandQueue,
 ) {
     for (arguments, reply) in calls.read() {
-        if project_opening(&state, &commands) {
+        if state.project_opening(&commands) {
             reply.err(busy());
             continue;
         }
@@ -480,7 +482,7 @@ fn create_asset(
     mut cmd: CommandQueue,
 ) {
     for (arguments, reply) in calls.read() {
-        if project_opening(&state, &commands) {
+        if state.project_opening(&commands) {
             reply.err(busy());
             continue;
         }
@@ -560,7 +562,7 @@ fn import_source(
     mut cmd: CommandQueue,
 ) {
     for (arguments, reply) in calls.read() {
-        if project_opening(&state, &commands) {
+        if state.project_opening(&commands) {
             reply.err(busy());
             continue;
         }
@@ -666,8 +668,8 @@ fn patched(
         )
     };
     let type_id = (value.as_ref() as &dyn std::any::Any).type_id();
-    let stored = json_to_value(patch, type_id, types).map_err(&refused)?;
-    let warnings = apply_value(value.as_mut(), &stored);
+    let stored = ReflectedValue::from_json(patch, type_id, types).map_err(&refused)?;
+    let warnings = stored.apply(value.as_mut());
     if let Some(warning) = warnings.first() {
         return Err(refused(warning.to_string()));
     }
@@ -915,33 +917,36 @@ fn invalid_pose(message: &str) -> ToolError {
     ToolError::new("invalid_arguments", message)
 }
 
-fn pose_of(arguments: &SetCamera) -> Result<SetCameraPose, ToolError> {
-    let finite = arguments
-        .position
-        .iter()
-        .chain(arguments.look_at.iter().flatten())
-        .chain(&arguments.yaw)
-        .chain(&arguments.pitch)
-        .all(|number| number.is_finite());
-    if !finite {
-        return Err(invalid_pose(
-            "position, look_at, yaw and pitch must be finite numbers within f32's range, about ±3.4e38.",
-        ));
-    }
-    let position = Vec3::from_array(arguments.position);
-    match (arguments.look_at, arguments.yaw, arguments.pitch) {
-        (Some(target), None, None) => SetCameraPose::looking_at(position, Vec3::from_array(target))
-            .ok_or_else(|| {
-                invalid_pose("look_at is the camera's own position; give a point away from it.")
+impl SetCamera {
+    fn pose_of(&self) -> Result<SetCameraPose, ToolError> {
+        let finite = self
+            .position
+            .iter()
+            .chain(self.look_at.iter().flatten())
+            .chain(&self.yaw)
+            .chain(&self.pitch)
+            .all(|number| number.is_finite());
+        if !finite {
+            return Err(invalid_pose(
+                "position, look_at, yaw and pitch must be finite numbers within f32's range, about ±3.4e38.",
+            ));
+        }
+        let position = Vec3::from_array(self.position);
+        match (self.look_at, self.yaw, self.pitch) {
+            (Some(target), None, None) => {
+                SetCameraPose::looking_at(position, Vec3::from_array(target)).ok_or_else(|| {
+                    invalid_pose("look_at is the camera's own position; give a point away from it.")
+                })
+            }
+            (None, Some(yaw), Some(pitch)) => Ok(SetCameraPose {
+                position,
+                yaw,
+                pitch,
             }),
-        (None, Some(yaw), Some(pitch)) => Ok(SetCameraPose {
-            position,
-            yaw,
-            pitch,
-        }),
-        _ => Err(invalid_pose(
-            "Give either look_at, or yaw and pitch together, but not both.",
-        )),
+            _ => Err(invalid_pose(
+                "Give either look_at, or yaw and pitch together, but not both.",
+            )),
+        }
     }
 }
 
@@ -956,7 +961,7 @@ fn set_camera(
             reply.err(camera_refused());
             continue;
         }
-        match pose_of(&arguments) {
+        match arguments.pose_of() {
             Ok(pose) => {
                 scene.trigger(pose);
                 cmd.spawn((
@@ -973,14 +978,16 @@ fn shown(value: f32) -> f32 {
     (value * 1000.0).round() / 1000.0 + 0.0
 }
 
-pub(super) fn describe_pose(fly: &FlyCamera) -> String {
-    let [x, y, z] = fly.position.to_array().map(shown);
-    let [fx, fy, fz] = fly.forward().to_array().map(shown);
-    format!(
-        "Camera at ({x:.3}, {y:.3}, {z:.3}), yaw {:.3}, pitch {:.3}, looking along ({fx:.3}, {fy:.3}, {fz:.3}).",
-        shown(fly.yaw),
-        shown(fly.pitch)
-    )
+impl FlyCamera {
+    pub(super) fn describe_pose(&self) -> String {
+        let [x, y, z] = self.position.to_array().map(shown);
+        let [fx, fy, fz] = self.forward().to_array().map(shown);
+        format!(
+            "Camera at ({x:.3}, {y:.3}, {z:.3}), yaw {:.3}, pitch {:.3}, looking along ({fx:.3}, {fy:.3}, {fz:.3}).",
+            shown(self.yaw),
+            shown(self.pitch)
+        )
+    }
 }
 
 fn answer_posed(
@@ -1001,7 +1008,7 @@ fn answer_posed(
         return;
     }
     for (entity, pending, awaiting) in waiting.iter() {
-        let pose = describe_pose(fly);
+        let pose = fly.describe_pose();
         match &awaiting.framed {
             Some(framed) => pending.reply.ok(format!("Framed {framed}. {pose}")),
             None => pending.reply.ok(pose),

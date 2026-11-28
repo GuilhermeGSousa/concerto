@@ -458,7 +458,7 @@ pub(crate) fn update_trees(
             &mut cmd,
         );
         for row in &rows {
-            shape_item(row, &theme, &mut nodes);
+            row.shape_item(&theme, &mut nodes);
             let (caret, drawn) = children
                 .get_entity_mut(row.entity)
                 .map(|(_, mut children)| {
@@ -475,10 +475,10 @@ pub(crate) fn update_trees(
                     (caret, drawn)
                 })
                 .unwrap_or_default();
-            let segments = connector_segments(row, &theme, row_height);
+            let segments = row.connector_segments(&theme, row_height);
             sync_connectors(row.entity, &segments, &drawn, &theme, &mut nodes, &mut cmd);
             match (caret, row.has_children) {
-                (None, true) => spawn_caret(row, &theme, &mut cmd),
+                (None, true) => row.spawn_caret(&theme, &mut cmd),
                 (Some(caret), false) => cmd.despawn(caret),
                 (Some(caret), true) => {
                     sync_caret(caret, row, &theme, &carets, &mut texts, &mut nodes)
@@ -510,83 +510,6 @@ fn owning_tree(
     })
 }
 
-fn shape_item(row: &TreeRow, theme: &UITheme, nodes: &mut Query<&mut UINode>) {
-    let Some(mut node) = nodes.get_entity_mut(row.entity) else {
-        return;
-    };
-    let left = caret_left(row, theme) + theme.tree_caret_column;
-    if node.padding.left != left {
-        node.padding.left = left;
-    }
-    if node.align_items != Some(AlignItems::Center) {
-        node.align_items = Some(AlignItems::Center);
-    }
-    if node.overflow_x != Overflow::Visible {
-        node.overflow_x = Overflow::Visible;
-    }
-    if node.overflow_y != Overflow::Visible {
-        node.overflow_y = Overflow::Visible;
-    }
-}
-
-fn caret_left(row: &TreeRow, theme: &UITheme) -> f32 {
-    theme.tree_inset + row.depth as f32 * theme.tree_indent
-}
-
-fn caret_glyph(row: &TreeRow, theme: &UITheme) -> String {
-    if row.drawn_expanded {
-        theme.tree_caret_expanded
-    } else {
-        theme.tree_caret_collapsed
-    }
-    .to_string()
-}
-
-fn caret_inset(row: &TreeRow, theme: &UITheme) -> UIInset {
-    UIInset {
-        top: UIValue::Px(0.0),
-        left: UIValue::Px(caret_left(row, theme)),
-        ..Default::default()
-    }
-}
-
-fn spawn_caret(row: &TreeRow, theme: &UITheme, cmd: &mut CommandQueue) {
-    let glyph = cmd
-        .spawn((
-            UINode::default(),
-            UIText {
-                text: caret_glyph(row, theme),
-                font_size: theme.tree_caret_font_size,
-                line_height: theme.line_height(theme.tree_caret_font_size),
-                font_family: theme.tree_caret_family.clone(),
-                color: theme.text_muted,
-                wrap: false,
-                ..Default::default()
-            },
-            UIWidgetPart,
-        ))
-        .entity();
-    let caret = cmd
-        .spawn((
-            UINode::default()
-                .with_position(Position::Absolute)
-                .with_inset(caret_inset(row, theme))
-                .with_size(
-                    UIValue::Px(theme.tree_caret_column),
-                    UIValue::Percent(100.0),
-                )
-                .with_align_items(AlignItems::Center)
-                .with_justify_content(AlignContent::Center),
-            Interactable,
-            click_caret.into_listener(),
-            UIWidgetPart,
-            UITreeCaret { glyph },
-        ))
-        .entity();
-    cmd.add_child(caret, glyph);
-    cmd.add_child(row.entity, caret);
-}
-
 fn sync_caret(
     caret: Entity,
     row: &TreeRow,
@@ -595,48 +518,19 @@ fn sync_caret(
     texts: &mut Query<&mut UIText>,
     nodes: &mut Query<&mut UINode>,
 ) {
-    let inset = caret_inset(row, theme);
+    let inset = row.caret_inset(theme);
     if let Some(mut node) = nodes.get_entity_mut(caret)
         && node.inset != inset
     {
         node.inset = inset;
     }
-    let glyph = caret_glyph(row, theme);
+    let glyph = row.caret_glyph(theme);
     if let Some(caret) = carets.get_entity(caret)
         && let Some(mut text) = texts.get_entity_mut(caret.glyph)
         && text.text != glyph
     {
         text.text = glyph;
     }
-}
-
-pub(crate) fn connector_segments(row: &TreeRow, theme: &UITheme, row_height: f32) -> Vec<UIBox> {
-    let Some(own) = row.depth.checked_sub(1) else {
-        return Vec::new();
-    };
-    let centre = row_height / 2.0;
-    let line_x = |level: usize| {
-        theme.tree_inset + level as f32 * theme.tree_indent + theme.tree_caret_column / 2.0
-    };
-    let vertical = |level: usize, height: f32| UIBox {
-        min: Vec2::new(line_x(level), 0.0),
-        size: Vec2::new(CONNECTOR_THICKNESS, height),
-    };
-    let mut segments = (0..own)
-        .filter(|level| row.continues.get(*level).copied().unwrap_or(false))
-        .map(|level| vertical(level, row_height))
-        .collect::<Vec<_>>();
-    segments.push(vertical(own, if row.last { centre } else { row_height }));
-    let tick = if row.has_children {
-        TICK_TO_CARET
-    } else {
-        TICK_TO_CONTENT
-    };
-    segments.push(UIBox {
-        min: Vec2::new(line_x(own), centre),
-        size: Vec2::new(tick, CONNECTOR_THICKNESS),
-    });
-    segments
 }
 
 fn sync_connectors(
@@ -680,6 +574,114 @@ fn sync_connectors(
     }
     for &extra in drawn.iter().skip(segments.len()) {
         cmd.despawn(extra);
+    }
+}
+
+impl TreeRow {
+    fn shape_item(&self, theme: &UITheme, nodes: &mut Query<&mut UINode>) {
+        let Some(mut node) = nodes.get_entity_mut(self.entity) else {
+            return;
+        };
+        let left = self.caret_left(theme) + theme.tree_caret_column;
+        if node.padding.left != left {
+            node.padding.left = left;
+        }
+        if node.align_items != Some(AlignItems::Center) {
+            node.align_items = Some(AlignItems::Center);
+        }
+        if node.overflow_x != Overflow::Visible {
+            node.overflow_x = Overflow::Visible;
+        }
+        if node.overflow_y != Overflow::Visible {
+            node.overflow_y = Overflow::Visible;
+        }
+    }
+
+    fn caret_left(&self, theme: &UITheme) -> f32 {
+        theme.tree_inset + self.depth as f32 * theme.tree_indent
+    }
+
+    fn caret_glyph(&self, theme: &UITheme) -> String {
+        if self.drawn_expanded {
+            theme.tree_caret_expanded
+        } else {
+            theme.tree_caret_collapsed
+        }
+        .to_string()
+    }
+
+    fn caret_inset(&self, theme: &UITheme) -> UIInset {
+        UIInset {
+            top: UIValue::Px(0.0),
+            left: UIValue::Px(self.caret_left(theme)),
+            ..Default::default()
+        }
+    }
+
+    fn spawn_caret(&self, theme: &UITheme, cmd: &mut CommandQueue) {
+        let glyph = cmd
+            .spawn((
+                UINode::default(),
+                UIText {
+                    text: self.caret_glyph(theme),
+                    font_size: theme.tree_caret_font_size,
+                    line_height: theme.line_height(theme.tree_caret_font_size),
+                    font_family: theme.tree_caret_family.clone(),
+                    color: theme.text_muted,
+                    wrap: false,
+                    ..Default::default()
+                },
+                UIWidgetPart,
+            ))
+            .entity();
+        let caret = cmd
+            .spawn((
+                UINode::default()
+                    .with_position(Position::Absolute)
+                    .with_inset(self.caret_inset(theme))
+                    .with_size(
+                        UIValue::Px(theme.tree_caret_column),
+                        UIValue::Percent(100.0),
+                    )
+                    .with_align_items(AlignItems::Center)
+                    .with_justify_content(AlignContent::Center),
+                Interactable,
+                click_caret.into_listener(),
+                UIWidgetPart,
+                UITreeCaret { glyph },
+            ))
+            .entity();
+        cmd.add_child(caret, glyph);
+        cmd.add_child(self.entity, caret);
+    }
+
+    pub(crate) fn connector_segments(&self, theme: &UITheme, row_height: f32) -> Vec<UIBox> {
+        let Some(own) = self.depth.checked_sub(1) else {
+            return Vec::new();
+        };
+        let centre = row_height / 2.0;
+        let line_x = |level: usize| {
+            theme.tree_inset + level as f32 * theme.tree_indent + theme.tree_caret_column / 2.0
+        };
+        let vertical = |level: usize, height: f32| UIBox {
+            min: Vec2::new(line_x(level), 0.0),
+            size: Vec2::new(CONNECTOR_THICKNESS, height),
+        };
+        let mut segments = (0..own)
+            .filter(|level| self.continues.get(*level).copied().unwrap_or(false))
+            .map(|level| vertical(level, row_height))
+            .collect::<Vec<_>>();
+        segments.push(vertical(own, if self.last { centre } else { row_height }));
+        let tick = if self.has_children {
+            TICK_TO_CARET
+        } else {
+            TICK_TO_CONTENT
+        };
+        segments.push(UIBox {
+            min: Vec2::new(line_x(own), centre),
+            size: Vec2::new(tick, CONNECTOR_THICKNESS),
+        });
+        segments
     }
 }
 
@@ -1107,7 +1109,7 @@ mod tests {
     }
 
     fn segments_of(row: &TreeRow) -> Vec<UIBox> {
-        connector_segments(row, &UITheme::default(), 24.0)
+        row.connector_segments(&UITheme::default(), 24.0)
     }
 
     #[test]

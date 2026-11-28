@@ -433,9 +433,9 @@ let glass = StandardMaterial::new(None, None)
 The glTF importer maps a material's `alphaMode` to these: `OPAQUE`, `MASK`
 with its `alphaCutoff` (0.5 when absent), and `BLEND`.
 
-`concerto::mesh::primitives` builds the common shapes, with normals, tangents
-and texture coordinates: `plane` on the XZ plane facing up, `cuboid`,
-`uv_sphere`, and `capsule` along Y. Each is centred on the origin, and sizes
+`Mesh` builds the common shapes, with normals, tangents
+and texture coordinates: `Mesh::plane` on the XZ plane facing up, `Mesh::cuboid`,
+`Mesh::uv_sphere`, and `Mesh::capsule` along Y. Each is centred on the origin, and sizes
 must be positive. A capsule's `half_height` is half the length of its cylinder,
 so its full height is `2.0 * (half_height + radius)`, and 0 or less gives a
 sphere. That is the same measure as
@@ -444,9 +444,9 @@ sphere. That is the same measure as
 half extents.
 
 ```rust
-use concerto::mesh::primitives::capsule;
+use concerto::mesh::Mesh;
 
-let mesh = assets.add(capsule(0.3, 0.6, 8, 16));
+let mesh = assets.add(Mesh::capsule(0.3, 0.6, 8, 16));
 ```
 
 ## Batching and culling

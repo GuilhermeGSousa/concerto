@@ -105,9 +105,11 @@ pub(crate) fn sync_in_viewport(
     }
 }
 
-fn forget_routing(routing: &mut Routing) {
-    routing.buttons.clear();
-    routing.pointer_on_picture = None;
+impl Routing {
+    fn forget_routing(&mut self) {
+        self.buttons.clear();
+        self.pointer_on_picture = None;
+    }
 }
 
 pub(crate) fn focus_shown_app(
@@ -128,7 +130,7 @@ pub(crate) fn focus_shown_app(
             }
         }
     }
-    forget_routing(&mut routing);
+    routing.forget_routing();
 }
 
 pub(crate) fn blur_hidden_app(
@@ -146,7 +148,7 @@ pub(crate) fn blur_hidden_app(
             cmd.trigger(StopPlay(document));
         }
     }
-    forget_routing(&mut routing);
+    routing.forget_routing();
 }
 
 pub(crate) fn focus_new_target(
@@ -161,7 +163,7 @@ pub(crate) fn focus_new_target(
     {
         app.push(WindowEvent::Focused(true));
     }
-    forget_routing(&mut routing);
+    routing.forget_routing();
 }
 
 pub(crate) fn blur_old_target(
@@ -243,32 +245,87 @@ fn shortcut(event: &WindowEvent, keys: &mut HashSet<KeyCode>) -> Option<Shortcut
     }
 }
 
-fn contains(view: &ViewportView, position: Vec2) -> bool {
-    let size = Vec2::new(view.size.0 as f32, view.size.1 as f32);
-    position.cmpge(view.origin).all() && position.cmplt(view.origin + size).all()
-}
-
-fn on_picture(view: &ViewportView, pointer: Vec2) -> bool {
-    view.over && contains(view, pointer)
-}
-
-fn release(owner: &mut InputOwner, app: &mut HostedApp) {
-    *owner = InputOwner::Editor;
-    app.push(WindowEvent::Focused(false));
-}
-
-fn hand_over(
-    owner: &mut InputOwner,
-    app: &mut HostedApp,
-    held: Option<&Input>,
-    pads_since: &[WindowEvent],
-) {
-    release(owner, app);
-    for pad in held.into_iter().flat_map(Input::gamepads) {
-        push_pad_state(pad, app);
+impl ViewportView {
+    /// The event the hosted `App` should receive for an editor window event, if any.
+    pub fn route(&self, event: &WindowEvent, routing: &mut Routing) -> Option<WindowEvent> {
+        let dragging = !routing.buttons.is_empty();
+        match event {
+            WindowEvent::CursorMoved { position } => {
+                (self.over || dragging).then(|| WindowEvent::CursorMoved {
+                    position: *position - self.origin,
+                })
+            }
+            WindowEvent::MouseMotion { .. } => (self.over || dragging).then(|| event.clone()),
+            WindowEvent::MouseWheel { .. } => self.over.then(|| event.clone()),
+            WindowEvent::MouseButton {
+                button,
+                pressed: true,
+            } => {
+                if !self.over {
+                    return None;
+                }
+                routing.buttons.insert(*button);
+                Some(event.clone())
+            }
+            WindowEvent::MouseButton {
+                button,
+                pressed: false,
+            } => {
+                routing.buttons.remove(button);
+                Some(event.clone())
+            }
+            WindowEvent::Key { pressed: true, .. } => {
+                (dragging || (self.over && !self.typing)).then(|| event.clone())
+            }
+            WindowEvent::Key { pressed: false, .. } => Some(event.clone()),
+            WindowEvent::Focused(focused) => {
+                if !focused {
+                    routing.buttons.clear();
+                }
+                Some(event.clone())
+            }
+            WindowEvent::Resized { .. }
+            | WindowEvent::ScaleFactorChanged(_)
+            | WindowEvent::Maximised(_)
+            | WindowEvent::CloseRequested
+            | WindowEvent::GamepadConnected { .. }
+            | WindowEvent::GamepadDisconnected { .. }
+            | WindowEvent::GamepadButton { .. }
+            | WindowEvent::GamepadAxis { .. } => None,
+        }
     }
-    for event in pads_since {
-        app.push(event.clone());
+
+    /// A `Resized` when the hosted window and the viewport disagree.
+    pub fn size_correction(&self, hosted: (u32, u32)) -> Option<WindowEvent> {
+        let (width, height) = self.size;
+        (width > 0 && height > 0 && self.size != hosted)
+            .then_some(WindowEvent::Resized { width, height })
+    }
+
+    fn contains(&self, position: Vec2) -> bool {
+        let size = Vec2::new(self.size.0 as f32, self.size.1 as f32);
+        position.cmpge(self.origin).all() && position.cmplt(self.origin + size).all()
+    }
+
+    fn on_picture(&self, pointer: Vec2) -> bool {
+        self.over && self.contains(pointer)
+    }
+}
+
+impl InputOwner {
+    fn release(&mut self, app: &mut HostedApp) {
+        *self = InputOwner::Editor;
+        app.push(WindowEvent::Focused(false));
+    }
+
+    fn hand_over(&mut self, app: &mut HostedApp, held: Option<&Input>, pads_since: &[WindowEvent]) {
+        self.release(app);
+        for pad in held.into_iter().flat_map(Input::gamepads) {
+            push_pad_state(pad, app);
+        }
+        for event in pads_since {
+            app.push(event.clone());
+        }
     }
 }
 
@@ -283,7 +340,7 @@ pub(crate) fn release_input(
         && **owner == InputOwner::Game
         && let Some(mut app) = hosted.get_entity_mut(document)
     {
-        hand_over(&mut owner, &mut app, Some(&input), &[]);
+        owner.hand_over(&mut app, Some(&input), &[]);
     }
 }
 
@@ -417,13 +474,11 @@ pub(crate) fn route_play_input(
                     stopping = true;
                     cmd.trigger(StopPlay(document));
                 }
-                _ if pressed == Some(RELEASE) => {
-                    hand_over(&mut current, &mut app, held, &pads_since)
+                _ if pressed == Some(RELEASE) => current.hand_over(&mut app, held, &pads_since),
+                WindowEvent::MouseButton { pressed: true, .. } if !view.on_picture(pointer) => {
+                    current.hand_over(&mut app, held, &pads_since);
                 }
-                WindowEvent::MouseButton { pressed: true, .. } if !on_picture(&view, pointer) => {
-                    hand_over(&mut current, &mut app, held, &pads_since);
-                }
-                WindowEvent::Focused(false) => release(&mut current, &mut app),
+                WindowEvent::Focused(false) => current.release(&mut app),
                 WindowEvent::CursorMoved { position } => app.push(WindowEvent::CursorMoved {
                     position: *position - view.origin,
                 }),
@@ -451,7 +506,7 @@ pub(crate) fn route_play_input(
                     forward_pad(event, &mut routing.told_pads, &mut app)
                 }
                 WindowEvent::Focused(false) => app.push(event.clone()),
-                WindowEvent::MouseButton { pressed: true, .. } if on_picture(&view, pointer) => {
+                WindowEvent::MouseButton { pressed: true, .. } if view.on_picture(pointer) => {
                     current = InputOwner::Game;
                     app.push(WindowEvent::Focused(true));
                     app.push(WindowEvent::CursorMoved {
@@ -475,66 +530,6 @@ pub(crate) fn route_play_input(
 #[derive(Resource, Default)]
 pub struct HostCursor {
     copied: bool,
-}
-
-/// The event the hosted `App` should receive for an editor window event, if any.
-pub fn route(
-    event: &WindowEvent,
-    view: &ViewportView,
-    routing: &mut Routing,
-) -> Option<WindowEvent> {
-    let dragging = !routing.buttons.is_empty();
-    match event {
-        WindowEvent::CursorMoved { position } => {
-            (view.over || dragging).then(|| WindowEvent::CursorMoved {
-                position: *position - view.origin,
-            })
-        }
-        WindowEvent::MouseMotion { .. } => (view.over || dragging).then(|| event.clone()),
-        WindowEvent::MouseWheel { .. } => view.over.then(|| event.clone()),
-        WindowEvent::MouseButton {
-            button,
-            pressed: true,
-        } => {
-            if !view.over {
-                return None;
-            }
-            routing.buttons.insert(*button);
-            Some(event.clone())
-        }
-        WindowEvent::MouseButton {
-            button,
-            pressed: false,
-        } => {
-            routing.buttons.remove(button);
-            Some(event.clone())
-        }
-        WindowEvent::Key { pressed: true, .. } => {
-            (dragging || (view.over && !view.typing)).then(|| event.clone())
-        }
-        WindowEvent::Key { pressed: false, .. } => Some(event.clone()),
-        WindowEvent::Focused(focused) => {
-            if !focused {
-                routing.buttons.clear();
-            }
-            Some(event.clone())
-        }
-        WindowEvent::Resized { .. }
-        | WindowEvent::ScaleFactorChanged(_)
-        | WindowEvent::Maximised(_)
-        | WindowEvent::CloseRequested
-        | WindowEvent::GamepadConnected { .. }
-        | WindowEvent::GamepadDisconnected { .. }
-        | WindowEvent::GamepadButton { .. }
-        | WindowEvent::GamepadAxis { .. } => None,
-    }
-}
-
-/// A `Resized` when the hosted window and the viewport disagree.
-pub fn size_correction(view: &ViewportView, hosted: (u32, u32)) -> Option<WindowEvent> {
-    let (width, height) = view.size;
-    (width > 0 && height > 0 && view.size != hosted)
-        .then_some(WindowEvent::Resized { width, height })
 }
 
 /// A `ScaleFactorChanged` when the hosted window's scale is not the editor window's.
@@ -581,7 +576,7 @@ pub(crate) fn step_viewport_target(
     }
     if let Some(resize) = app
         .window()
-        .and_then(|hosted_window| size_correction(&view, hosted_window.size()))
+        .and_then(|hosted_window| view.size_correction(hosted_window.size()))
     {
         app.push(resize);
     }
@@ -629,7 +624,7 @@ fn route_editing(
     }
     for event in events.read() {
         let dragging = !routing.buttons.is_empty();
-        if let Some(routed) = route(event, view, routing) {
+        if let Some(routed) = view.route(event, routing) {
             if !dragging && !routing.buttons.is_empty() && !view.typing {
                 let unseen: Vec<_> = input
                     .held_keys()
@@ -700,17 +695,25 @@ mod tests {
     #[test]
     fn a_release_reaches_the_viewport_wherever_the_pointer_is_and_typing_sends_it_no_keys() {
         let mut routing = Routing::default();
-        assert!(route(&press(MouseButton::Right), &view(true), &mut routing).is_some());
-        assert!(route(&key(true), &view(true), &mut routing).is_some());
+        assert!(
+            view(true)
+                .route(&press(MouseButton::Right), &mut routing)
+                .is_some()
+        );
+        assert!(view(true).route(&key(true), &mut routing).is_some());
 
-        assert!(route(&release(MouseButton::Right), &view(false), &mut routing).is_some());
-        assert!(route(&key(false), &view(false), &mut routing).is_some());
+        assert!(
+            view(false)
+                .route(&release(MouseButton::Right), &mut routing)
+                .is_some()
+        );
+        assert!(view(false).route(&key(false), &mut routing).is_some());
 
         let typing = ViewportView {
             typing: true,
             ..view(true)
         };
-        assert!(route(&key(true), &typing, &mut routing).is_none());
+        assert!(typing.route(&key(true), &mut routing).is_none());
     }
 
     mod playing {

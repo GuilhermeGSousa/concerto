@@ -31,7 +31,7 @@ use concerto_foundation::assets::{
 use concerto_mcp::{AppMcpExt, McpTool, Needs, PendingCall, ToolCalls, ToolRegistry};
 use concerto_reflect::TypeRegistry;
 use concerto_scene::{
-    link::{ChangeOutcome, LinkedNode, SceneLink, SceneLinkState, linked_node_name, shown_name},
+    link::{ChangeOutcome, LinkedNode, SceneLink, SceneLinkState, shown_name},
     link_path::LinkPath,
     scene::{LinkChange, Scene},
 };
@@ -55,7 +55,7 @@ use crate::{
         ParkedEditApp, PendingApp,
     },
     import::ImportFinished,
-    inspector::{InspectedComponent, InspectorHeader, ReadOnlyCard, refused},
+    inspector::{InspectedComponent, InspectorHeader, ReadOnlyCard, WriteRefusal},
     scene::SceneSaved,
     tools::{
         entity_ops::scene_member_by,
@@ -157,7 +157,7 @@ fn answer_link_change_removals(
                         event.request.index
                     ));
                 }
-                Err(reason) => pending.reply.err(refused(reason).into()),
+                Err(reason) => pending.reply.err(WriteRefusal::refused(reason).into()),
             }
             cmd.despawn(call);
         }
@@ -483,7 +483,7 @@ fn shown_changes(
     };
     let node = |path: &LinkPath| {
         scenes
-            .and_then(|scenes| linked_node_name(scenes, link.scene().id(), path))
+            .and_then(|scenes| path.node_name(scenes, link.scene().id()))
             .filter(|name| !name.is_empty())
             .map_or_else(|| path.to_string(), str::to_owned)
     };

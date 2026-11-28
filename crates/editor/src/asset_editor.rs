@@ -278,6 +278,35 @@ pub struct EditorDocument {
     pub failed: Option<AssetEntry>,
 }
 
+impl EditorDocument {
+    /// Applies the result of work started for `asset`, if the document still asks for it.
+    pub fn finish_request(&mut self, asset: &AssetEntry, result: Result<()>) -> bool {
+        if !self.is_request_current(asset) {
+            return false;
+        }
+        match result {
+            Ok(()) => {
+                self.current = self.pending.take();
+                self.failed = None;
+                if let Some(asset) = &self.current {
+                    self.title = asset.name().into_owned();
+                }
+                self.status.clear();
+            }
+            Err(error) => {
+                self.status = format!("{error:#}");
+                self.failed = self.pending.take();
+            }
+        }
+        true
+    }
+
+    /// Whether work started for `asset` still matches the document's request.
+    pub fn is_request_current(&self, asset: &AssetEntry) -> bool {
+        self.pending.as_ref() == Some(asset)
+    }
+}
+
 /// On a document whose content differs from what is on disk.
 #[derive(Component, Clone, Copy, Debug, Default)]
 pub struct Unsaved;
@@ -416,37 +445,6 @@ pub enum AssetEditorCommand {
 /// The queue of [`AssetEditorCommand`]s, run in order each update.
 #[derive(Resource, Default)]
 pub struct AssetEditorCommands(pub VecDeque<AssetEditorCommand>);
-
-/// Applies the result of work started for `asset`, if the document still asks for it.
-pub fn finish_asset_request(
-    doc: &mut EditorDocument,
-    asset: &AssetEntry,
-    result: Result<()>,
-) -> bool {
-    if !asset_request_is_current(doc, asset) {
-        return false;
-    }
-    match result {
-        Ok(()) => {
-            doc.current = doc.pending.take();
-            doc.failed = None;
-            if let Some(asset) = &doc.current {
-                doc.title = asset.name().into_owned();
-            }
-            doc.status.clear();
-        }
-        Err(error) => {
-            doc.status = format!("{error:#}");
-            doc.failed = doc.pending.take();
-        }
-    }
-    true
-}
-
-/// Whether work started for `asset` still matches the document's request.
-pub fn asset_request_is_current(doc: &EditorDocument, asset: &AssetEntry) -> bool {
-    doc.pending.as_ref() == Some(asset)
-}
 
 /// Applies the queued [`AssetEditorCommands`]: opens, activates and closes documents.
 pub fn process_editor_commands(
@@ -653,7 +651,7 @@ mod tests {
 
     fn finish(w: &mut World, editor: Entity, asset: &AssetEntry, result: Result<()>) -> bool {
         w.get_component_for_entity_mut::<EditorDocument>(editor)
-            .is_some_and(|doc| finish_asset_request(doc, asset, result))
+            .is_some_and(|doc| doc.finish_request(asset, result))
     }
 
     fn current(w: &World, editor: Entity) -> Option<AssetId> {

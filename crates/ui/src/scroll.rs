@@ -34,6 +34,25 @@ pub struct UIScrollArea {
     pub content: Option<Entity>,
 }
 
+impl UIScrollArea {
+    /// Scrolls this area the least distance that shows the span from `min` to `max`, in content
+    /// coordinates, in a viewport `viewport_extent` high.
+    ///
+    /// When the span is taller than the viewport, its end is shown. The offset stays within the
+    /// content.
+    pub fn scroll_to_rect(&mut self, viewport_extent: f32, min: f32, max: f32) {
+        if min < self.offset {
+            self.offset = min;
+        }
+        if max > self.offset + viewport_extent {
+            self.offset = max - viewport_extent;
+        }
+        self.offset = self
+            .offset
+            .clamp(0.0, (self.content_extent - viewport_extent).max(0.0));
+    }
+}
+
 impl Default for UIScrollArea {
     fn default() -> Self {
         Self {
@@ -77,6 +96,12 @@ pub struct UISplitPane {
 }
 
 impl UISplitPane {
+    /// Applies a split ratio to two caller-owned child nodes.
+    pub fn apply_split(&self, available: f32, first: &mut UINode, second: &mut UINode) {
+        self.apply_first_split(available, first);
+        self.apply_second_split(second);
+    }
+
     /// A pane split half and half between `first` and `second`, each at least 120 logical pixels.
     pub fn new(axis: UISplitAxis, first: Entity, second: Entity) -> Self {
         Self {
@@ -179,7 +204,7 @@ pub fn drag_split_handle(
     if pane.collapsed.is_some() {
         return;
     }
-    let available = available_extent(&pane, layout, pane_entity, &handles);
+    let available = pane.available_extent(layout, pane_entity, &handles);
     if available <= 0.0 {
         return;
     }
@@ -187,7 +212,7 @@ pub fn drag_split_handle(
         UISplitAxis::Horizontal => drag.delta.x,
         UISplitAxis::Vertical => drag.delta.y,
     };
-    let first = first_extent(&pane, available) + delta;
+    let first = pane.first_extent(available) + delta;
     pane.ratio = (first / available).clamp(0.0, 1.0);
 }
 
@@ -200,103 +225,84 @@ pub(crate) fn sync_split_panes(
         let (Some(first), Some(second)) = (pane.first, pane.second) else {
             continue;
         };
-        let available = available_extent(pane, layout, entity, &handles);
+        let available = pane.available_extent(layout, entity, &handles);
         {
             let Some(mut first_node) = nodes.get_entity_mut(first) else {
                 continue;
             };
             let mut next = UINode::clone(&first_node);
-            apply_first_split(pane, available, &mut next);
+            pane.apply_first_split(available, &mut next);
             first_node.set_if_neq(next);
         }
         let Some(mut second_node) = nodes.get_entity_mut(second) else {
             continue;
         };
         let mut next = UINode::clone(&second_node);
-        apply_second_split(pane, &mut next);
+        pane.apply_second_split(&mut next);
         second_node.set_if_neq(next);
     }
 }
 
-fn axis_extent(axis: UISplitAxis, size: glam::Vec2) -> f32 {
-    match axis {
-        UISplitAxis::Horizontal => size.x,
-        UISplitAxis::Vertical => size.y,
-    }
-}
-
-fn available_extent(
-    pane: &UISplitPane,
-    layout: &UILayout,
-    pane_entity: Entity,
-    handles: &Query<(&UISplitHandle, &UILayout)>,
-) -> f32 {
-    let reserved: f32 = handles
-        .iter()
-        .filter(|(handle, _)| handle.pane == pane_entity)
-        .map(|(_, handle_layout)| axis_extent(pane.axis, handle_layout.rect.size))
-        .sum();
-    (axis_extent(pane.axis, layout.content_rect.size) - reserved).max(0.0)
-}
-
-fn first_extent(pane: &UISplitPane, available: f32) -> f32 {
-    match pane.collapsed {
-        Some(0) => 0.0,
-        Some(1) => available,
-        _ => {
-            let low = pane.minimum_first.clamp(0.0, available);
-            let high = (available - pane.minimum_second).clamp(low, available);
-            (pane.ratio * available).clamp(low, high)
+impl UISplitAxis {
+    fn extent(self, size: glam::Vec2) -> f32 {
+        match self {
+            UISplitAxis::Horizontal => size.x,
+            UISplitAxis::Vertical => size.y,
         }
     }
 }
 
-/// Applies a split ratio to two caller-owned child nodes.
-pub fn apply_split(pane: &UISplitPane, available: f32, first: &mut UINode, second: &mut UINode) {
-    apply_first_split(pane, available, first);
-    apply_second_split(pane, second);
-}
+impl UISplitPane {
+    fn first_extent(&self, available: f32) -> f32 {
+        match self.collapsed {
+            Some(0) => 0.0,
+            Some(1) => available,
+            _ => {
+                let low = self.minimum_first.clamp(0.0, available);
+                let high = (available - self.minimum_second).clamp(low, available);
+                (self.ratio * available).clamp(low, high)
+            }
+        }
+    }
 
-fn apply_first_split(pane: &UISplitPane, available: f32, first: &mut UINode) {
-    first.visible = pane.collapsed != Some(0);
-    first.flex_grow = 0.0;
-    first.flex_shrink = 0.0;
-    first.overflow_x = Overflow::Hidden;
-    first.overflow_y = Overflow::Hidden;
-    let extent = UIValue::Px(first_extent(pane, available));
-    match pane.axis {
-        UISplitAxis::Horizontal => first.width = extent,
-        UISplitAxis::Vertical => first.height = extent,
+    fn apply_first_split(&self, available: f32, first: &mut UINode) {
+        first.visible = self.collapsed != Some(0);
+        first.flex_grow = 0.0;
+        first.flex_shrink = 0.0;
+        first.overflow_x = Overflow::Hidden;
+        first.overflow_y = Overflow::Hidden;
+        let extent = UIValue::Px(self.first_extent(available));
+        match self.axis {
+            UISplitAxis::Horizontal => first.width = extent,
+            UISplitAxis::Vertical => first.height = extent,
+        }
     }
-}
 
-fn apply_second_split(pane: &UISplitPane, second: &mut UINode) {
-    second.visible = pane.collapsed != Some(1);
-    second.flex_grow = 1.0;
-    second.flex_shrink = 1.0;
-    second.overflow_x = Overflow::Hidden;
-    second.overflow_y = Overflow::Hidden;
-    match pane.axis {
-        UISplitAxis::Horizontal => second.width = UIValue::Auto,
-        UISplitAxis::Vertical => second.height = UIValue::Auto,
+    fn apply_second_split(&self, second: &mut UINode) {
+        second.visible = self.collapsed != Some(1);
+        second.flex_grow = 1.0;
+        second.flex_shrink = 1.0;
+        second.overflow_x = Overflow::Hidden;
+        second.overflow_y = Overflow::Hidden;
+        match self.axis {
+            UISplitAxis::Horizontal => second.width = UIValue::Auto,
+            UISplitAxis::Vertical => second.height = UIValue::Auto,
+        }
     }
-}
 
-/// Scrolls `area` the least distance that shows the span from `min` to `max`, in content
-/// coordinates, in a viewport `viewport_extent` high.
-///
-/// When the span is taller than the viewport, its end is shown. The offset stays within the
-/// content.
-pub fn scroll_to_rect(area: &mut UIScrollArea, viewport_extent: f32, min: f32, max: f32) {
-    if min < area.offset {
-        area.offset = min;
+    fn available_extent(
+        &self,
+        layout: &UILayout,
+        pane_entity: Entity,
+        handles: &Query<(&UISplitHandle, &UILayout)>,
+    ) -> f32 {
+        let reserved: f32 = handles
+            .iter()
+            .filter(|(handle, _)| handle.pane == pane_entity)
+            .map(|(_, handle_layout)| self.axis.extent(handle_layout.rect.size))
+            .sum();
+        (self.axis.extent(layout.content_rect.size) - reserved).max(0.0)
     }
-    if max > area.offset + viewport_extent {
-        area.offset = max - viewport_extent;
-    }
-    area.offset = area
-        .offset
-        .clamp(0.0, (area.content_extent - viewport_extent).max(0.0));
 }
 
 #[cfg(test)]
@@ -362,27 +368,27 @@ mod tests {
     #[test]
     fn the_first_pane_takes_its_ratio_of_the_space_or_all_or_none_when_collapsed() {
         let mut pane = pane(0.5);
-        assert_eq!(first_extent(&pane, 990.0), 495.0);
+        assert_eq!(pane.first_extent(990.0), 495.0);
         pane.collapsed = Some(0);
-        assert_eq!(first_extent(&pane, 640.0), 0.0);
+        assert_eq!(pane.first_extent(640.0), 0.0);
         pane.collapsed = Some(1);
-        assert_eq!(first_extent(&pane, 640.0), 640.0);
+        assert_eq!(pane.first_extent(640.0), 640.0);
     }
 
     #[test]
     fn dragging_moves_the_boundary_by_exactly_the_pointer_delta() {
         let mut pane = pane(0.5);
         let available = 800.0;
-        let before = first_extent(&pane, available);
+        let before = pane.first_extent(available);
         pane.ratio = ((before + 37.0) / available).clamp(0.0, 1.0);
-        assert_eq!(first_extent(&pane, available) - before, 37.0);
+        assert_eq!(pane.first_extent(available) - before, 37.0);
     }
 
     #[test]
     fn panes_clip_their_contents_so_they_cannot_paint_over_each_other() {
         let mut first = UINode::default();
         let mut second = UINode::default();
-        apply_split(&pane(0.5), 600.0, &mut first, &mut second);
+        pane(0.5).apply_split(600.0, &mut first, &mut second);
         assert_eq!(first.overflow_x, Overflow::Hidden);
         assert_eq!(second.overflow_y, Overflow::Hidden);
     }
@@ -394,9 +400,9 @@ mod tests {
             content_extent: 300.0,
             content: None,
         };
-        scroll_to_rect(&mut area, 100.0, 220.0, 240.0);
+        area.scroll_to_rect(100.0, 220.0, 240.0);
         assert_eq!(area.offset, 140.0);
-        scroll_to_rect(&mut area, 100.0, 10.0, 20.0);
+        area.scroll_to_rect(100.0, 10.0, 20.0);
         assert_eq!(area.offset, 10.0);
     }
 }
@@ -426,24 +432,21 @@ pub struct ThumbGeometry {
     pub height: f32,
 }
 
-/// Thumb position and size for a scroll state, or `None` when the content fits and no bar should be drawn.
-pub fn thumb_geometry(
-    offset: f32,
-    content_extent: f32,
-    viewport: f32,
-    track: f32,
-) -> Option<ThumbGeometry> {
-    let scrollable = content_extent - viewport;
-    if scrollable <= 0.0 || viewport <= 0.0 || track <= 0.0 {
-        return None;
+impl ThumbGeometry {
+    /// Thumb position and size for a scroll state, or `None` when the content fits and no bar should be drawn.
+    pub fn of(offset: f32, content_extent: f32, viewport: f32, track: f32) -> Option<Self> {
+        let scrollable = content_extent - viewport;
+        if scrollable <= 0.0 || viewport <= 0.0 || track <= 0.0 {
+            return None;
+        }
+        let height = (viewport / content_extent * track).clamp(MIN_THUMB.min(track), track);
+        let travel = track - height;
+        let progress = (offset / scrollable).clamp(0.0, 1.0);
+        Some(Self {
+            offset: progress * travel,
+            height,
+        })
     }
-    let height = (viewport / content_extent * track).clamp(MIN_THUMB.min(track), track);
-    let travel = track - height;
-    let progress = (offset / scrollable).clamp(0.0, 1.0);
-    Some(ThumbGeometry {
-        offset: progress * travel,
-        height,
-    })
 }
 
 /// Spawns a track and thumb for each new scroll area.
@@ -493,7 +496,7 @@ pub(crate) fn sync_scrollbar_tracks(
         };
         let viewport = layout.content_rect.size.y;
         let visible =
-            thumb_geometry(area.offset, area.content_extent, viewport, viewport).is_some();
+            ThumbGeometry::of(area.offset, area.content_extent, viewport, viewport).is_some();
         if node.visible != visible {
             node.visible = visible;
         }
@@ -521,7 +524,8 @@ pub(crate) fn sync_scrollbar_thumbs(
             continue;
         };
         let viewport = layout.content_rect.size.y;
-        let Some(geometry) = thumb_geometry(area.offset, area.content_extent, viewport, viewport)
+        let Some(geometry) =
+            ThumbGeometry::of(area.offset, area.content_extent, viewport, viewport)
         else {
             continue;
         };
@@ -553,7 +557,7 @@ fn drag_scrollbar_thumb(
         return;
     };
     let viewport = layout.content_rect.size.y;
-    let Some(geometry) = thumb_geometry(area.offset, area.content_extent, viewport, viewport)
+    let Some(geometry) = ThumbGeometry::of(area.offset, area.content_extent, viewport, viewport)
     else {
         return;
     };

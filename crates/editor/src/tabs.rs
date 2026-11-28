@@ -176,45 +176,47 @@ struct PlayLook {
     style: UIInteractionStyle,
 }
 
-fn play_look(theme: &UITheme, state: Option<&PlayState>) -> PlayLook {
-    let wash = |color: Color, alpha: f32| {
-        let color = color.to_srgba();
-        Color::srgba(color.r, color.g, color.b, alpha)
-    };
-    match state {
-        Some(PlayState::Playing) => PlayLook {
-            glyph: glyph::STOP,
-            ink: theme.error,
-            border: theme.error,
-            style: UIInteractionStyle {
-                normal: wash(theme.error, 0.14),
-                hovered: wash(theme.error, 0.3),
-                pressed: wash(theme.error, 0.45),
-                disabled: Color::TRANSPARENT,
+impl PlayLook {
+    fn new(theme: &UITheme, state: Option<&PlayState>) -> Self {
+        let wash = |color: Color, alpha: f32| {
+            let color = color.to_srgba();
+            Color::srgba(color.r, color.g, color.b, alpha)
+        };
+        match state {
+            Some(PlayState::Playing) => PlayLook {
+                glyph: glyph::STOP,
+                ink: theme.error,
+                border: theme.error,
+                style: UIInteractionStyle {
+                    normal: wash(theme.error, 0.14),
+                    hovered: wash(theme.error, 0.3),
+                    pressed: wash(theme.error, 0.45),
+                    disabled: Color::TRANSPARENT,
+                },
             },
-        },
-        Some(PlayState::Starting) => PlayLook {
-            glyph: glyph::PLAY,
-            ink: theme.text_muted,
-            border: theme.border,
-            style: UIInteractionStyle {
-                normal: Color::TRANSPARENT,
-                hovered: theme.surface_hovered,
-                pressed: theme.surface_hovered,
-                disabled: Color::TRANSPARENT,
+            Some(PlayState::Starting) => PlayLook {
+                glyph: glyph::PLAY,
+                ink: theme.text_muted,
+                border: theme.border,
+                style: UIInteractionStyle {
+                    normal: Color::TRANSPARENT,
+                    hovered: theme.surface_hovered,
+                    pressed: theme.surface_hovered,
+                    disabled: Color::TRANSPARENT,
+                },
             },
-        },
-        Some(PlayState::Editing) | None => PlayLook {
-            glyph: glyph::PLAY,
-            ink: theme.canvas,
-            border: theme.accent,
-            style: UIInteractionStyle {
-                normal: theme.accent,
-                hovered: theme.accent_hovered,
-                pressed: theme.accent_secondary,
-                disabled: theme.accent,
+            Some(PlayState::Editing) | None => PlayLook {
+                glyph: glyph::PLAY,
+                ink: theme.canvas,
+                border: theme.accent,
+                style: UIInteractionStyle {
+                    normal: theme.accent,
+                    hovered: theme.accent_hovered,
+                    pressed: theme.accent_secondary,
+                    disabled: theme.accent,
+                },
             },
-        },
+        }
     }
 }
 
@@ -232,7 +234,7 @@ fn sync_play_buttons(
     for (play, mut text, mut interaction, mut material) in buttons.iter_mut() {
         let state = states.get_entity(play.document);
         let label = play_label(state);
-        let look = play_look(&theme, state);
+        let look = PlayLook::new(&theme, state);
         if text.text != label {
             text.text = label.into();
         }
@@ -248,7 +250,7 @@ fn sync_play_buttons(
         }
     }
     for (mark, mut text) in glyphs.iter_mut() {
-        let look = play_look(&theme, states.get_entity(mark.document));
+        let look = PlayLook::new(&theme, states.get_entity(mark.document));
         if !text.text.chars().eq([look.glyph]) {
             text.text = look.glyph.to_string();
         }
@@ -357,7 +359,7 @@ fn sync_tabs(
             let plays = document.asset_type == Scene::name();
             let state = states.get_entity(entity);
             let play = play_label(state);
-            let look = play_look(&theme, state);
+            let look = PlayLook::new(&theme, state);
             cmd.entity(content).add_child_with(
                 (
                     theme

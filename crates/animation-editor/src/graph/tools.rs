@@ -543,91 +543,95 @@ fn kind(copy: Option<&GraphCopy>, id: GraphNodeId) -> String {
         .map_or_else(|| "a node".to_owned(), |node| node.described())
 }
 
-fn answer(
-    edit: &GraphEdit,
-    change: &GraphChange,
-    state: Option<&GraphDocument>,
-    assets: &AssetRegistry,
-) -> String {
-    let copy = state.and_then(GraphDocument::graph);
-    let displaced = change.loose.map_or_else(String::new, |loose| {
-        format!("; node {loose}, which was there, is loose")
-    });
-    match edit {
-        GraphEdit::AddNode { parent, .. } => {
-            let node = change.node.unwrap_or(GraphNodeId(0));
-            let place = match (parent, change.slot) {
-                (Some(parent), Some(slot)) => format!("as input {slot} of node {parent}"),
-                _ => "loose".to_owned(),
-            };
-            format!(
-                "Added node {node}, {}, {place}{displaced}.",
-                kind(copy, node)
-            )
-        }
-        GraphEdit::AddParent { child, .. } => {
-            let node = change.node.unwrap_or(GraphNodeId(0));
-            format!(
-                "Added node {node}, {}, with node {child} as input {}.",
-                kind(copy, node),
-                change.slot.unwrap_or(0)
-            )
-        }
-        GraphEdit::Connect { child, parent, .. } => format!(
-            "Node {child} is input {} of node {parent}{displaced}.",
-            change.slot.unwrap_or(0)
-        ),
-        GraphEdit::RemoveNode(node) => format!("Removed node {node}."),
-        GraphEdit::RemoveLink { child } => format!("Node {child} is loose."),
-        GraphEdit::AddState { name, .. } => {
-            let initial = state
-                .and_then(GraphDocument::machine)
-                .is_some_and(|machine| machine.initial_state() == Some(*name));
-            let graph = change
-                .graph
-                .and_then(|graph| assets.get(graph))
-                .map_or("a graph", |entry| entry.address.as_str());
-            let initial = if initial { ", the initial state" } else { "" };
-            format!("Added state {name}{initial}, playing {graph}.")
-        }
-        GraphEdit::AddTransition { from, to } => match change.transition {
-            Some(transition) => format!("Added transition {transition}."),
-            None => format!("Added a transition {from} → {to}."),
-        },
-        GraphEdit::RemoveState(name) => format!("Removed state {name} and its transitions."),
-        GraphEdit::RemoveTransition(transition) => format!("Removed transition {transition}."),
-        GraphEdit::Open(_) | GraphEdit::Up(_) => {
-            let shown = state.map_or_else(Vec::new, GraphDocument::breadcrumb);
-            format!("Showing {}.", shown.join(" › "))
-        }
-        GraphEdit::Select(Some(GraphSelection::Node(node))) => {
-            let live = copy
-                .and_then(|copy| copy.node(*node))
-                .is_some_and(|node| node.live().is_some());
-            if state.is_some_and(|state| state.is_state_machine(*node)) {
+impl GraphEdit {
+    fn answer(
+        &self,
+        change: &GraphChange,
+        state: Option<&GraphDocument>,
+        assets: &AssetRegistry,
+    ) -> String {
+        let copy = state.and_then(GraphDocument::graph);
+        let displaced = change.loose.map_or_else(String::new, |loose| {
+            format!("; node {loose}, which was there, is loose")
+        });
+        match self {
+            GraphEdit::AddNode { parent, .. } => {
+                let node = change.node.unwrap_or(GraphNodeId(0));
+                let place = match (parent, change.slot) {
+                    (Some(parent), Some(slot)) => format!("as input {slot} of node {parent}"),
+                    _ => "loose".to_owned(),
+                };
                 format!(
-                    "Selected node {node}, {}; its states and transitions are edited in its diagram, which graph_open node={node} shows, so it has no Node value.",
-                    kind(copy, *node)
+                    "Added node {node}, {}, {place}{displaced}.",
+                    kind(copy, node)
                 )
-            } else if live {
-                format!(
-                    "Selected node {node}, {}; inspect and set_property take it as target Node.",
-                    kind(copy, *node)
-                )
-            } else {
-                format!("Selected node {node}; it could not be built, so it has no value to edit.")
             }
+            GraphEdit::AddParent { child, .. } => {
+                let node = change.node.unwrap_or(GraphNodeId(0));
+                format!(
+                    "Added node {node}, {}, with node {child} as input {}.",
+                    kind(copy, node),
+                    change.slot.unwrap_or(0)
+                )
+            }
+            GraphEdit::Connect { child, parent, .. } => format!(
+                "Node {child} is input {} of node {parent}{displaced}.",
+                change.slot.unwrap_or(0)
+            ),
+            GraphEdit::RemoveNode(node) => format!("Removed node {node}."),
+            GraphEdit::RemoveLink { child } => format!("Node {child} is loose."),
+            GraphEdit::AddState { name, .. } => {
+                let initial = state
+                    .and_then(GraphDocument::machine)
+                    .is_some_and(|machine| machine.initial_state() == Some(*name));
+                let graph = change
+                    .graph
+                    .and_then(|graph| assets.get(graph))
+                    .map_or("a graph", |entry| entry.address.as_str());
+                let initial = if initial { ", the initial state" } else { "" };
+                format!("Added state {name}{initial}, playing {graph}.")
+            }
+            GraphEdit::AddTransition { from, to } => match change.transition {
+                Some(transition) => format!("Added transition {transition}."),
+                None => format!("Added a transition {from} → {to}."),
+            },
+            GraphEdit::RemoveState(name) => format!("Removed state {name} and its transitions."),
+            GraphEdit::RemoveTransition(transition) => format!("Removed transition {transition}."),
+            GraphEdit::Open(_) | GraphEdit::Up(_) => {
+                let shown = state.map_or_else(Vec::new, GraphDocument::breadcrumb);
+                format!("Showing {}.", shown.join(" › "))
+            }
+            GraphEdit::Select(Some(GraphSelection::Node(node))) => {
+                let live = copy
+                    .and_then(|copy| copy.node(*node))
+                    .is_some_and(|node| node.live().is_some());
+                if state.is_some_and(|state| state.is_state_machine(*node)) {
+                    format!(
+                        "Selected node {node}, {}; its states and transitions are edited in its diagram, which graph_open node={node} shows, so it has no Node value.",
+                        kind(copy, *node)
+                    )
+                } else if live {
+                    format!(
+                        "Selected node {node}, {}; inspect and set_property take it as target Node.",
+                        kind(copy, *node)
+                    )
+                } else {
+                    format!(
+                        "Selected node {node}; it could not be built, so it has no value to self."
+                    )
+                }
+            }
+            GraphEdit::Select(Some(GraphSelection::Link { child })) => {
+                format!("Selected the link of node {child}.")
+            }
+            GraphEdit::Select(Some(GraphSelection::State(name))) => {
+                format!("Selected state {name}; inspect and set_property take it as target State.")
+            }
+            GraphEdit::Select(Some(GraphSelection::Transition(transition))) => format!(
+                "Selected transition {transition}; inspect and set_property take it as target Transition."
+            ),
+            GraphEdit::Select(None) => "Nothing is selected.".to_owned(),
         }
-        GraphEdit::Select(Some(GraphSelection::Link { child })) => {
-            format!("Selected the link of node {child}.")
-        }
-        GraphEdit::Select(Some(GraphSelection::State(name))) => {
-            format!("Selected state {name}; inspect and set_property take it as target State.")
-        }
-        GraphEdit::Select(Some(GraphSelection::Transition(transition))) => format!(
-            "Selected transition {transition}; inspect and set_property take it as target Transition."
-        ),
-        GraphEdit::Select(None) => "Nothing is selected.".to_owned(),
     }
 }
 
@@ -645,9 +649,7 @@ fn answer_graph_edits(
             }
             let state = graphs.get_entity(event.document);
             match &event.result {
-                Ok(change) => pending
-                    .reply
-                    .ok(answer(&event.edit, change, state, &assets)),
+                Ok(change) => pending.reply.ok(event.edit.answer(change, state, &assets)),
                 Err(reason) => pending.reply.err(refused(format!("{reason}."))),
             }
             cmd.despawn(call);
@@ -699,37 +701,61 @@ pub(super) fn param_line(
     line
 }
 
-fn param_lines(
-    state: &GraphDocument,
-    found: &[FoundParam],
-    types: &TypeRegistry,
-    lines: &mut Vec<String>,
-) {
-    if found.is_empty() {
-        return;
+impl GraphDocument {
+    fn param_lines(&self, found: &[FoundParam], types: &TypeRegistry, lines: &mut Vec<String>) {
+        if found.is_empty() {
+            return;
+        }
+        lines.push("parameters:".to_owned());
+        for param in found {
+            let default;
+            let value = match self.parameters.held(param) {
+                Some(held) => held.value(),
+                None => {
+                    default = param.data.default_value();
+                    default.as_ref()
+                }
+            };
+            let shared = found
+                .iter()
+                .filter(|other| other.name == param.name)
+                .count()
+                > 1;
+            lines.push(param_line(
+                param.name,
+                param.data.value_type_name(),
+                value,
+                shared,
+                types,
+            ));
+        }
     }
-    lines.push("parameters:".to_owned());
-    for param in found {
-        let default;
-        let value = match state.parameters.held(param) {
-            Some(held) => held.value(),
-            None => {
-                default = param.data.default_value();
-                default.as_ref()
+
+    fn live_block(&self, live: LiveView) -> Option<String> {
+        let mut lines = Vec::new();
+        if let Some(node) = self.shown_machine() {
+            let machine = live.node(node)?.machine?;
+            lines.push(machine.machine_part());
+        } else {
+            for node in self.graph()?.nodes() {
+                let Some(playing) = live.node(node.id) else {
+                    continue;
+                };
+                let mut line = format!("{} · weight {}", node.id, weight_text(playing.weight));
+                let shown_inline = playing.clip_time.is_some() || playing.machine.is_some();
+                if let Some(time) = playing.clip_time {
+                    line.push_str(&format!(" · time {}", time_text(time)));
+                }
+                if let Some(machine) = &playing.machine {
+                    line.push_str(&format!(" · {}", machine.machine_part()));
+                }
+                lines.push(line);
+                if !shown_inline {
+                    lines.extend(playing.describe.as_ref().map(|line| format!("  {line}")));
+                }
             }
-        };
-        let shared = found
-            .iter()
-            .filter(|other| other.name == param.name)
-            .count()
-            > 1;
-        lines.push(param_line(
-            param.name,
-            param.data.value_type_name(),
-            value,
-            shared,
-            types,
-        ));
+        }
+        (!lines.is_empty()).then(|| format!("live:\n{}", lines.join("\n")))
     }
 }
 
@@ -841,47 +867,22 @@ fn graph_set_param(
     }
 }
 
-fn machine_part(machine: &MachineView) -> String {
-    let mut part = match machine.current {
-        Some(current) => format!("in {current}"),
-        None => "in no state".to_owned(),
-    };
-    if let Some(transition) = machine.transition {
-        part.push_str(&format!(
-            " · {} → {} {}",
-            transition.from,
-            transition.to,
-            weight_text(transition.progress)
-        ));
-    }
-    part
-}
-
-fn live_block(state: &GraphDocument, live: LiveView) -> Option<String> {
-    let mut lines = Vec::new();
-    if let Some(node) = state.shown_machine() {
-        let machine = live.node(node)?.machine?;
-        lines.push(machine_part(&machine));
-    } else {
-        for node in state.graph()?.nodes() {
-            let Some(playing) = live.node(node.id) else {
-                continue;
-            };
-            let mut line = format!("{} · weight {}", node.id, weight_text(playing.weight));
-            let shown_inline = playing.clip_time.is_some() || playing.machine.is_some();
-            if let Some(time) = playing.clip_time {
-                line.push_str(&format!(" · time {}", time_text(time)));
-            }
-            if let Some(machine) = &playing.machine {
-                line.push_str(&format!(" · {}", machine_part(machine)));
-            }
-            lines.push(line);
-            if !shown_inline {
-                lines.extend(playing.describe.as_ref().map(|line| format!("  {line}")));
-            }
+impl MachineView {
+    fn machine_part(&self) -> String {
+        let mut part = match self.current {
+            Some(current) => format!("in {current}"),
+            None => "in no state".to_owned(),
+        };
+        if let Some(transition) = self.transition {
+            part.push_str(&format!(
+                " · {} → {} {}",
+                transition.from,
+                transition.to,
+                weight_text(transition.progress)
+            ));
         }
+        part
     }
-    (!lines.is_empty()).then(|| format!("live:\n{}", lines.join("\n")))
 }
 
 fn message_answer(type_path: &str, target: &str, nodes: &[PreviewNode]) -> String {
@@ -1214,7 +1215,7 @@ fn answer_param_sets(
         else {
             continue;
         };
-        let live = LiveView::of(&played.event, sent).and_then(|live| live_block(state, live));
+        let live = LiveView::of(&played.event, sent).and_then(|live| state.live_block(live));
         pending.reply.ok(match live {
             Some(live) => format!("{}\n{live}", setting.answer),
             None => format!("{} {NOT_PLAYING}", setting.answer),
@@ -1253,11 +1254,11 @@ fn graph_inspect(
                 .map(|project| project.root.as_path()),
         });
         let types = types.as_ref().map(|types| types.read());
-        let live = LiveView::latest(live, sent).and_then(|live| live_block(state, live));
+        let live = LiveView::latest(live, sent).and_then(|live| state.live_block(live));
         if let Some(machine) = state.machine() {
             state_lines(machine, &assets, &mut lines);
             if let Some(types) = types.as_deref() {
-                param_lines(state, &found, types, &mut lines);
+                state.param_lines(&found, types, &mut lines);
             }
             lines.extend(live);
             reply.ok(lines.join("\n"));
@@ -1277,7 +1278,7 @@ fn graph_inspect(
             lines.push(line);
         }
         if let Some(types) = types.as_deref() {
-            param_lines(state, &found, types, &mut lines);
+            state.param_lines(&found, types, &mut lines);
         }
         lines.extend(live);
         reply.ok(lines.join("\n"));

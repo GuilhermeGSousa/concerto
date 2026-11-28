@@ -13,7 +13,7 @@ use concerto_ecs::{
 };
 use concerto_foundation::assets::{
     AssetId,
-    content::{decode_content_asset, read_asset_record},
+    content::decode_content_asset,
     registry::{AssetEntry, AssetRegistry},
 };
 use concerto_mesh::{ReflectSkeletonSource, Skeleton};
@@ -22,8 +22,7 @@ use concerto_reflect::Reflect;
 
 use crate::{
     asset_editor::{
-        AssetEditor, AssetEditorRegistry, EditorDocument, SaveRequested, Unsaved,
-        finish_asset_request, report_save,
+        AssetEditor, AssetEditorRegistry, EditorDocument, SaveRequested, Unsaved, report_save,
     },
     guard::DiscardEdits,
     hosted::{HostRole, Hosted, HostedApp},
@@ -169,7 +168,8 @@ fn read_inspected(
     asset: &AssetEntry,
     record: &InspectedAsset,
 ) -> anyhow::Result<ReadAsset> {
-    let bytes = read_asset_record(root, asset)
+    let bytes = asset
+        .read_record(root)
         .with_context(|| format!("Cannot read {}", asset.location()))?;
     let decoded = (record.decode)(&bytes)?;
     anyhow::ensure!(
@@ -216,10 +216,10 @@ pub(crate) fn load_inspected_assets(
                 state.loaded = read.bytes;
                 cmd.remove::<Unsaved>(entity);
                 cmd.trigger(RefreshInspector);
-                finish_asset_request(&mut document, &asset, Ok(()));
+                document.finish_request(&asset, Ok(()));
             }
             Err(error) => {
-                finish_asset_request(&mut document, &asset, Err(error));
+                document.finish_request(&asset, Err(error));
             }
         }
     }
@@ -258,7 +258,8 @@ fn save_document(
         .get(id)
         .cloned()
         .context("The saved asset was not registered")?;
-    state.loaded = read_asset_record(root, &saved)
+    state.loaded = saved
+        .read_record(root)
         .with_context(|| format!("Cannot read {} back", saved.location()))?;
     document.title = saved.name().into_owned();
     document.current = Some(saved.clone());
@@ -340,7 +341,8 @@ fn read_bones(root: &Path, id: AssetId, assets: &AssetRegistry) -> anyhow::Resul
     let asset = assets
         .get(id)
         .context("The skeleton is not in the project")?;
-    let bytes = read_asset_record(root, asset)
+    let bytes = asset
+        .read_record(root)
         .with_context(|| format!("Cannot read {}", asset.location()))?;
     let (header, skeleton) = decode_content_asset::<Skeleton>(&bytes)?;
     anyhow::ensure!(

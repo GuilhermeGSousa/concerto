@@ -3,8 +3,7 @@ use std::fmt::Debug;
 
 use concerto_color::Color;
 use concerto_reflect::{
-    Reflect, ReflectDefault, ReflectJson, TypeRegistry, apply_value, json_to_value, to_json,
-    to_value,
+    Reflect, ReflectDefault, ReflectJson, ReflectedValue, TypeRegistry, to_json,
 };
 use glam::{Quat, Vec2, Vec3, Vec4};
 use serde_json::{Value, json};
@@ -60,8 +59,8 @@ fn each_leaf_with_a_codec_is_written_as_its_json_and_built_back_from_it() {
         let built = (codec.from_json)(&case.json).unwrap();
         assert_eq!(to_json(built.as_ref(), &registry), case.json);
         assert_eq!(
-            json_to_value(&case.json, (value as &dyn Any).type_id(), &registry),
-            Ok(to_value(value).unwrap()),
+            ReflectedValue::from_json(&case.json, (value as &dyn Any).type_id(), &registry),
+            Ok(ReflectedValue::encode(value).unwrap()),
             "{}",
             case.json
         );
@@ -70,8 +69,8 @@ fn each_leaf_with_a_codec_is_written_as_its_json_and_built_back_from_it() {
     for case in [codec(3.0_f32, json!(3)), codec(-3.0_f64, json!(-3))] {
         let value = case.value.as_ref();
         assert_eq!(
-            json_to_value(&case.json, (value as &dyn Any).type_id(), &registry),
-            Ok(to_value(value).unwrap()),
+            ReflectedValue::from_json(&case.json, (value as &dyn Any).type_id(), &registry),
+            Ok(ReflectedValue::encode(value).unwrap()),
             "a float decodes from the integer {}",
             case.json
         );
@@ -203,8 +202,8 @@ fn write<T: Reflect + Debug>(
     json: &Value,
     mut onto: T,
 ) -> Result<T, String> {
-    let stored = json_to_value(json, TypeId::of::<T>(), registry)?;
-    let warnings = apply_value(&mut onto, &stored);
+    let stored = ReflectedValue::from_json(json, TypeId::of::<T>(), registry)?;
+    let warnings = stored.apply(&mut onto);
     assert!(warnings.is_empty(), "{warnings:?}");
     Ok(onto)
 }
@@ -310,7 +309,7 @@ fn json_that_does_not_fit_the_type_is_refused() {
     ];
     for case in cases {
         assert!(
-            json_to_value(&case.json, case.target, &nested_registry()).is_err(),
+            ReflectedValue::from_json(&case.json, case.target, &nested_registry()).is_err(),
             "{}",
             case.json
         );

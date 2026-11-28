@@ -4,10 +4,7 @@ use concerto_foundation::transform::Transform;
 use concerto_physics::physics_pipeline::PhysicsPipeline;
 use concerto_physics::physics_state::PhysicsState;
 use concerto_ragdoll::testing::{humanoid_rig, humanoid_skeleton};
-use concerto_ragdoll::{
-    GenerateError, HumanoidSettings, Ragdoll, RagdollShape, Segment, Trial, generate_humanoid,
-    run_trial,
-};
+use concerto_ragdoll::{GenerateError, HumanoidSettings, Ragdoll, RagdollShape, Segment, Trial};
 use glam::{Quat, Vec3};
 
 use crate::common::world_with_floor;
@@ -15,7 +12,7 @@ use crate::common::world_with_floor;
 fn generated(rig: &RetargetRig, total_mass: f32) -> Result<Ragdoll, GenerateError> {
     let skeleton = humanoid_skeleton();
     let rig = rig.resolve(&skeleton, None).unwrap();
-    generate_humanoid(
+    Ragdoll::humanoid(
         AssetHandle::default(),
         &skeleton,
         &rig,
@@ -140,7 +137,9 @@ fn a_generated_humanoid_has_its_mass_its_one_way_knees_and_a_body_that_rests_in_
         );
     }
 
-    let report = run_trial(&resolved, Trial::Drop { height: 0.5 }, 10.0).unwrap();
+    let report = resolved
+        .run_trial(Trial::Drop { height: 0.5 }, 10.0)
+        .unwrap();
     assert!(report.overlaps.is_empty(), "{:?}", report.overlaps);
     assert!(
         report.rested_after.is_some(),
@@ -153,7 +152,8 @@ fn a_generated_humanoid_has_its_mass_its_one_way_knees_and_a_body_that_rests_in_
         impulse: Vec3::new(0.0, 0.0, 30.0),
     };
     assert!(
-        run_trial(&resolved, poked, 10.0)
+        resolved
+            .run_trial(poked, 10.0)
             .unwrap()
             .rested_after
             .is_some()
@@ -162,7 +162,7 @@ fn a_generated_humanoid_has_its_mass_its_one_way_knees_and_a_body_that_rests_in_
         bone: "tail".into(),
         impulse: Vec3::Z,
     };
-    assert_eq!(run_trial(&resolved, nowhere, 1.0), None);
+    assert_eq!(resolved.run_trial(nowhere, 1.0), None);
 
     let mut fat = ragdoll.clone();
     fat.part_mut("thigh_l").unwrap().shape = RagdollShape::Capsule {

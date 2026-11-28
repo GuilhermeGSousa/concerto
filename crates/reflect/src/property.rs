@@ -76,6 +76,36 @@ impl PropertyPath {
     pub fn get_depth(&self, index: usize) -> Option<PathSegment> {
         self.0.get(index).copied()
     }
+
+    /// Accesses the leaf, composite value, or root of `root` this path names, without retaining a borrowed value.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PathError::NotFound`] when a segment of this path names no field or element of
+    /// the value it is applied to.
+    pub fn access(
+        &self,
+        root: &dyn Reflect,
+        callback: &mut dyn FnMut(&dyn Reflect),
+    ) -> Result<(), PathError> {
+        access(root, self.segments(), callback)
+    }
+
+    /// Mutably accesses the leaf, composite value, or root of `root` this path names.
+    ///
+    /// The callback owns any validation policy; this function only resolves the path.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PathError::NotFound`] when a segment of this path names no field or element of
+    /// the value it is applied to.
+    pub fn access_mut(
+        &self,
+        root: &mut dyn Reflect,
+        callback: &mut dyn FnMut(&mut dyn Reflect),
+    ) -> Result<(), PathError> {
+        access_mut(root, self.segments(), callback)
+    }
 }
 
 impl std::fmt::Display for PropertyPath {
@@ -105,20 +135,6 @@ impl std::fmt::Display for PathError {
     }
 }
 impl std::error::Error for PathError {}
-
-/// Access a leaf, composite value, or root without retaining a borrowed value.
-///
-/// # Errors
-///
-/// Returns [`PathError::NotFound`] when a segment of `path` names no field or element of
-/// the value it is applied to.
-pub fn with_property(
-    root: &dyn Reflect,
-    path: &PropertyPath,
-    callback: &mut dyn FnMut(&dyn Reflect),
-) -> Result<(), PathError> {
-    access(root, path.segments(), callback)
-}
 
 fn access(
     value: &dyn Reflect,
@@ -160,22 +176,6 @@ fn access(
     };
     value.visit(&mut visitor);
     visitor.result.unwrap_or(Err(PathError::NotFound))
-}
-
-/// Mutably access a leaf, composite value, or root.
-///
-/// The callback owns any validation policy; this function only resolves the path.
-///
-/// # Errors
-///
-/// Returns [`PathError::NotFound`] when a segment of `path` names no field or element of
-/// the value it is applied to.
-pub fn with_property_mut(
-    root: &mut dyn Reflect,
-    path: &PropertyPath,
-    callback: &mut dyn FnMut(&mut dyn Reflect),
-) -> Result<(), PathError> {
-    access_mut(root, path.segments(), callback)
 }
 
 fn access_mut(

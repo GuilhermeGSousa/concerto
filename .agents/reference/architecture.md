@@ -232,14 +232,14 @@ sounds) are imported once, ahead of time. The running game never reads them.
   `UncookedData` and names its asset, with a version of its own: loads never
   read it, a derive reads its own on a cache
   miss through `DerivedInputs::own_uncooked`, tools read it with
-  `read_uncooked`, and a cook drops it.
+  `AssetEntry::read_uncooked`, and a cook drops it.
 - A sampled `Texture` derives from its own file, with no inputs: its payload
   holds its `role`, its `TextureSettings` and a `SourceSummary` (width, height,
   hash) of the imported image, whose bytes (`TextureSource`) are the file's
   uncooked section. The key is the summary's hash, the settings and the
   role, so a cache hit or a cooked blob never reads the source. On a miss
   `derive` takes the section, refuses one whose hash differs from the
-  summary's, and `derive_levels` decodes it, resolves `Auto` from the role,
+  summary's, and `TextureSource::derive_levels` decodes it, resolves `Auto` from the role,
   fits `max_size` (to whole 4×4 blocks for BC), builds the mips and encodes
   each level in BC1, BC4, BC5, BC7 or RGBA8; `apply_derived` keeps the levels
   and the summary. A version-2 file, with its source in the payload, migrates

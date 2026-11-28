@@ -13,12 +13,10 @@ use super::registry::{AssetEntry, AssetRegistry};
 use super::{Asset, AssetId, UncookedData};
 
 pub use concerto_asset_format::{
-    asset_record, read_content_asset, read_content_asset_header, read_content_asset_parts,
-    read_content_without_uncooked, read_uncooked_section, sub_asset_file_stem, without_uncooked,
-    write_content_asset, write_content_asset_with_embedded, write_content_asset_with_uncooked,
-    write_cooked_content_asset, AssetRecord, ContentAssetHeader, ContentAssetParts, ContentFile,
-    CookedSection, DerivedSection, EmbeddedAsset, EmbeddedPayload, ImportProvenance, UncookedBytes,
-    UncookedSection, UncookedSlice, CONTENT_ASSET_MAGIC, CONTENT_FORMAT_VERSION,
+    asset_record, read_content_without_uncooked, sub_asset_file_stem, without_uncooked,
+    AssetRecord, ContentAssetHeader, ContentAssetParts, ContentFile, CookedSection, DerivedSection,
+    EmbeddedAsset, EmbeddedPayload, ImportProvenance, UncookedBytes, UncookedSection,
+    UncookedSlice, CONTENT_ASSET_MAGIC, CONTENT_FORMAT_VERSION,
 };
 
 /// Decodes a content asset as `A`, checking its kind and type version and migrating an older version.
@@ -29,7 +27,7 @@ pub use concerto_asset_format::{
 /// another kind, was written by a newer version of `A`, or does not decode or
 /// migrate.
 pub fn decode_content_asset<A: Asset>(bytes: &[u8]) -> anyhow::Result<(ContentAssetHeader, A)> {
-    let (header, payload) = read_content_asset(bytes)?;
+    let (header, payload) = ContentAssetHeader::read(bytes)?;
     let value = decode_content_payload::<A>(&header.kind, header.kind_version, payload)?;
     Ok((header, value))
 }
@@ -177,59 +175,55 @@ impl EncodingFixture {
     }
 }
 
-/// The standalone record of `entry`, read from `<project_root>/<entry.address>`.
-///
-/// # Errors
-///
-/// Returns an error when the file cannot be read or is malformed, or does not
-/// hold the embedded asset `entry` names.
-pub fn read_asset_record(project_root: &Path, entry: &AssetEntry) -> anyhow::Result<Vec<u8>> {
-    let path = project_root.join(&entry.address);
-    let file = std::fs::read(&path)
-        .with_context(|| format!("failed to read content asset '{}'", path.display()))?;
-    let name = entry.embedded_in.as_ref().map(|held| held.name.as_str());
-    asset_record(&file, name)
-        .with_context(|| format!("malformed content asset '{}'", entry.location()))
-}
+impl AssetEntry {
+    /// The standalone record of this entry, read from `<project_root>/<address>`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the file cannot be read or is malformed, or does not
+    /// hold the embedded asset this entry names.
+    pub fn read_record(&self, project_root: &Path) -> anyhow::Result<Vec<u8>> {
+        let path = project_root.join(&self.address);
+        let file = std::fs::read(&path)
+            .with_context(|| format!("failed to read content asset '{}'", path.display()))?;
+        let name = self.embedded_in.as_ref().map(|held| held.name.as_str());
+        asset_record(&file, name)
+            .with_context(|| format!("malformed content asset '{}'", self.location()))
+    }
 
-/// The standalone record of `entry` without its uncooked section, which is not read from disk.
-///
-/// # Errors
-///
-/// Returns an error when the file cannot be read or is malformed, or does not
-/// hold the embedded asset `entry` names.
-pub fn read_asset_record_without_uncooked(
-    project_root: &Path,
-    entry: &AssetEntry,
-) -> anyhow::Result<Vec<u8>> {
-    let path = project_root.join(&entry.address);
-    let file = read_content_without_uncooked(&path)
-        .with_context(|| format!("failed to read content asset '{}'", path.display()))?;
-    let name = entry.embedded_in.as_ref().map(|held| held.name.as_str());
-    asset_record(&file, name)
-        .with_context(|| format!("malformed content asset '{}'", entry.location()))
-}
+    /// The standalone record of this entry without its uncooked section, which is not read from disk.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the file cannot be read or is malformed, or does not
+    /// hold the embedded asset this entry names.
+    pub fn read_record_without_uncooked(&self, project_root: &Path) -> anyhow::Result<Vec<u8>> {
+        let path = project_root.join(&self.address);
+        let file = read_content_without_uncooked(&path)
+            .with_context(|| format!("failed to read content asset '{}'", path.display()))?;
+        let name = self.embedded_in.as_ref().map(|held| held.name.as_str());
+        asset_record(&file, name)
+            .with_context(|| format!("malformed content asset '{}'", self.location()))
+    }
 
-/// The uncooked data of `entry`, read alone from `<project_root>/<entry.address>`.
-///
-/// `None` when its record has none.
-///
-/// # Errors
-///
-/// Returns an error when the file cannot be read or is malformed, or the
-/// section does not decode as `E`.
-pub fn read_uncooked<E: UncookedData>(
-    project_root: &Path,
-    entry: &AssetEntry,
-) -> anyhow::Result<Option<E>> {
-    let path = project_root.join(&entry.address);
-    let name = entry.embedded_in.as_ref().map(|held| held.name.as_str());
-    let Some(section) = read_uncooked_section(&path, name)? else {
-        return Ok(None);
-    };
-    decode_uncooked::<E>(&section.kind, section.version, &section.bytes)
-        .with_context(|| format!("malformed content asset '{}'", entry.location()))
-        .map(Some)
+    /// The uncooked data of this entry, read alone from `<project_root>/<address>`.
+    ///
+    /// `None` when its record has none.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the file cannot be read or is malformed, or the
+    /// section does not decode as `E`.
+    pub fn read_uncooked<E: UncookedData>(&self, project_root: &Path) -> anyhow::Result<Option<E>> {
+        let path = project_root.join(&self.address);
+        let name = self.embedded_in.as_ref().map(|held| held.name.as_str());
+        let Some(section) = UncookedBytes::read(&path, name)? else {
+            return Ok(None);
+        };
+        decode_uncooked::<E>(&section.kind, section.version, &section.bytes)
+            .with_context(|| format!("malformed content asset '{}'", self.location()))
+            .map(Some)
+    }
 }
 
 struct SectionToWrite {
@@ -254,7 +248,7 @@ impl SectionToWrite {
         if !holds {
             return Ok(None);
         }
-        Ok(read_uncooked_section(path, None)?.map(|section| Self {
+        Ok(UncookedBytes::read(path, None)?.map(|section| Self {
             version: section.version,
             bytes: section.bytes,
         }))
@@ -267,10 +261,8 @@ fn written(
     section: Option<&SectionToWrite>,
 ) -> anyhow::Result<Vec<u8>> {
     match section {
-        Some(section) => {
-            write_content_asset_with_uncooked(header, payload, section.version, &section.bytes)
-        }
-        None => write_content_asset(header, payload),
+        Some(section) => header.write_with_uncooked(payload, section.version, &section.bytes),
+        None => header.write(payload),
     }
 }
 
@@ -320,7 +312,7 @@ fn save_into<A: Asset>(
     let path = project_root.join(address);
     let existing = match path.exists() {
         true => {
-            let existing = read_content_asset_header(&path)?;
+            let existing = ContentAssetHeader::read_file(&path)?;
             refuse_a_host(&existing, address)?;
             Some(existing)
         }
@@ -381,7 +373,7 @@ pub fn resave_content_asset<A: Asset>(
     registry: &mut AssetRegistry,
 ) -> anyhow::Result<AssetId> {
     let path = project_root.join(address);
-    let existing = read_content_asset_header(&path)
+    let existing = ContentAssetHeader::read_file(&path)
         .with_context(|| format!("no content asset to resave at '{address}'"))?;
     refuse_a_host(&existing, address)?;
     if existing.kind != A::name() {

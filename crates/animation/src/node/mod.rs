@@ -5,7 +5,6 @@ use concerto_reflect::{Reflect, ReflectDefault};
 use uuid::Uuid;
 
 use crate::{
-    blackboard::AnimationBlackboard,
     clip::{AnimationChannel, AnimationClip, ClipEventData, KeyCursor},
     evaluation::{AnimationGraphContext, RootBone},
     message::ClipEnded,
@@ -47,42 +46,6 @@ pub use definition::{
 pub use layer::{LayerNode, LayerSpace};
 pub use slot::{PlayInSlot, SlotEntry, SlotNode, SlotState};
 pub use two_bone_ik::{IkGoal, IkTarget, TipRotation, TwoBoneIkNode, TwoBoneIkState};
-
-/// The rate a node plays at.
-///
-/// It is `play_rate` times the `f32` under `param`, or `play_rate` alone when `param` is `None`
-/// or holds no `f32`. A negative or non-finite result is 0.
-pub fn effective_play_rate(
-    play_rate: f32,
-    param: Option<Param<f32>>,
-    blackboard: &AnimationBlackboard,
-) -> f32 {
-    let scale = param.and_then(|param| blackboard.read(&param).copied());
-    let rate = play_rate * scale.unwrap_or(1.0);
-    if rate.is_finite() && rate > 0.0 {
-        rate
-    } else {
-        0.0
-    }
-}
-
-/// The weight a node applies.
-///
-/// It is `weight` times the `f32` under `param`, or `weight` alone when `param` is `None` or
-/// holds no `f32`, clamped to 0 to 1. A NaN result is 0.
-pub fn effective_weight(
-    weight: f32,
-    param: Option<Param<f32>>,
-    blackboard: &AnimationBlackboard,
-) -> f32 {
-    let scale = param.and_then(|param| blackboard.read(&param).copied());
-    let weight = weight * scale.unwrap_or(1.0);
-    if weight.is_nan() {
-        0.0
-    } else {
-        weight.clamp(0.0, 1.0)
-    }
-}
 
 /// What a clip does when it reaches its end.
 #[derive(Clone, Debug, Default, PartialEq, Reflect, serde::Serialize, serde::Deserialize)]
@@ -393,7 +356,9 @@ impl AnimationNode for AnimationClipNode {
             return;
         };
 
-        let rate = effective_play_rate(self.play_rate, self.play_rate_param, context.blackboard());
+        let rate = context
+            .blackboard()
+            .effective_play_rate(self.play_rate, self.play_rate_param);
         let span = ClockSpan {
             length: clip.duration(),
             offset: 0.0,
@@ -479,7 +444,7 @@ impl AnimationNode for AnimationClipNode {
         _inputs: &[WeightedMotion],
     ) -> RootMotion {
         clips.get(&self.clip).map_or(RootMotion::IDENTITY, |clip| {
-            root_motion(&state.clock, clip, context.root(), bone_ids)
+            state.clock.root_motion(clip, context.root(), bone_ids)
         })
     }
 
@@ -501,31 +466,33 @@ fn net_of_root_motion(joint: &mut JointPose, root: &RootBone) {
     joint.translation = root.rest.translation + root.up * lifted;
 }
 
-fn root_motion(
-    clock: &ClipClock,
-    clip: &AnimationClip,
-    root: Option<&RootBone>,
-    bone_ids: &[Uuid],
-) -> RootMotion {
-    let Some((root, channels)) = root.and_then(|root| {
-        let channels = clip.get_channels(bone_ids.get(root.index)?)?;
-        Some((root, channels))
-    }) else {
-        return RootMotion::IDENTITY;
-    };
+impl ClipClock {
+    fn root_motion(
+        &self,
+        clip: &AnimationClip,
+        root: Option<&RootBone>,
+        bone_ids: &[Uuid],
+    ) -> RootMotion {
+        let Some((root, channels)) = root.and_then(|root| {
+            let channels = clip.get_channels(bone_ids.get(root.index)?)?;
+            Some((root, channels))
+        }) else {
+            return RootMotion::IDENTITY;
+        };
 
-    let stretch = |from: f32, to: f32| {
-        RootMotion::between(
-            &sample_root(channels, &root.rest, from),
-            &sample_root(channels, &root.rest, to),
-            root.rest.rotation,
-        )
-    };
+        let stretch = |from: f32, to: f32| {
+            RootMotion::between(
+                &sample_root(channels, &root.rest, from),
+                &sample_root(channels, &root.rest, to),
+                root.rest.rotation,
+            )
+        };
 
-    if clock.wrapped {
-        stretch(clock.previous_time, clip.duration()).then(stretch(clock.start_time, clock.time))
-    } else {
-        stretch(clock.previous_time, clock.time)
+        if self.wrapped {
+            stretch(self.previous_time, clip.duration()).then(stretch(self.start_time, self.time))
+        } else {
+            stretch(self.previous_time, self.time)
+        }
     }
 }
 
@@ -617,7 +584,6 @@ mod tests {
 
     use super::{
         AnimationClipNode, AnimationClipNodeState, AnimationNode, AnimationPlayMode, BlendNode,
-        effective_play_rate, effective_weight,
     };
     use crate::{
         blackboard::AnimationBlackboard,
@@ -1134,7 +1100,7 @@ mod tests {
 
         for case in cases {
             assert_eq!(
-                effective_play_rate(case.rate, case.param.map(Into::into), &blackboard),
+                blackboard.effective_play_rate(case.rate, case.param.map(Into::into)),
                 case.effective,
                 "{}",
                 case.name
@@ -1162,7 +1128,7 @@ mod tests {
 
         for case in cases {
             assert_eq!(
-                effective_weight(case.rate, case.param.map(Into::into), &blackboard),
+                blackboard.effective_weight(case.rate, case.param.map(Into::into)),
                 case.effective,
                 "{}",
                 case.name

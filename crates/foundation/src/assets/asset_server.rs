@@ -46,7 +46,7 @@ use super::{
 };
 #[cfg(not(target_arch = "wasm32"))]
 use super::{
-    content::{asset_record, read_content_asset_header, read_uncooked_section},
+    content::{asset_record, ContentAssetHeader},
     derived::{cook_hook, record_is_derived, CookHook, CookReport},
 };
 
@@ -512,7 +512,7 @@ impl AssetServer {
             entries,
             hooks,
         } = file;
-        let has_uncooked = read_content_asset_header(&dir.join(address))?.has_uncooked();
+        let has_uncooked = ContentAssetHeader::read_file(&dir.join(address))?.has_uncooked();
         let hooked = entries
             .iter()
             .any(|entry| hooks.contains_key(entry.kind.as_str()));
@@ -613,7 +613,7 @@ impl AssetServer {
             ContentAssetRoot::Directory(dir) => {
                 let path = dir.join(&entry.address);
                 let name = entry.embedded_in.as_ref().map(|held| held.name.clone());
-                blocking::unblock(move || read_uncooked_section(&path, name.as_deref())).await
+                blocking::unblock(move || UncookedBytes::read(&path, name.as_deref())).await
             }
             _ => {
                 let file = try_read_relative(&root, &entry.address)
@@ -1287,7 +1287,7 @@ mod tests {
         world.insert_resource(server);
         world.register_type::<Holder>();
         let id = AssetId::new();
-        let stored = concerto_reflect::to_value(&Holder {
+        let stored = concerto_reflect::ReflectedValue::encode(&Holder {
             handle: AssetHandle::weak(id),
             empty: AssetHandle::default(),
         })
@@ -1376,14 +1376,14 @@ mod tests {
             let id = AssetId::new();
             let mut hook = LiveLeaves::new(&world);
             let registry = world.get_resource::<AppTypeRegistry>().unwrap().read();
-            let asset = concerto_reflect::json_to_value_with(
+            let asset = concerto_reflect::ReflectedValue::from_json_with(
                 &serde_json::Value::String(id.simple_hex()),
                 TypeId::of::<AssetHandle<FixtureAsset>>(),
                 &registry,
                 &mut hook,
             )
             .unwrap();
-            let reference = concerto_reflect::json_to_value_with(
+            let reference = concerto_reflect::ReflectedValue::from_json_with(
                 &serde_json::Value::String(entity.to_id_string()),
                 TypeId::of::<SceneEntityRef>(),
                 &registry,
@@ -1393,10 +1393,8 @@ mod tests {
 
             let mut handle = AssetHandle::<FixtureAsset>::default();
             let mut written = SceneEntityRef::default();
-            assert!(concerto_reflect::apply_value_with(&mut handle, &asset, &mut hook).is_empty());
-            assert!(
-                concerto_reflect::apply_value_with(&mut written, &reference, &mut hook).is_empty()
-            );
+            assert!(asset.apply_with(&mut handle, &mut hook).is_empty());
+            assert!(reference.apply_with(&mut written, &mut hook).is_empty());
 
             assert_eq!(handle.id(), id);
             assert_eq!(matches!(handle, AssetHandle::Strong(..)), with_server);

@@ -49,6 +49,10 @@ pub struct EventChannel<T: Event + 'static> {
 }
 
 impl<T: Event + 'static> EventChannel<T> {
+    pub(crate) fn oldest_id(&self) -> usize {
+        self.events_a.start_event_count
+    }
+
     /// Creates an empty channel.
     pub fn new() -> Self {
         EventChannel {

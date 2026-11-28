@@ -32,11 +32,11 @@ use concerto_foundation::assets::AssetId;
 use concerto_foundation::assets::asset_server::{AssetServer, handle_asset_load_events};
 use concerto_foundation::assets::asset_store::AssetStore;
 use concerto_foundation::assets::content::{
-    ContentAssetHeader, check_encoding, decode_content_asset, write_content_asset,
+    ContentAssetHeader, check_encoding, decode_content_asset,
 };
 use concerto_foundation::assets::handle::{AssetHandle, LiveLeaves};
 use concerto_name::{Name, name};
-use concerto_reflect::{Reflect, ReflectedValue, TypeRegistry, ValueWarning, to_value};
+use concerto_reflect::{Reflect, ReflectedValue, TypeRegistry, ValueWarning};
 use proptest::prelude::*;
 use uuid::Uuid;
 
@@ -460,7 +460,7 @@ struct StoredRate {
 fn a_stored_play_rate_param_loads_as_no_param_when_missing_or_a_string() {
     let registry = registry(false);
     let node = || AnimationClipNode::new(clip("outer_pose")).with_play_rate(1.5);
-    let draw_speed = to_value(&Some(name!("draw_speed"))).unwrap();
+    let draw_speed = ReflectedValue::encode(&Some(name!("draw_speed"))).unwrap();
     let cases = [
         StoredRate {
             name: "missing",
@@ -470,14 +470,14 @@ fn a_stored_play_rate_param_loads_as_no_param_when_missing_or_a_string() {
         },
         StoredRate {
             name: "a string",
-            play_rate_param: Some(to_value(&String::from("draw_speed")).unwrap()),
+            play_rate_param: Some(ReflectedValue::encode(&String::from("draw_speed")).unwrap()),
             warnings: 1,
             loaded: node(),
         },
     ];
 
     for case in cases {
-        let ReflectedValue::Struct(mut fields) = to_value(&node()).unwrap() else {
+        let ReflectedValue::Struct(mut fields) = ReflectedValue::encode(&node()).unwrap() else {
             panic!("a clip node is stored as a struct");
         };
         fields.retain(|(name, _)| name != "play_rate_param");
@@ -498,7 +498,7 @@ fn a_stored_play_rate_param_loads_as_no_param_when_missing_or_a_string() {
         let expected = if stored_name {
             draw_speed.clone()
         } else {
-            to_value(&None::<Name>).unwrap()
+            ReflectedValue::encode(&None::<Name>).unwrap()
         };
         assert_eq!(
             play_rate_param_of(&loaded.built),
@@ -508,7 +508,7 @@ fn a_stored_play_rate_param_loads_as_no_param_when_missing_or_a_string() {
         );
         assert_eq!(
             loaded.built,
-            to_value(&case.loaded).unwrap(),
+            ReflectedValue::encode(&case.loaded).unwrap(),
             "{}",
             case.name
         );
@@ -560,7 +560,7 @@ fn a_version_1_clip_migrates_to_a_clip_with_no_events() {
         derived: None,
         embedded: Vec::new(),
     };
-    let bytes = write_content_asset(&header, &payload).unwrap();
+    let bytes = header.write(&payload).unwrap();
 
     let (_, clip) = decode_content_asset::<AnimationClip>(&bytes).expect("migrates");
 
@@ -587,7 +587,7 @@ fn a_version_2_clip_migrates_to_a_clip_that_is_not_additive() {
         derived: None,
         embedded: Vec::new(),
     };
-    let bytes = write_content_asset(&header, &payload).unwrap();
+    let bytes = header.write(&payload).unwrap();
 
     let (_, clip) = decode_content_asset::<AnimationClip>(&bytes).expect("migrates");
 
@@ -738,7 +738,7 @@ fn a_version_1_retarget_rig_migrates_to_a_rig_with_no_goals() {
         derived: None,
         embedded: Vec::new(),
     };
-    let bytes = write_content_asset(&header, &payload).unwrap();
+    let bytes = header.write(&payload).unwrap();
 
     let (_, rig) = decode_content_asset::<RetargetRig>(&bytes).expect("migrates");
 

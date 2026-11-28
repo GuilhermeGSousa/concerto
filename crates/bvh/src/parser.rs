@@ -66,6 +66,67 @@ fn error<T>(line: usize, message: impl Into<String>) -> Result<T> {
     })
 }
 
+impl Bvh {
+    pub(crate) fn parse(text: &str) -> Result<Self> {
+        let lines: Vec<(usize, &str)> = text
+            .lines()
+            .enumerate()
+            .map(|(index, line)| (index + 1, line))
+            .collect();
+
+        let motion_at = lines
+            .iter()
+            .position(|(_, line)| line.split_whitespace().next() == Some("MOTION"));
+        let hierarchy_end = motion_at.unwrap_or(lines.len());
+
+        let mut tokens = Tokens {
+            tokens: Vec::new(),
+            position: 0,
+            last_line: lines.last().map_or(1, |(number, _)| *number),
+        };
+        for (number, line) in &lines[..hierarchy_end] {
+            for token in split_braces(line) {
+                tokens.tokens.push((*number, token));
+            }
+        }
+        if let Some(last) = tokens.tokens.last() {
+            tokens.last_line = last.0;
+        }
+
+        tokens.expect("HIERARCHY")?;
+        let mut joints = Vec::new();
+        let mut channel_count = 0;
+        match tokens.next() {
+            Some((_, "ROOT")) => {
+                tokens.parse_joint(None, 0, &mut joints, &mut channel_count)?;
+            }
+            Some((line, token)) => return error(line, format!("expected ROOT, found {token}")),
+            None => return error(tokens.last_line, "no ROOT joint in HIERARCHY"),
+        }
+        match tokens.next() {
+            None => {}
+            Some((line, "ROOT")) => return error(line, "more than one ROOT is not supported"),
+            Some((line, "}")) => return error(line, "unbalanced braces: unexpected closing brace"),
+            Some((line, token)) => {
+                return error(line, format!("unexpected {token} after the hierarchy"));
+            }
+        }
+
+        let Some(motion_at) = motion_at else {
+            return error(tokens.last_line, "missing MOTION section");
+        };
+        let (frame_time, frames) =
+            parse_motion(&lines[motion_at + 1..], motion_at + 1, channel_count)?;
+
+        Ok(Self {
+            joints,
+            frame_time,
+            channel_count,
+            frames,
+        })
+    }
+}
+
 struct Tokens<'a> {
     tokens: Vec<(usize, &'a str)>,
     position: usize,
@@ -126,6 +187,101 @@ impl<'a> Tokens<'a> {
     fn offset(&mut self) -> Result<[f32; 3]> {
         Ok([self.float()?, self.float()?, self.float()?])
     }
+
+    fn parse_joint(
+        &mut self,
+        parent: Option<usize>,
+        depth: usize,
+        joints: &mut Vec<Joint>,
+        channel_count: &mut usize,
+    ) -> Result<()> {
+        let (name_line, name) = self.expect_next("a joint name")?;
+        if depth >= MAX_JOINT_DEPTH {
+            return error(
+                name_line,
+                format!("joints are nested more than {MAX_JOINT_DEPTH} deep"),
+            );
+        }
+        if name == "{" || name == "}" {
+            return error(name_line, "expected a joint name");
+        }
+        if name.contains('/') {
+            return error(name_line, format!("joint name {name} contains '/'"));
+        }
+        if joints
+            .iter()
+            .any(|joint| joint.parent == parent && joint.name == name)
+        {
+            return error(
+                name_line,
+                format!("duplicate joint name {name} under the same parent"),
+            );
+        }
+        self.expect_open_brace()?;
+
+        let index = joints.len();
+        joints.push(Joint {
+            name: name.to_string(),
+            parent,
+            offset: [0.0; 3],
+            channels: Vec::new(),
+            channel_start: *channel_count,
+        });
+
+        loop {
+            let Some((line, token)) = self.next() else {
+                return error(
+                    self.last_line,
+                    format!("unbalanced braces: joint {name} is never closed"),
+                );
+            };
+            match token {
+                "OFFSET" => joints[index].offset = self.offset()?,
+                "CHANNELS" => {
+                    let (count_line, count) = self.expect_next("a channel count")?;
+                    let count: usize = count
+                        .parse()
+                        .or_else(|_| error(count_line, format!("invalid channel count {count}")))?;
+                    let mut channels = Vec::new();
+                    for _ in 0..count {
+                        let (channel_line, channel) = self.expect_next("a channel name")?;
+                        match Channel::parse(channel) {
+                            Some(channel) => channels.push(channel),
+                            None => {
+                                return error(channel_line, format!("unknown channel {channel}"));
+                            }
+                        }
+                    }
+                    *channel_count += count;
+                    joints[index].channels = channels;
+                }
+                "JOINT" => self.parse_joint(Some(index), depth + 1, joints, channel_count)?,
+                "End" => {
+                    self.expect("Site")?;
+                    self.expect_open_brace()?;
+                    loop {
+                        match self.next() {
+                            Some((_, "OFFSET")) => {
+                                self.offset()?;
+                            }
+                            Some((_, "}")) => break,
+                            Some((line, token)) => {
+                                return error(line, format!("unexpected {token} in End Site"));
+                            }
+                            None => {
+                                return error(
+                                    self.last_line,
+                                    "unbalanced braces: End Site is never closed",
+                                );
+                            }
+                        }
+                    }
+                }
+                "}" => return Ok(()),
+                other => return error(line, format!("unexpected {other} in joint {name}")),
+            }
+        }
+    }
 }
 
 fn split_braces(line: &str) -> Vec<&str> {
@@ -148,160 +304,7 @@ fn split_braces(line: &str) -> Vec<&str> {
     out
 }
 
-pub(crate) fn parse(text: &str) -> Result<Bvh> {
-    let lines: Vec<(usize, &str)> = text
-        .lines()
-        .enumerate()
-        .map(|(index, line)| (index + 1, line))
-        .collect();
-
-    let motion_at = lines
-        .iter()
-        .position(|(_, line)| line.split_whitespace().next() == Some("MOTION"));
-    let hierarchy_end = motion_at.unwrap_or(lines.len());
-
-    let mut tokens = Tokens {
-        tokens: Vec::new(),
-        position: 0,
-        last_line: lines.last().map_or(1, |(number, _)| *number),
-    };
-    for (number, line) in &lines[..hierarchy_end] {
-        for token in split_braces(line) {
-            tokens.tokens.push((*number, token));
-        }
-    }
-    if let Some(last) = tokens.tokens.last() {
-        tokens.last_line = last.0;
-    }
-
-    tokens.expect("HIERARCHY")?;
-    let mut joints = Vec::new();
-    let mut channel_count = 0;
-    match tokens.next() {
-        Some((_, "ROOT")) => {
-            parse_joint(&mut tokens, None, 0, &mut joints, &mut channel_count)?;
-        }
-        Some((line, token)) => return error(line, format!("expected ROOT, found {token}")),
-        None => return error(tokens.last_line, "no ROOT joint in HIERARCHY"),
-    }
-    match tokens.next() {
-        None => {}
-        Some((line, "ROOT")) => return error(line, "more than one ROOT is not supported"),
-        Some((line, "}")) => return error(line, "unbalanced braces: unexpected closing brace"),
-        Some((line, token)) => {
-            return error(line, format!("unexpected {token} after the hierarchy"));
-        }
-    }
-
-    let Some(motion_at) = motion_at else {
-        return error(tokens.last_line, "missing MOTION section");
-    };
-    let (frame_time, frames) = parse_motion(&lines[motion_at + 1..], motion_at + 1, channel_count)?;
-
-    Ok(Bvh {
-        joints,
-        frame_time,
-        channel_count,
-        frames,
-    })
-}
-
 const MAX_JOINT_DEPTH: usize = 128;
-
-fn parse_joint(
-    tokens: &mut Tokens<'_>,
-    parent: Option<usize>,
-    depth: usize,
-    joints: &mut Vec<Joint>,
-    channel_count: &mut usize,
-) -> Result<()> {
-    let (name_line, name) = tokens.expect_next("a joint name")?;
-    if depth >= MAX_JOINT_DEPTH {
-        return error(
-            name_line,
-            format!("joints are nested more than {MAX_JOINT_DEPTH} deep"),
-        );
-    }
-    if name == "{" || name == "}" {
-        return error(name_line, "expected a joint name");
-    }
-    if name.contains('/') {
-        return error(name_line, format!("joint name {name} contains '/'"));
-    }
-    if joints
-        .iter()
-        .any(|joint| joint.parent == parent && joint.name == name)
-    {
-        return error(
-            name_line,
-            format!("duplicate joint name {name} under the same parent"),
-        );
-    }
-    tokens.expect_open_brace()?;
-
-    let index = joints.len();
-    joints.push(Joint {
-        name: name.to_string(),
-        parent,
-        offset: [0.0; 3],
-        channels: Vec::new(),
-        channel_start: *channel_count,
-    });
-
-    loop {
-        let Some((line, token)) = tokens.next() else {
-            return error(
-                tokens.last_line,
-                format!("unbalanced braces: joint {name} is never closed"),
-            );
-        };
-        match token {
-            "OFFSET" => joints[index].offset = tokens.offset()?,
-            "CHANNELS" => {
-                let (count_line, count) = tokens.expect_next("a channel count")?;
-                let count: usize = count
-                    .parse()
-                    .or_else(|_| error(count_line, format!("invalid channel count {count}")))?;
-                let mut channels = Vec::new();
-                for _ in 0..count {
-                    let (channel_line, channel) = tokens.expect_next("a channel name")?;
-                    match Channel::parse(channel) {
-                        Some(channel) => channels.push(channel),
-                        None => {
-                            return error(channel_line, format!("unknown channel {channel}"));
-                        }
-                    }
-                }
-                *channel_count += count;
-                joints[index].channels = channels;
-            }
-            "JOINT" => parse_joint(tokens, Some(index), depth + 1, joints, channel_count)?,
-            "End" => {
-                tokens.expect("Site")?;
-                tokens.expect_open_brace()?;
-                loop {
-                    match tokens.next() {
-                        Some((_, "OFFSET")) => {
-                            tokens.offset()?;
-                        }
-                        Some((_, "}")) => break,
-                        Some((line, token)) => {
-                            return error(line, format!("unexpected {token} in End Site"));
-                        }
-                        None => {
-                            return error(
-                                tokens.last_line,
-                                "unbalanced braces: End Site is never closed",
-                            );
-                        }
-                    }
-                }
-            }
-            "}" => return Ok(()),
-            other => return error(line, format!("unexpected {other} in joint {name}")),
-        }
-    }
-}
 
 fn parse_motion(
     lines: &[(usize, &str)],

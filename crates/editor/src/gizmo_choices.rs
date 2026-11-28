@@ -43,6 +43,43 @@ pub struct GizmoChoices {
 }
 
 impl GizmoChoices {
+    fn apply_to(&self, app: &mut HostedApp) {
+        if app.role() == HostRole::Preview {
+            return;
+        }
+        let changes: Vec<SetGizmoAlways> = app
+            .world()
+            .get_resource::<ComponentGizmos>()
+            .map(|kinds| {
+                kinds
+                    .kinds()
+                    .iter()
+                    .filter(|kind| kind.always != self.always(kind.name))
+                    .map(|kind| SetGizmoAlways {
+                        kind: kind.name.to_owned(),
+                        always: !kind.always,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        for change in changes {
+            app.trigger(change);
+        }
+    }
+
+    fn differs(&self, app: &HostedApp) -> bool {
+        app.role() != HostRole::Preview
+            && app
+                .world()
+                .get_resource::<ComponentGizmos>()
+                .is_some_and(|kinds| {
+                    kinds
+                        .kinds()
+                        .iter()
+                        .any(|kind| kind.always != self.always(kind.name))
+                })
+    }
+
     /// Whether the kind `kind` is drawn for every entity.
     pub fn always(&self, kind: &str) -> bool {
         self.always.contains(kind)
@@ -106,43 +143,6 @@ fn kind_names(kinds: Option<&ComponentGizmos>) -> Vec<&'static str> {
         .unwrap_or_default()
 }
 
-fn apply_to(app: &mut HostedApp, choices: &GizmoChoices) {
-    if app.role() == HostRole::Preview {
-        return;
-    }
-    let changes: Vec<SetGizmoAlways> = app
-        .world()
-        .get_resource::<ComponentGizmos>()
-        .map(|kinds| {
-            kinds
-                .kinds()
-                .iter()
-                .filter(|kind| kind.always != choices.always(kind.name))
-                .map(|kind| SetGizmoAlways {
-                    kind: kind.name.to_owned(),
-                    always: !kind.always,
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    for change in changes {
-        app.trigger(change);
-    }
-}
-
-fn differs(app: &HostedApp, choices: &GizmoChoices) -> bool {
-    app.role() != HostRole::Preview
-        && app
-            .world()
-            .get_resource::<ComponentGizmos>()
-            .is_some_and(|kinds| {
-                kinds
-                    .kinds()
-                    .iter()
-                    .any(|kind| kind.always != choices.always(kind.name))
-            })
-}
-
 pub(crate) fn apply_gizmo_choices(
     _: NonSendMarker,
     choices: Res<GizmoChoices>,
@@ -152,27 +152,27 @@ pub(crate) fn apply_gizmo_choices(
     mut starting: Query<&mut PendingPlayApp>,
 ) {
     for mut app in hosted.iter_mut() {
-        if differs(&app, &choices) {
-            apply_to(&mut app, &choices);
+        if choices.differs(&app) {
+            choices.apply_to(&mut app);
         }
     }
     for mut app in parked.iter_mut() {
-        if differs(&app.0, &choices) {
-            apply_to(&mut app.0, &choices);
+        if choices.differs(&app.0) {
+            choices.apply_to(&mut app.0);
         }
     }
     for mut app in pending.iter_mut() {
-        if app.held().is_some_and(|held| differs(held, &choices))
+        if app.held().is_some_and(|held| choices.differs(held))
             && let Some(held) = app.held_mut()
         {
-            apply_to(held, &choices);
+            choices.apply_to(held);
         }
     }
     for mut app in starting.iter_mut() {
-        if app.0.held().is_some_and(|held| differs(held, &choices))
+        if app.0.held().is_some_and(|held| choices.differs(held))
             && let Some(held) = app.0.held_mut()
         {
-            apply_to(held, &choices);
+            choices.apply_to(held);
         }
     }
 }
@@ -291,28 +291,30 @@ fn unknown_gizmo(kind: &str, names: &[&'static str]) -> ToolError {
     ToolError::new("unknown_gizmo", message)
 }
 
-fn chosen(
-    arguments: &Gizmos,
-    names: &[&'static str],
-    choices: &mut GizmoChoices,
-) -> Result<String, ToolError> {
-    match (arguments.kind.as_deref(), arguments.always) {
-        (None, None) => {}
-        (Some(kind), Some(always)) => {
-            let name = names
-                .iter()
-                .find(|name| name.eq_ignore_ascii_case(kind))
-                .ok_or_else(|| unknown_gizmo(kind, names))?;
-            choices.set(name, always);
+impl Gizmos {
+    fn chosen(
+        &self,
+        names: &[&'static str],
+        choices: &mut GizmoChoices,
+    ) -> Result<String, ToolError> {
+        match (self.kind.as_deref(), self.always) {
+            (None, None) => {}
+            (Some(kind), Some(always)) => {
+                let name = names
+                    .iter()
+                    .find(|name| name.eq_ignore_ascii_case(kind))
+                    .ok_or_else(|| unknown_gizmo(kind, names))?;
+                choices.set(name, always);
+            }
+            _ => {
+                return Err(ToolError::new(
+                    "invalid_arguments",
+                    "Give kind and always together to set a kind, or neither to list the kinds.",
+                ));
+            }
         }
-        _ => {
-            return Err(ToolError::new(
-                "invalid_arguments",
-                "Give kind and always together to set a kind, or neither to list the kinds.",
-            ));
-        }
+        Ok(listing(names, choices))
     }
-    Ok(listing(names, choices))
 }
 
 fn gizmos(
@@ -322,7 +324,7 @@ fn gizmos(
 ) {
     let names = kind_names(kinds.as_deref());
     for (arguments, reply) in calls.read() {
-        match chosen(&arguments, &names, &mut choices) {
+        match arguments.chosen(&names, &mut choices) {
             Ok(answer) => reply.ok(answer),
             Err(error) => reply.err(error),
         }

@@ -16,7 +16,7 @@ use concerto_foundation::{
     },
     transform::Transform,
 };
-use concerto_mesh::{primitives::plane, MeshComponent};
+use concerto_mesh::{Mesh, MeshComponent};
 use concerto_render::{
     assets::{
         material::StandardMaterial,
@@ -35,7 +35,6 @@ use concerto_render::{
     gpu::Gpu,
     material_plugin::MaterialPlugin,
     plugin::RenderPlugin,
-    readback::read_texture,
 };
 use concerto_window::plugin::{Window, WindowPlugin};
 use glam::{Quat, Vec2, Vec3};
@@ -204,7 +203,7 @@ fn render(gpu: &Gpu, content: &Content, bc_textures: bool, surface: Surface) -> 
         (Vec3::new(-0.2, 0.0, -1.0), 0.42),
         (Vec3::new(0.25, 0.0, -1.0), 0.065),
     ] {
-        let mesh = server.add(plane(Vec2::splat(size)));
+        let mesh = server.add(Mesh::plane(Vec2::splat(size)));
         let material = server.add(material(&server, surface));
         app.main_mut().world_mut().spawn((
             MeshComponent { handle: mesh },
@@ -236,7 +235,7 @@ fn render(gpu: &Gpu, content: &Content, bc_textures: bool, surface: Surface) -> 
         .world()
         .get_component_for_entity::<RenderCamera>(render_entity)
         .unwrap();
-    read_texture(gpu, render_camera.render_target.as_ref().unwrap().texture())
+    gpu.read_texture(render_camera.render_target.as_ref().unwrap().texture())
 }
 
 fn max_difference(a: &RgbaImage, b: &RgbaImage, channels: usize) -> u8 {

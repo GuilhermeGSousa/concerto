@@ -14,7 +14,7 @@ use concerto_foundation::{
     },
     transform::Transform,
 };
-use concerto_mesh::{primitives::plane, MeshComponent};
+use concerto_mesh::MeshComponent;
 use concerto_render::{
     assets::{
         material::{AlphaMode, StandardMaterial},
@@ -32,7 +32,6 @@ use concerto_render::{
     gpu::Gpu,
     material_plugin::MaterialPlugin,
     plugin::RenderPlugin,
-    readback::read_texture,
     shadow_pipeline::ShadowPipelinePlugin,
     AsBindGroup, Tonemapping,
 };
@@ -146,7 +145,7 @@ fn centre_pixel(app: &App, gpu: &Gpu, camera: Entity) -> [u8; 3] {
         .world()
         .get_component_for_entity::<RenderCamera>(render_entity)
         .unwrap();
-    let image = read_texture(gpu, render_camera.render_target.as_ref().unwrap().texture());
+    let image = gpu.read_texture(render_camera.render_target.as_ref().unwrap().texture());
     let [r, g, b, _] = image.get_pixel(SIZE / 2, SIZE / 2).0;
     [r, g, b]
 }
@@ -209,8 +208,8 @@ fn blended_surfaces_draw_back_to_front_over_the_opaque_scene_without_hiding_it()
     };
 
     let server = app.get_resource::<AssetServer>().unwrap().clone();
-    let floor_mesh = server.add(plane(Vec2::splat(8.0)));
-    let sheet_mesh = server.add(plane(Vec2::splat(4.0)));
+    let floor_mesh = server.add(Mesh::plane(Vec2::splat(8.0)));
+    let sheet_mesh = server.add(Mesh::plane(Vec2::splat(4.0)));
     let (floor_material, far_material, near_material, near_opaque_material) = (
         material(&app, &floor),
         material(&app, &far),
@@ -330,8 +329,8 @@ fn blended_surfaces_of_two_material_types_are_sorted_together_by_distance() {
     let middle = Vec3::new(0.0, 1.0, 0.0);
 
     let server = app.get_resource::<AssetServer>().unwrap().clone();
-    let floor_mesh = server.add(plane(Vec2::splat(8.0)));
-    let sheet_mesh = server.add(plane(Vec2::splat(4.0)));
+    let floor_mesh = server.add(Mesh::plane(Vec2::splat(8.0)));
+    let sheet_mesh = server.add(Mesh::plane(Vec2::splat(4.0)));
     let (floor_material, far_material, near_material) = (
         material(&app, &floor),
         material(&app, &far),

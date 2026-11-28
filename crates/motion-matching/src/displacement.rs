@@ -225,11 +225,8 @@ mod tests {
 
     use concerto_app::{plugins::AssetManagerPlugin, App};
     use concerto_ecs::entity::hierarchy::{ChildOf, Children};
-    use concerto_reflect::{apply_value, to_value};
-    use concerto_scene::{
-        capture::capture_scene,
-        spawner::{spawn_scene_in_world, SpawnFilter},
-    };
+    use concerto_reflect::ReflectedValue;
+    use concerto_scene::{scene::Scene, spawner::SpawnFilter};
 
     use super::*;
     use crate::plugin::MotionMatchingPlugin;
@@ -447,9 +444,9 @@ mod tests {
     #[test]
     fn each_variant_round_trips_through_reflection() {
         for value in variants() {
-            let stored = to_value(&value).unwrap();
+            let stored = ReflectedValue::encode(&value).unwrap();
             let mut loaded = CharacterDisplacement::Clamp(Clamp::default());
-            assert!(apply_value(&mut loaded, &stored).is_empty());
+            assert!(stored.apply(&mut loaded).is_empty());
             assert_eq!(loaded, value);
         }
     }
@@ -473,10 +470,11 @@ mod tests {
             world.entity_mut(root).add_child(child);
         }
 
-        let scene = capture_scene(world, root).unwrap();
+        let scene = Scene::capture(world, root).unwrap();
         let parent = world.spawn(());
-        let spawned =
-            spawn_scene_in_world(world, &scene, parent, &SpawnFilter::default()).node_entities;
+        let spawned = scene
+            .spawn_in_world(world, parent, &SpawnFilter::default())
+            .node_entities;
 
         let link = world
             .get_component_for_entity::<CharacterLink>(spawned[1])

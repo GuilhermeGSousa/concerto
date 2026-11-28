@@ -12,14 +12,14 @@ use concerto_ecs::component::Component;
 use concerto_foundation::assets::{AssetId, handle::AssetHandle};
 use concerto_gltf::gltf_importer::{GltfImporter, GltfSettings};
 use concerto_mesh::{JointPose, Skeleton, SkeletonComponent, mesh::MeshComponent};
-use concerto_reflect::{Reflect, apply_value};
+use concerto_reflect::Reflect;
 use concerto_render::assets::material::{AlphaMode, StandardMaterial};
 use concerto_scene::node_id::NodeId;
 use concerto_scene::scene::{Scene, SceneNode, SerializedComponent};
 
 fn decode<T: Reflect + Default>(component: &SerializedComponent) -> T {
     let mut value = T::default();
-    let warnings = apply_value(&mut value, &component.value);
+    let warnings = component.value.apply(&mut value);
     assert!(warnings.is_empty(), "{warnings:?}");
     value
 }
@@ -373,7 +373,7 @@ fn event_keys(outputs: &ImportOutputs, name: &str) -> Vec<NamedKey> {
                 std::any::type_name::<AnimationEvent>()
             );
             let mut event = AnimationEvent::default();
-            let warnings = apply_value(&mut event, &key.event.value().unwrap());
+            let warnings = key.event.value().unwrap().apply(&mut event);
             assert!(warnings.is_empty(), "{warnings:?}");
             named_key(key.time, event.name.as_str())
         })
